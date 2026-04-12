@@ -2,20 +2,24 @@
  * Build-time script: fetches all SWU card data from TCGPlayer
  * and writes static JSON files to public/data/.
  *
+ * Discovers all sets dynamically from TCGPlayer's API aggregations,
+ * so new sets are automatically included without code changes.
+ *
  * Run: npx tsx scripts/fetch-prices.ts
  */
 
-// Import the canonical set list from the app types
-import { SETS as ALL_SETS } from '../src/types/index.js';
-
-// Build a slug → name mapping from the canonical set list
-const SETS: Record<string, string> = Object.fromEntries(
-  ALL_SETS.map(s => [s.slug, s.name])
-);
+import { SETS as KNOWN_SETS } from '../src/types/index.js';
 
 const TCGPLAYER_SEARCH_URL =
   'https://mp-search-api.tcgplayer.com/v1/search/request?q=&isList=true&mpfev=2952';
 const PAGE_SIZE = 50;
+
+const HEADERS = {
+  'Content-Type': 'application/json',
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  Accept: 'application/json',
+};
 
 interface CardData {
   name: string;
@@ -29,13 +33,18 @@ interface CardData {
   productId: string;
 }
 
+interface DiscoveredSet {
+  slug: string;
+  apiName: string; // Exact name for the TCGPlayer API filter
+}
+
 function extractVariant(name: string): string {
   const match = name.match(/\(([^)]+)\)\s*$/);
   if (!match) return 'Standard';
   return match[1];
 }
 
-function buildSearchBody(setName: string, from: number): string {
+function buildSearchBody(setApiName: string, from: number): string {
   return JSON.stringify({
     algorithm: '',
     from,
@@ -43,7 +52,7 @@ function buildSearchBody(setName: string, from: number): string {
     filters: {
       term: {
         productLineName: ['star-wars-unlimited'],
-        setName: [setName],
+        setName: [setApiName],
       },
       range: {},
       match: {},
@@ -76,71 +85,11 @@ async function fetchWithRetry(url: string, opts: RequestInit, retries = 3): Prom
   throw new Error('Unreachable');
 }
 
-async function fetchAllCards(setSlug: string, setName: string): Promise<CardData[]> {
-  const allCards: CardData[] = [];
-  let from = 0;
-  let totalResults = Infinity;
-
-  while (from < totalResults) {
-    const res = await fetchWithRetry(TCGPLAYER_SEARCH_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Accept: 'application/json',
-      },
-      body: buildSearchBody(setName, from),
-    });
-
-    const data: any = await res.json();
-    const resultSet = data.results?.[0];
-    if (!resultSet) break;
-
-    totalResults = resultSet.totalResults || 0;
-    const results = resultSet.results || [];
-    if (results.length === 0) break;
-
-    for (const item of results) {
-      allCards.push({
-        name: item.productName || '',
-        variant: extractVariant(item.productName || ''),
-        printing: item.foilOnly ? 'Foil' : 'Normal',
-        rarity: item.rarityName || '',
-        number: item.customAttributes?.number || '',
-        marketPrice: typeof item.marketPrice === 'number' ? item.marketPrice : null,
-        set: setSlug,
-        setName,
-        productId: String(Math.round(item.productId || 0)),
-      });
-    }
-
-    from += PAGE_SIZE;
-    // Small delay between pages to be polite
-    if (from < totalResults) await sleep(200);
-  }
-
-  return allCards;
-}
-
-function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
-
-/** Query TCGPlayer aggregations to discover all SWU set names */
-async function discoverSets(): Promise<Record<string, string>> {
+/** Query TCGPlayer aggregations to discover all SWU sets with their exact API names */
+async function discoverSets(): Promise<DiscoveredSet[]> {
   const res = await fetchWithRetry(TCGPLAYER_SEARCH_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      Accept: 'application/json',
-    },
+    headers: HEADERS,
     body: JSON.stringify({
       algorithm: '',
       from: 0,
@@ -163,20 +112,57 @@ async function discoverSets(): Promise<Record<string, string>> {
   });
 
   const data: any = await res.json();
-  const aggs = data.results?.[0]?.aggregations;
-  if (!aggs) return {};
-
-  const setAgg = aggs.setName;
-  if (!Array.isArray(setAgg)) return {};
-
-  const discovered: Record<string, string> = {};
-  for (const item of setAgg) {
-    const name = item.value || item.urlValue;
-    if (!name) continue;
-    const slug = item.urlValue || slugify(name);
-    discovered[slug] = name;
+  const setAgg = data.results?.[0]?.aggregations?.setName;
+  if (!Array.isArray(setAgg)) {
+    throw new Error('Could not discover sets from TCGPlayer aggregations');
   }
-  return discovered;
+
+  return setAgg.map((item: any) => ({
+    slug: item.urlValue,
+    apiName: item.value, // The exact name TCGPlayer uses in its API
+  }));
+}
+
+async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]> {
+  const allCards: CardData[] = [];
+  let from = 0;
+  let totalResults = Infinity;
+
+  while (from < totalResults) {
+    const res = await fetchWithRetry(TCGPLAYER_SEARCH_URL, {
+      method: 'POST',
+      headers: HEADERS,
+      body: buildSearchBody(apiName, from),
+    });
+
+    const data: any = await res.json();
+    const resultSet = data.results?.[0];
+    if (!resultSet) break;
+
+    totalResults = resultSet.totalResults || 0;
+    const results = resultSet.results || [];
+    if (results.length === 0) break;
+
+    for (const item of results) {
+      allCards.push({
+        name: item.productName || '',
+        variant: extractVariant(item.productName || ''),
+        printing: item.foilOnly ? 'Foil' : 'Normal',
+        rarity: item.rarityName || '',
+        number: item.customAttributes?.number || '',
+        marketPrice: typeof item.marketPrice === 'number' ? item.marketPrice : null,
+        set: slug,
+        setName: apiName,
+        productId: String(Math.round(item.productId || 0)),
+      });
+    }
+
+    from += PAGE_SIZE;
+    // Small delay between pages to be polite
+    if (from < totalResults) await sleep(200);
+  }
+
+  return allCards;
 }
 
 async function main() {
@@ -189,34 +175,26 @@ async function main() {
   const timestamp = new Date().toISOString();
   console.log(`Fetching prices at ${timestamp}...`);
 
-  // Discover all sets from TCGPlayer and merge with our known list
+  // Discover all sets directly from TCGPlayer with exact API names
   console.log('Discovering sets from TCGPlayer...');
   const discovered = await discoverSets();
-  const allSets = { ...SETS };
-  const newSets: string[] = [];
+  console.log(`Found ${discovered.length} sets on TCGPlayer.`);
 
-  for (const [slug, name] of Object.entries(discovered)) {
-    if (!allSets[slug]) {
-      allSets[slug] = name;
-      newSets.push(`${slug} (${name})`);
-    }
-  }
-
+  // Check for sets we don't have in our types
+  const knownSlugs = new Set(KNOWN_SETS.map(s => s.slug));
+  const newSets = discovered.filter(s => !knownSlugs.has(s.slug));
   if (newSets.length > 0) {
-    console.log(`\n⚠️  Found ${newSets.length} new set(s) not in types/index.ts:`);
-    newSets.forEach(s => console.log(`    - ${s}`));
-    console.log('  Auto-including them for this build. Add them to src/types/index.ts for proper support.\n');
+    console.log(`\n⚠️  ${newSets.length} new set(s) not in src/types/index.ts:`);
+    newSets.forEach(s => console.log(`    - ${s.slug} ("${s.apiName}")`));
+    console.log('  Auto-including them. Add to src/types/index.ts for proper display names/codes.\n');
   }
-
-  console.log(`Fetching ${Object.keys(allSets).length} sets...`);
 
   const manifest: Record<string, { cards: number }> = {};
 
-  const entries = Object.entries(allSets);
-  for (let i = 0; i < entries.length; i++) {
-    const [slug, name] = entries[i];
+  for (let i = 0; i < discovered.length; i++) {
+    const { slug, apiName } = discovered[i];
     process.stdout.write(`  ${slug}...`);
-    const cards = await fetchAllCards(slug, name);
+    const cards = await fetchAllCards(slug, apiName);
     if (cards.length === 0) {
       console.log(' 0 cards (skipping)');
       continue;
@@ -225,7 +203,7 @@ async function main() {
     manifest[slug] = { cards: cards.length };
     console.log(` ${cards.length} cards`);
     // Pause between sets to avoid rate limiting
-    if (i < entries.length - 1) await sleep(1000);
+    if (i < discovered.length - 1) await sleep(1000);
   }
 
   // Write manifest with timestamp
