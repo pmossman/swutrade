@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --color-space-900: #0a0e1a;
+  --color-space-800: #111627;
+  --color-space-700: #1a1f2e;
+  --color-space-600: #242a3d;
+  --color-gold: #F5A623;
+  --color-gold-bright: #FFD700;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Subtle star field background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(1px 1px at 20% 30%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1px 1px at 40% 70%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1px 1px at 60% 20%, rgba(255, 255, 255, 0.25), transparent),
+    radial-gradient(1px 1px at 80% 50%, rgba(255, 255, 255, 0.15), transparent),
+    radial-gradient(1.5px 1.5px at 10% 80%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1px 1px at 70% 90%, rgba(255, 255, 255, 0.3), transparent),
+    radial-gradient(1px 1px at 90% 10%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1.5px 1.5px at 50% 50%, rgba(255, 255, 255, 0.15), transparent),
+    radial-gradient(1px 1px at 30% 60%, rgba(255, 255, 255, 0.2), transparent),
+    radial-gradient(1px 1px at 85% 75%, rgba(255, 255, 255, 0.25), transparent);
+}
+
+/* Star Wars crawl-style title */
+.swu-title {
+  font-family: 'Pathway Extreme', sans-serif;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  background: linear-gradient(180deg, #FFE81F 0%, #FFA500 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.4)) drop-shadow(0 0 20px rgba(255, 165, 0, 0.15));
+}
+
+/* Overlay animations */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #242a3d;
+  border-radius: 3px;
+}
