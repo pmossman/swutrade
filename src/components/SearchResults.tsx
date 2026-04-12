@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 import type { CardVariant, TradeCard } from '../types';
 import { tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
@@ -17,7 +17,6 @@ interface SearchResultsProps {
   isExpanded: boolean;
   setFilterLabel: string | null;
   onExpandSearch: () => void;
-  onDismiss: () => void;
 }
 
 function formatPrice(price: number | null): string {
@@ -113,7 +112,7 @@ function QtyControls({ card, qty, onAdd, onChangeQty, onRemove, accentColor }: {
   );
 }
 
-export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch, onDismiss }: SearchResultsProps) {
+export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch }: SearchResultsProps) {
   if (!query || query.length < 2) return null;
 
   if (isSearching) {

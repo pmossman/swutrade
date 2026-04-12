@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
 import type { TradeCard, CardVariant } from '../types';
 import { SETS, tradeCardKey } from '../types';
-import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl, cardTcgPlayerUrl } from '../services/priceService';
+import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl } from '../services/priceService';
 import { useCardSearch } from '../hooks/useCardSearch';
 import { SearchResults } from './SearchResults';
 
@@ -211,7 +211,6 @@ export function TradeSide({
           isExpanded={searchExpanded}
           setFilterLabel={setFilterLabel}
           onExpandSearch={handleExpandSearch}
-          onDismiss={handleDismissSearch}
         />
       </div>
       {/* Done button */}
@@ -290,7 +289,6 @@ export function TradeSide({
               const unitPrice = adjustPrice(tc.card.marketPrice, percentage);
               const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
               const variant = extractVariantLabel(tc.card.name);
-              const tcgUrl = cardTcgPlayerUrl(tc.card.productId);
 
               const rowPads: Record<ThumbSize, string> = {
                 lg: 'px-3 py-3 gap-3',
