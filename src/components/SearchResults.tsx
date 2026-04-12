@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import type { CardVariant, TradeCard } from '../types';
 import { SETS, tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
@@ -131,7 +131,7 @@ function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeC
       {groups.map(setGroup => (
         <div key={setGroup.setSlug}>
           {showSetHeaders && (
-            <div className="px-2.5 py-1.5 bg-space-700/50 sticky top-0 z-10">
+            <div className="px-2.5 py-1.5 bg-space-700 sticky top-0 z-10">
               <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                 {setGroup.setCode}
               </span>
