@@ -1,8 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { CardVariant, TradeCard } from '../types';
-import { tradeCardKey } from '../types';
+import { SETS, tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
 import { adjustPrice, extractVariantLabel, cardImageUrl, cardTcgPlayerUrl } from '../services/priceService';
+
+const promoSlugs = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
+
+type ResultTab = 'main' | 'promo';
 
 interface SearchResultsProps {
   results: SetSearchGroup[];
@@ -112,46 +116,21 @@ function QtyControls({ card, qty, onAdd, onChangeQty, onRemove, accentColor }: {
   );
 }
 
-export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch }: SearchResultsProps) {
-  if (!query || query.length < 2) return null;
-
-  if (isSearching) {
-    return (
-      <div className="bg-space-800 border border-space-600 rounded-lg mt-1 p-3 text-center text-gray-500 text-sm">
-        Searching...
-      </div>
-    );
-  }
-
-  const showExpandBtn = !isExpanded && setFilterLabel;
-  const hasResults = results.some(sg => sg.groups.length > 0);
-
-  if (!hasResults) {
-    return (
-      <div className="bg-space-800 border border-space-600 rounded-lg mt-1 p-3 text-center">
-        <div className="text-gray-500 text-sm">
-          No cards found{setFilterLabel ? ` in ${setFilterLabel}` : ''}
-        </div>
-        {showExpandBtn && (
-          <button
-            onClick={onExpandSearch}
-            className="mt-2 text-xs text-gold hover:text-gold-bright transition-colors"
-          >
-            Search all sets
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  const multipleSetGroups = results.length > 1;
-
+function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeCards, accentColor, showSetHeaders }: {
+  groups: SetSearchGroup[];
+  percentage: number;
+  onAdd: (card: CardVariant) => void;
+  onChangeQty: (key: string, delta: number) => void;
+  onRemove: (key: string) => void;
+  tradeCards: TradeCard[];
+  accentColor: string;
+  showSetHeaders: boolean;
+}) {
   return (
-    <div className="bg-space-800 border border-space-600 rounded-lg mt-1 divide-y divide-space-700">
-      {results.map(setGroup => (
+    <div className="divide-y divide-space-700">
+      {groups.map(setGroup => (
         <div key={setGroup.setSlug}>
-          {/* Set header — shown when results span multiple sets */}
-          {multipleSetGroups && (
+          {showSetHeaders && (
             <div className="px-2.5 py-1.5 bg-space-700/50 sticky top-0 z-10">
               <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                 {setGroup.setCode}
@@ -159,7 +138,6 @@ export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemov
               <span className="text-[10px] text-gray-600 ml-1.5">{setGroup.setName}</span>
             </div>
           )}
-          {/* Card groups within this set */}
           <div className="divide-y divide-space-700/50">
             {setGroup.groups.map(group => (
               <div key={`${setGroup.setSlug}-${group.baseName}`} className="px-2.5 py-2">
@@ -225,8 +203,93 @@ export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemov
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch }: SearchResultsProps) {
+  const [activeTab, setActiveTab] = useState<ResultTab>('main');
+
+  if (!query || query.length < 2) return null;
+
+  if (isSearching) {
+    return (
+      <div className="bg-space-800 border border-space-600 rounded-lg mt-1 p-3 text-center text-gray-500 text-sm">
+        Searching...
+      </div>
+    );
+  }
+
+  const showExpandBtn = !isExpanded && setFilterLabel;
+  const hasResults = results.some(sg => sg.groups.length > 0);
+
+  if (!hasResults) {
+    return (
+      <div className="bg-space-800 border border-space-600 rounded-lg mt-1 p-3 text-center">
+        <div className="text-gray-500 text-sm">
+          No cards found{setFilterLabel ? ` in ${setFilterLabel}` : ''}
+        </div>
+        {showExpandBtn && (
+          <button
+            onClick={onExpandSearch}
+            className="mt-2 text-xs text-gold hover:text-gold-bright transition-colors"
+          >
+            Search all sets
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const mainResults = results.filter(sg => !promoSlugs.has(sg.setSlug));
+  const promoResults = results.filter(sg => promoSlugs.has(sg.setSlug));
+  const mainCount = mainResults.reduce((n, sg) => n + sg.groups.length, 0);
+  const promoCount = promoResults.reduce((n, sg) => n + sg.groups.length, 0);
+  const showTabs = mainCount > 0 && promoCount > 0;
+  // If only one category has results, show it directly without tabs
+  const visibleResults = showTabs
+    ? (activeTab === 'main' ? mainResults : promoResults)
+    : (mainCount > 0 ? mainResults : promoResults);
+  const showSetHeaders = visibleResults.length > 1;
+
+  const tabBase = 'px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors';
+  const tabActive = accentColor === 'blue'
+    ? 'bg-blue-900/50 text-blue-300'
+    : 'bg-emerald-900/50 text-emerald-300';
+  const tabInactive = 'text-gray-500 hover:text-gray-300';
+
+  return (
+    <div className="bg-space-800 border border-space-600 rounded-lg mt-1">
+      {showTabs && (
+        <div className="flex items-center gap-1 px-2.5 pt-2 pb-1">
+          <button
+            onClick={() => setActiveTab('main')}
+            className={`${tabBase} ${activeTab === 'main' ? tabActive : tabInactive}`}
+          >
+            Sets
+            <span className="ml-1 text-[10px] opacity-70">{mainCount}</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('promo')}
+            className={`${tabBase} ${activeTab === 'promo' ? tabActive : tabInactive}`}
+          >
+            Promos
+            <span className="ml-1 text-[10px] opacity-70">{promoCount}</span>
+          </button>
+        </div>
+      )}
+      <SetGroupList
+        groups={visibleResults}
+        percentage={percentage}
+        onAdd={onAdd}
+        onChangeQty={onChangeQty}
+        onRemove={onRemove}
+        tradeCards={tradeCards}
+        accentColor={accentColor}
+        showSetHeaders={showSetHeaders}
+      />
       {showExpandBtn && (
-        <div className="px-2.5 py-2 text-center">
+        <div className="px-2.5 py-2 text-center border-t border-space-700">
           <button
             onClick={onExpandSearch}
             className="text-[11px] text-gray-500 hover:text-gold transition-colors"

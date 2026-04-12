@@ -97,7 +97,9 @@ export function TradeSide({
   onLoadAllSets,
 }: TradeSideProps) {
   const [searchExpanded, setSearchExpanded] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const overlayInputRef = useRef<HTMLInputElement>(null);
 
   const effectiveFilter = searchExpanded ? null : setFilter;
 
@@ -118,12 +120,15 @@ export function TradeSide({
   const handleClearSearch = () => {
     search.clearSearch();
     setSearchExpanded(false);
+    setSearchFocused(false);
   };
 
   const handleDismissSearch = useCallback(() => {
     search.clearSearch();
     setSearchExpanded(false);
+    setSearchFocused(false);
     inputRef.current?.blur();
+    overlayInputRef.current?.blur();
   }, [search]);
 
   const handleCardTap = useCallback((card: CardVariant) => {
@@ -143,6 +148,7 @@ export function TradeSide({
   }, 0);
 
   const hasSearchResults = search.query.length >= 2;
+  const showOverlay = searchFocused || hasSearchResults;
 
   const hdr = headerColors[accentColor];
   const searchBorder = searchBorderColors[accentColor];
@@ -154,7 +160,7 @@ export function TradeSide({
     {/* Search overlay — covers viewport when actively searching */}
     <div
       className={`fixed inset-0 z-40 bg-space-900/95 flex flex-col transition-all duration-200 ease-out ${
-        hasSearchResults
+        showOverlay
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-4 pointer-events-none'
       }`}
@@ -174,7 +180,7 @@ export function TradeSide({
             )}
           </div>
           <input
-            ref={inputRef}
+            ref={overlayInputRef}
             type="text"
             value={search.query}
             onChange={e => search.setQuery(e.target.value)}
@@ -198,6 +204,11 @@ export function TradeSide({
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3">
+        {!hasSearchResults && (
+          <div className="flex items-center justify-center h-full text-gray-600 text-sm">
+            Type a card name to search
+          </div>
+        )}
         <SearchResults
           results={search.results}
           percentage={percentage}
@@ -254,8 +265,9 @@ export function TradeSide({
             value={search.query}
             onChange={e => search.setQuery(e.target.value)}
             onFocus={() => {
-              // If there's already a query, the overlay will show via hasSearchResults
-              // This input just triggers the initial typing
+              setSearchFocused(true);
+              // Move focus to the overlay input after it renders
+              setTimeout(() => overlayInputRef.current?.focus(), 50);
             }}
             placeholder={searchExpanded ? 'Search all sets...' : `Add cards${setFilterLabel ? ` (${setFilterLabel})` : ''}...`}
             className={`w-full bg-space-700 text-gray-100 border border-space-600 rounded-lg pl-8 pr-8 py-1.5 text-base placeholder-gray-500 focus:outline-none focus:ring-1 transition-all ${searchBorder}`}
