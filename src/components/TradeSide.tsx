@@ -4,6 +4,7 @@ import { SETS, tradeCardKey } from '../types';
 import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { useCardSearch } from '../hooks/useCardSearch';
 import { SearchResults } from './SearchResults';
+import { PriceModeToggle } from './PriceModeToggle';
 
 interface TradeSideProps {
   label: string;
@@ -19,6 +20,7 @@ interface TradeSideProps {
   setFilter: string | null;
   isLoading: boolean;
   onLoadAllSets: () => void;
+  onPriceModeChange: (mode: PriceMode) => void;
 }
 
 function formatPrice(price: number | null): string {
@@ -97,6 +99,7 @@ export function TradeSide({
   setFilter,
   isLoading,
   onLoadAllSets,
+  onPriceModeChange,
 }: TradeSideProps) {
   const [searchExpanded, setSearchExpanded] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -201,8 +204,9 @@ export function TradeSide({
             </svg>
           </button>
         </div>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex items-center justify-between">
           <span className={`text-[11px] font-semibold ${hdr.split(' ').pop()}`}>Adding to: {label}</span>
+          <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
         </div>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3">

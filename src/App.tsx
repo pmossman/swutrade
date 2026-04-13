@@ -8,6 +8,7 @@ import { TradeSide } from './components/TradeSide';
 import { TradeBalance } from './components/TradeBalance';
 import { TradeSummary } from './components/TradeSummary';
 import { usePriceData } from './hooks/usePriceData';
+import { useTradeUrl } from './hooks/useTradeUrl';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -33,6 +34,17 @@ function App() {
   useEffect(() => {
     priceData.loadAllSets();
   }, [priceData.loadAllSets]);
+
+  // Sync trade state to/from URL for sharing and back/forward navigation
+  const allLoadedCards = useMemo(() => Object.values(priceData.cards).flat(), [priceData.cards]);
+  useTradeUrl(
+    { yourCards, theirCards, percentage, priceMode },
+    allLoadedCards,
+    setYourCards,
+    setTheirCards,
+    setPercentage,
+    setPriceMode,
+  );
 
   // --- Card management helpers (qty-aware) ---
 
@@ -161,6 +173,7 @@ function App() {
             setFilter={setFilter}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
+            onPriceModeChange={setPriceMode}
           />
           <TradeSide
             label="Them"
@@ -176,6 +189,7 @@ function App() {
             setFilter={setFilter}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
+            onPriceModeChange={setPriceMode}
           />
         </div>
       </div>
@@ -211,6 +225,7 @@ function App() {
           theirCards={theirCards}
           percentage={percentage}
           priceMode={priceMode}
+          onPriceModeChange={setPriceMode}
           onClose={() => setShowSummary(false)}
         />
       )}

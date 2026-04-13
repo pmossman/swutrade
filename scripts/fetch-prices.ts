@@ -168,7 +168,7 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
 }
 
 async function main() {
-  const { mkdirSync, writeFileSync } = await import('fs');
+  const { mkdirSync, writeFileSync, readFileSync } = await import('fs');
   const { join } = await import('path');
 
   const outDir = join(import.meta.dirname, '..', 'public', 'data');
@@ -214,7 +214,24 @@ async function main() {
     JSON.stringify({ timestamp, sets: manifest }, null, 2),
   );
 
-  console.log(`Done. Wrote ${Object.keys(manifest).length} sets + manifest to public/data/`);
+  // Build a compact product-id → card-info index for OG image generation
+  const productIndex: Record<string, { n: string; p: number | null; l: number | null; s: string }> = {};
+  for (const slug of Object.keys(manifest)) {
+    const setPath = join(outDir, `${slug}.json`);
+    const cards: CardData[] = JSON.parse(readFileSync(setPath, 'utf-8'));
+    for (const card of cards) {
+      if (card.productId) {
+        productIndex[card.productId] = {
+          n: card.name,
+          p: card.marketPrice,
+          l: card.lowPrice,
+          s: card.setName,
+        };
+      }
+    }
+  }
+  writeFileSync(join(outDir, 'product-index.json'), JSON.stringify(productIndex));
+  console.log(`Done. Wrote ${Object.keys(manifest).length} sets + manifest + product index to public/data/`);
 }
 
 main().catch(err => {

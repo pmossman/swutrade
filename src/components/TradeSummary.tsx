@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { toPng } from 'html-to-image';
 import type { TradeCard, PriceMode } from '../types';
+import { PriceModeToggle } from './PriceModeToggle';
 import { tradeCardKey } from '../types';
 import { adjustPrice, extractVariantLabel, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
 
@@ -9,6 +10,7 @@ interface TradeSummaryProps {
   theirCards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
+  onPriceModeChange: (mode: PriceMode) => void;
   onClose: () => void;
 }
 
@@ -100,13 +102,14 @@ function SideList({ cards, percentage, priceMode, label, accentColor }: {
   );
 }
 
-export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onClose }: TradeSummaryProps) {
+export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onPriceModeChange, onClose }: TradeSummaryProps) {
   const yourTotal = calcTotal(yourCards, percentage, priceMode);
   const theirTotal = calcTotal(theirCards, percentage, priceMode);
   const diff = yourTotal - theirTotal;
   const absDiff = Math.abs(diff);
   const isEven = absDiff < 0.01;
   const [exporting, setExporting] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const captureRef = useRef<HTMLDivElement>(null);
 
   let message: string;
@@ -163,12 +166,46 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onC
     }
   }, [exporting]);
 
+  const handleCopyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const input = document.createElement('input');
+      input.value = window.location.href;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 bg-space-900/95 flex flex-col animate-fade-in">
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
         <h2 className="text-base font-bold text-gold-bright">Trade Summary</h2>
         <div className="flex items-center gap-2">
+          <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
+          <button
+            onClick={handleCopyLink}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-space-700 text-gray-300 hover:bg-space-600 transition-colors"
+          >
+            {linkCopied ? (
+              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+            )}
+            {linkCopied ? 'Copied!' : 'Link'}
+          </button>
           <button
             onClick={handleExport}
             disabled={exporting}
@@ -184,7 +221,7 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onC
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             )}
-            Share
+            Image
           </button>
           <button
             onClick={onClose}
