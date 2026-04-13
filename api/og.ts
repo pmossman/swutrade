@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { Resvg } from '@resvg/resvg-js';
 
 interface CardInfo {
   n: string;  // name
@@ -162,7 +163,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   <text x="600" y="610" fill="#4b5563" font-size="14" text-anchor="middle">swutrade.com</text>
 </svg>`;
 
-  res.setHeader('Content-Type', 'image/svg+xml');
+  // Convert SVG to PNG for broad platform compatibility (Discord, iMessage, etc.)
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: 1200 },
+  });
+  const png = resvg.render().asPng();
+
+  res.setHeader('Content-Type', 'image/png');
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
-  res.status(200).send(svg);
+  res.status(200).send(Buffer.from(png));
 }
