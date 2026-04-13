@@ -199,6 +199,7 @@ function App() {
             yourCards={yourCards}
             theirCards={theirCards}
             percentage={percentage}
+            priceMode={priceMode}
           />
         )}
       </div>
