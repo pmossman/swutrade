@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
+import { toPng } from 'html-to-image';
 import type { TradeCard, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import { adjustPrice, extractVariantLabel, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
@@ -100,6 +101,8 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onC
   const diff = yourTotal - theirTotal;
   const absDiff = Math.abs(diff);
   const isEven = absDiff < 0.01;
+  const [exporting, setExporting] = useState(false);
+  const captureRef = useRef<HTMLDivElement>(null);
 
   let message: string;
   let balanceColor: string;
@@ -115,35 +118,102 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onC
     balanceColor = 'text-amber-400';
   }
 
+  const handleExport = useCallback(async () => {
+    if (!captureRef.current || exporting) return;
+    setExporting(true);
+
+    try {
+      // html-to-image needs images loaded; run twice for reliability
+      const dataUrl = await toPng(captureRef.current, {
+        backgroundColor: '#0a0e1a',
+        pixelRatio: 2,
+      });
+      // Re-render for any images that loaded late
+      const finalUrl = await toPng(captureRef.current, {
+        backgroundColor: '#0a0e1a',
+        pixelRatio: 2,
+      });
+
+      const blob = await (await fetch(finalUrl)).blob();
+      const file = new File([blob], 'swu-trade.png', { type: 'image/png' });
+
+      // Try Web Share API (works on mobile for sharing to Discord etc.)
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'SWU Trade',
+        });
+      } else {
+        // Fallback: download the image
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'swu-trade.png';
+        a.click();
+      }
+    } catch (err) {
+      // User cancelled share or something went wrong — ignore
+      console.warn('Export failed:', err);
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting]);
+
   return (
     <div className="fixed inset-0 z-50 bg-space-900/95 flex flex-col animate-fade-in">
       {/* Header */}
       <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
         <h2 className="text-base font-bold text-gold-bright">Trade Summary</h2>
-        <button
-          onClick={onClose}
-          className="text-gray-500 hover:text-gray-300 transition-colors p-1"
-          aria-label="Close summary"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
-      {/* Balance */}
-      <div className="shrink-0 px-4 pb-3">
-        <div className={`text-center text-lg font-bold ${balanceColor}`}>{message}</div>
-        <div className="text-center text-[10px] text-gray-500 mt-0.5">
-          @ {percentage}% TCGPlayer {priceMode === 'low' ? 'lowest' : 'market'}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gold/20 text-gold hover:bg-gold/30 transition-colors disabled:opacity-50"
+          >
+            {exporting ? (
+              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            Share
+          </button>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-300 transition-colors p-1"
+            aria-label="Close summary"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       </div>
 
-      {/* Card lists */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-          <SideList cards={yourCards} percentage={percentage} priceMode={priceMode} label="You" accentColor="emerald" />
-          <SideList cards={theirCards} percentage={percentage} priceMode={priceMode} label="Them" accentColor="blue" />
+      {/* Capturable content area */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div ref={captureRef} className="px-4 pb-4">
+          {/* Balance */}
+          <div className="pb-3">
+            <div className={`text-center text-lg font-bold ${balanceColor}`}>{message}</div>
+            <div className="text-center text-[10px] text-gray-500 mt-0.5">
+              @ {percentage}% TCGPlayer {priceMode === 'low' ? 'lowest' : 'market'}
+            </div>
+          </div>
+
+          {/* Card lists */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
+            <SideList cards={yourCards} percentage={percentage} priceMode={priceMode} label="You" accentColor="emerald" />
+            <SideList cards={theirCards} percentage={percentage} priceMode={priceMode} label="Them" accentColor="blue" />
+          </div>
+
+          {/* Watermark for shared image */}
+          <div className="mt-3 text-center text-[9px] text-gray-600">
+            swutrade.com
+          </div>
         </div>
       </div>
     </div>
