@@ -1,5 +1,29 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resvg } from '@resvg/resvg-js';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// Load Inter font once at module load — bundled with the function via @fontsource
+const __dirname = dirname(fileURLToPath(import.meta.url));
+function loadFont(filename: string): Buffer | null {
+  const candidates = [
+    join(__dirname, '..', 'node_modules', '@fontsource', 'inter', 'files', filename),
+    join(process.cwd(), 'node_modules', '@fontsource', 'inter', 'files', filename),
+  ];
+  for (const p of candidates) {
+    try {
+      return readFileSync(p);
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+const fontRegular = loadFont('inter-latin-400-normal.woff');
+const fontBold = loadFont('inter-latin-700-normal.woff');
+const fontBlack = loadFont('inter-latin-900-normal.woff');
 
 interface CardInfo {
   n: string;  // name
@@ -143,7 +167,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
   <rect width="1200" height="630" fill="#0a0e1a"/>
   <style>
-    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    text { font-family: 'Inter', sans-serif; }
   </style>
 
   <!-- Header -->
@@ -164,8 +188,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 </svg>`;
 
   // Convert SVG to PNG for broad platform compatibility (Discord, iMessage, etc.)
+  const fontBuffers: Buffer[] = [];
+  if (fontRegular) fontBuffers.push(fontRegular);
+  if (fontBold) fontBuffers.push(fontBold);
+  if (fontBlack) fontBuffers.push(fontBlack);
+
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: 1200 },
+    font: {
+      fontBuffers,
+      loadSystemFonts: false,
+      defaultFontFamily: 'Inter',
+    },
   });
   const png = resvg.render().asPng();
 
