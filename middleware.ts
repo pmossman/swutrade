@@ -1,7 +1,5 @@
-import { next } from '@vercel/edge';
-
 // Common crawler/bot user agents that fetch link previews
-const CRAWLER_PATTERN = /bot|crawl|spider|slurp|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|WhatsApp|Discordbot|TelegramBot|Slackbot|iMessage|Applebot|Google-InspectionTool|Googlebot|bingbot/i;
+const CRAWLER_PATTERN = /bot|crawl|spider|slurp|facebookexternalhit|Facebot|Twitterbot|LinkedInBot|WhatsApp|Discordbot|TelegramBot|Slackbot|Applebot|Google-InspectionTool|Googlebot|bingbot/i;
 
 export default function middleware(request: Request) {
   const url = new URL(request.url);
@@ -9,12 +7,12 @@ export default function middleware(request: Request) {
 
   // Only intercept requests to root path with trade params
   if (url.pathname !== '/' || (!url.searchParams.has('y') && !url.searchParams.has('t'))) {
-    return next();
+    return;
   }
 
   // Only intercept for crawlers/bots
   if (!CRAWLER_PATTERN.test(ua)) {
-    return next();
+    return;
   }
 
   // Build OG image URL with the same trade params
@@ -43,7 +41,7 @@ export default function middleware(request: Request) {
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>SWU Trade — Star Wars Unlimited Trade Calculator</title>
+  <title>SWU Trade Summary</title>
   <meta name="description" content="${description}">
   <meta property="og:title" content="SWU Trade Summary">
   <meta property="og:description" content="${description}">
