@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import type { CardVariant, TradeCard } from './types';
+import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
+import { PriceModeToggle } from './components/PriceModeToggle';
 import { SetFilter } from './components/SetFilter';
 import { PriceSlider } from './components/PriceSlider';
 import { TradeSide } from './components/TradeSide';
@@ -20,6 +21,7 @@ function timeAgo(iso: string): string {
 
 function App() {
   const [percentage, setPercentage] = useState(80);
+  const [priceMode, setPriceMode] = useState<PriceMode>('market');
   const [setFilter, setSetFilter] = useState<string | null>(null);
   const [yourCards, setYourCards] = useState<TradeCard[]>([]);
   const [theirCards, setTheirCards] = useState<TradeCard[]>([]);
@@ -110,6 +112,7 @@ function App() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <SetFilter value={setFilter} onChange={handleSetChange} />
+          <PriceModeToggle value={priceMode} onChange={setPriceMode} />
           <PriceSlider value={percentage} onChange={setPercentage} />
           {priceData.isAnyLoading ? (
             <span className="text-[11px] text-gray-500 animate-pulse">Loading...</span>
@@ -148,6 +151,7 @@ function App() {
             label="You"
             cards={yourCards}
             percentage={percentage}
+            priceMode={priceMode}
             onAdd={handleAddYour}
             onRemove={handleRemoveYour}
             onChangeQty={handleQtyYour}
@@ -162,6 +166,7 @@ function App() {
             label="Them"
             cards={theirCards}
             percentage={percentage}
+            priceMode={priceMode}
             onAdd={handleAddTheir}
             onRemove={handleRemoveTheir}
             onChangeQty={handleQtyTheir}
@@ -186,6 +191,7 @@ function App() {
               yourCards={yourCards}
               theirCards={theirCards}
               percentage={percentage}
+              priceMode={priceMode}
             />
           </button>
         ) : (
@@ -203,6 +209,7 @@ function App() {
           yourCards={yourCards}
           theirCards={theirCards}
           percentage={percentage}
+          priceMode={priceMode}
           onClose={() => setShowSummary(false)}
         />
       )}

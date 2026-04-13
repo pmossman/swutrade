@@ -28,6 +28,7 @@ interface CardData {
   rarity: string;
   number: string;
   marketPrice: number | null;
+  lowPrice: number | null;
   set: string;
   setName: string;
   productId: string;
@@ -151,6 +152,7 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
         rarity: item.rarityName || '',
         number: item.customAttributes?.number || '',
         marketPrice: typeof item.marketPrice === 'number' ? item.marketPrice : null,
+        lowPrice: typeof item.lowestPrice === 'number' ? item.lowestPrice : null,
         set: slug,
         setName: apiName,
         productId: String(Math.round(item.productId || 0)),

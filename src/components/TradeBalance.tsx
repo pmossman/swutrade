@@ -1,22 +1,23 @@
-import type { TradeCard } from '../types';
-import { adjustPrice } from '../services/priceService';
+import type { TradeCard, PriceMode } from '../types';
+import { adjustPrice, getCardPrice } from '../services/priceService';
 
 interface TradeBalanceProps {
   yourCards: TradeCard[];
   theirCards: TradeCard[];
   percentage: number;
+  priceMode: PriceMode;
 }
 
-function calcTotal(cards: TradeCard[], percentage: number): number {
+function calcTotal(cards: TradeCard[], percentage: number, priceMode: PriceMode): number {
   return cards.reduce((sum, tc) => {
-    const adj = adjustPrice(tc.card.marketPrice, percentage);
+    const adj = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
     return sum + (adj ?? 0) * tc.qty;
   }, 0);
 }
 
-export function TradeBalance({ yourCards, theirCards, percentage }: TradeBalanceProps) {
-  const yourTotal = calcTotal(yourCards, percentage);
-  const theirTotal = calcTotal(theirCards, percentage);
+export function TradeBalance({ yourCards, theirCards, percentage, priceMode }: TradeBalanceProps) {
+  const yourTotal = calcTotal(yourCards, percentage, priceMode);
+  const theirTotal = calcTotal(theirCards, percentage, priceMode);
   const diff = yourTotal - theirTotal;
   const absDiff = Math.abs(diff);
   const isEven = absDiff < 0.01;
@@ -52,7 +53,7 @@ export function TradeBalance({ yourCards, theirCards, percentage }: TradeBalance
       {!isEmpty && (
         <>
           <div className="text-[11px] text-gray-500 mt-0.5 text-center">
-            You: ${yourTotal.toFixed(2)} &middot; Them: ${theirTotal.toFixed(2)} &middot; @ {percentage}% TCG
+            You: ${yourTotal.toFixed(2)} &middot; Them: ${theirTotal.toFixed(2)} &middot; @ {percentage}% {priceMode === 'low' ? 'Low' : 'Market'}
           </div>
           <div className="mt-2 flex items-center justify-center gap-1.5 text-xs font-semibold text-gold/80">
             <span>View Summary</span>

@@ -5,10 +5,13 @@ export interface CardVariant {
   rarity: string;
   number: string;
   marketPrice: number | null;
+  lowPrice: number | null;
   set: string;
   setName: string;
   productId?: string;
 }
+
+export type PriceMode = 'market' | 'low';
 
 export interface CardGroup {
   baseName: string;

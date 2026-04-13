@@ -1,4 +1,4 @@
-import type { CardVariant, CardGroup, SetInfo } from '../types';
+import type { CardVariant, CardGroup, SetInfo, PriceMode } from '../types';
 
 // Static data is served from /data/ (built at deploy time)
 const DATA_BASE = '/data';
@@ -61,6 +61,16 @@ export function groupCards(cards: CardVariant[]): CardGroup[] {
 export function adjustPrice(price: number | null, percentage: number): number | null {
   if (price === null) return null;
   return Math.round(price * (percentage / 100) * 100) / 100;
+}
+
+/** Get the active price for a card based on the price mode */
+export function getCardPrice(card: CardVariant, mode: PriceMode): number | null {
+  return mode === 'low' ? card.lowPrice : card.marketPrice;
+}
+
+/** Get the alternate (non-active) price for a card */
+export function getAltPrice(card: CardVariant, mode: PriceMode): number | null {
+  return mode === 'low' ? card.marketPrice : card.lowPrice;
 }
 
 export function cardImageUrl(productId: string | undefined, size: 'sm' | 'md' | 'lg' = 'sm'): string | null {

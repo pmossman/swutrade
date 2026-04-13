@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react';
-import type { TradeCard, CardVariant } from '../types';
+import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { SETS, tradeCardKey } from '../types';
-import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl } from '../services/priceService';
+import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { useCardSearch } from '../hooks/useCardSearch';
 import { SearchResults } from './SearchResults';
 
@@ -9,6 +9,7 @@ interface TradeSideProps {
   label: string;
   cards: TradeCard[];
   percentage: number;
+  priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
   onRemove: (key: string) => void;
   onChangeQty: (key: string, delta: number) => void;
@@ -86,6 +87,7 @@ export function TradeSide({
   label,
   cards,
   percentage,
+  priceMode,
   onAdd,
   onRemove,
   onChangeQty,
@@ -143,7 +145,7 @@ export function TradeSide({
     : null;
 
   const total = cards.reduce((sum, tc) => {
-    const adj = adjustPrice(tc.card.marketPrice, percentage);
+    const adj = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
     return sum + (adj ?? 0) * tc.qty;
   }, 0);
 
@@ -212,6 +214,7 @@ export function TradeSide({
         <SearchResults
           results={search.results}
           percentage={percentage}
+          priceMode={priceMode}
           onAdd={onAdd}
           onChangeQty={onChangeQty}
           onRemove={onRemove}
@@ -298,7 +301,8 @@ export function TradeSide({
           <div className="divide-y divide-space-700">
             {cards.map(tc => {
               const key = tradeCardKey(tc.card);
-              const unitPrice = adjustPrice(tc.card.marketPrice, percentage);
+              const unitPrice = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
+              const altUnitPrice = adjustPrice(getAltPrice(tc.card, priceMode), percentage);
               const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
               const variant = extractVariantLabel(tc.card.name);
 
@@ -332,6 +336,7 @@ export function TradeSide({
                     {!isCompact && (
                       <div className={`text-gray-500 leading-tight ${tSize === 'lg' ? 'text-xs mt-0.5' : 'text-[10px]'}`}>
                         {variant} &middot; {formatPrice(unitPrice)} ea
+                        {altUnitPrice !== null && <span className="text-gray-600 ml-1">({formatPrice(altUnitPrice)})</span>}
                       </div>
                     )}
                     {tSize === 'lg' && tc.qty > 1 && (

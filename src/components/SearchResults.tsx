@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { CardVariant, TradeCard } from '../types';
+import type { CardVariant, TradeCard, PriceMode } from '../types';
 import { SETS, tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
-import { adjustPrice, extractVariantLabel, cardImageUrl, cardTcgPlayerUrl } from '../services/priceService';
+import { adjustPrice, extractVariantLabel, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
 
 const promoSlugs = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 
@@ -11,6 +11,7 @@ type ResultTab = 'main' | 'promo';
 interface SearchResultsProps {
   results: SetSearchGroup[];
   percentage: number;
+  priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
   onChangeQty: (key: string, delta: number) => void;
   onRemove: (key: string) => void;
@@ -116,9 +117,10 @@ function QtyControls({ card, qty, onAdd, onChangeQty, onRemove, accentColor }: {
   );
 }
 
-function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeCards, accentColor, showSetHeaders }: {
+function SetGroupList({ groups, percentage, priceMode, onAdd, onChangeQty, onRemove, tradeCards, accentColor, showSetHeaders }: {
   groups: SetSearchGroup[];
   percentage: number;
+  priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
   onChangeQty: (key: string, delta: number) => void;
   onRemove: (key: string) => void;
@@ -146,7 +148,8 @@ function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeC
                 </div>
                 <div className="space-y-1.5">
                   {group.variants.map((card, i) => {
-                    const adjusted = adjustPrice(card.marketPrice, percentage);
+                    const adjusted = adjustPrice(getCardPrice(card, priceMode), percentage);
+                    const altAdj = adjustPrice(getAltPrice(card, priceMode), percentage);
                     const variantLabel = extractVariantLabel(card.name);
                     const tcgUrl = cardTcgPlayerUrl(card.productId);
                     return (
@@ -184,6 +187,7 @@ function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeC
                           </div>
                           <span className="text-sm text-gold font-semibold">
                             {formatPrice(adjusted)}
+                            {altAdj !== null && <span className="text-[10px] text-gray-600 ml-1">({formatPrice(altAdj)})</span>}
                           </span>
                         </div>
                         <QtyControls
@@ -207,7 +211,7 @@ function SetGroupList({ groups, percentage, onAdd, onChangeQty, onRemove, tradeC
   );
 }
 
-export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch }: SearchResultsProps) {
+export function SearchResults({ results, percentage, priceMode, onAdd, onChangeQty, onRemove, tradeCards, isSearching, query, accentColor, isExpanded, setFilterLabel, onExpandSearch }: SearchResultsProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>('main');
 
   if (!query || query.length < 2) return null;
@@ -281,6 +285,7 @@ export function SearchResults({ results, percentage, onAdd, onChangeQty, onRemov
       <SetGroupList
         groups={visibleResults}
         percentage={percentage}
+        priceMode={priceMode}
         onAdd={onAdd}
         onChangeQty={onChangeQty}
         onRemove={onRemove}
