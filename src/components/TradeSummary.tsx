@@ -76,8 +76,13 @@ function SideList({ cards, percentage, priceMode, label, accentColor }: {
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] text-gray-200 truncate leading-tight">{tc.card.name}</div>
                   <div className="text-[9px] text-gray-500 leading-tight">
-                    {variant}
-                    {altUnit !== null && <span className="text-gray-600 ml-1">({formatPrice(altUnit)} ea)</span>}
+                    {variant} &middot;{' '}
+                    <span className="text-gray-400">{priceMode === 'market' ? 'Mkt' : 'Low'}</span> {formatPrice(unitPrice)} ea
+                    {altUnit !== null && (
+                      <span className="text-gray-600 ml-1">
+                        <span>{priceMode === 'market' ? 'Low' : 'Mkt'}</span> {formatPrice(altUnit)}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {tc.qty > 1 && (

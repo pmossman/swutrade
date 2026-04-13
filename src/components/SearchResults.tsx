@@ -185,10 +185,14 @@ function SetGroupList({ groups, percentage, priceMode, onAdd, onChangeQty, onRem
                               </a>
                             )}
                           </div>
-                          <span className="text-sm text-gold font-semibold">
-                            {formatPrice(adjusted)}
-                            {altAdj !== null && <span className="text-[10px] text-gray-600 ml-1">({formatPrice(altAdj)})</span>}
-                          </span>
+                          <div className="text-sm text-gold font-semibold leading-tight">
+                            <span className="text-[9px] text-gray-500 font-normal">{priceMode === 'market' ? 'Mkt' : 'Low'}</span> {formatPrice(adjusted)}
+                          </div>
+                          {altAdj !== null && (
+                            <div className="text-[10px] text-gray-600 leading-tight">
+                              <span className="text-[9px]">{priceMode === 'market' ? 'Low' : 'Mkt'}</span> {formatPrice(altAdj)}
+                            </div>
+                          )}
                         </div>
                         <QtyControls
                           card={card}

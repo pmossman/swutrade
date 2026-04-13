@@ -335,8 +335,13 @@ export function TradeSide({
                     </div>
                     {!isCompact && (
                       <div className={`text-gray-500 leading-tight ${tSize === 'lg' ? 'text-xs mt-0.5' : 'text-[10px]'}`}>
-                        {variant} &middot; {formatPrice(unitPrice)} ea
-                        {altUnitPrice !== null && <span className="text-gray-600 ml-1">({formatPrice(altUnitPrice)})</span>}
+                        {variant} &middot;{' '}
+                        <span className="text-gray-400">{priceMode === 'market' ? 'Mkt' : 'Low'}</span> {formatPrice(unitPrice)} ea
+                        {altUnitPrice !== null && (
+                          <span className="text-gray-600 ml-1">
+                            <span className="text-gray-600">{priceMode === 'market' ? 'Low' : 'Mkt'}</span> {formatPrice(altUnitPrice)}
+                          </span>
+                        )}
                       </div>
                     )}
                     {tSize === 'lg' && tc.qty > 1 && (
