@@ -202,7 +202,16 @@ export function ListsDrawer({
                     // promo-only labels like "(Judge)" or "(Top 8)" don't
                     // match the schema enum, so those fall back to Any.
                     const isCanonical = (CANONICAL_VARIANTS as readonly string[]).includes(variant);
-                    const restriction = (ctx.wantsMode === 'specific' && isCanonical)
+                    // Force Specific when the visible tile represents a
+                    // non-Standard variant — the user's choice of tile
+                    // signals intent. Showcase Leaders especially: search
+                    // "showcase" filters the family to that single tile,
+                    // and tapping it should save Specific[Showcase], not
+                    // "any printing of this card."
+                    const visibleIsNonStandard = isCanonical && variant !== 'Standard';
+                    const useSpecific = isCanonical
+                      && (ctx.wantsMode === 'specific' || visibleIsNonStandard);
+                    const restriction = useSpecific
                       ? { mode: 'restricted' as const, variants: [variant as CanonicalVariant] }
                       : { mode: 'any' as const };
                     wants.add({ familyId: cardFamilyId(card), qty: 1, restriction });

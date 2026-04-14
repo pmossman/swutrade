@@ -223,6 +223,15 @@ export function ListCardPicker({
           renderTile={(card, ctx) => {
             const key = tileKey(card);
             const savedQty = key ? savedCounts.get(key) ?? 0 : 0;
+            // Show variant badge when the tile represents a specific
+            // variant — always for available, always in wants/Specific,
+            // and in wants/Any when search filtered the family down to
+            // a non-Standard variant (so the user sees what they're
+            // about to save). Otherwise hide so Any tiles stay clean.
+            const variant = extractVariantLabel(card.name);
+            const showBadge = listType === 'available'
+              || wantsMode === 'specific'
+              || (wantsMode === 'any' && variant !== 'Standard');
             return (
               <PickerTile
                 key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -231,7 +240,7 @@ export function ListCardPicker({
                 priceMode={priceMode}
                 landscape={ctx.leaderGroup}
                 savedQty={savedQty}
-                showVariantBadge={listType === 'available' || wantsMode === 'specific'}
+                showVariantBadge={showBadge}
                 onPick={() => onPick(card, pickContext)}
               />
             );
