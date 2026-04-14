@@ -11,7 +11,6 @@ import {
   extractVariantLabel,
   variantBadgeColor,
   variantDisplayLabel,
-  isLeaderOrBaseGroup,
 } from '../variants';
 import { bestMatchForWant } from '../listMatching';
 
@@ -20,7 +19,6 @@ interface TileEntry {
   card: CardVariant;        // card to add when tile is tapped
   qty: number;              // how many are in the user's list
   isPriority?: boolean;     // wants priority flag (gold-bright star)
-  landscape: boolean;
 }
 
 interface TradeListsSectionProps {
@@ -65,14 +63,7 @@ export function TradeListsSection({
         .map(item => {
           const card = byProductId.get(item.productId);
           if (!card) return null;
-          // Single-card landscape detection works because isLeader-
-          // OrBaseGroup consults the card's cardType when present.
-          return {
-            itemId: item.id,
-            card,
-            qty: item.qty,
-            landscape: isLeaderOrBaseGroup([card]),
-          } as TileEntry;
+          return { itemId: item.id, card, qty: item.qty } as TileEntry;
         })
         .filter((t): t is TileEntry => t !== null);
     }
@@ -96,9 +87,6 @@ export function TradeListsSection({
           card,
           qty: item.qty,
           isPriority: item.isPriority,
-          // Inspect the whole family — a Leader's cheapest matching
-          // variant may not itself carry cardType.
-          landscape: isLeaderOrBaseGroup(candidates),
         } as TileEntry;
       })
       .filter((t): t is TileEntry => t !== null);
@@ -110,9 +98,7 @@ export function TradeListsSection({
   const accent = isOffering
     ? 'text-emerald-300 border-emerald-500/30'
     : 'text-blue-300 border-blue-500/30';
-  const tileHover = isOffering
-    ? 'hover:border-emerald-500/60'
-    : 'hover:border-blue-500/60';
+  const accentColor = isOffering ? 'emerald' : 'blue';
 
   return (
     <section className="mb-6">
@@ -123,98 +109,112 @@ export function TradeListsSection({
         <span className="text-[10px] text-gray-600">{tiles.length}</span>
       </div>
 
-      <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8 gap-3">
-        {tiles.map(({ itemId, card, qty, isPriority, landscape }) => (
-          <SourceTile
+      {/* Compact list-style rows. Cards in your lists feel like "shortcuts
+          to add" rather than mini trade tiles — no card-art frame, no big
+          gold badge. The thumbnail is just an aid; the row is the action. */}
+      <ul className="flex flex-col gap-1.5">
+        {tiles.map(({ itemId, card, qty, isPriority }) => (
+          <SourceRow
             key={itemId}
             card={card}
             qty={qty}
             isPriority={isPriority}
-            landscape={landscape}
             percentage={percentage}
             priceMode={priceMode}
-            hoverClass={tileHover}
+            accentColor={accentColor}
             onClick={() => onAdd(card)}
           />
         ))}
-      </div>
+      </ul>
     </section>
   );
 }
 
-interface SourceTileProps {
+interface SourceRowProps {
   card: CardVariant;
   qty: number;
   isPriority?: boolean;
-  landscape: boolean;
   percentage: number;
   priceMode: PriceMode;
-  hoverClass: string;
+  accentColor: 'emerald' | 'blue';
   onClick: () => void;
 }
 
-function SourceTile({
+function SourceRow({
   card,
   qty,
   isPriority,
-  landscape,
   percentage,
   priceMode,
-  hoverClass,
+  accentColor,
   onClick,
-}: SourceTileProps) {
+}: SourceRowProps) {
   const variant = extractVariantLabel(card.name);
   const variantLabel = variantDisplayLabel(variant);
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
+  const display = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '');
+  const hoverText = accentColor === 'emerald' ? 'group-hover:text-emerald-300' : 'group-hover:text-blue-300';
+  const hoverBorder = accentColor === 'emerald' ? 'group-hover:border-emerald-500/40' : 'group-hover:border-blue-500/40';
+  const hoverBg = accentColor === 'emerald' ? 'group-hover:bg-emerald-950/15' : 'group-hover:bg-blue-950/15';
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group relative flex flex-col items-stretch rounded-lg bg-space-800/80 border border-space-700 transition-all text-left overflow-hidden active:scale-[0.98] ${hoverClass}`}
-    >
-      <div className={`${landscape ? 'aspect-[7/5]' : 'aspect-[5/7]'} bg-space-900 overflow-hidden`}>
-        {imgUrl ? (
-          <img
-            src={imgUrl}
-            alt={card.name}
-            loading="lazy"
-            className="w-full h-full object-contain"
-          />
-        ) : null}
-      </div>
-      {/* Quantity badge — gold pill in top-right shows "×N" so users see
-          how many they have/want of that card. */}
-      <span
-        className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-gold text-space-900 text-[10px] font-bold leading-none shadow"
-        aria-label={`${qty} in list`}
+    <li>
+      <button
+        type="button"
+        onClick={onClick}
+        className={`group w-full flex items-center gap-3 px-2 py-1.5 rounded-md bg-transparent border border-space-800 ${hoverBorder} ${hoverBg} transition-colors text-left active:scale-[0.99]`}
       >
-        ×{qty}
-      </span>
-      {isPriority && (
-        // Priority star for wants — gold-bright per palette rules. Sits
-        // top-left so it doesn't crowd the qty badge.
-        <span
-          className="absolute top-1 left-1 text-gold-bright drop-shadow"
-          aria-label="Priority want"
-          style={{ fontSize: 14, lineHeight: 1 }}
-        >
-          ★
+        {/* Thumbnail — small, neutral. Object-cover crops gracefully for
+            both portrait and landscape source images so leaders don't
+            hijack the row height. */}
+        <div className="w-8 h-11 shrink-0 rounded bg-space-900 overflow-hidden border border-space-700">
+          {imgUrl ? (
+            <img
+              src={imgUrl}
+              alt=""
+              loading="lazy"
+              className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+            />
+          ) : null}
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+          <div className="flex items-center gap-1.5">
+            {isPriority && (
+              <span className="text-gold-bright shrink-0" aria-label="Priority want" style={{ fontSize: 11, lineHeight: 1 }}>
+                ★
+              </span>
+            )}
+            <span className="text-sm text-gray-200 truncate">{display}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-[10px]">
+            {variantLabel && (
+              <span className={`leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
+                {variantLabel}
+              </span>
+            )}
+            <span className="text-gray-500">×{qty}</span>
+            {price !== null && (
+              <span className="text-gold font-semibold">${price.toFixed(2)}</span>
+            )}
+          </div>
+        </div>
+
+        {/* "Add" hint — plus icon visible always (subtle), brightens on
+            hover. Reads as the action affordance. */}
+        <span className={`shrink-0 text-gray-600 ${hoverText} transition-colors`} aria-hidden>
+          <PlusIcon className="w-4 h-4" />
         </span>
-      )}
-      <div className="px-1.5 py-1 flex items-center gap-1">
-        {variantLabel && (
-          <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
-            {variantLabel}
-          </span>
-        )}
-        {price !== null && (
-          <span className="ml-auto text-[10px] text-gold font-semibold">
-            ${price.toFixed(2)}
-          </span>
-        )}
-      </div>
-    </button>
+      </button>
+    </li>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <path d="M8 3V13M3 8H13" />
+    </svg>
   );
 }
