@@ -254,7 +254,7 @@ function RestrictionEditor({
                 key={v}
                 type="button"
                 onClick={() => toggleVariant(v)}
-                className={`text-[10px] leading-none px-2 py-1 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
+                className={`text-xs leading-none px-2.5 py-1.5 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
                 aria-pressed={selected}
               >
                 {v}
@@ -280,7 +280,7 @@ function SegmentedOption({
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
         active ? 'bg-gold/20 text-gold' : 'text-gray-400 hover:text-gray-200'
       }`}
     >
