@@ -372,6 +372,7 @@ export function TradeSide({
             available={available}
             byFamilyAll={byFamilyAll}
             byProductId={byProductId}
+            tradeCards={cards}
             percentage={percentage}
             priceMode={priceMode}
             onAdd={onAdd}

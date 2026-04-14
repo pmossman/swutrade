@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { CardVariant, PriceMode } from '../types';
+import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import {
@@ -12,13 +12,13 @@ import {
   variantBadgeColor,
   variantDisplayLabel,
 } from '../variants';
-import { bestMatchForWant } from '../listMatching';
+import { bestMatchForWant, matchesRestriction } from '../listMatching';
 
 interface TileEntry {
-  itemId: string;          // wants/available item id, used as React key
-  card: CardVariant;        // card to add when tile is tapped
-  qty: number;              // how many are in the user's list
-  isPriority?: boolean;     // wants priority flag (gold-bright star)
+  itemId: string;           // wants/available item id, used as React key
+  card: CardVariant;         // card to add when tile is tapped
+  remaining: number;         // qty still needed to fulfill the list item
+  isPriority?: boolean;      // wants priority flag (gold-bright star)
 }
 
 interface TradeListsSectionProps {
@@ -30,6 +30,10 @@ interface TradeListsSectionProps {
    *  loaded yet are skipped silently. */
   byFamilyAll: Map<string, CardVariant[]>;
   byProductId: Map<string, CardVariant>;
+  /** Cards already on this trade side. Used to subtract from the
+   *  desired qty so each row shows what's still needed; rows disappear
+   *  once their item is fully fulfilled. */
+  tradeCards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
@@ -51,6 +55,7 @@ export function TradeListsSection({
   available,
   byFamilyAll,
   byProductId,
+  tradeCards,
   percentage,
   priceMode,
   onAdd,
@@ -63,7 +68,15 @@ export function TradeListsSection({
         .map(item => {
           const card = byProductId.get(item.productId);
           if (!card) return null;
-          return { itemId: item.id, card, qty: item.qty } as TileEntry;
+          // Remaining = desired qty minus what's already in this trade
+          // side as the exact same productId.
+          const inTrade = tradeCards.reduce(
+            (sum, tc) => tc.card.productId === item.productId ? sum + tc.qty : sum,
+            0,
+          );
+          const remaining = item.qty - inTrade;
+          if (remaining <= 0) return null;
+          return { itemId: item.id, card, remaining } as TileEntry;
         })
         .filter((t): t is TileEntry => t !== null);
     }
@@ -82,15 +95,25 @@ export function TradeListsSection({
         if (candidates.length === 0) return null;
         const card = bestMatchForWant(item, candidates, priceMode);
         if (!card) return null;
+        // Remaining = desired qty minus any trade-side cards from the
+        // same family that satisfy the want's restriction.
+        const familyProductIds = new Set(candidates.map(c => c.productId).filter((p): p is string => !!p));
+        const inTrade = tradeCards.reduce((sum, tc) => {
+          if (!tc.card.productId || !familyProductIds.has(tc.card.productId)) return sum;
+          if (!matchesRestriction(tc.card, item.restriction)) return sum;
+          return sum + tc.qty;
+        }, 0);
+        const remaining = item.qty - inTrade;
+        if (remaining <= 0) return null;
         return {
           itemId: item.id,
           card,
-          qty: item.qty,
+          remaining,
           isPriority: item.isPriority,
         } as TileEntry;
       })
       .filter((t): t is TileEntry => t !== null);
-  }, [isOffering, available.items, wants.items, byFamilyAll, byProductId, priceMode]);
+  }, [isOffering, available.items, wants.items, byFamilyAll, byProductId, priceMode, tradeCards]);
 
   if (tiles.length === 0) return null;
 
@@ -111,13 +134,15 @@ export function TradeListsSection({
 
       {/* Compact list-style rows. Cards in your lists feel like "shortcuts
           to add" rather than mini trade tiles — no card-art frame, no big
-          gold badge. The thumbnail is just an aid; the row is the action. */}
+          gold badge. Each row is a "to-do": the qty shown is what's
+          STILL needed (desired minus already-in-trade), and the row
+          disappears once fulfilled. */}
       <ul className="flex flex-col gap-1.5">
-        {tiles.map(({ itemId, card, qty, isPriority }) => (
+        {tiles.map(({ itemId, card, remaining, isPriority }) => (
           <SourceRow
             key={itemId}
             card={card}
-            qty={qty}
+            remaining={remaining}
             isPriority={isPriority}
             percentage={percentage}
             priceMode={priceMode}
@@ -132,7 +157,7 @@ export function TradeListsSection({
 
 interface SourceRowProps {
   card: CardVariant;
-  qty: number;
+  remaining: number;
   isPriority?: boolean;
   percentage: number;
   priceMode: PriceMode;
@@ -142,7 +167,7 @@ interface SourceRowProps {
 
 function SourceRow({
   card,
-  qty,
+  remaining,
   isPriority,
   percentage,
   priceMode,
@@ -194,7 +219,7 @@ function SourceRow({
                 {variantLabel}
               </span>
             )}
-            <span className="text-gray-500">×{qty}</span>
+            <span className="text-gray-500" title="Remaining to fulfill">×{remaining}</span>
             {price !== null && (
               <span className="text-gold font-semibold">${price.toFixed(2)}</span>
             )}
