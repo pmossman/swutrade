@@ -13,6 +13,7 @@ import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
+import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
 import { usePersistedState } from './hooks/usePersistedState';
 
@@ -65,6 +66,9 @@ function App() {
   // Single shared filter-state instance so both trade sides see the
   // same scope toggle + variant/set hide preferences in real time.
   const filters = useSearchFilters();
+  // Collapse controls are a mobile concern — side-by-side panels on
+  // desktop don't benefit from collapsing either side.
+  const isMobile = useIsMobile();
 
   // Load all sets on mount (static files are fast from CDN)
   useEffect(() => {
@@ -214,9 +218,9 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
-            collapsed={offeringCollapsed}
-            onToggleCollapse={() => setOfferingCollapsed(c => !c)}
-            flexBasis={offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
+            collapsed={isMobile && offeringCollapsed}
+            onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
+            flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
           />
           {/* Mobile-only drag handle between the two panels. Collapsed
               panels hide the divider — nothing to resize against. */}
@@ -238,9 +242,9 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
-            collapsed={receivingCollapsed}
-            onToggleCollapse={() => setReceivingCollapsed(c => !c)}
-            flexBasis={offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
+            collapsed={isMobile && receivingCollapsed}
+            onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
+            flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
           />
         </div>
       </div>
@@ -257,8 +261,8 @@ function App() {
               theirCards={theirCards}
               percentage={percentage}
               priceMode={priceMode}
-              collapsed={bannerCollapsed}
-              onToggleCollapse={() => setBannerCollapsed(c => !c)}
+              collapsed={isMobile && bannerCollapsed}
+              onToggleCollapse={isMobile ? () => setBannerCollapsed(c => !c) : undefined}
             />
           </button>
         ) : (

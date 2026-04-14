@@ -58,7 +58,9 @@ interface TradeSideProps {
   /** When true, the card list collapses and the header shrinks to show
    *  just the label + count + total, with a chevron to re-expand. */
   collapsed: boolean;
-  onToggleCollapse: () => void;
+  /** Only provided on mobile — desktop layout shows both panels side
+   *  by side so collapsing offers no space win. */
+  onToggleCollapse?: () => void;
   /** Optional explicit flex-basis percentage (0-1). When set, overrides
    *  the default auto-sizing — used by the mobile panel divider. */
   flexBasis?: number;
@@ -391,25 +393,27 @@ export function TradeSide({
       {/* Header — collapse chevron (left), label, count when collapsed,
           total, add button. Collapsing keeps essentials visible while
           saving vertical space for the other panel on mobile. */}
-      <div className={`flex items-center gap-2 pl-3 pr-2 py-1.5 ${collapsed ? '' : 'border-b border-space-600'} shrink-0 ${hdr}`}>
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="w-7 h-7 rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 flex items-center justify-center transition-colors"
-          aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
-          title={collapsed ? 'Expand' : 'Collapse'}
-        >
-          {/* Chevron points DOWN when expanded (content is below) and
-              SIDEWAYS when collapsed (expand-to-the-right metaphor). */}
-          <svg
-            className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+      <div className={`flex items-center gap-2 ${onToggleCollapse ? 'pl-3' : 'pl-4'} pr-2 py-1.5 ${collapsed ? '' : 'border-b border-space-600'} shrink-0 ${hdr}`}>
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="w-7 h-7 rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 flex items-center justify-center transition-colors"
+            aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
+            title={collapsed ? 'Expand' : 'Collapse'}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
+            {/* Chevron points DOWN when expanded (content is below) and
+                SIDEWAYS when collapsed (expand-to-the-right metaphor). */}
+            <svg
+              className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        )}
         <span className="swu-display text-xs sm:text-sm">{label}</span>
         {cards.length > 0 && (
           <span className="text-[11px] tabular-nums text-gray-400 font-medium">
