@@ -313,30 +313,19 @@ function App() {
         </div>
       </div>
 
-      {/* Balance bar at bottom */}
+      {/* Balance bar at bottom — TradeBalance owns its own click
+          handling now: a tap when collapsed expands first, a tap when
+          expanded opens the summary. */}
       <div className="shrink-0 px-3 pb-3 pt-2 max-w-5xl mx-auto w-full">
-        {hasCards ? (
-          <button
-            onClick={() => setShowSummary(true)}
-            className="w-full text-left active:scale-[0.98] transition-transform"
-          >
-            <TradeBalance
-              yourCards={yourCards}
-              theirCards={theirCards}
-              percentage={percentage}
-              priceMode={priceMode}
-              collapsed={isMobile && bannerCollapsed}
-              onToggleCollapse={isMobile ? () => setBannerCollapsed(c => !c) : undefined}
-            />
-          </button>
-        ) : (
-          <TradeBalance
-            yourCards={yourCards}
-            theirCards={theirCards}
-            percentage={percentage}
-            priceMode={priceMode}
-          />
-        )}
+        <TradeBalance
+          yourCards={yourCards}
+          theirCards={theirCards}
+          percentage={percentage}
+          priceMode={priceMode}
+          collapsed={isMobile && bannerCollapsed}
+          onToggleCollapse={isMobile ? () => setBannerCollapsed(c => !c) : undefined}
+          onPrimary={hasCards ? () => setShowSummary(true) : undefined}
+        />
       </div>
 
       {/* Trade summary overlay */}

@@ -166,6 +166,13 @@ const qtyBtnColors: Record<string, string> = {
   blue: 'text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/70',
 };
 
+// Collapse chevron — colored to match the side accent so it reads as
+// part of the panel chrome, not a generic system control.
+const chevronColors: Record<string, string> = {
+  emerald: 'text-emerald-400/80',
+  blue: 'text-blue-400/80',
+};
+
 // Pick thumbnail size based on total card entries. On mobile we cap
 // at `md` since even a single card at `lg` eats most of the viewport
 // and doesn't leave room for the other panel.
@@ -422,42 +429,53 @@ export function TradeSide({
     >
       {/* Saber-bar side accent */}
       <div className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-full ${saberBarColors[accentColor]}`} aria-hidden />
-      {/* Header — collapse chevron (left), label, count when collapsed,
-          total, add button. Collapsing keeps essentials visible while
-          saving vertical space for the other panel on mobile. */}
-      <div className={`flex items-center gap-2 ${onToggleCollapse ? 'pl-3' : 'pl-4'} pr-2 py-1.5 ${collapsed ? '' : 'border-b border-space-600'} shrink-0 ${hdr}`}>
-        {onToggleCollapse && (
+      {/* Header — entire row toggles collapse on tap when collapse is
+          available (mobile). The chevron is just a visual indicator,
+          colored to match the side's accent so it reads as part of the
+          panel rather than a generic gray button. */}
+      {(() => {
+        const headerContent = (
+          <>
+            {onToggleCollapse && (
+              <span className={`shrink-0 flex items-center justify-center w-5 h-5 ${chevronColors[accentColor]}`} aria-hidden>
+                <svg
+                  className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </span>
+            )}
+            <span className="swu-display text-xs sm:text-sm">{label}</span>
+            {cards.length > 0 && (
+              <span className="text-[11px] tabular-nums text-gray-400 font-medium">
+                · {cards.length} card{cards.length === 1 ? '' : 's'}
+              </span>
+            )}
+            <span className="flex-1" aria-hidden />
+            <span className="flex items-baseline gap-1">
+              <span className="text-[9px] uppercase tracking-widest text-gray-500 font-semibold">Total</span>
+              <span className="font-bold tabular-nums text-gray-100">{formatPrice(total)}</span>
+            </span>
+          </>
+        );
+        const headerClass = `flex items-center gap-2 px-4 py-1.5 ${collapsed ? '' : 'border-b border-space-600'} shrink-0 ${hdr}`;
+        return onToggleCollapse ? (
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="w-7 h-7 rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 flex items-center justify-center transition-colors"
             aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
-            title={collapsed ? 'Expand' : 'Collapse'}
+            aria-expanded={!collapsed}
+            className={`${headerClass} w-full text-left hover:bg-white/[0.02] active:bg-white/[0.04] transition-colors`}
           >
-            {/* Chevron points DOWN when expanded (content is below) and
-                SIDEWAYS when collapsed (expand-to-the-right metaphor). */}
-            <svg
-              className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-            </svg>
+            {headerContent}
           </button>
-        )}
-        <span className="swu-display text-xs sm:text-sm">{label}</span>
-        {cards.length > 0 && (
-          <span className="text-[11px] tabular-nums text-gray-400 font-medium">
-            · {cards.length} card{cards.length === 1 ? '' : 's'}
-          </span>
-        )}
-        <span className="flex-1" aria-hidden />
-        <span className="flex items-baseline gap-1">
-          <span className="text-[9px] uppercase tracking-widest text-gray-500 font-semibold">Total</span>
-          <span className="font-bold tabular-nums text-gray-100">{formatPrice(total)}</span>
-        </span>
-      </div>
+        ) : (
+          <div className={headerClass}>{headerContent}</div>
+        );
+      })()}
 
       {/* Slim add-action bar directly below the header. Hidden when
           the panel is collapsed OR when the panel is empty — in that
