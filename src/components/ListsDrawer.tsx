@@ -8,7 +8,6 @@ import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
 import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
-import { bestMatchForWant } from '../listMatching';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -18,8 +17,6 @@ interface ListsDrawerProps {
   percentage: number;
   priceMode: PriceMode;
   onPriceModeChange: (mode: PriceMode) => void;
-  onAddToOffering: (card: CardVariant) => void;
-  onAddToReceiving: (card: CardVariant) => void;
 }
 
 type ListTab = 'wants' | 'available';
@@ -37,8 +34,6 @@ export function ListsDrawer({
   percentage,
   priceMode,
   onPriceModeChange,
-  onAddToOffering,
-  onAddToReceiving,
 }: ListsDrawerProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
@@ -49,31 +44,19 @@ export function ListsDrawer({
   const availableCount = available.items.length;
   const totalCount = wantsCount + availableCount;
 
-  // Index all loaded cards for fast lookup when rendering rows. Keys
-  // here are the cross-printing family id — every printing of a card
-  // shares the same key, so a wants item saved as "any Luke" can pull
-  // Standard, Hyperspace, and Showcase variants alike.
-  //  - byFamily: one sample variant per family, prefers Standard, used
-  //    for image + display name on wants rows.
-  //  - byFamilyAll: every variant per family, used by bestMatchForWant
-  //    to pick the cheapest variant satisfying a wants restriction.
-  //  - byProductId: exact variant lookup for Available rows.
-  const { byFamily, byFamilyAll, byProductId } = useMemo(() => {
+  // Drawer rows display image + display name (wants) or exact variant
+  // (available). Add-to-trade flows through the trade overlay's empty-
+  // state lists section now, so we don't need the full byFamilyAll map.
+  const { byFamily, byProductId } = useMemo(() => {
     const byFamily = new Map<string, CardVariant>();
-    const byFamilyAll = new Map<string, CardVariant[]>();
     const byProductId = new Map<string, CardVariant>();
     for (const card of allCards) {
       if (card.productId) byProductId.set(card.productId, card);
       const fid = cardFamilyId(card);
       const existing = byFamily.get(fid);
-      if (!existing || card.variant === 'Standard') {
-        byFamily.set(fid, card);
-      }
-      const bucket = byFamilyAll.get(fid);
-      if (bucket) bucket.push(card);
-      else byFamilyAll.set(fid, [card]);
+      if (!existing || card.variant === 'Standard') byFamily.set(fid, card);
     }
-    return { byFamily, byFamilyAll, byProductId };
+    return { byFamily, byProductId };
   }, [allCards]);
 
   // Saved-count maps for picker tile badges. Keyed by:
@@ -228,35 +211,26 @@ export function ListsDrawer({
                       />
                     ) : (
                       <ul className="flex flex-col gap-2">
-                        {sortedWants.map(item => {
-                          const candidates = byFamilyAll.get(item.familyId) ?? [];
-                          const quickAddCard = candidates.length > 0
-                            ? bestMatchForWant(item, candidates, priceMode)
-                            : null;
-                          return (
-                            <WantsRow
-                              key={item.id}
-                              item={item}
-                              sampleCard={byFamily.get(item.familyId) ?? null}
-                              quickAddCard={quickAddCard}
-                              isEditing={editingWantId === item.id}
-                              onChangeQty={qty => wants.update(item.id, { qty })}
-                              onTogglePriority={() => wants.togglePriority(item.id)}
-                              onRemove={() => {
-                                if (editingWantId === item.id) setEditingWantId(null);
-                                wants.remove(item.id);
-                              }}
-                              onToggleEdit={() =>
-                                setEditingWantId(prev => (prev === item.id ? null : item.id))
-                              }
-                              onChangeRestriction={next =>
-                                wants.update(item.id, { restriction: next })
-                              }
-                              onAddToOffering={onAddToOffering}
-                              onAddToReceiving={onAddToReceiving}
-                            />
-                          );
-                        })}
+                        {sortedWants.map(item => (
+                          <WantsRow
+                            key={item.id}
+                            item={item}
+                            sampleCard={byFamily.get(item.familyId) ?? null}
+                            isEditing={editingWantId === item.id}
+                            onChangeQty={qty => wants.update(item.id, { qty })}
+                            onTogglePriority={() => wants.togglePriority(item.id)}
+                            onRemove={() => {
+                              if (editingWantId === item.id) setEditingWantId(null);
+                              wants.remove(item.id);
+                            }}
+                            onToggleEdit={() =>
+                              setEditingWantId(prev => (prev === item.id ? null : item.id))
+                            }
+                            onChangeRestriction={next =>
+                              wants.update(item.id, { restriction: next })
+                            }
+                          />
+                        ))}
                       </ul>
                     )}
                   </div>
@@ -301,8 +275,6 @@ export function ListsDrawer({
                             priceMode={priceMode}
                             onChangeQty={qty => available.update(item.id, { qty })}
                             onRemove={() => available.remove(item.id)}
-                            onAddToOffering={onAddToOffering}
-                            onAddToReceiving={onAddToReceiving}
                           />
                         ))}
                       </ul>

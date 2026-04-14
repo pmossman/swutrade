@@ -201,8 +201,6 @@ function App() {
               percentage={percentage}
               priceMode={priceMode}
               onPriceModeChange={setPriceMode}
-              onAddToOffering={handleAddYour}
-              onAddToReceiving={handleAddTheir}
             />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               {/* Market/Low is a valuable surface on desktop where there's

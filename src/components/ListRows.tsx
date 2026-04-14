@@ -42,52 +42,6 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
   );
 }
 
-interface QuickAddProps {
-  onAddToOffering: () => void;
-  onAddToReceiving: () => void;
-  disabled?: boolean;
-  disabledTitle?: string;
-}
-
-// Two small pills that push the item into Offering / Receiving. Uses the
-// same emerald/blue side-identity colors as the trade panels. When
-// disabled (e.g. a wants item whose restriction currently matches no
-// loaded variant) both pills still render so the row layout is stable,
-// but they read-only grey out.
-function QuickAddButtons({ onAddToOffering, onAddToReceiving, disabled, disabledTitle }: QuickAddProps) {
-  const base = 'shrink-0 px-2 h-6 rounded text-[10px] font-bold uppercase tracking-wider transition-colors border';
-  return (
-    <div className="flex items-center gap-1 shrink-0">
-      <button
-        type="button"
-        onClick={onAddToOffering}
-        disabled={disabled}
-        title={disabled ? disabledTitle : 'Add to Offering'}
-        className={`${base} ${
-          disabled
-            ? 'border-space-700 text-gray-700 cursor-not-allowed'
-            : 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/30 hover:border-emerald-500/60'
-        }`}
-      >
-        + Off
-      </button>
-      <button
-        type="button"
-        onClick={onAddToReceiving}
-        disabled={disabled}
-        title={disabled ? disabledTitle : 'Add to Receiving'}
-        className={`${base} ${
-          disabled
-            ? 'border-space-700 text-gray-700 cursor-not-allowed'
-            : 'border-blue-500/40 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/60'
-        }`}
-      >
-        + Rec
-      </button>
-    </div>
-  );
-}
-
 function RowShell({ imgUrl, title, children }: { imgUrl: string | null; title: string; children: React.ReactNode }) {
   return (
     <li className="flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/60 border border-space-700">
@@ -105,9 +59,6 @@ interface WantsRowProps {
   item: WantsItem;
   /** Any variant of this base card — used for image + display name. */
   sampleCard: CardVariant | null;
-  /** The variant that would actually be pushed into a trade on quick-add.
-   *  Cheapest card matching the restriction. Null when nothing matches. */
-  quickAddCard: CardVariant | null;
   /** True when this row's restriction editor is expanded. */
   isEditing: boolean;
   onChangeQty: (next: number) => void;
@@ -115,8 +66,6 @@ interface WantsRowProps {
   onRemove: () => void;
   onToggleEdit: () => void;
   onChangeRestriction: (next: VariantRestriction) => void;
-  onAddToOffering: (card: CardVariant) => void;
-  onAddToReceiving: (card: CardVariant) => void;
 }
 
 function restrictionLabel(r: VariantRestriction): string {
@@ -129,15 +78,12 @@ function restrictionLabel(r: VariantRestriction): string {
 export function WantsRow({
   item,
   sampleCard,
-  quickAddCard,
   isEditing,
   onChangeQty,
   onTogglePriority,
   onRemove,
   onToggleEdit,
   onChangeRestriction,
-  onAddToOffering,
-  onAddToReceiving,
 }: WantsRowProps) {
   const imgUrl = sampleCard?.productId ? cardImageUrl(sampleCard.productId, 'sm') : null;
   const title = sampleCard?.displayName ?? sampleCard?.name ?? item.familyId;
@@ -174,15 +120,7 @@ export function WantsRow({
       )}
       <div className="flex items-center justify-between gap-2">
         <QtyStepper qty={item.qty} onChangeQty={onChangeQty} />
-        <div className="flex items-center gap-2">
-          <QuickAddButtons
-            onAddToOffering={() => quickAddCard && onAddToOffering(quickAddCard)}
-            onAddToReceiving={() => quickAddCard && onAddToReceiving(quickAddCard)}
-            disabled={!quickAddCard}
-            disabledTitle="No matching variant loaded"
-          />
-          <RemoveButton onRemove={onRemove} />
-        </div>
+        <RemoveButton onRemove={onRemove} />
       </div>
     </RowShell>
   );
@@ -298,8 +236,6 @@ interface AvailableRowProps {
   priceMode: PriceMode;
   onChangeQty: (next: number) => void;
   onRemove: () => void;
-  onAddToOffering: (card: CardVariant) => void;
-  onAddToReceiving: (card: CardVariant) => void;
 }
 
 export function AvailableRow({
@@ -309,8 +245,6 @@ export function AvailableRow({
   priceMode,
   onChangeQty,
   onRemove,
-  onAddToOffering,
-  onAddToReceiving,
 }: AvailableRowProps) {
   const imgUrl = card?.productId ? cardImageUrl(card.productId, 'sm') : null;
   const title = card?.displayName ?? card?.name ?? item.productId;
@@ -337,15 +271,7 @@ export function AvailableRow({
       </div>
       <div className="flex items-center justify-between gap-2">
         <QtyStepper qty={item.qty} onChangeQty={onChangeQty} />
-        <div className="flex items-center gap-2">
-          <QuickAddButtons
-            onAddToOffering={() => card && onAddToOffering(card)}
-            onAddToReceiving={() => card && onAddToReceiving(card)}
-            disabled={!card}
-            disabledTitle="Card not currently loaded"
-          />
-          <RemoveButton onRemove={onRemove} />
-        </div>
+        <RemoveButton onRemove={onRemove} />
       </div>
     </RowShell>
   );
