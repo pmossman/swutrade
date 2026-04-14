@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
@@ -117,40 +117,84 @@ export function TradeListsSection({
 
   if (tiles.length === 0) return null;
 
+  return (
+    <CollapsibleSection
+      isOffering={isOffering}
+      tiles={tiles}
+      percentage={percentage}
+      priceMode={priceMode}
+      onAdd={onAdd}
+    />
+  );
+}
+
+interface CollapsibleSectionProps {
+  isOffering: boolean;
+  tiles: TileEntry[];
+  percentage: number;
+  priceMode: PriceMode;
+  onAdd: (card: CardVariant) => void;
+}
+
+function CollapsibleSection({ isOffering, tiles, percentage, priceMode, onAdd }: CollapsibleSectionProps) {
+  // Default expanded — user collapses when they want search results to
+  // dominate. Local state means the choice resets per overlay open,
+  // which feels right (each session is a fresh decision).
+  const [collapsed, setCollapsed] = useState(false);
+
   const heading = isOffering ? 'From your Available' : 'From your Wants';
   const accent = isOffering
     ? 'text-emerald-300 border-emerald-500/30'
     : 'text-blue-300 border-blue-500/30';
+  const chevron = isOffering ? 'text-emerald-400/80' : 'text-blue-400/80';
   const accentColor = isOffering ? 'emerald' : 'blue';
 
   return (
-    <section className="mb-6">
-      <div className={`flex items-baseline gap-2 pb-2 mb-3 border-b ${accent}`}>
+    <section className={collapsed ? 'mb-3' : 'mb-6'}>
+      <button
+        type="button"
+        onClick={() => setCollapsed(c => !c)}
+        aria-label={collapsed ? `Expand ${heading}` : `Collapse ${heading}`}
+        aria-expanded={!collapsed}
+        className={`w-full flex items-center gap-2 pb-2 mb-3 border-b ${accent} hover:bg-white/[0.02] active:bg-white/[0.04] transition-colors text-left`}
+      >
+        <span className={`shrink-0 flex items-center justify-center w-4 h-4 ${chevron}`} aria-hidden>
+          <svg
+            className={`w-3 h-3 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
         <span className="text-[10px] font-bold tracking-[0.18em] uppercase">
           {heading}
         </span>
         <span className="text-[10px] text-gray-600">{tiles.length}</span>
-      </div>
+      </button>
 
       {/* Compact list-style rows. Cards in your lists feel like "shortcuts
           to add" rather than mini trade tiles — no card-art frame, no big
           gold badge. Each row is a "to-do": the qty shown is what's
           STILL needed (desired minus already-in-trade), and the row
           disappears once fulfilled. */}
-      <ul className="flex flex-col gap-1.5">
-        {tiles.map(({ itemId, card, remaining, isPriority }) => (
-          <SourceRow
-            key={itemId}
-            card={card}
-            remaining={remaining}
-            isPriority={isPriority}
-            percentage={percentage}
-            priceMode={priceMode}
-            accentColor={accentColor}
-            onClick={() => onAdd(card)}
-          />
-        ))}
-      </ul>
+      {!collapsed && (
+        <ul className="flex flex-col gap-1.5">
+          {tiles.map(({ itemId, card, remaining, isPriority }) => (
+            <SourceRow
+              key={itemId}
+              card={card}
+              remaining={remaining}
+              isPriority={isPriority}
+              percentage={percentage}
+              priceMode={priceMode}
+              accentColor={accentColor}
+              onClick={() => onAdd(card)}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
