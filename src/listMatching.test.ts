@@ -35,7 +35,7 @@ describe('matchesRestriction', () => {
   });
 
   it('restricted mode matches only listed variants', () => {
-    const r = { mode: 'restricted' as const, variants: ['Hyperspace', 'Showcase'] as const };
+    const r = { mode: 'restricted' as const, variants: ['Hyperspace', 'Showcase'] as ('Hyperspace' | 'Showcase')[] };
     expect(matchesRestriction(card('Foo (Hyperspace)'), r)).toBe(true);
     expect(matchesRestriction(card('Foo (Showcase)'), r)).toBe(true);
     expect(matchesRestriction(card('Foo'), r)).toBe(false); // Standard
@@ -60,14 +60,14 @@ describe('bestMatchForWant', () => {
       card('Foo (Hyperspace)', 2), // matches
       card('Foo (Showcase)', 20),  // matches
     ];
-    const restriction = { mode: 'restricted' as const, variants: ['Hyperspace', 'Showcase'] as const };
+    const restriction = { mode: 'restricted' as const, variants: ['Hyperspace', 'Showcase'] as ('Hyperspace' | 'Showcase')[] };
     const result = bestMatchForWant(want(restriction), candidates, 'market');
     expect(result?.name).toBe('Foo (Hyperspace)');
   });
 
   it('returns null when nothing matches', () => {
     const candidates = [card('Foo', 1)];
-    const restriction = { mode: 'restricted' as const, variants: ['Showcase'] as const };
+    const restriction = { mode: 'restricted' as const, variants: ['Showcase'] as ('Showcase')[] };
     expect(bestMatchForWant(want(restriction), candidates, 'market')).toBeNull();
   });
 

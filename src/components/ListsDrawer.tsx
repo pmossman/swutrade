@@ -42,6 +42,7 @@ export function ListsDrawer({
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
   const [mode, setMode] = useState<Mode>('list');
+  const [editingWantId, setEditingWantId] = useState<string | null>(null);
 
   const wantsCount = wants.items.length;
   const availableCount = available.items.length;
@@ -200,9 +201,19 @@ export function ListsDrawer({
                               item={item}
                               sampleCard={byBase.get(item.baseCardId) ?? null}
                               quickAddCard={quickAddCard}
+                              isEditing={editingWantId === item.id}
                               onChangeQty={qty => wants.update(item.id, { qty })}
                               onTogglePriority={() => wants.togglePriority(item.id)}
-                              onRemove={() => wants.remove(item.id)}
+                              onRemove={() => {
+                                if (editingWantId === item.id) setEditingWantId(null);
+                                wants.remove(item.id);
+                              }}
+                              onToggleEdit={() =>
+                                setEditingWantId(prev => (prev === item.id ? null : item.id))
+                              }
+                              onChangeRestriction={next =>
+                                wants.update(item.id, { restriction: next })
+                              }
                               onAddToOffering={onAddToOffering}
                               onAddToReceiving={onAddToReceiving}
                             />
