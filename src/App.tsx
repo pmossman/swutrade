@@ -16,6 +16,12 @@ import { useSearchFilters } from './hooks/useVariantFilter';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
 import { usePersistedState } from './hooks/usePersistedState';
+import {
+  PERSIST_KEYS,
+  PercentageSchema,
+  PriceModeSchema,
+  DEFAULTS,
+} from './persistence';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -31,18 +37,15 @@ function App() {
   // Persist the user's preferred pricing knobs across sessions. The raw
   // setters bypass localStorage so URL-driven updates (share links,
   // back/forward) don't clobber the saved preference.
-  const [percentage, setPercentage, setPercentageRaw] = usePersistedState<number>(
-    'swu.pct',
-    80,
-    raw => {
-      const n = parseInt(raw, 10);
-      return Number.isFinite(n) && n >= 1 && n <= 100 ? n : null;
-    },
+  const [percentage, setPercentage, setPercentageRaw] = usePersistedState(
+    PERSIST_KEYS.percentage,
+    PercentageSchema,
+    DEFAULTS.percentage,
   );
   const [priceMode, setPriceMode, setPriceModeRaw] = usePersistedState<PriceMode>(
-    'swu.pm',
-    'market',
-    raw => (raw === 'market' || raw === 'low' ? raw : null),
+    PERSIST_KEYS.priceMode,
+    PriceModeSchema,
+    DEFAULTS.priceMode,
   );
   const [yourCards, setYourCards] = useState<TradeCard[]>([]);
   const [theirCards, setTheirCards] = useState<TradeCard[]>([]);
