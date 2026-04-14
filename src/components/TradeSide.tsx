@@ -12,6 +12,7 @@ import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import type { SharedLists } from '../hooks/useSharedLists';
 import { TradeListsSection } from './TradeListsSection';
 
 const PROMO_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
@@ -64,6 +65,7 @@ interface TradeSideProps {
   // Drawer uses; lifted to App so both surfaces stay in sync.
   wants: WantsApi;
   available: AvailableApi;
+  sharedLists: SharedLists | null;
   byFamilyAll: Map<string, CardVariant[]>;
   byProductId: Map<string, CardVariant>;
   /** When true, the card list collapses and the header shrinks to show
@@ -204,6 +206,7 @@ export function TradeSide({
   onPriceModeChange,
   wants,
   available,
+  sharedLists,
   byFamilyAll,
   byProductId,
   filters,
@@ -381,6 +384,7 @@ export function TradeSide({
           side={accentColor === 'emerald' ? 'offering' : 'receiving'}
           wants={wants}
           available={available}
+          sharedLists={sharedLists}
           byFamilyAll={byFamilyAll}
           byProductId={byProductId}
           tradeCards={cards}

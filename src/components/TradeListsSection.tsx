@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import type { SharedLists } from '../hooks/useSharedLists';
 import {
   cardImageUrl,
   adjustPrice,
@@ -13,46 +14,38 @@ import {
   variantDisplayLabel,
 } from '../variants';
 import { bestMatchForWant, matchesRestriction } from '../listMatching';
+import type { WantsItem } from '../persistence';
 
 interface TileEntry {
-  itemId: string;           // wants/available item id, used as React key
-  card: CardVariant;         // card to add when tile is tapped
-  remaining: number;         // qty still needed to fulfill the list item
-  isPriority?: boolean;      // wants priority flag (gold-bright star)
+  itemId: string;
+  card: CardVariant;
+  remaining: number;
+  isPriority?: boolean;
 }
+
+type Tone = 'emerald' | 'blue' | 'gold';
 
 interface TradeListsSectionProps {
   side: 'offering' | 'receiving';
   wants: WantsApi;
   available: AvailableApi;
-  /** All cards loaded so far. The section resolves wants/available items
-   *  to specific variants for display + add. Items whose card hasn't
-   *  loaded yet are skipped silently. */
+  /** Optional sender lists from a ?w=&a= URL. Renders as a second
+   *  section so the recipient can see the sender's relevant cards
+   *  alongside their own. */
+  sharedLists: SharedLists | null;
   byFamilyAll: Map<string, CardVariant[]>;
   byProductId: Map<string, CardVariant>;
-  /** Cards already on this trade side. Used to subtract from the
-   *  desired qty so each row shows what's still needed; rows disappear
-   *  once their item is fully fulfilled. */
   tradeCards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
 }
 
-/**
- * Personal-source picker rendered in the add-card overlay's empty state.
- * - Offering side: pulls from your Available list.
- * - Receiving side: pulls from your Wants list (priority items first).
- *
- * Lives ABOVE search so users see their curated cards before resorting
- * to the broader TCGPlayer search. Hidden as soon as the user types
- * (search results take over). Renders nothing when the relevant list is
- * empty; the existing "type to search" hint then fills the space.
- */
 export function TradeListsSection({
   side,
   wants,
   available,
+  sharedLists,
   byFamilyAll,
   byProductId,
   tradeCards,
@@ -62,92 +55,145 @@ export function TradeListsSection({
 }: TradeListsSectionProps) {
   const isOffering = side === 'offering';
 
-  const tiles = useMemo<TileEntry[]>(() => {
+  // User's own list — Available on Offering side, Wants on Receiving.
+  const primaryTiles = useMemo<TileEntry[]>(() => {
     if (isOffering) {
       return available.items
         .map(item => {
           const card = byProductId.get(item.productId);
           if (!card) return null;
-          // Remaining = desired qty minus what's already in this trade
-          // side as the exact same productId.
-          const inTrade = tradeCards.reduce(
-            (sum, tc) => tc.card.productId === item.productId ? sum + tc.qty : sum,
-            0,
-          );
+          const inTrade = countInTradeByProduct(tradeCards, item.productId);
           const remaining = item.qty - inTrade;
           if (remaining <= 0) return null;
           return { itemId: item.id, card, remaining } as TileEntry;
         })
         .filter((t): t is TileEntry => t !== null);
     }
-
-    // Wants — priority first, then by add order.
     const sorted = [...wants.items].sort((a, b) => {
       const pa = a.isPriority ? 1 : 0;
       const pb = b.isPriority ? 1 : 0;
       if (pa !== pb) return pb - pa;
       return a.addedAt - b.addedAt;
     });
-
     return sorted
-      .map(item => {
-        const candidates = byFamilyAll.get(item.familyId) ?? [];
-        if (candidates.length === 0) return null;
-        const card = bestMatchForWant(item, candidates, priceMode);
-        if (!card) return null;
-        // Remaining = desired qty minus any trade-side cards from the
-        // same family that satisfy the want's restriction.
-        const familyProductIds = new Set(candidates.map(c => c.productId).filter((p): p is string => !!p));
-        const inTrade = tradeCards.reduce((sum, tc) => {
-          if (!tc.card.productId || !familyProductIds.has(tc.card.productId)) return sum;
-          if (!matchesRestriction(tc.card, item.restriction)) return sum;
-          return sum + tc.qty;
-        }, 0);
-        const remaining = item.qty - inTrade;
-        if (remaining <= 0) return null;
-        return {
-          itemId: item.id,
-          card,
-          remaining,
-          isPriority: item.isPriority,
-        } as TileEntry;
-      })
+      .map(item => buildWantTile(item, byFamilyAll, tradeCards, priceMode))
       .filter((t): t is TileEntry => t !== null);
   }, [isOffering, available.items, wants.items, byFamilyAll, byProductId, priceMode, tradeCards]);
 
-  if (tiles.length === 0) return null;
+  // Sender's relevant list — sender's Wants on Offering side (cards
+  // they want from us), sender's Available on Receiving side (cards
+  // they have to give us).
+  const sharedTiles = useMemo<TileEntry[]>(() => {
+    if (!sharedLists) return [];
+    if (isOffering) {
+      return sharedLists.wants
+        .map((w, i) => {
+          // Reuse the wants tile builder; sender wants don't carry an
+          // id so we synthesize one for React keys.
+          const tile = buildWantTile(
+            { ...w, id: 'shared-w-' + i, addedAt: 0 } as WantsItem,
+            byFamilyAll,
+            tradeCards,
+            priceMode,
+          );
+          return tile ? { ...tile, itemId: 'shared-w-' + w.familyId + '-' + i } : null;
+        })
+        .filter((t): t is TileEntry => t !== null);
+    }
+    return sharedLists.available
+      .map((a, i) => {
+        const card = byProductId.get(a.productId);
+        if (!card) return null;
+        const inTrade = countInTradeByProduct(tradeCards, a.productId);
+        const remaining = a.qty - inTrade;
+        if (remaining <= 0) return null;
+        return {
+          itemId: 'shared-a-' + a.productId + '-' + i,
+          card,
+          remaining,
+        } as TileEntry;
+      })
+      .filter((t): t is TileEntry => t !== null);
+  }, [sharedLists, isOffering, byFamilyAll, byProductId, priceMode, tradeCards]);
+
+  if (primaryTiles.length === 0 && sharedTiles.length === 0) return null;
+
+  const primaryHeading = isOffering ? 'From your Available' : 'From your Wants';
+  const sharedHeading = isOffering ? 'From the shared link · They want' : 'From the shared link · They have';
 
   return (
-    <CollapsibleSection
-      isOffering={isOffering}
-      tiles={tiles}
-      percentage={percentage}
-      priceMode={priceMode}
-      onAdd={onAdd}
-    />
+    <>
+      {primaryTiles.length > 0 && (
+        <CollapsibleSection
+          tiles={primaryTiles}
+          heading={primaryHeading}
+          tone={isOffering ? 'emerald' : 'blue'}
+          percentage={percentage}
+          priceMode={priceMode}
+          onAdd={onAdd}
+        />
+      )}
+      {sharedTiles.length > 0 && (
+        <CollapsibleSection
+          tiles={sharedTiles}
+          heading={sharedHeading}
+          tone="gold"
+          percentage={percentage}
+          priceMode={priceMode}
+          onAdd={onAdd}
+        />
+      )}
+    </>
+  );
+}
+
+function buildWantTile(
+  item: WantsItem,
+  byFamilyAll: Map<string, CardVariant[]>,
+  tradeCards: TradeCard[],
+  priceMode: PriceMode,
+): TileEntry | null {
+  const candidates = byFamilyAll.get(item.familyId) ?? [];
+  if (candidates.length === 0) return null;
+  const card = bestMatchForWant(item, candidates, priceMode);
+  if (!card) return null;
+  const familyProductIds = new Set(candidates.map(c => c.productId).filter((p): p is string => !!p));
+  const inTrade = tradeCards.reduce((sum, tc) => {
+    if (!tc.card.productId || !familyProductIds.has(tc.card.productId)) return sum;
+    if (!matchesRestriction(tc.card, item.restriction)) return sum;
+    return sum + tc.qty;
+  }, 0);
+  const remaining = item.qty - inTrade;
+  if (remaining <= 0) return null;
+  return {
+    itemId: item.id,
+    card,
+    remaining,
+    isPriority: item.isPriority,
+  };
+}
+
+function countInTradeByProduct(tradeCards: TradeCard[], productId: string): number {
+  return tradeCards.reduce(
+    (sum, tc) => tc.card.productId === productId ? sum + tc.qty : sum,
+    0,
   );
 }
 
 interface CollapsibleSectionProps {
-  isOffering: boolean;
   tiles: TileEntry[];
+  heading: string;
+  tone: Tone;
   percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
 }
 
-function CollapsibleSection({ isOffering, tiles, percentage, priceMode, onAdd }: CollapsibleSectionProps) {
-  // Default expanded — user collapses when they want search results to
-  // dominate. Local state means the choice resets per overlay open,
-  // which feels right (each session is a fresh decision).
+function CollapsibleSection({ tiles, heading, tone, percentage, priceMode, onAdd }: CollapsibleSectionProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const heading = isOffering ? 'From your Available' : 'From your Wants';
-  const accent = isOffering
-    ? 'text-emerald-300 border-emerald-500/30'
-    : 'text-blue-300 border-blue-500/30';
-  const chevron = isOffering ? 'text-emerald-400/80' : 'text-blue-400/80';
-  const accentColor = isOffering ? 'emerald' : 'blue';
+  const accent = TONE_HEADER[tone];
+  const chevron = TONE_CHEVRON[tone];
 
   return (
     <section className={collapsed ? 'mb-3' : 'mb-6'}>
@@ -173,12 +219,6 @@ function CollapsibleSection({ isOffering, tiles, percentage, priceMode, onAdd }:
         </span>
         <span className="text-[10px] text-gray-600">{tiles.length}</span>
       </button>
-
-      {/* Compact list-style rows. Cards in your lists feel like "shortcuts
-          to add" rather than mini trade tiles — no card-art frame, no big
-          gold badge. Each row is a "to-do": the qty shown is what's
-          STILL needed (desired minus already-in-trade), and the row
-          disappears once fulfilled. */}
       {!collapsed && (
         <ul className="flex flex-col gap-1.5">
           {tiles.map(({ itemId, card, remaining, isPriority }) => (
@@ -189,7 +229,7 @@ function CollapsibleSection({ isOffering, tiles, percentage, priceMode, onAdd }:
               isPriority={isPriority}
               percentage={percentage}
               priceMode={priceMode}
-              accentColor={accentColor}
+              tone={tone}
               onClick={() => onAdd(card)}
             />
           ))}
@@ -205,7 +245,7 @@ interface SourceRowProps {
   isPriority?: boolean;
   percentage: number;
   priceMode: PriceMode;
-  accentColor: 'emerald' | 'blue';
+  tone: Tone;
   onClick: () => void;
 }
 
@@ -215,7 +255,7 @@ function SourceRow({
   isPriority,
   percentage,
   priceMode,
-  accentColor,
+  tone,
   onClick,
 }: SourceRowProps) {
   const variant = extractVariantLabel(card.name);
@@ -223,20 +263,15 @@ function SourceRow({
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
   const display = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '');
-  const hoverText = accentColor === 'emerald' ? 'group-hover:text-emerald-300' : 'group-hover:text-blue-300';
-  const hoverBorder = accentColor === 'emerald' ? 'group-hover:border-emerald-500/40' : 'group-hover:border-blue-500/40';
-  const hoverBg = accentColor === 'emerald' ? 'group-hover:bg-emerald-950/15' : 'group-hover:bg-blue-950/15';
+  const hover = TONE_HOVER[tone];
 
   return (
     <li>
       <button
         type="button"
         onClick={onClick}
-        className={`group w-full flex items-center gap-3 px-2 py-1.5 rounded-md bg-transparent border border-space-800 ${hoverBorder} ${hoverBg} transition-colors text-left active:scale-[0.99]`}
+        className={`group w-full flex items-center gap-3 px-2 py-1.5 rounded-md bg-transparent border border-space-800 ${hover.border} ${hover.bg} transition-colors text-left active:scale-[0.99]`}
       >
-        {/* Thumbnail — small, neutral. Object-cover crops gracefully for
-            both portrait and landscape source images so leaders don't
-            hijack the row height. */}
         <div className="w-8 h-11 shrink-0 rounded bg-space-900 overflow-hidden border border-space-700">
           {imgUrl ? (
             <img
@@ -270,15 +305,31 @@ function SourceRow({
           </div>
         </div>
 
-        {/* "Add" hint — plus icon visible always (subtle), brightens on
-            hover. Reads as the action affordance. */}
-        <span className={`shrink-0 text-gray-600 ${hoverText} transition-colors`} aria-hidden>
+        <span className={`shrink-0 text-gray-600 ${hover.text} transition-colors`} aria-hidden>
           <PlusIcon className="w-4 h-4" />
         </span>
       </button>
     </li>
   );
 }
+
+const TONE_HEADER: Record<Tone, string> = {
+  emerald: 'text-emerald-300 border-emerald-500/30',
+  blue:    'text-blue-300 border-blue-500/30',
+  gold:    'text-gold border-gold/30',
+};
+
+const TONE_CHEVRON: Record<Tone, string> = {
+  emerald: 'text-emerald-400/80',
+  blue:    'text-blue-400/80',
+  gold:    'text-gold/80',
+};
+
+const TONE_HOVER: Record<Tone, { border: string; bg: string; text: string }> = {
+  emerald: { border: 'group-hover:border-emerald-500/40', bg: 'group-hover:bg-emerald-950/15', text: 'group-hover:text-emerald-300' },
+  blue:    { border: 'group-hover:border-blue-500/40',    bg: 'group-hover:bg-blue-950/15',    text: 'group-hover:text-blue-300' },
+  gold:    { border: 'group-hover:border-gold/40',        bg: 'group-hover:bg-gold/5',         text: 'group-hover:text-gold' },
+};
 
 function PlusIcon({ className }: { className?: string }) {
   return (

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
 import type { CardVariant, PriceMode } from '../types';
@@ -8,6 +8,7 @@ import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
 import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
+import { encodeWants, encodeAvailable } from '../urlCodec';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -144,15 +145,23 @@ export function ListsDrawer({
             <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">
               My Lists
             </Dialog.Title>
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                aria-label="Close"
-                className="text-gray-500 hover:text-gray-200 transition-colors"
-              >
-                <CloseIcon className="w-4 h-4" />
-              </button>
-            </Dialog.Close>
+            <div className="flex items-center gap-3">
+              {totalCount > 0 && (
+                <ShareListsButton
+                  wantsItems={wants.items}
+                  availableItems={available.items}
+                />
+              )}
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  className="text-gray-500 hover:text-gray-200 transition-colors"
+                >
+                  <CloseIcon className="w-4 h-4" />
+                </button>
+              </Dialog.Close>
+            </div>
           </div>
 
           <Tabs.Root
@@ -333,6 +342,78 @@ function TabTrigger({
         </span>
       )}
     </Tabs.Trigger>
+  );
+}
+
+function ShareListsButton({
+  wantsItems,
+  availableItems,
+}: {
+  wantsItems: WantsApi['items'];
+  availableItems: AvailableApi['items'];
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = useCallback(async () => {
+    // Build a URL based on the current location (preserving any
+    // active trade params), with ?w= / ?a= overlaying the user's
+    // current lists. Empty lists drop their param.
+    const url = new URL(window.location.href);
+    if (wantsItems.length > 0) url.searchParams.set('w', encodeWants(wantsItems));
+    else url.searchParams.delete('w');
+    if (availableItems.length > 0) url.searchParams.set('a', encodeAvailable(availableItems));
+    else url.searchParams.delete('a');
+    try {
+      await navigator.clipboard.writeText(url.toString());
+    } catch {
+      // Fallback for non-clipboard contexts (older Safari iframes etc.)
+      const input = document.createElement('input');
+      input.value = url.toString();
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [wantsItems, availableItems]);
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title="Copy a share link with your lists"
+      aria-label="Share my lists"
+      className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide text-gray-400 hover:text-gold hover:bg-gold/10 transition-colors"
+    >
+      {copied ? (
+        <>
+          <CheckIcon className="w-3 h-3" />
+          Copied
+        </>
+      ) : (
+        <>
+          <LinkIcon className="w-3 h-3" />
+          Share
+        </>
+      )}
+    </button>
+  );
+}
+
+function LinkIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6.5 8.5l3-3M5 7l-1.5 1.5a2.5 2.5 0 003.5 3.5L8.5 10.5M11 9l1.5-1.5a2.5 2.5 0 00-3.5-3.5L7.5 5.5" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 8.5l3 3 7-7" />
+    </svg>
   );
 }
 

@@ -15,6 +15,7 @@ import { ListsDrawer } from './components/ListsDrawer';
 import { BetaBadge } from './components/BetaBadge';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
+import { useSharedLists } from './hooks/useSharedLists';
 import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
@@ -77,6 +78,7 @@ function App() {
   const filters = useSearchFilters();
   const wants = useWants();
   const available = useAvailable();
+  const sharedLists = useSharedLists();
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
@@ -276,6 +278,7 @@ function App() {
             filters={filters}
             wants={wants}
             available={available}
+            sharedLists={sharedLists}
             byFamilyAll={cardIndex.byFamilyAll}
             byProductId={cardIndex.byProductId}
             collapsed={isMobile && offeringCollapsed}
@@ -304,6 +307,7 @@ function App() {
             filters={filters}
             wants={wants}
             available={available}
+            sharedLists={sharedLists}
             byFamilyAll={cardIndex.byFamilyAll}
             byProductId={cardIndex.byProductId}
             collapsed={isMobile && receivingCollapsed}
