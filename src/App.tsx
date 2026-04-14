@@ -188,9 +188,20 @@ function App() {
               onAddToReceiving={handleAddTheir}
             />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
-              <PriceModeToggle value={priceMode} onChange={setPriceMode} />
-              <span className="w-px h-5 bg-space-700" aria-hidden />
-              <PriceSlider value={percentage} onChange={setPercentage} />
+              {/* Market/Low is a valuable surface on desktop where there's
+                  room. On mobile it'd push TCG% off the right edge, so we
+                  fold it into the TCG% popover instead (PriceSlider below
+                  renders it on mobile). */}
+              <div className="hidden md:flex items-center gap-1.5">
+                <PriceModeToggle value={priceMode} onChange={setPriceMode} />
+                <span className="w-px h-5 bg-space-700" aria-hidden />
+              </div>
+              <PriceSlider
+                value={percentage}
+                onChange={setPercentage}
+                priceMode={priceMode}
+                onPriceModeChange={setPriceMode}
+              />
             </div>
             {hasCards && (
               <>

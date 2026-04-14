@@ -1,18 +1,29 @@
 import { Popover } from './Popover';
+import { PriceModeToggle } from './PriceModeToggle';
+import type { PriceMode } from '../types';
 
 interface PriceSliderProps {
   value: number;
   onChange: (value: number) => void;
+  /** When provided, the popover also exposes the Market/Low toggle —
+   *  used on narrow viewports where there's no room for an inline one
+   *  in the header pill. The inline toggle can hide on mobile and users
+   *  still get to the setting through this popover. */
+  priceMode?: PriceMode;
+  onPriceModeChange?: (mode: PriceMode) => void;
 }
 
 const PRESETS = [50, 60, 70, 80, 90, 100] as const;
 
 /**
  * Collapsed-by-default TCG % picker. Shows the current value as a small
- * pill; tap to expand a popover with the preset buttons. The big preset
- * strip was visually noisy for a setting most users only adjust once.
+ * pill; tap to expand a popover with the preset buttons. On mobile the
+ * popover also carries the Market/Low toggle so the inline toggle can
+ * drop out of the header.
  */
-export function PriceSlider({ value, onChange }: PriceSliderProps) {
+export function PriceSlider({ value, onChange, priceMode, onPriceModeChange }: PriceSliderProps) {
+  const includeModeToggle = priceMode && onPriceModeChange;
+
   return (
     <Popover
       align="right"
@@ -38,23 +49,32 @@ export function PriceSlider({ value, onChange }: PriceSliderProps) {
       )}
     >
       {({ close }) => (
-        // 3-col grid keeps the panel narrow enough to sit inside a
-        // small mobile viewport. On sm+ we have room for a single row.
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 min-w-[180px]">
-          {PRESETS.map(p => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => { onChange(p); close(); }}
-              className={`px-1 py-1 rounded-md text-xs font-semibold text-center tabular-nums transition-colors ${
-                value === p
-                  ? 'bg-gold/20 text-gold border border-gold/40'
-                  : 'bg-space-700 text-gray-400 border border-space-600 hover:border-gray-500'
-              }`}
-            >
-              {p}%
-            </button>
-          ))}
+        <div className="flex flex-col gap-2 min-w-[180px]">
+          {/* Market/Low toggle — rendered inside the popover so the
+              header pill can shed its inline Market/Low on mobile.
+              Hidden on desktop where the inline one is already visible. */}
+          {includeModeToggle && (
+            <div className="flex justify-center md:hidden">
+              <PriceModeToggle value={priceMode!} onChange={onPriceModeChange!} />
+            </div>
+          )}
+          {/* 3-col on mobile, 6-col on sm+ matches the original layout. */}
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1">
+            {PRESETS.map(p => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => { onChange(p); close(); }}
+                className={`px-1 py-1 rounded-md text-xs font-semibold text-center tabular-nums transition-colors ${
+                  value === p
+                    ? 'bg-gold/20 text-gold border border-gold/40'
+                    : 'bg-space-700 text-gray-400 border border-space-600 hover:border-gray-500'
+                }`}
+              >
+                {p}%
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </Popover>
