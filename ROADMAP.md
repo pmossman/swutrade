@@ -30,8 +30,7 @@ Local-first wants and available lists, stored in the browser. No backend.
 - [x] Inline variant restriction editor
 - [x] swuapi.com enrichment at build time (`baseCardId`, `cardType`, aspects, traits)
 - [ ] **Empty-state integration in trade search** — when the add-card overlay opens with no query, surface user's Wants (on Receiving side) and Available (on Offering side) as one-tap sources. Search stays the tool; lists become the personalized default.
-- [ ] **Save-to-list from search** — small bookmark affordance on each search tile. Closes the loop: search finds card → save → shows in add-card empty state next time.
-- [ ] **URL encoding for list sharing** — `?w=…&a=…` params so a link can carry a lightweight anonymous list (sets up Phase 3).
+- [x] **URL encoding for list sharing** — `?w=…&a=…` params so a link can carry a lightweight anonymous list (sets up Phase 3).
 
 ### Phase 2 — Accounts + sync
 
@@ -80,6 +79,12 @@ Niche community; Discord is already central to the vision. Skipping a second aut
 ### 2026-04-14 — `cardType` drives leader/landscape rendering
 
 Legacy heuristic was "any variant is Showcase → treat as Leader." Enrichment populates `cardType` per variant now, so we use it directly for Leader/Base detection. Showcase heuristic stays as a fallback for unmatched cards. Fixes the Unit-with-Showcase-printing case (Darth Vader - Unstoppable rendered landscape incorrectly).
+
+### 2026-04-14 — Dropped: save-to-list affordance on search tiles
+
+Considered: a bookmark icon on each search tile so users could save cards to wants/available without leaving the trade overlay.
+
+Rejected. Trader feedback: lists tend to be stable references built when organizing a collection, not something updated in the heat of an active trade. The "closed loop" framing was theoretical — in practice most users just want to *consume* their lists during trade-building, not modify them. Dropped to keep the trade flow uncluttered.
 
 ### 2026-04-14 — Privacy defaults for Phase 2
 
