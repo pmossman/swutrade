@@ -265,8 +265,8 @@ export function TradeSide({
       {/* Side-ID header — saber bar + swu-display label. Market/Low
           now lives in the controls strip below, with the other
           scope/filter controls, matching the main view layout. */}
-      <div className="shrink-0 px-4 pt-3 pb-2 relative">
-        <div className={`absolute left-2 top-3 bottom-3 w-[3px] rounded-full ${saberBarColors[accentColor]}`} aria-hidden />
+      <div className="shrink-0 pt-3 pb-2 px-4 sm:px-6 max-w-6xl mx-auto w-full relative">
+        <div className={`absolute left-4 sm:left-6 top-3 bottom-3 w-[3px] rounded-full ${saberBarColors[accentColor]}`} aria-hidden />
         <div className="pl-3 flex items-center justify-between">
           <div>
             <div className="text-[9px] tracking-[0.25em] text-gray-500 uppercase">Adding to</div>
@@ -284,7 +284,7 @@ export function TradeSide({
           </button>
         </div>
       </div>
-      <div className="shrink-0 px-3 pb-1">
+      <div className="shrink-0 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
         <div className="relative">
           <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
             {search.isSearching || isLoading ? (
@@ -325,7 +325,7 @@ export function TradeSide({
           group pattern. Lives OUTSIDE the scroll area so it's always
           visible, just like Market/Low was before. */}
       {hasSearchResults && (
-        <div className="shrink-0 px-3 pt-2 pb-1 max-w-6xl mx-auto w-full">
+        <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
           <SearchControls
             scope={filters.scope}
             setScope={filters.setScope}

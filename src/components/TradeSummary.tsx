@@ -183,8 +183,9 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onP
 
   return (
     <div className="fixed inset-0 z-50 bg-space-900/95 flex flex-col animate-fade-in">
-      {/* Thin header strip — actions only; the balance headline is the hero */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-3 pb-2">
+      {/* Thin header strip — width-matched to the content below so
+          the back/share/pricing controls don't hang past the edges. */}
+      <div className="shrink-0 flex items-center justify-between max-w-6xl mx-auto w-full px-4 pt-3 pb-2">
         <button
           onClick={onClose}
           className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 -ml-1.5 flex items-center gap-1.5 text-sm"
