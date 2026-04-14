@@ -9,6 +9,18 @@ import {
   type VariantRestriction,
 } from '../persistence';
 
+/**
+ * Stable signature for a restriction. Two wants items with the same
+ * (familyId, restrictionKey) are treated as the same item — adding
+ * bumps qty rather than creating a duplicate row. Different keys
+ * (e.g., Hyperspace vs Hyperspace Foil restrictions on the same
+ * card) are tracked as separate items.
+ */
+function restrictionKey(r: VariantRestriction): string {
+  if (r.mode === 'any') return 'any';
+  return [...r.variants].sort().join('|');
+}
+
 function newId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return `w_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -48,16 +60,22 @@ export function useWants(): WantsApi {
     const qty = Math.min(99, Math.max(1, input.qty ?? 1));
     let created: WantsItem | null = null;
 
+    const inputRestriction = input.restriction ?? { mode: 'any' as const };
+    const inputKey = restrictionKey(inputRestriction);
+
     setItems(prev => {
-      const existing = prev.find(i => i.familyId === input.familyId);
+      // Dedupe by (familyId + restriction signature) so tapping the
+      // Hyperspace tile and the Standard tile of the same card produce
+      // separate items rather than collapsing into one bumped qty with
+      // the wrong restriction.
+      const existing = prev.find(
+        i => i.familyId === input.familyId && restrictionKey(i.restriction) === inputKey,
+      );
       let next: WantsItem[];
       if (existing) {
         const bumped: WantsItem = {
           ...existing,
           qty: Math.min(99, existing.qty + qty),
-          // Don't override restriction on re-add — the user's previous
-          // narrowing stands (they can widen it via the inline editor).
-          // Other optional fields may be updated by the caller.
           ...(input.isPriority !== undefined ? { isPriority: input.isPriority } : {}),
           ...(input.maxUnitPrice !== undefined ? { maxUnitPrice: input.maxUnitPrice } : {}),
           ...(input.note !== undefined ? { note: input.note } : {}),
