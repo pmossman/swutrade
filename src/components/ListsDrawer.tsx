@@ -10,6 +10,7 @@ import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVa
 import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
+import { TradeImageModal } from './TradeImageModal';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -370,52 +371,90 @@ function ShareListsButton({
   wantsItems: WantsApi['items'];
   availableItems: AvailableApi['items'];
 }) {
-  const [copied, setCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [showImage, setShowImage] = useState(false);
 
-  const copy = useCallback(async () => {
-    // Build a URL based on the current location (preserving any
-    // active trade params), with ?w= / ?a= overlaying the user's
-    // current lists. Empty lists drop their param.
+  // Build the share URL from current location, overlaying ?w=/?a=
+  // with the user's lists. Used for both Link copy and Image render.
+  const shareUrl = useCallback((): URL => {
     const url = new URL(window.location.href);
     if (wantsItems.length > 0) url.searchParams.set('w', encodeWants(wantsItems));
     else url.searchParams.delete('w');
     if (availableItems.length > 0) url.searchParams.set('a', encodeAvailable(availableItems));
     else url.searchParams.delete('a');
+    // List shares default to list-view landing — clear any lingering
+    // ?view=trade so the recipient lands on the dedicated /list view.
+    url.searchParams.delete('view');
+    return url;
+  }, [wantsItems, availableItems]);
+
+  const copyLink = useCallback(async () => {
+    const url = shareUrl().toString();
     try {
-      await navigator.clipboard.writeText(url.toString());
+      await navigator.clipboard.writeText(url);
     } catch {
-      // Fallback for non-clipboard contexts (older Safari iframes etc.)
       const input = document.createElement('input');
-      input.value = url.toString();
+      input.value = url;
       document.body.appendChild(input);
       input.select();
       document.execCommand('copy');
       document.body.removeChild(input);
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [wantsItems, availableItems]);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }, [shareUrl]);
+
+  const imageUrl = useCallback(() => {
+    const url = shareUrl();
+    const params = new URLSearchParams();
+    const w = url.searchParams.get('w');
+    const a = url.searchParams.get('a');
+    if (w) params.set('w', w);
+    if (a) params.set('a', a);
+    const pct = url.searchParams.get('pct');
+    const pm = url.searchParams.get('pm');
+    if (pct) params.set('pct', pct);
+    if (pm) params.set('pm', pm);
+    return `/api/og?${params.toString()}`;
+  }, [shareUrl]);
 
   return (
-    <button
-      type="button"
-      onClick={copy}
-      title="Copy a share link with your lists"
-      aria-label="Share my lists"
-      className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide text-gray-400 hover:text-gold hover:bg-gold/10 transition-colors"
-    >
-      {copied ? (
-        <>
-          <CheckIcon className="w-3 h-3" />
-          Copied
-        </>
-      ) : (
-        <>
-          <LinkIcon className="w-3 h-3" />
-          Share
-        </>
+    <>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={copyLink}
+          title="Copy a share link with your lists"
+          aria-label="Copy share link"
+          className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide text-gray-400 hover:text-gold hover:bg-gold/10 transition-colors"
+        >
+          {linkCopied ? (
+            <>
+              <CheckIcon className="w-3 h-3" />
+              Copied
+            </>
+          ) : (
+            <>
+              <LinkIcon className="w-3 h-3" />
+              Link
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowImage(true)}
+          title="Generate a shareable image of your lists"
+          aria-label="Generate share image"
+          className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide bg-gold/10 text-gold hover:bg-gold/20 transition-colors"
+        >
+          <ImageIcon className="w-3 h-3" />
+          Image
+        </button>
+      </div>
+      {showImage && (
+        <TradeImageModal imageUrl={imageUrl()} onClose={() => setShowImage(false)} />
       )}
-    </button>
+    </>
   );
 }
 
@@ -431,6 +470,16 @@ function CheckIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 8.5l3 3 7-7" />
+    </svg>
+  );
+}
+
+function ImageIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <circle cx="6" cy="7" r="1" />
+      <path d="M2 11l3-3 4 4 2-2 3 3" />
     </svg>
   );
 }
