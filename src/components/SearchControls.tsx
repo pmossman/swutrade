@@ -1,6 +1,6 @@
 import type { PriceMode } from '../types';
 import { PriceModeToggle } from './PriceModeToggle';
-import { variantBadgeColor } from '../utils/variantBadge';
+import { variantBadgeColor } from '../variants';
 import type { SearchScope } from '../hooks/useVariantFilter';
 
 const FILTERABLE_VARIANTS = [

@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { SETS, tradeCardKey } from '../types';
-import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
 import { useCardSearch } from '../hooks/useCardSearch';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { SearchResults } from './SearchResults';
@@ -9,7 +10,6 @@ import { SearchControls } from './SearchControls';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
-import { variantBadgeColor, variantDisplayLabel } from '../utils/variantBadge';
 
 const PROMO_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 

@@ -1,4 +1,4 @@
-import type { CardVariant, CardGroup, SetInfo, PriceMode, TradeCard } from '../types';
+import type { CardVariant, SetInfo, PriceMode, TradeCard } from '../types';
 
 // Static data is served from /data/ (built at deploy time)
 const DATA_BASE = '/data';
@@ -32,39 +32,6 @@ export async function fetchSetPrices(set: SetInfo): Promise<CardVariant[]> {
   const data: CardVariant[] = await res.json();
   clientCache[set.slug] = data;
   return data;
-}
-
-export function extractVariantLabel(name: string): string {
-  const match = name.match(/\(([^)]+)\)\s*$/);
-  if (!match) return 'Standard';
-  return match[1];
-}
-
-// Leaders (and Base cards) in SWU are the only cards that get Showcase
-// variants printed, so the presence of any Showcase variant in a card's
-// variant list is a reliable signal that the base card is landscape-
-// oriented. Set-by-set leader counts vary, so number ranges aren't a
-// reliable proxy.
-export function isLeaderOrBaseGroup(variants: { name: string }[]): boolean {
-  return variants.some(v => extractVariantLabel(v.name) === 'Showcase');
-}
-
-export function extractBaseName(name: string): string {
-  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
-
-export function groupCards(cards: CardVariant[]): CardGroup[] {
-  const groups: Record<string, CardGroup> = {};
-
-  for (const card of cards) {
-    const baseName = extractBaseName(card.name);
-    if (!groups[baseName]) {
-      groups[baseName] = { baseName, variants: [] };
-    }
-    groups[baseName].variants.push(card);
-  }
-
-  return Object.values(groups);
 }
 
 export function adjustPrice(price: number | null, percentage: number): number | null {

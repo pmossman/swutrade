@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { CardVariant, CardGroup } from '../types';
 import { SETS } from '../types';
-import { groupCards } from '../services/priceService';
+import { groupCards, extractVariantLabel } from '../variants';
 
 export interface SetSearchGroup {
   setSlug: string;
@@ -14,8 +14,6 @@ interface UseCardSearchProps {
   allCards: CardVariant[];
   setFilter: string | null;
 }
-
-import { extractVariantLabel } from '../services/priceService';
 
 // Reverse index: latest set = 0 (highest priority)
 const setOrder = Object.fromEntries(

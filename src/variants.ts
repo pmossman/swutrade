@@ -1,6 +1,21 @@
+import type { CardVariant, CardGroup } from './types';
+
 // Canonical display order for SWU print variants. Lower = earlier.
 // Any unknown variant sinks to the bottom of the list so it's visible
 // but doesn't muddle the established progression.
+export const CANONICAL_VARIANTS = [
+  'Standard',
+  'Foil',
+  'Hyperspace',
+  'Hyperspace Foil',
+  'Prestige',
+  'Prestige Foil',
+  'Serialized',
+  'Showcase',
+] as const;
+
+export type CanonicalVariant = (typeof CANONICAL_VARIANTS)[number];
+
 const VARIANT_ORDER: Record<string, number> = {
   'Standard': 0,
   'Foil': 1,
@@ -49,4 +64,50 @@ export function variantBadgeColor(variant: string): string {
     case 'Foil':            return 'bg-indigo-900/50 text-indigo-300';
     default:                return 'bg-space-600 text-gray-300';
   }
+}
+
+export function extractVariantLabel(name: string): string {
+  const match = name.match(/\(([^)]+)\)\s*$/);
+  if (!match) return 'Standard';
+  return match[1];
+}
+
+export function extractBaseName(name: string): string {
+  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+// Leaders (and Base cards) in SWU are the only cards that get Showcase
+// variants printed, so the presence of any Showcase variant in a card's
+// variant list is a reliable signal that the base card is landscape-
+// oriented. Set-by-set leader counts vary, so number ranges aren't a
+// reliable proxy.
+export function isLeaderOrBaseGroup(variants: { name: string }[]): boolean {
+  return variants.some(v => extractVariantLabel(v.name) === 'Showcase');
+}
+
+export function groupCards(cards: CardVariant[]): CardGroup[] {
+  const groups: Record<string, CardGroup> = {};
+
+  for (const card of cards) {
+    const baseName = extractBaseName(card.name);
+    if (!groups[baseName]) {
+      groups[baseName] = { baseName, variants: [] };
+    }
+    groups[baseName].variants.push(card);
+  }
+
+  return Object.values(groups);
+}
+
+// --- Future Phase-1 hooks ---
+// When card enrichment (swuapi.com) lands, each CardVariant will carry a
+// stable baseCardId derived from the source's uuid. Until then, synthesize
+// one from setSlug + base name so downstream code (wants lists) can key
+// off a single identifier throughout.
+export function synthesizeBaseCardId(card: CardVariant): string {
+  const slug = extractBaseName(card.name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return `${card.set}:${slug}`;
 }

@@ -2,8 +2,7 @@ import type { CardVariant, TradeCard, PriceMode } from '../types';
 import { SETS, tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
 import { CardTile } from './CardTile';
-import { variantRank } from '../utils/variantBadge';
-import { extractVariantLabel, isLeaderOrBaseGroup } from '../services/priceService';
+import { variantRank, extractVariantLabel, isLeaderOrBaseGroup } from '../variants';
 import type { SearchScope } from '../hooks/useVariantFilter';
 
 const promoSlugs = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));

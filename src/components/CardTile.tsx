@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
-import { adjustPrice, extractVariantLabel, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
-import { variantBadgeColor } from '../utils/variantBadge';
+import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { extractVariantLabel, variantBadgeColor } from '../variants';
 
 interface CardTileProps {
   card: CardVariant;

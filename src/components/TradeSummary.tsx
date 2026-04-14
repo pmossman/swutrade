@@ -5,8 +5,8 @@ import { PriceSlider } from './PriceSlider';
 import { ShareButtons } from './ShareButtons';
 import { MobileActionsKebab } from './MobileActionsKebab';
 import { tradeCardKey } from '../types';
-import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices, extractVariantLabel, extractBaseName } from '../services/priceService';
-import { variantBadgeColor, variantDisplayLabel } from '../utils/variantBadge';
+import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices } from '../services/priceService';
+import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 
 interface TradeSummaryProps {
