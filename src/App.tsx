@@ -15,6 +15,7 @@ import { ListsDrawer } from './components/ListsDrawer';
 import { BetaBadge } from './components/BetaBadge';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
+import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
@@ -87,6 +88,27 @@ function App() {
 
   // Sync trade state to/from URL for sharing and back/forward navigation
   const allLoadedCards = useMemo(() => Object.values(priceData.cards).flat(), [priceData.cards]);
+
+  // Build cross-printing card indexes once, share with both the trade
+  // side overlays (empty-state lists picker) and the Lists Drawer
+  // (rows + picker badges). Keys are family ids — every printing of a
+  // card shares the same key. byProductId is the exact-variant lookup
+  // used by available rows.
+  const cardIndex = useMemo(() => {
+    const byFamily = new Map<string, CardVariant>();
+    const byFamilyAll = new Map<string, CardVariant[]>();
+    const byProductId = new Map<string, CardVariant>();
+    for (const card of allLoadedCards) {
+      if (card.productId) byProductId.set(card.productId, card);
+      const fid = cardFamilyId(card);
+      const existing = byFamily.get(fid);
+      if (!existing || card.variant === 'Standard') byFamily.set(fid, card);
+      const bucket = byFamilyAll.get(fid);
+      if (bucket) bucket.push(card);
+      else byFamilyAll.set(fid, [card]);
+    }
+    return { byFamily, byFamilyAll, byProductId };
+  }, [allLoadedCards]);
   useTradeUrl(
     { yourCards, theirCards, percentage, priceMode },
     allLoadedCards,
@@ -253,6 +275,10 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
+            wants={wants}
+            available={available}
+            byFamilyAll={cardIndex.byFamilyAll}
+            byProductId={cardIndex.byProductId}
             collapsed={isMobile && offeringCollapsed}
             onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
@@ -277,6 +303,10 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
+            wants={wants}
+            available={available}
+            byFamilyAll={cardIndex.byFamilyAll}
+            byProductId={cardIndex.byProductId}
             collapsed={isMobile && receivingCollapsed}
             onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}

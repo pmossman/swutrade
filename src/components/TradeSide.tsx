@@ -10,6 +10,9 @@ import { SearchControls } from './SearchControls';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
+import type { WantsApi } from '../hooks/useWants';
+import type { AvailableApi } from '../hooks/useAvailable';
+import { TradeListsSection } from './TradeListsSection';
 
 const PROMO_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 
@@ -55,6 +58,14 @@ interface TradeSideProps {
   // Shared filter state (scope + hide-variants + hide-sets). Lifted to
   // App so both trade sides stay in sync in real time.
   filters: ReturnType<typeof useSearchFilters>;
+  // Personal-source pickers in the search overlay's empty state pull
+  // from these. Offering side surfaces Available; Receiving surfaces
+  // Wants. byFamilyAll / byProductId are the same indexes the Lists
+  // Drawer uses; lifted to App so both surfaces stay in sync.
+  wants: WantsApi;
+  available: AvailableApi;
+  byFamilyAll: Map<string, CardVariant[]>;
+  byProductId: Map<string, CardVariant>;
   /** When true, the card list collapses and the header shrinks to show
    *  just the label + count + total, with a chevron to re-expand. */
   collapsed: boolean;
@@ -184,6 +195,10 @@ export function TradeSide({
   isLoading,
   onLoadAllSets,
   onPriceModeChange,
+  wants,
+  available,
+  byFamilyAll,
+  byProductId,
   filters,
   collapsed,
   onToggleCollapse,
@@ -350,8 +365,20 @@ export function TradeSide({
           top padding so sticky set headers stay flush with the viewport
           edge. Outer flex wrapper centers the column on wide screens. */}
       {!hasSearchResults ? (
-        <div className="flex-1 max-w-6xl mx-auto w-full flex items-center justify-center text-gray-600 text-sm">
-          Type a card name to search
+        <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full overflow-y-auto px-4 sm:px-6 pt-2 pb-6">
+          <TradeListsSection
+            side={accentColor === 'emerald' ? 'offering' : 'receiving'}
+            wants={wants}
+            available={available}
+            byFamilyAll={byFamilyAll}
+            byProductId={byProductId}
+            percentage={percentage}
+            priceMode={priceMode}
+            onAdd={onAdd}
+          />
+          <div className="text-center text-gray-600 text-xs">
+            Or type a card name to search
+          </div>
         </div>
       ) : (
         <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
