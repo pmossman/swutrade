@@ -236,7 +236,7 @@ function App() {
       )}
 
       {/* Footer */}
-      <div className="shrink-0 pb-2 text-center text-[10px] text-gray-600">
+      <div className="shrink-0 pb-2 px-3 text-center text-[10px] text-gray-600 max-w-5xl mx-auto w-full">
         <div className="flex items-center justify-center gap-2 flex-wrap">
           <span>
             Created by{' '}
@@ -270,10 +270,17 @@ function App() {
             <>
               <span className="text-space-600" aria-hidden>·</span>
               <span title={`Prices updated ${priceData.priceTimestamp}`}>
-                Updated {timeAgo(priceData.priceTimestamp)}
+                Prices updated {timeAgo(priceData.priceTimestamp)}
               </span>
             </>
           )}
+        </div>
+        {/* Legal/attribution line — tiny, muted. Keep the language
+            conservative so we never imply endorsement. */}
+        <div className="mt-1.5 text-[9px] text-gray-700 leading-snug px-2">
+          SWUTrade is an unofficial fan site, not produced or endorsed by Fantasy Flight Publishing or Lucasfilm Ltd.
+          Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
+          Card prices are estimates — see stores for final pricing.
         </div>
       </div>
     </div>
