@@ -37,10 +37,22 @@ export function PriceSlider({ value, onChange, priceMode, onPriceModeChange }: P
               ? 'bg-gold/25 text-gold-bright border border-gold/50'
               : 'bg-gold/15 text-gold border border-gold/30 hover:bg-gold/20'
           }`}
-          aria-label={`TCG percentage: ${value}%`}
+          aria-label={
+            priceMode
+              ? `TCG ${priceMode === 'low' ? 'Low' : 'Market'} ${value}%`
+              : `TCG percentage: ${value}%`
+          }
           aria-expanded={open}
         >
           <span className="text-[10px] text-gold/70 font-normal">TCG</span>
+          {/* Show mode inline when this pill carries both controls
+              (mobile case). Keeps the "what is currently in effect"
+              visible without an extra tap. */}
+          {priceMode && (
+            <span className="text-[10px] text-gold/70 font-normal">
+              {priceMode === 'low' ? 'Low' : 'Mkt'}
+            </span>
+          )}
           <span className="tabular-nums">{value}%</span>
           <svg className="w-3 h-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />

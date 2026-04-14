@@ -154,8 +154,8 @@ function App() {
           Mobile hides the wordmark and collapses Share/Clear into a
           single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <div className="flex items-center gap-3 md:gap-4">
-          <h1 className="flex flex-col items-start md:flex-row md:items-center md:gap-2 leading-none select-none shrink-0">
+        <div className="flex items-center gap-2 md:gap-4">
+          <h1 className="flex items-center gap-2 select-none shrink-0">
             {/* Logo sits flush against the "S" — the tiny gap after
                 the logo should match the inter-letter tracking so
                 it reads as a glyph in the word, not a separate icon. */}
@@ -165,17 +165,12 @@ function App() {
                 <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
               </span>
             </span>
-            {/* Beta badge tucks under the wordmark on mobile so it doesn't
-                steal horizontal space from the right-side controls. On
-                desktop it sits inline with the title. */}
-            <span className="mt-1 md:mt-0">
-              <BetaBadge />
-            </span>
+            <BetaBadge />
           </h1>
           {/* Controls cluster — pricing + actions grouped together and
               pushed to the right (ml-auto) so the logo/title gets
               breathing room on the left. */}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5 md:gap-2">
             <ListsDrawer
               wants={wants}
               available={available}
