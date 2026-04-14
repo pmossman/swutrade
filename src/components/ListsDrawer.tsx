@@ -1,26 +1,78 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
+import type { CardVariant, PriceMode } from '../types';
+import type { WantsApi } from '../hooks/useWants';
+import type { AvailableApi } from '../hooks/useAvailable';
+import { ListCardPicker } from './ListCardPicker';
+import { WantsRow, AvailableRow } from './ListRows';
 
 interface ListsDrawerProps {
-  wantsCount?: number;
-  availableCount?: number;
+  wants: WantsApi;
+  available: AvailableApi;
+  allCards: CardVariant[];
+  percentage: number;
+  priceMode: PriceMode;
 }
 
 type ListTab = 'wants' | 'available';
+type Mode = 'list' | 'picker';
 
 /**
  * Mobile: bottom sheet sliding up from viewport bottom.
  * Desktop: centered modal.
- * Empty tabs for now — real content lands in follow-up commits.
  */
-export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerProps) {
+export function ListsDrawer({ wants, available, allCards, percentage, priceMode }: ListsDrawerProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
+  const [mode, setMode] = useState<Mode>('list');
+
+  const wantsCount = wants.items.length;
+  const availableCount = available.items.length;
   const totalCount = wantsCount + availableCount;
 
+  // Index all loaded cards for fast lookup when rendering rows. Same scan
+  // powers both wants (by baseCardId → a sample variant for img/display)
+  // and available (by productId → exact variant).
+  const { byBase, byProductId } = useMemo(() => {
+    const byBase = new Map<string, CardVariant>();
+    const byProductId = new Map<string, CardVariant>();
+    for (const card of allCards) {
+      if (card.productId) byProductId.set(card.productId, card);
+      if (card.baseCardId) {
+        // Prefer the Standard variant as the display sample when we can
+        // find it; otherwise first-wins.
+        const existing = byBase.get(card.baseCardId);
+        if (!existing || card.variant === 'Standard') {
+          byBase.set(card.baseCardId, card);
+        }
+      }
+    }
+    return { byBase, byProductId };
+  }, [allCards]);
+
+  // Priority-first sort for wants, insertion order otherwise
+  const sortedWants = useMemo(() => {
+    return [...wants.items].sort((a, b) => {
+      const pa = a.isPriority ? 1 : 0;
+      const pb = b.isPriority ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return a.addedAt - b.addedAt;
+    });
+  }, [wants.items]);
+
+  // Close the picker whenever the drawer or tab changes.
+  const handleTabChange = (next: ListTab) => {
+    setTab(next);
+    setMode('list');
+  };
+  const handleOpenChange = (next: boolean) => {
+    if (!next) setMode('list');
+    setOpen(next);
+  };
+
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Root open={open} onOpenChange={handleOpenChange}>
       <Dialog.Trigger asChild>
         <button
           type="button"
@@ -42,13 +94,9 @@ export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerP
         <Dialog.Content
           aria-describedby={undefined}
           className={[
-            // Positioning/transform live in index.css under .drawer-content
-            // to avoid a Tailwind-transform vs keyframe race on first paint.
             'drawer-content z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
             'flex flex-col',
-            // Mobile: bottom sheet shape
             'max-h-[85dvh] rounded-t-2xl border-b-0',
-            // Desktop: centered modal size/shape
             'md:w-[min(640px,calc(100vw-2rem))] md:max-h-[85dvh] md:rounded-2xl md:border',
           ].join(' ')}
         >
@@ -74,44 +122,122 @@ export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerP
 
           <Tabs.Root
             value={tab}
-            onValueChange={v => setTab(v as ListTab)}
+            onValueChange={v => handleTabChange(v as ListTab)}
             className="flex flex-col flex-1 min-h-0"
           >
             <Tabs.List
               className="flex gap-1 px-3 pt-2 border-b border-space-800"
               aria-label="Wants and Available lists"
             >
-              <TabTrigger value="wants" count={wantsCount}>
-                Wants
-              </TabTrigger>
-              <TabTrigger value="available" count={availableCount}>
-                Available
-              </TabTrigger>
+              <TabTrigger value="wants" count={wantsCount}>Wants</TabTrigger>
+              <TabTrigger value="available" count={availableCount}>Available</TabTrigger>
             </Tabs.List>
 
-            <Tabs.Content
-              value="wants"
-              className="flex-1 min-h-0 overflow-y-auto p-5 data-[state=inactive]:hidden"
-            >
-              <EmptyState
-                title="No wants yet"
-                body="Save cards you're looking for. You'll be able to add them to trades in one tap."
-              />
+            <Tabs.Content value="wants" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+              {mode === 'picker' && tab === 'wants' ? (
+                <ListCardPicker
+                  allCards={allCards}
+                  percentage={percentage}
+                  priceMode={priceMode}
+                  title="Add to Wants"
+                  onPick={card => {
+                    if (card.baseCardId) {
+                      wants.add({ baseCardId: card.baseCardId, qty: 1, restriction: { mode: 'any' } });
+                    }
+                    setMode('list');
+                  }}
+                  onClose={() => setMode('list')}
+                />
+              ) : (
+                <>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {sortedWants.length === 0 ? (
+                      <EmptyState
+                        title="No wants yet"
+                        body="Save cards you're looking for. You'll be able to add them to trades in one tap."
+                      />
+                    ) : (
+                      <ul className="flex flex-col gap-2">
+                        {sortedWants.map(item => (
+                          <WantsRow
+                            key={item.id}
+                            item={item}
+                            sampleCard={byBase.get(item.baseCardId) ?? null}
+                            onChangeQty={qty => wants.update(item.id, { qty })}
+                            onTogglePriority={() => wants.togglePriority(item.id)}
+                            onRemove={() => wants.remove(item.id)}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <AddCardFooter onClick={() => setMode('picker')} />
+                </>
+              )}
             </Tabs.Content>
 
-            <Tabs.Content
-              value="available"
-              className="flex-1 min-h-0 overflow-y-auto p-5 data-[state=inactive]:hidden"
-            >
-              <EmptyState
-                title="No available cards yet"
-                body="Save exact cards you have to trade. Matchmaking against other users comes later."
-              />
+            <Tabs.Content value="available" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
+              {mode === 'picker' && tab === 'available' ? (
+                <ListCardPicker
+                  allCards={allCards}
+                  percentage={percentage}
+                  priceMode={priceMode}
+                  title="Add to Available"
+                  onPick={card => {
+                    if (card.productId) {
+                      available.add({ productId: card.productId, qty: 1 });
+                    }
+                    setMode('list');
+                  }}
+                  onClose={() => setMode('list')}
+                />
+              ) : (
+                <>
+                  <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                    {available.items.length === 0 ? (
+                      <EmptyState
+                        title="No available cards yet"
+                        body="Save exact cards you have to trade. Matchmaking against other users comes later."
+                      />
+                    ) : (
+                      <ul className="flex flex-col gap-2">
+                        {available.items.map(item => (
+                          <AvailableRow
+                            key={item.id}
+                            item={item}
+                            card={byProductId.get(item.productId) ?? null}
+                            percentage={percentage}
+                            priceMode={priceMode}
+                            onChangeQty={qty => available.update(item.id, { qty })}
+                            onRemove={() => available.remove(item.id)}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <AddCardFooter onClick={() => setMode('picker')} />
+                </>
+              )}
             </Tabs.Content>
           </Tabs.Root>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function AddCardFooter({ onClick }: { onClick: () => void }) {
+  return (
+    <div className="shrink-0 border-t border-space-800 p-3">
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gold/10 border border-gold/30 text-gold hover:bg-gold/20 hover:border-gold/50 transition-colors text-xs font-bold tracking-[0.1em] uppercase"
+      >
+        <PlusIcon className="w-3.5 h-3.5" />
+        Add Card
+      </button>
+    </div>
   );
 }
 
@@ -185,6 +311,22 @@ function CloseIcon({ className }: { className?: string }) {
       aria-hidden
     >
       <path d="M4 4L12 12M4 12L12 4" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      aria-hidden
+    >
+      <path d="M8 3V13M3 8H13" />
     </svg>
   );
 }
