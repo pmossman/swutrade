@@ -11,6 +11,7 @@ import { Logo } from './components/Logo';
 import { ClearAllButton } from './components/ClearAllButton';
 import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
+import { ListsDrawer } from './components/ListsDrawer';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -161,6 +162,7 @@ function App() {
               pushed to the right (ml-auto) so the logo/title gets
               breathing room on the left. */}
           <div className="ml-auto flex items-center gap-2">
+            <ListsDrawer />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               <PriceModeToggle value={priceMode} onChange={setPriceMode} />
               <span className="w-px h-5 bg-space-700" aria-hidden />
