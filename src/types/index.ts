@@ -1,3 +1,12 @@
+export type CardType =
+  | 'Leader'
+  | 'Base'
+  | 'Unit'
+  | 'Event'
+  | 'Upgrade'
+  | 'Token Unit'
+  | 'Token Upgrade';
+
 export interface CardVariant {
   name: string;
   variant: string; // "Standard", "Hyperspace", "Hyperspace Foil", "Showcase", etc.
@@ -9,6 +18,15 @@ export interface CardVariant {
   set: string;
   setName: string;
   productId?: string;
+  // Enrichment fields populated by scripts/enrich-cards.ts from swuapi.com.
+  // All optional so legacy cached data (pre-enrichment) still validates.
+  // baseCardId is stable across variants of the same card — the primary
+  // key for wants lists (mode: 'any' and 'restricted').
+  baseCardId?: string;
+  displayName?: string;
+  cardType?: CardType;
+  aspects?: string[];
+  traits?: string[];
 }
 
 export type PriceMode = 'market' | 'low';
