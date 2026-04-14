@@ -119,23 +119,30 @@ function App() {
 
   return (
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
-      {/* Top bar — single row: logo | scope + pricing controls | actions */}
+      {/* Top bar — logo anchors the left. On mobile the controls
+          stack vertically to the right of the logo so we use the
+          horizontal space next to the wordmark instead of spilling
+          into new rows below. On md+ they flow horizontally. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <div className="flex items-center gap-x-8 gap-y-2 flex-wrap">
+        <div className="flex items-center gap-3 md:gap-6">
           <h1 className="flex items-center gap-2.5 select-none shrink-0">
             <Logo className="w-9 h-9 shrink-0" />
             <span className="text-sm font-bold text-gray-200 tracking-[0.12em] leading-none">
               <span className="uppercase">SWU</span><span className="text-gold uppercase">Trade</span><span className="text-[11px] text-gray-500 font-medium">.com</span>
             </span>
           </h1>
-          <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
-            <PriceModeToggle value={priceMode} onChange={setPriceMode} />
-            <span className="w-px h-5 bg-space-700" aria-hidden />
-            <PriceSlider value={percentage} onChange={setPercentage} />
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            {hasCards && <ShareButtons size="sm" />}
-            {hasCards && <ClearAllButton onConfirm={handleClear} />}
+          <div className="flex flex-col items-end gap-1.5 md:flex-row md:items-center md:flex-1 md:gap-2">
+            <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
+              <PriceModeToggle value={priceMode} onChange={setPriceMode} />
+              <span className="w-px h-5 bg-space-700" aria-hidden />
+              <PriceSlider value={percentage} onChange={setPercentage} />
+            </div>
+            {(hasCards) && (
+              <div className="flex items-center gap-2 md:ml-auto">
+                <ShareButtons size="sm" />
+                <ClearAllButton onConfirm={handleClear} />
+              </div>
+            )}
           </div>
         </div>
       </div>
