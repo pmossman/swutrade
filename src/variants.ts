@@ -1,4 +1,4 @@
-import type { CardVariant, CardGroup } from './types';
+import type { CardVariant, CardGroup, CardType } from './types';
 
 // Canonical display order for SWU print variants. Lower = earlier.
 // Any unknown variant sinks to the bottom of the list so it's visible
@@ -76,12 +76,20 @@ export function extractBaseName(name: string): string {
   return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
-// Leaders (and Base cards) in SWU are the only cards that get Showcase
-// variants printed, so the presence of any Showcase variant in a card's
-// variant list is a reliable signal that the base card is landscape-
-// oriented. Set-by-set leader counts vary, so number ranges aren't a
-// reliable proxy.
-export function isLeaderOrBaseGroup(variants: { name: string }[]): boolean {
+// Leader and Base cards are landscape-oriented. Prefer the explicit
+// cardType populated by enrichment from swuapi — reliable and precise.
+// Fall back to the legacy "has Showcase variant" heuristic for cards
+// that enrichment didn't match, since older assumptions held that only
+// Leaders/Bases got Showcase printings. That heuristic misfires for
+// Unit cards that later received Showcase variants (e.g., Darth Vader -
+// Unstoppable), so we only consult it when cardType is unavailable.
+export function isLeaderOrBaseGroup(
+  variants: Array<{ name: string; cardType?: CardType }>,
+): boolean {
+  const hasTyped = variants.some(v => v.cardType !== undefined);
+  if (hasTyped) {
+    return variants.some(v => v.cardType === 'Leader' || v.cardType === 'Base');
+  }
   return variants.some(v => extractVariantLabel(v.name) === 'Showcase');
 }
 

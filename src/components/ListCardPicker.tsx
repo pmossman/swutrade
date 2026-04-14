@@ -145,8 +145,8 @@ export function ListCardPicker({
           hiddenSets={filters.hiddenSets}
           // Tighter grids for the narrower drawer — one col less at each
           // breakpoint than the trade overlay.
-          portraitColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
-          landscapeColsClass="grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
+          portraitColsClass="grid-cols-4 sm:grid-cols-4 md:grid-cols-5"
+          landscapeColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
           renderTile={(card, ctx) => (
             <PickerTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
-import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { adjustPrice, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, variantBadgeColor } from '../variants';
 
 interface CardTileProps {
@@ -56,7 +56,6 @@ export function CardTile({
   const unitPrice = adjustPrice(getCardPrice(card, priceMode), percentage);
   const altUnitPrice = adjustPrice(getAltPrice(card, priceMode), percentage);
   const src = cardImageUrl(card.productId);
-  const tcgUrl = cardTcgPlayerUrl(card.productId);
 
   const marketRaw = getCardPrice(card, 'market');
   const lowRaw = getCardPrice(card, 'low');
@@ -84,17 +83,12 @@ export function CardTile({
   }, [card, onDecrement]);
 
   const handleImageClick = useCallback((e: React.MouseEvent) => {
-    // Clicking directly on the image still adds — the whole tile is the
-    // button — but we let the user reach TCGPlayer via a small icon that
-    // intercepts its own click.
+    // Clicking the image adds to trade — the whole tile is the button.
+    // TCGPlayer link lives on trade-row cards only; keeping search-tile
+    // art clean of overlay icons.
     e.stopPropagation();
     handleAdd();
   }, [handleAdd]);
-
-  const handleTcgClick = useCallback((e: React.MouseEvent) => {
-    // External link — don't add to trade on this click.
-    e.stopPropagation();
-  }, []);
 
   const handleKeyActivate = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -140,24 +134,6 @@ export function CardTile({
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-600 text-2xl">?</div>
-        )}
-
-        {/* TCGPlayer link — tiny, hover-revealed so it doesn't clutter
-            the card art. Only surface on the image that remains. */}
-        {tcgUrl && (
-          <a
-            href={tcgUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={handleTcgClick}
-            className="hover-reveal absolute bottom-1.5 right-1.5 w-6 h-6 rounded-full bg-space-900/80 hover:bg-space-900 text-gray-400 hover:text-gold flex items-center justify-center"
-            title="View on TCGPlayer"
-            aria-label="View on TCGPlayer"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-          </a>
         )}
       </div>
 

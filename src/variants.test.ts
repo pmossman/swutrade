@@ -47,17 +47,46 @@ describe('variantRank', () => {
 });
 
 describe('isLeaderOrBaseGroup', () => {
-  it('is true when any variant is Showcase', () => {
+  it('uses cardType: Leader when enrichment is available', () => {
+    expect(isLeaderOrBaseGroup([
+      { name: 'Foo (Standard)', cardType: 'Leader' },
+      { name: 'Foo (Hyperspace)', cardType: 'Leader' },
+    ])).toBe(true);
+  });
+
+  it('uses cardType: Base when enrichment is available', () => {
+    expect(isLeaderOrBaseGroup([
+      { name: 'Foo (Standard)', cardType: 'Base' },
+    ])).toBe(true);
+  });
+
+  it('returns false for Unit cards even when a Showcase variant exists', () => {
+    // Regression: legacy heuristic misflagged Darth Vader - Unstoppable
+    // (a Unit with a Showcase printing) as a leader/landscape card.
+    expect(isLeaderOrBaseGroup([
+      { name: 'Unstoppable (Standard)', cardType: 'Unit' },
+      { name: 'Unstoppable (Showcase)', cardType: 'Unit' },
+    ])).toBe(false);
+  });
+
+  it('falls back to Showcase heuristic when cardType is unavailable', () => {
     expect(isLeaderOrBaseGroup([
       { name: 'Foo (Standard)' },
       { name: 'Foo (Showcase)' },
     ])).toBe(true);
-  });
-
-  it('is false when no Showcase variant is present', () => {
     expect(isLeaderOrBaseGroup([
       { name: 'Foo (Standard)' },
       { name: 'Foo (Hyperspace)' },
+    ])).toBe(false);
+  });
+
+  it('prefers cardType over heuristic when mixed (first card typed)', () => {
+    // Even one typed variant activates the cardType path; the Showcase
+    // heuristic no longer gets a vote. This is the desired behavior —
+    // partial enrichment should still correctly classify the group.
+    expect(isLeaderOrBaseGroup([
+      { name: 'Foo (Standard)', cardType: 'Unit' },
+      { name: 'Foo (Showcase)' },
     ])).toBe(false);
   });
 });

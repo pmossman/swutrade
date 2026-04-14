@@ -27,8 +27,8 @@ interface CardResultsGridProps {
   landscapeColsClass?: string;
 }
 
-const DEFAULT_PORTRAIT_COLS = 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7';
-const DEFAULT_LANDSCAPE_COLS = 'grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5';
+const DEFAULT_PORTRAIT_COLS = 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8';
+const DEFAULT_LANDSCAPE_COLS = 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
 
 // Single padding contract used by every surface that embeds this component,
 // so sticky set-headers and tile grids always line up visually. Sticky
