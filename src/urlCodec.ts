@@ -1,4 +1,6 @@
 import type { TradeCard, CardVariant, PriceMode } from './types';
+import type { WantsItem, AvailableItem, VariantRestriction } from './persistence';
+import { CANONICAL_VARIANTS, type CanonicalVariant } from './variants';
 
 export interface TradeUrlState {
   yourCards: TradeCard[];
@@ -98,4 +100,107 @@ export function buildCardMap(cards: CardVariant[]): Map<string, CardVariant> {
     if (card.productId) map.set(card.productId, card);
   }
   return map;
+}
+
+// =====================================================================
+// List-sharing codec (Phase 1 → consumed in Phase 3)
+// =====================================================================
+//
+// URL grammar:
+//   w=<want>[,<want>...]    each want is `<encoded_familyId>.<qty>[.r<hex>][.p]`
+//   a=<avail>[,<avail>...]  each available is `<productId>.<qty>`
+//
+// For wants:
+//   - familyId is URL-encoded (handles "::" and slashes safely)
+//   - .r<hex> appears only when restriction.mode === 'restricted'; the
+//     hex is a bitmask over CANONICAL_VARIANTS (Standard=bit0 … Showcase=bit7)
+//   - .p appears only when isPriority is true
+//
+// Decoder caps qty at [1, 99] and silently drops malformed entries so
+// a partly-broken URL still loads what it can.
+// =====================================================================
+
+/** Convert a list of canonical variants into a bitmask over CANONICAL_VARIANTS. */
+export function variantsToMask(variants: readonly CanonicalVariant[]): number {
+  let mask = 0;
+  for (const v of variants) {
+    const idx = CANONICAL_VARIANTS.indexOf(v);
+    if (idx >= 0) mask |= 1 << idx;
+  }
+  return mask;
+}
+
+export function maskToVariants(mask: number): CanonicalVariant[] {
+  const out: CanonicalVariant[] = [];
+  for (let i = 0; i < CANONICAL_VARIANTS.length; i++) {
+    if (mask & (1 << i)) out.push(CANONICAL_VARIANTS[i]);
+  }
+  return out;
+}
+
+export type WantsUrlEntry = Pick<WantsItem, 'familyId' | 'qty' | 'restriction' | 'isPriority'>;
+export type AvailableUrlEntry = Pick<AvailableItem, 'productId' | 'qty'>;
+
+export function encodeWants(items: readonly WantsUrlEntry[]): string {
+  return items.map(w => {
+    const parts = [encodeURIComponent(w.familyId), String(clampQty(w.qty))];
+    if (w.restriction.mode === 'restricted' && w.restriction.variants.length > 0) {
+      parts.push('r' + variantsToMask(w.restriction.variants).toString(16));
+    }
+    if (w.isPriority) parts.push('p');
+    return parts.join('.');
+  }).join(',');
+}
+
+export function decodeWants(param: string): WantsUrlEntry[] {
+  if (!param) return [];
+  const out: WantsUrlEntry[] = [];
+  for (const entry of param.split(',').filter(Boolean)) {
+    const fields = entry.split('.');
+    if (fields.length < 2) continue;
+    const [encId, qtyStr, ...flags] = fields;
+    let familyId: string;
+    try {
+      familyId = decodeURIComponent(encId);
+    } catch {
+      continue;
+    }
+    if (!familyId) continue;
+    const qty = clampQty(parseInt(qtyStr, 10));
+    let restriction: VariantRestriction = { mode: 'any' };
+    let isPriority: true | undefined;
+    for (const flag of flags) {
+      if (flag === 'p') isPriority = true;
+      else if (flag.startsWith('r')) {
+        const mask = parseInt(flag.slice(1), 16);
+        if (Number.isFinite(mask)) {
+          const variants = maskToVariants(mask);
+          if (variants.length > 0) restriction = { mode: 'restricted', variants };
+        }
+      }
+    }
+    out.push({ familyId, qty, restriction, ...(isPriority ? { isPriority } : {}) });
+  }
+  return out;
+}
+
+export function encodeAvailable(items: readonly AvailableUrlEntry[]): string {
+  return items.map(a => `${a.productId}.${clampQty(a.qty)}`).join(',');
+}
+
+export function decodeAvailable(param: string): AvailableUrlEntry[] {
+  if (!param) return [];
+  const out: AvailableUrlEntry[] = [];
+  for (const entry of param.split(',').filter(Boolean)) {
+    const [productId, qtyStr] = entry.split('.');
+    if (!productId) continue;
+    out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
+  }
+  return out;
+}
+
+function clampQty(n: number): number {
+  if (!Number.isFinite(n) || n < 1) return 1;
+  if (n > 99) return 99;
+  return Math.floor(n);
 }

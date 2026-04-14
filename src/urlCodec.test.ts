@@ -5,6 +5,14 @@ import {
   parseTradeUrl,
   encodeCards,
   decodeCardRefs,
+  encodeWants,
+  decodeWants,
+  encodeAvailable,
+  decodeAvailable,
+  variantsToMask,
+  maskToVariants,
+  type WantsUrlEntry,
+  type AvailableUrlEntry,
 } from './urlCodec';
 
 function makeCard(productId: string, name = 'Test'): CardVariant {
@@ -86,5 +94,113 @@ describe('urlCodec', () => {
     expect(decodeCardRefs('1001.notanumber')).toEqual([
       { productId: '1001', qty: 1 },
     ]);
+  });
+});
+
+describe('variantsToMask / maskToVariants', () => {
+  it('round-trips a single variant', () => {
+    const m = variantsToMask(['Hyperspace']);
+    expect(maskToVariants(m)).toEqual(['Hyperspace']);
+  });
+
+  it('round-trips multiple variants in canonical order', () => {
+    const m = variantsToMask(['Showcase', 'Standard', 'Hyperspace']);
+    // Decoded order matches CANONICAL_VARIANTS regardless of input order.
+    expect(maskToVariants(m)).toEqual(['Standard', 'Hyperspace', 'Showcase']);
+  });
+
+  it('Standard maps to bit 0', () => {
+    expect(variantsToMask(['Standard'])).toBe(0b1);
+  });
+
+  it('Showcase maps to bit 7', () => {
+    expect(variantsToMask(['Showcase'])).toBe(0b10000000);
+  });
+});
+
+describe('encodeWants / decodeWants', () => {
+  const wants: WantsUrlEntry[] = [
+    {
+      familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin',
+      qty: 2,
+      restriction: { mode: 'any' },
+      isPriority: true,
+    },
+    {
+      familyId: 'a-lawless-time::darth-vader-unstoppable',
+      qty: 1,
+      restriction: { mode: 'restricted', variants: ['Hyperspace', 'Showcase'] },
+    },
+  ];
+
+  it('round-trips wants through encode → decode', () => {
+    const encoded = encodeWants(wants);
+    const decoded = decodeWants(encoded);
+    expect(decoded).toEqual(wants);
+  });
+
+  it('URL-encodes special chars in familyId', () => {
+    const encoded = encodeWants([wants[0]]);
+    // "::" is not a literal in the encoded form; gets percent-encoded
+    expect(encoded).not.toContain('::');
+    // The actual special char "%3A" comes from URL-encoding ":"
+    expect(encoded).toContain('%3A');
+  });
+
+  it('omits restriction segment for any-mode items', () => {
+    const encoded = encodeWants([{
+      familyId: 'set::card',
+      qty: 1,
+      restriction: { mode: 'any' },
+    }]);
+    // No ".r" segment should appear
+    expect(encoded.includes('.r')).toBe(false);
+  });
+
+  it('omits priority segment for non-priority items', () => {
+    const encoded = encodeWants([{
+      familyId: 'set::card',
+      qty: 1,
+      restriction: { mode: 'any' },
+    }]);
+    expect(encoded.endsWith('.p')).toBe(false);
+  });
+
+  it('returns empty array for blank input', () => {
+    expect(decodeWants('')).toEqual([]);
+  });
+
+  it('caps qty at 99 and floors at 1', () => {
+    const decoded = decodeWants('set%3A%3Acard.500,set%3A%3Aother.0');
+    expect(decoded[0].qty).toBe(99);
+    expect(decoded[1].qty).toBe(1);
+  });
+
+  it('skips entries with malformed familyId', () => {
+    // Single-segment entry has no qty
+    const decoded = decodeWants('set%3A%3Acard,real%3A%3Aone.2');
+    expect(decoded).toHaveLength(1);
+    expect(decoded[0].familyId).toBe('real::one');
+  });
+});
+
+describe('encodeAvailable / decodeAvailable', () => {
+  it('round-trips available through encode → decode', () => {
+    const items: AvailableUrlEntry[] = [
+      { productId: '540213', qty: 3 },
+      { productId: '617180', qty: 1 },
+    ];
+    const decoded = decodeAvailable(encodeAvailable(items));
+    expect(decoded).toEqual(items);
+  });
+
+  it('caps qty at 99 and floors at 1', () => {
+    const decoded = decodeAvailable('111.500,222.0');
+    expect(decoded[0].qty).toBe(99);
+    expect(decoded[1].qty).toBe(1);
+  });
+
+  it('returns empty array for blank input', () => {
+    expect(decodeAvailable('')).toEqual([]);
   });
 });
