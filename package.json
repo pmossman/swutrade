@@ -5,16 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "gen:fonts": "tsx scripts/gen-fonts.ts",
     "fetch-prices": "tsx scripts/fetch-prices.ts",
+    "fetch-prices:force": "FETCH_PRICES=1 tsx scripts/fetch-prices.ts",
     "build": "tsx scripts/fetch-prices.ts && tsc -b && vite build",
+    "build:fresh": "FETCH_PRICES=1 tsx scripts/fetch-prices.ts && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fontsource/inter": "^5.2.8",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.2.2",
-    "html-to-image": "^1.11.13",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tailwindcss": "^4.2.2"

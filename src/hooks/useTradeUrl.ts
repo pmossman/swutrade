@@ -34,12 +34,23 @@ function buildSearch(state: TradeUrlState): string {
   const t = encodeCards(state.theirCards);
   if (y) params.set('y', y);
   if (t) params.set('t', t);
-  if (state.percentage !== 80) params.set('pct', String(state.percentage));
-  if (state.priceMode !== 'market') params.set('pm', 'l');
+  // When there's a trade, always encode pm/pct so share links carry the
+  // sharer's intent rather than picking up the receiver's persisted prefs.
+  // When there's no trade, omit them so the bare URL stays clean and
+  // localStorage preferences remain authoritative.
+  const hasTrade = Boolean(y || t);
+  if (hasTrade || state.percentage !== 80) params.set('pct', String(state.percentage));
+  if (hasTrade || state.priceMode !== 'market') {
+    params.set('pm', state.priceMode === 'low' ? 'l' : 'm');
+  }
   return params.toString();
 }
 
-function parseUrl(): { pending: PendingCards; percentage: number; priceMode: PriceMode } | null {
+function parseUrl(): {
+  pending: PendingCards;
+  percentage: number | null;
+  priceMode: PriceMode | null;
+} | null {
   const params = new URLSearchParams(window.location.search);
   const y = params.get('y');
   const t = params.get('t');
@@ -53,8 +64,9 @@ function parseUrl(): { pending: PendingCards; percentage: number; priceMode: Pri
       yours: decodeCardRefs(y || ''),
       theirs: decodeCardRefs(t || ''),
     },
-    percentage: pct ? parseInt(pct, 10) || 80 : 80,
-    priceMode: pm === 'l' ? 'low' : 'market',
+    // null means "URL didn't specify — leave current (persisted) value alone"
+    percentage: pct ? parseInt(pct, 10) || 80 : null,
+    priceMode: pm === 'l' ? 'low' : pm === 'm' ? 'market' : null,
   };
 }
 
@@ -87,10 +99,15 @@ export function useTradeUrl(
   useEffect(() => {
     const parsed = parseUrl();
     if (parsed) {
-      pendingRef.current = parsed.pending;
+      // Only track pending if there's actually something to resolve.
+      // Otherwise the later-resolve effect bails early on empty allCards
+      // and pendingRef stays set forever, which wedges URL sync.
+      const hasPending = parsed.pending.yours.length > 0 || parsed.pending.theirs.length > 0;
+      if (hasPending) pendingRef.current = parsed.pending;
       suppressPushRef.current = true;
-      setPercentage(parsed.percentage);
-      setPriceMode(parsed.priceMode);
+      // null means URL didn't specify — keep the persisted value.
+      if (parsed.percentage !== null) setPercentage(parsed.percentage);
+      if (parsed.priceMode !== null) setPriceMode(parsed.priceMode);
     }
     initializedRef.current = true;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -131,6 +148,18 @@ export function useTradeUrl(
     const newUrl = search ? `?${search}` : window.location.pathname;
     const currentSearch = window.location.search.replace(/^\?/, '');
 
+    // While pending card references are still waiting on price data to
+    // load, don't rewrite the URL to drop them. Otherwise the mount →
+    // first-render → state-sync cycle wipes the y/t params before the
+    // resolver gets a chance, and a refresh mid-window loses the trade.
+    if (pendingRef.current) {
+      const currentParams = new URLSearchParams(currentSearch);
+      const newParams = new URLSearchParams(search);
+      const wouldDropY = currentParams.get('y') && !newParams.get('y');
+      const wouldDropT = currentParams.get('t') && !newParams.get('t');
+      if (wouldDropY || wouldDropT) return;
+    }
+
     if (search !== currentSearch) {
       if (suppressPushRef.current) {
         suppressPushRef.current = false;
@@ -157,13 +186,14 @@ export function useTradeUrl(
     if (!parsed) {
       setYourCards([]);
       setTheirCards([]);
-      setPercentage(80);
-      setPriceMode('market');
+      // Don't reset pm/pct on popstate to a bare URL — the user's persisted
+      // prefs should stand. The setter here is the raw setter so it won't
+      // overwrite localStorage anyway.
       return;
     }
 
-    setPercentage(parsed.percentage);
-    setPriceMode(parsed.priceMode);
+    if (parsed.percentage !== null) setPercentage(parsed.percentage);
+    if (parsed.priceMode !== null) setPriceMode(parsed.priceMode);
     setYourCards(resolveCards(parsed.pending.yours, cardMap));
     setTheirCards(resolveCards(parsed.pending.theirs, cardMap));
   }, [allCards, setYourCards, setTheirCards, setPercentage, setPriceMode]);

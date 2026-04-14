@@ -168,11 +168,23 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
 }
 
 async function main() {
-  const { mkdirSync, writeFileSync, readFileSync } = await import('fs');
+  const { mkdirSync, writeFileSync, readFileSync, existsSync } = await import('fs');
   const { join } = await import('path');
 
   const outDir = join(import.meta.dirname, '..', 'public', 'data');
   mkdirSync(outDir, { recursive: true });
+
+  // Skip the fetch when we already have data, unless explicitly forced.
+  // Vercel build cache restores `public/data/` between deploys, so a normal
+  // build skips this step entirely (~5min → seconds). Trigger a refresh with
+  // FETCH_PRICES=1 (e.g. via cron) when prices need updating.
+  const force = process.env.FETCH_PRICES === '1' || process.argv.includes('--force');
+  const manifestPath = join(outDir, 'manifest.json');
+  if (!force && existsSync(manifestPath) && existsSync(join(outDir, 'product-index.json'))) {
+    const existing = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+    console.log(`Skipping price fetch — reusing data from ${existing.timestamp} (set FETCH_PRICES=1 to refresh).`);
+    return;
+  }
 
   const timestamp = new Date().toISOString();
   console.log(`Fetching prices at ${timestamp}...`);

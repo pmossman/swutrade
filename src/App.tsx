@@ -2,13 +2,17 @@ import { useState, useCallback, useEffect, useMemo } from 'react';
 import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
 import { PriceModeToggle } from './components/PriceModeToggle';
-import { SetFilter } from './components/SetFilter';
 import { PriceSlider } from './components/PriceSlider';
 import { TradeSide } from './components/TradeSide';
 import { TradeBalance } from './components/TradeBalance';
 import { TradeSummary } from './components/TradeSummary';
+import { ShareButtons } from './components/ShareButtons';
+import { Logo } from './components/Logo';
+import { ClearAllButton } from './components/ClearAllButton';
 import { usePriceData } from './hooks/usePriceData';
+import { useSearchFilters } from './hooks/useVariantFilter';
 import { useTradeUrl } from './hooks/useTradeUrl';
+import { usePersistedState } from './hooks/usePersistedState';
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -21,14 +25,30 @@ function timeAgo(iso: string): string {
 }
 
 function App() {
-  const [percentage, setPercentage] = useState(80);
-  const [priceMode, setPriceMode] = useState<PriceMode>('market');
-  const [setFilter, setSetFilter] = useState<string | null>(null);
+  // Persist the user's preferred pricing knobs across sessions. The raw
+  // setters bypass localStorage so URL-driven updates (share links,
+  // back/forward) don't clobber the saved preference.
+  const [percentage, setPercentage, setPercentageRaw] = usePersistedState<number>(
+    'swu.pct',
+    80,
+    raw => {
+      const n = parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 1 && n <= 100 ? n : null;
+    },
+  );
+  const [priceMode, setPriceMode, setPriceModeRaw] = usePersistedState<PriceMode>(
+    'swu.pm',
+    'market',
+    raw => (raw === 'market' || raw === 'low' ? raw : null),
+  );
   const [yourCards, setYourCards] = useState<TradeCard[]>([]);
   const [theirCards, setTheirCards] = useState<TradeCard[]>([]);
   const [showSummary, setShowSummary] = useState(false);
 
   const priceData = usePriceData();
+  // Single shared filter-state instance so both trade sides see the
+  // same scope toggle + variant/set hide preferences in real time.
+  const filters = useSearchFilters();
 
   // Load all sets on mount (static files are fast from CDN)
   useEffect(() => {
@@ -42,8 +62,8 @@ function App() {
     allLoadedCards,
     setYourCards,
     setTheirCards,
-    setPercentage,
-    setPriceMode,
+    setPercentageRaw,
+    setPriceModeRaw,
   );
 
   // --- Card management helpers (qty-aware) ---
@@ -86,14 +106,6 @@ function App() {
   const handleRemoveYour = useMemo(() => removeCard(setYourCards), [removeCard]);
   const handleRemoveTheir = useMemo(() => removeCard(setTheirCards), [removeCard]);
 
-  const handleSetChange = useCallback((slug: string | null) => {
-    setSetFilter(slug);
-    if (slug) {
-      const set = SETS.find(s => s.slug === slug);
-      if (set) priceData.loadSet(set);
-    }
-  }, [priceData]);
-
   const handleLoadAllSets = useCallback(() => {
     priceData.loadAllSets();
   }, [priceData]);
@@ -107,32 +119,24 @@ function App() {
 
   return (
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
-      {/* Top bar */}
+      {/* Top bar — single row: logo | scope + pricing controls | actions */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <div className="flex items-center justify-between mb-2.5">
-          <h1 className="swu-title text-xl">
-            SWU TRADE
-          </h1>
-          {hasCards && (
-            <button
-              onClick={handleClear}
-              className="text-[11px] text-gray-500 hover:text-red-400 transition-colors px-2 py-1 rounded"
-            >
-              Clear All
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <SetFilter value={setFilter} onChange={handleSetChange} />
-          <PriceModeToggle value={priceMode} onChange={setPriceMode} />
-          <PriceSlider value={percentage} onChange={setPercentage} />
-          {priceData.isAnyLoading ? (
-            <span className="text-[11px] text-gray-500 animate-pulse">Loading...</span>
-          ) : priceData.priceTimestamp && (
-            <span className="text-[10px] text-gray-600" title={`Prices updated ${priceData.priceTimestamp}`}>
-              Prices: {timeAgo(priceData.priceTimestamp)}
+        <div className="flex items-center gap-x-8 gap-y-2 flex-wrap">
+          <h1 className="flex items-center gap-2.5 select-none shrink-0">
+            <Logo className="w-9 h-9 shrink-0" />
+            <span className="text-sm font-bold text-gray-200 tracking-[0.12em] leading-none">
+              <span className="uppercase">SWU</span><span className="text-gold uppercase">Trade</span><span className="text-[11px] text-gray-500 font-medium">.com</span>
             </span>
-          )}
+          </h1>
+          <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
+            <PriceModeToggle value={priceMode} onChange={setPriceMode} />
+            <span className="w-px h-5 bg-space-700" aria-hidden />
+            <PriceSlider value={percentage} onChange={setPercentage} />
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            {hasCards && <ShareButtons size="sm" />}
+            {hasCards && <ClearAllButton onConfirm={handleClear} />}
+          </div>
         </div>
       </div>
 
@@ -160,7 +164,7 @@ function App() {
       <div className="flex-1 min-h-0 px-3 pb-2 max-w-5xl mx-auto w-full">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 h-full">
           <TradeSide
-            label="You"
+            label="Offering"
             cards={yourCards}
             percentage={percentage}
             priceMode={priceMode}
@@ -170,13 +174,13 @@ function App() {
             accentColor="emerald"
             borderColor="border-emerald-500/20"
             setCards={priceData.cards}
-            setFilter={setFilter}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
+            filters={filters}
           />
           <TradeSide
-            label="Them"
+            label="Receiving"
             cards={theirCards}
             percentage={percentage}
             priceMode={priceMode}
@@ -186,10 +190,10 @@ function App() {
             accentColor="blue"
             borderColor="border-blue-500/20"
             setCards={priceData.cards}
-            setFilter={setFilter}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
+            filters={filters}
           />
         </div>
       </div>
@@ -226,35 +230,50 @@ function App() {
           percentage={percentage}
           priceMode={priceMode}
           onPriceModeChange={setPriceMode}
+          onPercentageChange={setPercentage}
           onClose={() => setShowSummary(false)}
         />
       )}
 
       {/* Footer */}
       <div className="shrink-0 pb-2 text-center text-[10px] text-gray-600">
-        <div>
-          Created by Parker Mossman
-          {' · '}
-          <a
-            href="https://discord.com/users/pmoss"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-500 hover:text-gold transition-colors underline"
-          >
-            @pmoss
-          </a>
-          {' on Discord'}
-        </div>
-        <div className="mt-0.5 hidden md:block">
-          Prices from{' '}
-          <a
-            href="https://www.tcgplayer.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-gray-500 hover:text-gold transition-colors underline"
-          >
-            TCGPlayer
-          </a>
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <span>
+            Created by{' '}
+            <a
+              href="https://discord.com/users/pmoss"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-500 hover:text-gold transition-colors underline"
+            >
+              @pmoss
+            </a>
+          </span>
+          <span className="text-space-600" aria-hidden>·</span>
+          <span>
+            Prices from{' '}
+            <a
+              href="https://www.tcgplayer.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-500 hover:text-gold transition-colors underline"
+            >
+              TCGPlayer
+            </a>
+          </span>
+          {priceData.isAnyLoading ? (
+            <>
+              <span className="text-space-600" aria-hidden>·</span>
+              <span className="text-gray-500 animate-pulse">Loading prices…</span>
+            </>
+          ) : priceData.priceTimestamp && (
+            <>
+              <span className="text-space-600" aria-hidden>·</span>
+              <span title={`Prices updated ${priceData.priceTimestamp}`}>
+                Updated {timeAgo(priceData.priceTimestamp)}
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

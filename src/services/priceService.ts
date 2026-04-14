@@ -1,4 +1,4 @@
-import type { CardVariant, CardGroup, SetInfo, PriceMode } from '../types';
+import type { CardVariant, CardGroup, SetInfo, PriceMode, TradeCard } from '../types';
 
 // Static data is served from /data/ (built at deploy time)
 const DATA_BASE = '/data';
@@ -40,6 +40,15 @@ export function extractVariantLabel(name: string): string {
   return match[1];
 }
 
+// Leaders (and Base cards) in SWU are the only cards that get Showcase
+// variants printed, so the presence of any Showcase variant in a card's
+// variant list is a reliable signal that the base card is landscape-
+// oriented. Set-by-set leader counts vary, so number ranges aren't a
+// reliable proxy.
+export function isLeaderOrBaseGroup(variants: { name: string }[]): boolean {
+  return variants.some(v => extractVariantLabel(v.name) === 'Showcase');
+}
+
 export function extractBaseName(name: string): string {
   return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
@@ -71,6 +80,19 @@ export function getCardPrice(card: CardVariant, mode: PriceMode): number | null 
 /** Get the alternate (non-active) price for a card */
 export function getAltPrice(card: CardVariant, mode: PriceMode): number | null {
   return mode === 'low' ? card.marketPrice : card.lowPrice;
+}
+
+/**
+ * Count how many cards on a side have no price for the active mode. Used to
+ * flag trades whose totals may be misleading because some line items are
+ * silently treated as $0.
+ */
+export function countMissingPrices(cards: TradeCard[], mode: PriceMode): number {
+  let n = 0;
+  for (const tc of cards) {
+    if (getCardPrice(tc.card, mode) === null) n += tc.qty;
+  }
+  return n;
 }
 
 export function cardImageUrl(productId: string | undefined, size: 'sm' | 'md' | 'lg' = 'sm'): string | null {

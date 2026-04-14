@@ -7,6 +7,26 @@
   --color-space-600: #242a3d;
   --color-gold: #F5A623;
   --color-gold-bright: #FFD700;
+  --color-crimson: #e11d2a;
+  --color-crimson-deep: #4a0a10;
+  --color-crimson-light: #fca5a5;
+
+  --shadow-glow-gold:
+    0 0 0 1px rgba(245, 166, 35, 0.22),
+    0 0 28px -6px rgba(245, 166, 35, 0.35);
+  --shadow-glow-emerald:
+    0 0 0 1px rgba(52, 211, 153, 0.22),
+    0 0 28px -6px rgba(52, 211, 153, 0.35);
+  --shadow-glow-amber:
+    0 0 0 1px rgba(245, 158, 11, 0.25),
+    0 0 28px -6px rgba(245, 158, 11, 0.4);
+  --shadow-glow-crimson:
+    0 0 0 1px rgba(225, 29, 42, 0.35),
+    0 0 30px -6px rgba(225, 29, 42, 0.5);
+  --shadow-frame-gold:
+    0 0 0 1px rgba(245, 166, 35, 0.35),
+    0 0 60px -10px rgba(245, 166, 35, 0.35),
+    0 20px 50px -10px rgba(0, 0, 0, 0.6);
 }
 
 html {
@@ -37,16 +57,26 @@ body::before {
     radial-gradient(1px 1px at 85% 75%, rgba(255, 255, 255, 0.25), transparent);
 }
 
-/* Star Wars crawl-style title */
+/* Wordmark — uses the app's own gold tokens (FFD700 → F5A623) so it
+   sits inside the established palette instead of introducing a colder
+   SW-title yellow. Tracking opens up so Pathway Extreme Black breathes. */
 .swu-title {
   font-family: 'Pathway Extreme', sans-serif;
   font-weight: 900;
-  letter-spacing: 0.08em;
-  background: linear-gradient(180deg, #FFE81F 0%, #FFA500 100%);
+  letter-spacing: 0.14em;
+  background: linear-gradient(180deg, #FFD700 0%, #FFD700 50%, #F5A623 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.4)) drop-shadow(0 0 20px rgba(255, 165, 0, 0.15));
+  filter: drop-shadow(0 0 6px rgba(255, 215, 0, 0.3)) drop-shadow(0 0 18px rgba(245, 166, 35, 0.15));
+}
+
+/* Aurebesh-ish uppercase tracking for secondary display text */
+.swu-display {
+  font-family: 'Pathway Extreme', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 /* Overlay animations */
@@ -56,6 +86,59 @@ body::before {
 }
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
+}
+
+@keyframes pulse-glow-crimson {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(225, 29, 42, 0.35), 0 0 30px -6px rgba(225, 29, 42, 0.5); }
+  50%      { box-shadow: 0 0 0 1px rgba(225, 29, 42, 0.5),  0 0 40px -4px rgba(225, 29, 42, 0.7); }
+}
+.animate-pulse-crimson {
+  animation: pulse-glow-crimson 2.4s ease-in-out infinite;
+}
+
+/* Show only on touch devices (e.g. mobile long-press hints) */
+.touch-only { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .touch-only { display: block; }
+}
+
+/* Show only on devices with a fine pointer (desktop mouse / trackpad) —
+   used for keyboard-shortcut hint strips that don't apply on mobile. */
+.kbd-hint { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .kbd-hint { display: flex; }
+}
+
+/* Hover-reveal: secondary actions that sit quietly until the user
+   expresses interest in the row. On touch devices (no hover) we always
+   show them so mobile users can reach them without a modifier. */
+.hover-reveal {
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.group:hover .hover-reveal,
+.group:focus-within .hover-reveal {
+  opacity: 1;
+}
+@media (hover: none) and (pointer: coarse) {
+  .hover-reveal { opacity: 0.7; }
+}
+
+/* Tile add feedback — brief pulse when a card is added to the trade */
+@keyframes tile-add-pulse {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+.animate-tile-add {
+  animation: tile-add-pulse 0.18s ease-out;
+}
+
+/* Image modal radial vignette — a deep-space feel so the image pops */
+.modal-vignette {
+  background:
+    radial-gradient(ellipse at center, rgba(10, 14, 26, 0.7) 0%, rgba(0, 0, 0, 0.96) 85%),
+    #000;
 }
 
 /* Custom scrollbar */

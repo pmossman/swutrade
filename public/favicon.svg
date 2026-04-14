@@ -1,1 +1,35 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">⚔️</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Two trading cards leaning toward each other, meeting at a gold
+       balance point. Emerald (left) and blue (right) mirror the side
+       accent colors used throughout the app. -->
+  <defs>
+    <linearGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD700" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Artwork shifted up by 8 so the visual center matches the viewBox
+       center, which makes the mark sit nicely next to inline wordmarks. -->
+  <g transform="translate(0 -8)">
+    <circle cx="50" cy="55" r="18" fill="url(#glow)" opacity="0.55"/>
+
+    <g transform="translate(38 58) rotate(-18)" filter="url(#shadow)">
+      <rect x="-17" y="-25" width="34" height="50" rx="4"
+            fill="#0f3f2f" stroke="#34d399" stroke-width="3"/>
+      <rect x="-12" y="-20" width="24" height="26" rx="2" fill="#065f46" opacity="0.7"/>
+    </g>
+
+    <g transform="translate(62 58) rotate(18)" filter="url(#shadow)">
+      <rect x="-17" y="-25" width="34" height="50" rx="4"
+            fill="#0f2a52" stroke="#60a5fa" stroke-width="3"/>
+      <rect x="-12" y="-20" width="24" height="26" rx="2" fill="#1e3a8a" opacity="0.7"/>
+    </g>
+
+    <circle cx="50" cy="48" r="5" fill="#FFD700"/>
+    <circle cx="50" cy="48" r="7" fill="none" stroke="#FFA500" stroke-width="1" opacity="0.7"/>
+  </g>
+</svg>

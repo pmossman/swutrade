@@ -1,3 +1,5 @@
+import { Popover } from './Popover';
+
 interface PriceSliderProps {
   value: number;
   onChange: (value: number) => void;
@@ -5,23 +7,54 @@ interface PriceSliderProps {
 
 const PRESETS = [50, 60, 70, 80, 90, 100] as const;
 
+/**
+ * Collapsed-by-default TCG % picker. Shows the current value as a small
+ * pill; tap to expand a popover with the preset buttons. The big preset
+ * strip was visually noisy for a setting most users only adjust once.
+ */
 export function PriceSlider({ value, onChange }: PriceSliderProps) {
   return (
-    <div className="flex items-center gap-1">
-      <span className="text-[11px] text-gray-500 mr-0.5">% TCG</span>
-      {PRESETS.map(p => (
+    <Popover
+      align="right"
+      panelClassName="p-1.5"
+      trigger={({ open, toggle }) => (
         <button
-          key={p}
-          onClick={() => onChange(p)}
-          className={`px-1.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-            value === p
-              ? 'bg-gold/20 text-gold border border-gold/40'
-              : 'bg-space-700 text-gray-400 border border-space-600 hover:border-gray-500'
+          type="button"
+          onClick={e => { e.stopPropagation(); toggle(); }}
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition-colors ${
+            open
+              ? 'bg-gold/25 text-gold-bright border border-gold/50'
+              : 'bg-gold/15 text-gold border border-gold/30 hover:bg-gold/20'
           }`}
+          aria-label={`TCG percentage: ${value}%`}
+          aria-expanded={open}
         >
-          {p}%
+          <span className="text-[10px] text-gold/70 font-normal">TCG</span>
+          <span className="tabular-nums">{value}%</span>
+          <svg className="w-3 h-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
         </button>
-      ))}
-    </div>
+      )}
+    >
+      {({ close }) => (
+        <div className="flex items-center gap-1">
+          {PRESETS.map(p => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => { onChange(p); close(); }}
+              className={`px-2 py-1 rounded-md text-xs font-semibold transition-colors ${
+                value === p
+                  ? 'bg-gold/20 text-gold border border-gold/40'
+                  : 'bg-space-700 text-gray-400 border border-space-600 hover:border-gray-500'
+              }`}
+            >
+              {p}%
+            </button>
+          ))}
+        </div>
+      )}
+    </Popover>
   );
 }

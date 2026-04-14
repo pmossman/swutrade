@@ -1,9 +1,12 @@
-import { useState, useRef, useCallback } from 'react';
-import { toPng } from 'html-to-image';
+import { useState, useEffect } from 'react';
 import type { TradeCard, PriceMode } from '../types';
 import { PriceModeToggle } from './PriceModeToggle';
+import { PriceSlider } from './PriceSlider';
+import { ShareButtons } from './ShareButtons';
 import { tradeCardKey } from '../types';
-import { adjustPrice, extractVariantLabel, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices, extractVariantLabel, extractBaseName } from '../services/priceService';
+import { variantBadgeColor, variantDisplayLabel } from '../utils/variantBadge';
+import { computeBalance, balanceChrome } from '../utils/forceBalance';
 
 interface TradeSummaryProps {
   yourCards: TradeCard[];
@@ -11,6 +14,7 @@ interface TradeSummaryProps {
   percentage: number;
   priceMode: PriceMode;
   onPriceModeChange: (mode: PriceMode) => void;
+  onPercentageChange: (value: number) => void;
   onClose: () => void;
 }
 
@@ -26,74 +30,118 @@ function calcTotal(cards: TradeCard[], percentage: number, priceMode: PriceMode)
   }, 0);
 }
 
-function MiniThumb({ productId, name }: { productId?: string; name: string }) {
+function SummaryTile({ tc, percentage, priceMode, accentColor }: {
+  tc: TradeCard;
+  percentage: number;
+  priceMode: PriceMode;
+  accentColor: 'emerald' | 'blue';
+}) {
   const [errored, setErrored] = useState(false);
-  const src = cardImageUrl(productId, 'md');
+  const unitPrice = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
+  const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
+  const missingPrice = unitPrice === null;
+  const src = cardImageUrl(tc.card.productId, 'md');
+  const qtyBg = accentColor === 'emerald'
+    ? 'bg-black/85 text-white ring-1 ring-emerald-400/70'
+    : 'bg-black/85 text-white ring-1 ring-blue-400/70';
 
-  if (!src || errored) {
-    return <div className="w-6 h-8 rounded-sm bg-space-600 shrink-0" />;
-  }
-
+  // All tiles use portrait 5:7 aspect for grid uniformity. Leader/base
+  // cards (landscape in real life) get center-cropped rather than
+  // breaking the grid rhythm — simpler and more predictable than
+  // mixing orientations in a single grid.
   return (
-    <img
-      src={src}
-      alt={name}
-      loading="lazy"
-      onError={() => setErrored(true)}
-      className="w-6 h-8 rounded-sm object-cover shrink-0 bg-space-600"
-    />
+    <div
+      className={`group relative flex flex-col bg-space-800/60 rounded-md overflow-hidden border ${missingPrice ? 'border-red-500/60' : 'border-space-700'}`}
+      title={`${tc.card.name}${tc.qty > 1 ? ` × ${tc.qty}` : ''}`}
+    >
+      <div className="relative w-full aspect-[5/7] bg-space-900 overflow-hidden">
+        {src && !errored ? (
+          <img
+            src={src}
+            alt={tc.card.name}
+            loading="lazy"
+            onError={() => setErrored(true)}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-600">?</div>
+        )}
+        {tc.qty > 1 && (
+          <span className={`absolute top-1 right-1 min-w-[22px] h-[18px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold tabular-nums shadow-lg ${qtyBg}`}>
+            ×{tc.qty}
+          </span>
+        )}
+        {missingPrice && (
+          <span className="absolute top-1 left-1 w-5 h-5 rounded-full bg-red-900/90 text-red-200 flex items-center justify-center shadow-lg" title="No price">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </span>
+        )}
+      </div>
+      <div className="px-1.5 py-1 leading-tight">
+        <div className="text-[10px] text-gray-300 truncate">{extractBaseName(tc.card.name)}</div>
+        {(() => {
+          const variant = extractVariantLabel(tc.card.name);
+          const label = variantDisplayLabel(variant);
+          if (!label) return null;
+          return (
+            <span className={`inline-block max-w-full truncate align-middle text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
+              {label}
+            </span>
+          );
+        })()}
+        <div className={`text-[11px] font-bold tabular-nums ${missingPrice ? 'text-red-400' : 'text-gold'}`}>
+          {formatPrice(lineTotal)}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function SideList({ cards, percentage, priceMode, label, accentColor }: {
+function SidePanel({ cards, percentage, priceMode, label, accentColor }: {
   cards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
   label: string;
-  accentColor: string;
+  accentColor: 'emerald' | 'blue';
 }) {
   const total = calcTotal(cards, percentage, priceMode);
-  const labelColor = accentColor === 'emerald' ? 'text-emerald-400' : 'text-blue-400';
-  const borderColor = accentColor === 'emerald' ? 'border-emerald-500/30' : 'border-blue-500/30';
+  const labelColor = accentColor === 'emerald' ? 'text-emerald-300' : 'text-blue-300';
+  const borderColor = accentColor === 'emerald' ? 'border-emerald-500/20' : 'border-blue-500/20';
+  const saberGradient = accentColor === 'emerald'
+    ? 'bg-gradient-to-b from-emerald-300 via-emerald-500 to-emerald-700 shadow-[0_0_10px_rgba(52,211,153,0.55)]'
+    : 'bg-gradient-to-b from-blue-300 via-blue-500 to-blue-700 shadow-[0_0_10px_rgba(96,165,250,0.55)]';
+
+  // Grid of card tiles. Column count adapts to card count so small
+  // trades don't look tiny and large trades stay one-screen.
+  const gridCols = cards.length <= 6
+    ? 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4'
+    : cards.length <= 12
+      ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5'
+      : 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6';
 
   return (
-    <div>
-      <div className={`flex items-center justify-between pb-1.5 mb-2 border-b ${borderColor}`}>
-        <span className={`text-xs font-semibold uppercase tracking-wide ${labelColor}`}>{label}</span>
-        <span className={`text-sm font-bold tabular-nums ${labelColor}`}>{formatPrice(total)}</span>
+    <div className={`relative bg-space-800/80 rounded-xl border ${borderColor} overflow-hidden`}>
+      <div className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${saberGradient}`} aria-hidden />
+      <div className="flex items-center justify-between pl-5 pr-4 py-2.5 border-b border-space-700">
+        <span className={`swu-display text-xs ${labelColor}`}>{label}</span>
+        <span className="text-base font-bold tabular-nums text-gray-100">{formatPrice(total)}</span>
       </div>
       {cards.length === 0 ? (
-        <div className="text-gray-600 text-xs py-2">No cards</div>
+        <div className="px-5 py-6 text-gray-600 text-sm text-center">No cards</div>
       ) : (
-        <div className="space-y-1">
+        <div className={`grid ${gridCols} gap-2 p-3`}>
           {cards.map(tc => {
             const key = tradeCardKey(tc.card);
-            const unitPrice = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
-            const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
-            const altUnit = adjustPrice(getAltPrice(tc.card, priceMode), percentage);
-            const variant = extractVariantLabel(tc.card.name);
             return (
-              <div key={key} className="flex items-center gap-1.5">
-                <MiniThumb productId={tc.card.productId} name={tc.card.name} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[11px] text-gray-200 truncate leading-tight">{tc.card.name}</div>
-                  <div className="text-[9px] text-gray-500 leading-tight">
-                    {variant} &middot;{' '}
-                    <span className="text-gray-400">{priceMode === 'market' ? 'Mkt' : 'Low'}</span> {formatPrice(unitPrice)} ea
-                    {altUnit !== null && (
-                      <span className="text-gray-600 ml-1">
-                        <span>{priceMode === 'market' ? 'Low' : 'Mkt'}</span> {formatPrice(altUnit)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {tc.qty > 1 && (
-                  <span className="text-[10px] text-gray-400 tabular-nums shrink-0">x{tc.qty}</span>
-                )}
-                <span className="text-[11px] font-semibold text-gold tabular-nums shrink-0 w-12 text-right">
-                  {formatPrice(lineTotal)}
-                </span>
-              </div>
+              <SummaryTile
+                key={key}
+                tc={tc}
+                percentage={percentage}
+                priceMode={priceMode}
+                accentColor={accentColor}
+              />
             );
           })}
         </div>
@@ -102,160 +150,109 @@ function SideList({ cards, percentage, priceMode, label, accentColor }: {
   );
 }
 
-export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onPriceModeChange, onClose }: TradeSummaryProps) {
+export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onPriceModeChange, onPercentageChange, onClose }: TradeSummaryProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const yourTotal = calcTotal(yourCards, percentage, priceMode);
   const theirTotal = calcTotal(theirCards, percentage, priceMode);
-  const diff = yourTotal - theirTotal;
-  const absDiff = Math.abs(diff);
-  const isEven = absDiff < 0.01;
-  const [exporting, setExporting] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
-  const captureRef = useRef<HTMLDivElement>(null);
+  const isEmpty = yourCards.length === 0 && theirCards.length === 0;
+  const balance = computeBalance(yourTotal, theirTotal, isEmpty);
+  const chrome = balanceChrome(balance.tone);
+  const missingCount = countMissingPrices(yourCards, priceMode) + countMissingPrices(theirCards, priceMode);
 
-  let message: string;
-  let balanceColor: string;
-
-  if (isEven) {
-    message = 'Trade is even!';
-    balanceColor = 'text-emerald-400';
-  } else if (diff > 0) {
-    message = `They owe you ${formatPrice(absDiff)}`;
-    balanceColor = 'text-emerald-400';
-  } else {
-    message = `You owe them ${formatPrice(absDiff)}`;
-    balanceColor = 'text-amber-400';
+  // Thematic action line, matching the pattern in the bottom balance bar.
+  let actionLine: React.ReactNode = null;
+  if (balance.tier !== 'balanced' && balance.absDiff >= 0.01) {
+    const amount = `$${balance.absDiff.toFixed(2)}`;
+    const verb = balance.favored === 'them' ? 'Ask for' : 'Offer';
+    actionLine = (
+      <>
+        {verb}{' '}
+        <span className={`font-bold tabular-nums ${chrome.headline}`}>{amount}</span>
+        {' '}more to restore balance
+      </>
+    );
   }
-
-  const handleExport = useCallback(async () => {
-    if (!captureRef.current || exporting) return;
-    setExporting(true);
-
-    try {
-      // html-to-image needs images loaded; run twice for reliability
-      const dataUrl = await toPng(captureRef.current, {
-        backgroundColor: '#0a0e1a',
-        pixelRatio: 2,
-      });
-      // Re-render for any images that loaded late
-      const finalUrl = await toPng(captureRef.current, {
-        backgroundColor: '#0a0e1a',
-        pixelRatio: 2,
-      });
-
-      const blob = await (await fetch(finalUrl)).blob();
-      const file = new File([blob], 'swu-trade.png', { type: 'image/png' });
-
-      // Try Web Share API (works on mobile for sharing to Discord etc.)
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: 'SWU Trade',
-        });
-      } else {
-        // Fallback: download the image
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = 'swu-trade.png';
-        a.click();
-      }
-    } catch (err) {
-      // User cancelled share or something went wrong — ignore
-      console.warn('Export failed:', err);
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting]);
-
-  const handleCopyLink = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
-      // Fallback for older browsers
-      const input = document.createElement('input');
-      input.value = window.location.href;
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand('copy');
-      document.body.removeChild(input);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2000);
-    }
-  }, []);
 
   return (
     <div className="fixed inset-0 z-50 bg-space-900/95 flex flex-col animate-fade-in">
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
-        <h2 className="text-base font-bold text-gold-bright">Trade Summary</h2>
+      {/* Thin header strip — actions only; the balance headline is the hero */}
+      <div className="shrink-0 flex items-center justify-between px-4 pt-3 pb-2">
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 -ml-1.5 flex items-center gap-1.5 text-sm"
+          aria-label="Close summary"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+          </svg>
+          <span className="hidden sm:inline">Back</span>
+        </button>
         <div className="flex items-center gap-2">
-          <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
-          <button
-            onClick={handleCopyLink}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-space-700 text-gray-300 hover:bg-space-600 transition-colors"
-          >
-            {linkCopied ? (
-              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-              </svg>
-            )}
-            {linkCopied ? 'Copied!' : 'Link'}
-          </button>
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gold/20 text-gold hover:bg-gold/30 transition-colors disabled:opacity-50"
-          >
-            {exporting ? (
-              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            )}
-            Image
-          </button>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-300 transition-colors p-1"
-            aria-label="Close summary"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
+            <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
+            <span className="w-px h-5 bg-space-700" aria-hidden />
+            <PriceSlider value={percentage} onChange={onPercentageChange} />
+          </div>
+          <ShareButtons />
         </div>
       </div>
 
-      {/* Capturable content area */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div ref={captureRef} className="px-4 pb-4">
-          {/* Balance */}
-          <div className="pb-3">
-            <div className={`text-center text-lg font-bold ${balanceColor}`}>{message}</div>
-            <div className="text-center text-[10px] text-gray-500 mt-0.5">
-              @ {percentage}% TCGPlayer {priceMode === 'low' ? 'lowest' : 'market'}
+        <div className="max-w-6xl mx-auto px-4 pb-6 pt-2 sm:pt-4">
+          {/* Compact balance strip — mirrors the bottom banner's pattern
+              (headline + action + color-coded totals) so the language
+              and visual hierarchy stay consistent across contexts. */}
+          <div className={`rounded-lg border ${chrome.border} ${chrome.bg} px-4 py-3 mb-4 ${balance.tier === 'chaos' ? 'animate-pulse-crimson' : ''}`}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex-1 min-w-0">
+                <div className={`swu-display text-xs sm:text-sm ${chrome.headline}`}>
+                  {balance.headline}
+                </div>
+                {actionLine && (
+                  <div className="text-[11px] sm:text-xs text-gray-300 mt-0.5">
+                    {actionLine}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-[11px] tabular-nums shrink-0">
+                <span className="flex items-baseline gap-1">
+                  <span className="text-emerald-400/70 uppercase text-[9px] tracking-widest font-semibold">Offer</span>
+                  <span className="text-emerald-200 font-semibold">${yourTotal.toFixed(2)}</span>
+                </span>
+                <span className="text-space-600" aria-hidden>·</span>
+                <span className="flex items-baseline gap-1">
+                  <span className="text-blue-400/70 uppercase text-[9px] tracking-widest font-semibold">Receive</span>
+                  <span className="text-blue-200 font-semibold">${theirTotal.toFixed(2)}</span>
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Card lists */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl mx-auto">
-            <SideList cards={yourCards} percentage={percentage} priceMode={priceMode} label="You" accentColor="emerald" />
-            <SideList cards={theirCards} percentage={percentage} priceMode={priceMode} label="Them" accentColor="blue" />
+          {missingCount > 0 && (
+            <div className="mb-4 mx-auto max-w-md flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-xs font-bold text-red-300">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <span>
+                {missingCount} card{missingCount === 1 ? '' : 's'} missing price — balance is incomplete
+              </span>
+            </div>
+          )}
+
+          {/* Two-panel receipt — card tiles inside each side, so big
+              trades fit without scrolling and card art is visible. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <SidePanel cards={yourCards} percentage={percentage} priceMode={priceMode} label="Offering" accentColor="emerald" />
+            <SidePanel cards={theirCards} percentage={percentage} priceMode={priceMode} label="Receiving" accentColor="blue" />
           </div>
 
-          {/* Watermark for shared image */}
-          <div className="mt-3 text-center text-[9px] text-gray-600">
-            swutrade.com
-          </div>
         </div>
       </div>
     </div>

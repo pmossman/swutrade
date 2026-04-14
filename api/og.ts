@@ -1,29 +1,32 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resvg } from '@resvg/resvg-js';
-import { readFileSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { inter_400, inter_700, inter_900 } from './_fonts.js';
+// Inlined at build time so the function never needs to self-fetch its own
+// (potentially auth-walled) origin to resolve card names/prices.
+import productIndex from '../public/data/product-index.json' with { type: 'json' };
 
-// Load Inter font once at module load — bundled with the function via @fontsource
-const __dirname = dirname(fileURLToPath(import.meta.url));
-function loadFont(filename: string): Buffer | null {
-  const candidates = [
-    join(__dirname, '..', 'node_modules', '@fontsource', 'inter', 'files', filename),
-    join(process.cwd(), 'node_modules', '@fontsource', 'inter', 'files', filename),
-  ];
-  for (const p of candidates) {
-    try {
-      return readFileSync(p);
-    } catch {
-      // try next
-    }
+// resvg-js@2.6.2 only accepts font *file paths* (not buffers), so we write
+// the inlined base64 fonts to /tmp on cold start and hand the paths to Resvg.
+// /tmp is the only writable dir in Vercel functions and persists across warm
+// invocations, so this happens at most once per instance.
+const tmp = tmpdir();
+const fontPaths: string[] = [];
+for (const [name, b64] of [
+  ['inter-400.ttf', inter_400],
+  ['inter-700.ttf', inter_700],
+  ['inter-900.ttf', inter_900],
+] as const) {
+  const p = join(tmp, name);
+  try {
+    writeFileSync(p, Buffer.from(b64, 'base64'));
+    fontPaths.push(p);
+  } catch (err) {
+    console.error(`Failed to write ${name} to ${tmp}:`, err);
   }
-  return null;
 }
-
-const fontRegular = loadFont('inter-latin-400-normal.woff');
-const fontBold = loadFont('inter-latin-700-normal.woff');
-const fontBlack = loadFont('inter-latin-900-normal.woff');
 
 interface CardInfo {
   n: string;  // name
@@ -33,6 +36,36 @@ interface CardInfo {
 }
 
 type ProductIndex = Record<string, CardInfo>;
+
+// Fetched card images live here for the lifetime of the warm container so
+// repeat renders of the same trade (or popular cards) don't re-fetch from
+// TCGPlayer. Keyed by productId. Value is a base64 data URI ready to drop
+// into `<image href="...">`, or null if the fetch failed (we cache misses
+// too so we don't keep retrying broken IDs).
+const imageCache = new Map<string, string | null>();
+
+async function fetchCardImage(productId: string): Promise<string | null> {
+  if (imageCache.has(productId)) return imageCache.get(productId)!;
+  if (!productId || productId === '0') {
+    imageCache.set(productId, null);
+    return null;
+  }
+  try {
+    const url = `https://product-images.tcgplayer.com/fit-in/200x279/${productId}.jpg`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      imageCache.set(productId, null);
+      return null;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    const dataUri = `data:image/jpeg;base64,${buf.toString('base64')}`;
+    imageCache.set(productId, dataUri);
+    return dataUri;
+  } catch {
+    imageCache.set(productId, null);
+    return null;
+  }
+}
 
 function decodeCardRefs(param: string): { productId: string; qty: number }[] {
   if (!param) return [];
@@ -45,6 +78,22 @@ function decodeCardRefs(param: string): { productId: string; qty: number }[] {
 function formatPrice(price: number | null): string {
   if (price === null) return 'N/A';
   return `$${price.toFixed(2)}`;
+}
+
+// Colored-pill styling per variant, matching the app's variantBadgeColor.
+// Returns null for Standard (no pill — it's the implicit baseline).
+function variantBadgeStyle(variant: string): { bg: string; text: string } | null {
+  switch (variant) {
+    case 'Foil':            return { bg: '#312e8180', text: '#a5b4fc' };
+    case 'Hyperspace':      return { bg: '#0c4a6e80', text: '#7dd3fc' };
+    case 'Hyperspace Foil': return { bg: '#581c8780', text: '#d8b4fe' };
+    case 'Showcase':        return { bg: '#78350f80', text: '#fcd34d' };
+    case 'Prestige':        return { bg: '#701a7580', text: '#f0abfc' };
+    case 'Prestige Foil':   return { bg: '#83184380', text: '#f9a8d4' };
+    case 'Serialized':      return { bg: '#f5a62333', text: '#F5A623' };
+    case 'Standard':
+    default:                return null;
+  }
 }
 
 function extractVariant(name: string): string {
@@ -60,15 +109,72 @@ function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Truncate text to fit within a given width (approximate)
+// Truncate text to fit within a given width (approximate, in chars at 18pt)
 function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars - 1) + '…';
 }
 
-type ResolvedCard = { name: string; variant: string; qty: number; price: number | null };
+type ResolvedCard = {
+  productId: string;
+  name: string;
+  variant: string;
+  qty: number;
+  price: number | null;
+  imageDataUri: string | null;
+};
 
-function renderCardList(
+// Layout constants — keep the math in one place
+const COL_WIDTH = 540;
+const LEFT_X = 36;
+const RIGHT_X = 624;
+const GRID_TOP = 185;        // top of the card grid area (under column header)
+const GRID_BOTTOM = 615;     // bottom of grid (no footer anymore)
+const GRID_HEIGHT = GRID_BOTTOM - GRID_TOP;
+const CARD_ASPECT = 1.4;     // real card aspect (5:7 portrait) — no cropping
+
+// Pick a grid layout that fits `count` cards in the available area.
+// Each tile shows name → variant pill (if any) → price on separate
+// lines so they can't overlap even at dense sizes.
+function gridLayout(count: number): {
+  cols: number;
+  rows: number;
+  tileW: number;
+  imgH: number;
+  tileH: number;
+  nameSize: number;
+  pillSize: number;
+  priceSize: number;
+} {
+  const gap = 8;
+  const candidates = [
+    { cols: 4, nameSize: 13, pillSize: 10,  priceSize: 16 },
+    { cols: 5, nameSize: 11, pillSize: 9,   priceSize: 14 },
+    { cols: 6, nameSize: 10, pillSize: 8.5, priceSize: 13 },
+    { cols: 7, nameSize: 9,  pillSize: 8,   priceSize: 12 },
+    { cols: 8, nameSize: 8,  pillSize: 7.5, priceSize: 11 },
+  ];
+  for (const c of candidates) {
+    const tileW = (COL_WIDTH - gap * (c.cols - 1)) / c.cols;
+    const imgH = tileW * CARD_ASPECT;
+    // 3-line text: name + pill + price with 2px gaps; pill ~ pillSize+3
+    const textH = c.nameSize + 2 + (c.pillSize + 3) + 2 + c.priceSize + 4;
+    const tileH = imgH + textH;
+    const rowsAvail = Math.max(1, Math.floor((GRID_HEIGHT + 6) / (tileH + 6)));
+    if (rowsAvail * c.cols >= count) {
+      return { cols: c.cols, rows: Math.ceil(count / c.cols), tileW, imgH, tileH, nameSize: c.nameSize, pillSize: c.pillSize, priceSize: c.priceSize };
+    }
+  }
+  const last = candidates[candidates.length - 1];
+  const tileW = (COL_WIDTH - gap * (last.cols - 1)) / last.cols;
+  const imgH = tileW * CARD_ASPECT;
+  const textH = last.nameSize + 2 + (last.pillSize + 3) + 2 + last.priceSize + 4;
+  const tileH = imgH + textH;
+  const rowsAvail = Math.max(1, Math.floor((GRID_HEIGHT + 6) / (tileH + 6)));
+  return { cols: last.cols, rows: rowsAvail, tileW, imgH, tileH, nameSize: last.nameSize, pillSize: last.pillSize, priceSize: last.priceSize };
+}
+
+function renderCardGrid(
   cards: ResolvedCard[],
   label: string,
   color: string,
@@ -77,33 +183,86 @@ function renderCardList(
   const total = cards.reduce((s, c) => s + (c.price ?? 0) * c.qty, 0);
   let svg = '';
 
-  // Header
-  svg += `<line x1="${x}" y1="130" x2="${x + 500}" y2="130" stroke="${color}" stroke-opacity="0.3" stroke-width="2"/>`;
-  svg += `<text x="${x}" y="122" fill="${color}" font-size="20" font-weight="700" letter-spacing="1">${label.toUpperCase()}</text>`;
-  svg += `<text x="${x + 500}" y="122" fill="${color}" font-size="22" font-weight="700" text-anchor="end">${escapeXml(formatPrice(total))}</text>`;
+  // Column header — saber-bar accent + label + total. Positioned
+  // well below the balance section so there's clear breathing room.
+  const headerBaselineY = 170;
+  const saberTop = headerBaselineY - 14;
+  const saberH = 20;
+  svg += `<rect x="${x}" y="${saberTop}" width="3" height="${saberH}" rx="1.5" fill="${color}"/>`;
+  svg += `<text x="${x + 12}" y="${headerBaselineY}" fill="${color}" font-size="16" font-weight="700" letter-spacing="2">${label.toUpperCase()}</text>`;
+  svg += `<text x="${x + COL_WIDTH}" y="${headerBaselineY}" fill="#f3f4f6" font-size="20" font-weight="800" text-anchor="end">${escapeXml(formatPrice(total))}</text>`;
+  svg += `<line x1="${x}" y1="${headerBaselineY + 10}" x2="${x + COL_WIDTH}" y2="${headerBaselineY + 10}" stroke="${color}" stroke-opacity="0.22" stroke-width="1.5"/>`;
 
   if (cards.length === 0) {
-    svg += `<text x="${x}" y="160" fill="#6b7280" font-size="16">No cards</text>`;
+    svg += `<text x="${x + COL_WIDTH / 2}" y="${GRID_TOP + 80}" fill="#4b5563" font-size="16" text-anchor="middle">Empty</text>`;
     return svg;
   }
 
-  const maxCards = 8;
-  const visibleCards = cards.slice(0, maxCards);
+  const layout = gridLayout(cards.length);
+  const maxVisible = layout.cols * layout.rows;
+  const visible = cards.slice(0, maxVisible);
+  const gap = 8;
 
-  visibleCards.forEach((card, i) => {
-    const cy = 158 + i * 44;
-    const displayName = escapeXml(truncate(card.name, 30));
-    const variantText = escapeXml(card.variant + (card.qty > 1 ? ` × ${card.qty}` : ''));
+  visible.forEach((card, i) => {
+    const col = i % layout.cols;
+    const row = Math.floor(i / layout.cols);
+    const tileX = x + col * (layout.tileW + gap);
+    const tileY = GRID_TOP + row * (layout.tileH + 6);
+
+    // Portrait aspect enforced — landscape leaders get center-cropped
+    // to fit the portrait tile, keeping the grid visually uniform.
+    if (card.imageDataUri) {
+      svg += `<image href="${card.imageDataUri}" x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" preserveAspectRatio="xMidYMid slice"/>`;
+    } else {
+      svg += `<rect x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" fill="#1f2937" rx="3"/>`;
+      svg += `<text x="${tileX + layout.tileW / 2}" y="${tileY + layout.imgH / 2 + 6}" fill="#4b5563" font-size="16" text-anchor="middle">?</text>`;
+    }
+
+    // Qty chip (top-right overlay, only when > 1)
+    if (card.qty > 1) {
+      const chipW = Math.max(22, layout.tileW * 0.3);
+      const chipH = 16;
+      const chipX = tileX + layout.tileW - chipW - 3;
+      const chipY = tileY + 3;
+      svg += `<rect x="${chipX}" y="${chipY}" width="${chipW}" height="${chipH}" rx="8" fill="#000" fill-opacity="0.85" stroke="${color}" stroke-opacity="0.7" stroke-width="1"/>`;
+      svg += `<text x="${chipX + chipW / 2}" y="${chipY + 12}" fill="#fff" font-size="10" font-weight="800" text-anchor="middle">×${card.qty}</text>`;
+    }
+
+    // Metadata below image — matches the app's SummaryTile pattern:
+    // name, optional variant pill, line total, all LEFT-ALIGNED so
+    // the three stacked lines read as a coherent label column.
     const lineTotal = card.price !== null ? card.price * card.qty : null;
+    const textTop = tileY + layout.imgH + 3;
+    const nameMax = Math.max(8, Math.floor(layout.tileW / (layout.nameSize * 0.55)));
+    const vbs = variantBadgeStyle(card.variant);
 
-    svg += `<text x="${x}" y="${cy}" fill="#e5e7eb" font-size="16">${displayName}</text>`;
-    svg += `<text x="${x}" y="${cy + 18}" fill="#6b7280" font-size="12">${variantText}</text>`;
-    svg += `<text x="${x + 500}" y="${cy}" fill="#d4a843" font-size="16" font-weight="600" text-anchor="end">${escapeXml(formatPrice(lineTotal))}</text>`;
+    // Line 1: card name
+    const nameBaselineY = textTop + layout.nameSize;
+    svg += `<text x="${tileX}" y="${nameBaselineY}" fill="#d1d5db" font-size="${layout.nameSize}" font-weight="500">${escapeXml(truncate(card.name, nameMax))}</text>`;
+
+    // Line 2 (if non-Standard): variant pill, left-aligned
+    const pillH = layout.pillSize + 3;
+    let afterPillY = nameBaselineY;
+    if (vbs) {
+      const vlabel = card.variant === 'Hyperspace Foil' ? 'HS Foil' : card.variant;
+      const pillTextW = vlabel.length * layout.pillSize * 0.6;
+      const pillPadX = 4;
+      const pillW = Math.min(pillTextW + pillPadX * 2, layout.tileW);
+      const pillTopY = nameBaselineY + 3;
+      svg += `<rect x="${tileX}" y="${pillTopY}" width="${pillW}" height="${pillH}" rx="2" fill="${vbs.bg}"/>`;
+      svg += `<text x="${tileX + pillPadX}" y="${pillTopY + layout.pillSize + 0.5}" fill="${vbs.text}" font-size="${layout.pillSize}" font-weight="700" letter-spacing="0.3">${escapeXml(vlabel.toUpperCase())}</text>`;
+      afterPillY = pillTopY + pillH;
+    }
+
+    // Line 3 (or 2 for Standard): line total, left-aligned gold
+    const priceBaselineY = afterPillY + layout.priceSize + 2;
+    const priceColor = card.price === null ? '#f87171' : '#d4a843';
+    svg += `<text x="${tileX}" y="${priceBaselineY}" fill="${priceColor}" font-size="${layout.priceSize}" font-weight="700">${escapeXml(formatPrice(lineTotal))}</text>`;
   });
 
-  if (cards.length > maxCards) {
-    const overflowY = 158 + maxCards * 44;
-    svg += `<text x="${x}" y="${overflowY}" fill="#6b7280" font-size="14">+${cards.length - maxCards} more</text>`;
+  if (cards.length > maxVisible) {
+    const overflowY = GRID_TOP + layout.rows * (layout.tileH + 6) + 12;
+    svg += `<text x="${x + COL_WIDTH / 2}" y="${overflowY}" fill="#9ca3af" font-size="12" font-weight="600" text-anchor="middle">+${cards.length - maxVisible} more</text>`;
   }
 
   return svg;
@@ -115,29 +274,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const pct = parseInt((req.query.pct as string) || '80', 10);
   const pm = req.query.pm === 'l' ? 'low' : 'market';
 
-  // Fetch the product index from our own deployment
-  const proto = req.headers['x-forwarded-proto'] || 'https';
-  const host = req.headers['x-forwarded-host'] || req.headers.host || 'swutrade.com';
-  const origin = `${proto}://${host}`;
-
-  let index: ProductIndex = {};
-  try {
-    const fetchRes = await fetch(`${origin}/data/product-index.json`);
-    if (fetchRes.ok) index = await fetchRes.json();
-  } catch {
-    // Fall back to empty
-  }
-
+  const index = productIndex as ProductIndex;
   const yourRefs = decodeCardRefs(y);
   const theirRefs = decodeCardRefs(t);
+
+  // Fetch all card images in parallel — module-level cache means repeat
+  // renders of the same trade hit warm cache and skip the network entirely.
+  const allRefs = [...yourRefs, ...theirRefs];
+  // Fetch up to a conservative per-side cap (matches the densest grid
+  // layout which tops out around 28 tiles) so we have images for
+  // anything the grid might render.
+  const visibleIds = allRefs.slice(0, 60).map(r => r.productId);
+  const imageMap = new Map<string, string | null>();
+  await Promise.all(
+    Array.from(new Set(visibleIds)).map(async id => {
+      imageMap.set(id, await fetchCardImage(id));
+    }),
+  );
 
   const resolveCards = (refs: { productId: string; qty: number }[]): ResolvedCard[] =>
     refs.map(ref => {
       const card = index[ref.productId];
-      if (!card) return { name: `#${ref.productId}`, variant: '', qty: ref.qty, price: null };
+      const imageDataUri = imageMap.get(ref.productId) ?? null;
+      if (!card) {
+        return { productId: ref.productId, name: `#${ref.productId}`, variant: '', qty: ref.qty, price: null, imageDataUri };
+      }
       const rawPrice = pm === 'low' ? card.l : card.p;
       const price = rawPrice !== null ? Math.round(rawPrice * pct) / 100 : null;
-      return { name: extractBaseName(card.n), variant: extractVariant(card.n), qty: ref.qty, price };
+      return {
+        productId: ref.productId,
+        name: extractBaseName(card.n),
+        variant: extractVariant(card.n),
+        qty: ref.qty,
+        price,
+        imageDataUri,
+      };
     });
 
   const yourCards = resolveCards(yourRefs);
@@ -147,56 +318,139 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const theirTotal = theirCards.reduce((s, c) => s + (c.price ?? 0) * c.qty, 0);
   const diff = yourTotal - theirTotal;
   const absDiff = Math.abs(diff);
-  const isEven = absDiff < 0.01;
+  const larger = Math.max(yourTotal, theirTotal);
+  const ratio = larger > 0 ? absDiff / larger : 0;
+  // "Your" side (Offering) being worth MORE means you're giving up more
+  // value than you're getting — the trade tilts toward THEM. Inverted
+  // from the raw diff sign because "your total" is what you're giving.
+  const favored = absDiff < 0.01 ? 'none' : diff > 0 ? 'them' : 'you';
+
+  // Force-themed balance message. Colors intentionally avoid emerald/blue —
+  // those are reserved as side-identity colors (Offering / Receiving).
+  // Absolute-dollar floors keep small-total trades from escalating into
+  // alarm territory: a $2 gap on a $5 trade is high ratio-wise but
+  // trivial in absolute terms.
+  let tier: 'balanced' | 'ripple' | 'disturbance' | 'chaos';
+  if (ratio < 0.02) tier = 'balanced';
+  else if (ratio < 0.07) tier = 'ripple';
+  else if (ratio < 0.15) tier = 'disturbance';
+  else tier = 'chaos';
+  if (absDiff < 5 && (tier === 'disturbance' || tier === 'chaos')) tier = 'ripple';
+  else if (absDiff < 15 && tier === 'chaos') tier = 'disturbance';
 
   let balanceText: string;
+  let balanceAction: string | null;
   let balanceColor: string;
-  if (isEven) {
-    balanceText = 'Trade is even!';
-    balanceColor = '#34d399';
-  } else if (diff > 0) {
-    balanceText = `They owe you ${escapeXml(formatPrice(absDiff))}`;
-    balanceColor = '#34d399';
-  } else {
-    balanceText = `You owe them ${escapeXml(formatPrice(absDiff))}`;
-    balanceColor = '#fbbf24';
+  const amount = `$${absDiff.toFixed(2)}`;
+  // Action verb from the sharer's perspective — matches the app's
+  // bottom-banner copy so the image stays on-brand. "Ask for" when the
+  // Offering side is paying too much; "Offer" when Receiving is.
+  const verb = favored === 'them' ? 'Ask for' : 'Offer';
+  switch (tier) {
+    case 'balanced':
+      balanceText = 'Balance in the Force';
+      balanceColor = '#FFD700';
+      balanceAction = favored === 'none' ? null : `${amount} in ${favored === 'you' ? 'your' : 'their'} favor`;
+      break;
+    case 'ripple':
+      balanceText = 'A ripple in the Force';
+      balanceColor = '#F5A623';
+      balanceAction = `${verb} ${amount} to restore balance`;
+      break;
+    case 'disturbance':
+      balanceText = 'A disturbance in the Force';
+      balanceColor = '#fbbf24';
+      balanceAction = `${verb} ${amount} to restore balance`;
+      break;
+    case 'chaos':
+      balanceText = 'A great disturbance in the Force';
+      balanceColor = '#f87171';
+      balanceAction = `${verb} ${amount} to restore balance`;
+      break;
   }
 
   const priceLabel = pm === 'low' ? 'Low' : 'Market';
 
+  // Vertical structure (1200×630):
+  //   y=0–80   header (logomark + wordmark + pricing meta)
+  //   y=80    thin divider
+  //   y=100–210 balance section (headline + action line)
+  //   y=230–570 two columns (header + card grid)
+  //   y=600    footer (swutrade.com)
   const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="logo-glow" cx="50%" cy="55%" r="50%">
+      <stop offset="0%" stop-color="#FFD700" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="logo-shadow">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.5" flood-opacity="0.4"/>
+    </filter>
+  </defs>
   <rect width="1200" height="630" fill="#0a0e1a"/>
   <style>
     text { font-family: 'Inter', sans-serif; }
   </style>
 
-  <!-- Header -->
-  <text x="48" y="60" fill="#d4a843" font-size="36" font-weight="900" letter-spacing="2">SWU TRADE</text>
-  <text x="1152" y="60" fill="#6b7280" font-size="16" text-anchor="end">@ ${pct}% TCGPlayer ${priceLabel}</text>
+  <!-- Header: compact logomark + wordmark + pricing meta -->
+  <g transform="translate(36 14) scale(0.38)">
+    <g transform="translate(0 -8)">
+      <circle cx="50" cy="55" r="18" fill="url(#logo-glow)" opacity="0.55"/>
+      <g transform="translate(38 58) rotate(-18)" filter="url(#logo-shadow)">
+        <rect x="-17" y="-25" width="34" height="50" rx="4" fill="#0f3f2f" stroke="#34d399" stroke-width="3"/>
+        <rect x="-12" y="-20" width="24" height="26" rx="2" fill="#065f46" opacity="0.7"/>
+      </g>
+      <g transform="translate(62 58) rotate(18)" filter="url(#logo-shadow)">
+        <rect x="-17" y="-25" width="34" height="50" rx="4" fill="#0f2a52" stroke="#60a5fa" stroke-width="3"/>
+        <rect x="-12" y="-20" width="24" height="26" rx="2" fill="#1e3a8a" opacity="0.7"/>
+      </g>
+      <circle cx="50" cy="48" r="5" fill="#FFD700"/>
+      <circle cx="50" cy="48" r="7" fill="none" stroke="#FFA500" stroke-width="1" opacity="0.7"/>
+    </g>
+  </g>
+  <text x="80" y="40" font-size="22" font-weight="900" letter-spacing="2.5">
+    <tspan fill="#e5e7eb">SWU</tspan><tspan fill="#F5A623">TRADE</tspan>
+    <tspan fill="#6b7280" font-size="13" font-weight="500" letter-spacing="0" dx="2">.com</tspan>
+  </text>
+  <text x="1164" y="38" fill="#9ca3af" font-size="13" font-weight="500" text-anchor="end">@ ${pct}% TCGPlayer ${priceLabel}</text>
+  <line x1="36" y1="58" x2="1164" y2="58" stroke="#1f2937" stroke-width="1"/>
 
-  <!-- Balance -->
-  <text x="600" y="96" fill="${balanceColor}" font-size="30" font-weight="700" text-anchor="middle">${balanceText}</text>
+  <!-- Balance section — compact headline + thematic action line -->
+  <text x="600" y="90" fill="${balanceColor}" font-size="20" font-weight="900" letter-spacing="2.5" text-anchor="middle">${escapeXml(balanceText.toUpperCase())}</text>
+  ${balanceAction ? `<text x="600" y="114" fill="#d1d5db" font-size="14" font-weight="500" text-anchor="middle">${escapeXml(balanceAction)}</text>` : ''}
 
-  <!-- You column -->
-  ${renderCardList(yourCards, 'You', '#34d399', 48)}
+  <!-- Offering column (your side) -->
+  ${renderCardGrid(yourCards, 'Offering', '#34d399', LEFT_X)}
 
-  <!-- Them column -->
-  ${renderCardList(theirCards, 'Them', '#60a5fa', 648)}
-
-  <!-- Footer -->
-  <text x="600" y="610" fill="#4b5563" font-size="14" text-anchor="middle">swutrade.com</text>
+  <!-- Receiving column (their side) -->
+  ${renderCardGrid(theirCards, 'Receiving', '#60a5fa', RIGHT_X)}
 </svg>`;
 
-  // Convert SVG to PNG for broad platform compatibility (Discord, iMessage, etc.)
-  const fontBuffers: Buffer[] = [];
-  if (fontRegular) fontBuffers.push(fontRegular);
-  if (fontBold) fontBuffers.push(fontBold);
-  if (fontBlack) fontBuffers.push(fontBlack);
+  // Debug helpers — `?format=svg` returns the raw SVG, `?debug=1` returns JSON
+  // diagnostics. Useful for triaging font/render issues without re-deploying.
+  if (req.query.format === 'svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(svg);
+    return;
+  }
+  if (req.query.debug === '1') {
+    res.setHeader('Content-Type', 'application/json');
+    res.status(200).json({
+      cardCounts: { your: yourCards.length, their: theirCards.length },
+      indexEntries: Object.keys(index).length,
+      fontPaths,
+      imagesFetched: Array.from(imageMap.entries()).map(([id, v]) => ({ id, ok: v !== null })),
+      svgLength: svg.length,
+    });
+    return;
+  }
 
+  // Render at 2x for crisper text/images on retina embeds. Output is 2400×1260
+  // PNG which still embeds well in Discord/iMessage/Twitter (they downscale).
   const resvg = new Resvg(svg, {
-    fitTo: { mode: 'width', value: 1200 },
+    fitTo: { mode: 'width', value: 2400 },
     font: {
-      fontBuffers,
+      fontFiles: fontPaths,
       loadSystemFonts: false,
       defaultFontFamily: 'Inter',
     },
