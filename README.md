@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://swutrade.com">
-    <img src="./public/readme-banner.svg?v=2" alt="SWU Trade — Star Wars: Unlimited Trade Calculator" width="720">
+    <img src="./public/banner.svg" alt="SWU Trade — Star Wars: Unlimited Trade Calculator" width="720">
   </a>
 </p>
 
