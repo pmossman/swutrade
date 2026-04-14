@@ -11,6 +11,8 @@
     "build": "tsx scripts/fetch-prices.ts && tsc -b && vite build",
     "build:fresh": "FETCH_PRICES=1 tsx scripts/fetch-prices.ts && tsc -b && vite build",
     "lint": "eslint .",
+    "test": "vitest",
+    "test:run": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -35,6 +37,7 @@
     "tsx": "^4.21.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
-    "vite": "^8.0.4"
+    "vite": "^8.0.4",
+    "vitest": "^3.2.4"
   }
 }
