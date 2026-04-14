@@ -1,73 +1,56 @@
-# React + TypeScript + Vite
+# SWU Trade
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Balance Star Wars Unlimited card trades with live TCGPlayer market prices. Live at [swutrade.com](https://swutrade.com).
 
-Currently, two official plugins are available:
+Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## How it works
 
-## React Compiler
+- **Cards and prices** both come from TCGPlayer's marketplace search API. `scripts/fetch-prices.ts` discovers every SWU set dynamically, pages through each one, and writes per-set JSON to `public/data/` at build time.
+- **The client** reads those static JSON files directly from `/data/*.json` — no runtime API calls for price data.
+- **Refreshes** run every 2h via a GitHub Actions cron (`.github/workflows/refresh-prices.yml`) that POSTs to a Vercel deploy hook with `?buildCache=false` to force a re-fetch. See `ROADMAP.md` for the plan to move this off the deploy path.
+- **OG previews**: `middleware.ts` intercepts crawler requests to share links and returns an HTML page pointing at `/api/og`, which renders a trade summary image on demand.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Stack
 
-## Expanding the ESLint configuration
+React 19 + TypeScript + Vite, Tailwind v4, deployed on Vercel (Fluid Compute for the API routes).
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Local development
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The dev server runs against whatever price snapshot is currently in `public/data/`. To pull fresh prices locally:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run fetch-prices:force
 ```
+
+## Scripts
+
+| Script | What it does |
+| --- | --- |
+| `dev` | Vite dev server |
+| `build` | Fetch prices (cached) → typecheck → build |
+| `build:fresh` | Force a price refetch, then build |
+| `fetch-prices` | Incremental price fetch into `public/data/` |
+| `fetch-prices:force` | Re-fetch everything, ignoring cache |
+| `gen:fonts` | Rebuild the font subset used by the OG image route |
+| `lint` | ESLint |
+| `preview` | Preview the production build |
+
+## Layout
+
+```
+api/          Vercel functions — OG image, on-demand price proxy, search
+middleware.ts Serves OG preview HTML to crawlers on shared trade URLs
+scripts/      Build-time price fetcher + font subsetter for the OG image
+src/          React app
+public/data/  Baked per-set price JSON (shipped with each deploy)
+```
+
+## Attribution
+
+Card data and prices via TCGPlayer. Star Wars: Unlimited is © Fantasy Flight Games / Lucasfilm. This is an unaffiliated fan tool.
