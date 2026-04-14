@@ -18,23 +18,38 @@ Three invariants we protect through all of this:
 
 ## Phases
 
-### Phase 1 — Personal lists *(in progress)*
+### Phase 1 — Personal lists + anonymous sharing *(in progress)*
 
-Local-first wants and available lists, stored in the browser. No backend.
+Local-first wants and available lists. Anonymous URL-encoded sharing is a complete feature on its own — accounts (Phase 2) layer persistence and identity on top, they don't gate the core sharing UX.
 
-- [x] Data model + Zod persistence (`swu.wants.v1`, `swu.available.v1`)
+**Shipped:**
+- [x] Data model + Zod persistence (`swu.wants.v2`, `swu.available.v1`)
 - [x] Lists drawer shell (Radix Dialog + Tabs)
 - [x] List rows with qty, priority toggle (wants), delete
 - [x] Embedded card picker for adding items (reuses `CardSearchBrowser`)
-- [x] Quick-add: `+ Off / + Rec` buttons on list rows
 - [x] Inline variant restriction editor
 - [x] swuapi.com enrichment at build time (`baseCardId`, `cardType`, aspects, traits)
-- [ ] **Empty-state integration in trade search** — when the add-card overlay opens with no query, surface user's Wants (on Receiving side) and Available (on Offering side) as one-tap sources. Search stays the tool; lists become the personalized default.
-- [x] **URL encoding for list sharing** — `?w=…&a=…` params so a link can carry a lightweight anonymous list (sets up Phase 3).
+- [x] Cross-printing family-id so "any variant" wants match Standard / Hyperspace / Showcase
+- [x] Empty-state integration in trade search (with shared-link sender-list section)
+- [x] URL encoding (`?w=…&a=…`) — anonymous, copy-link sharing
+- [x] Phase-3-style "From the shared link" section in recipient's empty state
+- [x] Quantity-aware to-do semantics (rows count down as cards get added to trade)
 
-### Phase 2 — Accounts + sync
+**Open — anonymous list-sharing polish:**
+- [ ] **Landing banner on shared link** — recipient lands and sees a dismissible "Someone shared their lists with you" notice rather than having to discover it inside the add-card overlay.
+- [ ] **OG image for shared lists** — extend `api/og.ts` so a `?w=…&a=…` URL gets a Discord/Slack/iMessage unfurl rendering the cards as a grid. We already have the resvg pipeline.
+- [ ] **Dedicated `/list` (or `?view=list`) view** — a full-page rendering of just the shared lists, not gated behind the add-card overlay. Click "Start trade" to flip into trade mode with the shared lists pre-loaded.
+
+### Phase 2 — Accounts + sync (upgrade path, not gate)
 
 Discord OAuth (single provider — matches the eventual community layer), Neon Postgres via Vercel Marketplace, lists sync to the server when signed in, local-first while anonymous.
+
+Phase 2 is **purely additive** — it doesn't change what's possible anonymously. It enables:
+- Cross-device sync (no localStorage boundary)
+- Stable handle URLs (`swutrade.com/u/<handle>/wants`) instead of URL-encoded params
+- The identity layer for Phase 4 Discord features
+
+Anonymous users continue using URL-encoded shares. When they sign in, their existing local lists migrate to the server.
 
 - Data model: `users`, `wants_items`, `available_items`, `list_share_tokens`, `discord_guild_memberships`
 - Public profile URLs: `swutrade.com/u/<handle>` for a user's wants (available stays private by default — see *Privacy defaults* below)
@@ -79,6 +94,12 @@ Niche community; Discord is already central to the vision. Skipping a second aut
 ### 2026-04-14 — `cardType` drives leader/landscape rendering
 
 Legacy heuristic was "any variant is Showcase → treat as Leader." Enrichment populates `cardType` per variant now, so we use it directly for Leader/Base detection. Showcase heuristic stays as a fallback for unmatched cards. Fixes the Unit-with-Showcase-printing case (Darth Vader - Unstoppable rendered landscape incorrectly).
+
+### 2026-04-14 — Anonymous sharing is a complete feature, not a prerequisite for Phase 2
+
+Earlier framing implied that the rich shared-list UX (dedicated views, OG image unfurls, prominent landing experience) needed accounts to land. Wrong. URL-encoded params already carry everything needed for a full sharing experience — recipient sees, browses, and pulls cards from the sender's lists. Accounts are an *upgrade path* (cross-device sync + stable handles), not a gate.
+
+Practical consequence: the landing banner, dedicated `/list` view, and OG image generation move into Phase 1 polish. Phase 2 still owns persistence + identity, but doesn't block any user-visible sharing capability.
 
 ### 2026-04-14 — Dropped: save-to-list affordance on search tiles
 
