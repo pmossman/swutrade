@@ -9,6 +9,7 @@ import { ListCardPicker } from './ListCardPicker';
 import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
+import { bestMatchForWant } from '../listMatching';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -46,18 +47,24 @@ export function ListsDrawer({
   const totalCount = wantsCount + availableCount;
 
   // Drawer rows display image + display name (wants) or exact variant
-  // (available). Add-to-trade flows through the trade overlay's empty-
-  // state lists section now, so we don't need the full byFamilyAll map.
-  const { byFamily, byProductId } = useMemo(() => {
+  // (available). For wants, the row's thumbnail should reflect the
+  // restriction — a Showcase-only want should show the Showcase art,
+  // not the family's Standard rep. byFamilyAll powers bestMatchForWant
+  // which picks the right variant per item.
+  const { byFamily, byFamilyAll, byProductId } = useMemo(() => {
     const byFamily = new Map<string, CardVariant>();
+    const byFamilyAll = new Map<string, CardVariant[]>();
     const byProductId = new Map<string, CardVariant>();
     for (const card of allCards) {
       if (card.productId) byProductId.set(card.productId, card);
       const fid = cardFamilyId(card);
       const existing = byFamily.get(fid);
       if (!existing || card.variant === 'Standard') byFamily.set(fid, card);
+      const bucket = byFamilyAll.get(fid);
+      if (bucket) bucket.push(card);
+      else byFamilyAll.set(fid, [card]);
     }
-    return { byFamily, byProductId };
+    return { byFamily, byFamilyAll, byProductId };
   }, [allCards]);
 
   // Saved-count maps for picker tile badges. Keyed by:
@@ -220,11 +227,21 @@ export function ListsDrawer({
                       />
                     ) : (
                       <ul className="flex flex-col gap-2">
-                        {sortedWants.map(item => (
+                        {sortedWants.map(item => {
+                          // Prefer the variant that satisfies the want's
+                          // restriction (e.g. Showcase art for a Showcase-
+                          // restricted want). Falls back to the family's
+                          // Standard rep when no candidates loaded yet.
+                          const candidates = byFamilyAll.get(item.familyId) ?? [];
+                          const sampleCard =
+                            bestMatchForWant(item, candidates, priceMode)
+                            ?? byFamily.get(item.familyId)
+                            ?? null;
+                          return (
                           <WantsRow
                             key={item.id}
                             item={item}
-                            sampleCard={byFamily.get(item.familyId) ?? null}
+                            sampleCard={sampleCard}
                             isEditing={editingWantId === item.id}
                             onChangeQty={qty => wants.update(item.id, { qty })}
                             onTogglePriority={() => wants.togglePriority(item.id)}
@@ -239,7 +256,8 @@ export function ListsDrawer({
                               wants.update(item.id, { restriction: next })
                             }
                           />
-                        ))}
+                          );
+                        })}
                       </ul>
                     )}
                   </div>

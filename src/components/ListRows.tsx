@@ -1,7 +1,7 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { cardImageUrl, adjustPrice, getCardPrice } from '../services/priceService';
-import { variantBadgeColor, variantDisplayLabel, extractVariantLabel, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { variantBadgeColor, variantDisplayLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
@@ -86,7 +86,12 @@ export function WantsRow({
   onChangeRestriction,
 }: WantsRowProps) {
   const imgUrl = sampleCard?.productId ? cardImageUrl(sampleCard.productId, 'sm') : null;
-  const title = sampleCard?.displayName ?? sampleCard?.name ?? item.familyId;
+  // Strip the variant suffix from the fallback name so unenriched cards
+  // don't show "(Showcase)" in the title — variant is already conveyed
+  // by the thumbnail art.
+  const title = sampleCard?.displayName
+    ?? (sampleCard?.name ? extractBaseName(sampleCard.name) : null)
+    ?? item.familyId;
 
   return (
     <RowShell imgUrl={imgUrl} title={title}>
