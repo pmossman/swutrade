@@ -7,6 +7,8 @@ interface TradeBalanceProps {
   theirCards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 function calcTotal(cards: TradeCard[], percentage: number, priceMode: PriceMode): number {
@@ -20,7 +22,7 @@ function formatDollars(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-export function TradeBalance({ yourCards, theirCards, percentage, priceMode }: TradeBalanceProps) {
+export function TradeBalance({ yourCards, theirCards, percentage, priceMode, collapsed = false, onToggleCollapse }: TradeBalanceProps) {
   const yourTotal = calcTotal(yourCards, percentage, priceMode);
   const theirTotal = calcTotal(theirCards, percentage, priceMode);
   const isEmpty = yourCards.length === 0 && theirCards.length === 0;
@@ -57,31 +59,82 @@ export function TradeBalance({ yourCards, theirCards, percentage, priceMode }: T
     }
   }
 
+  // Collapsed view — single compact line so users on a tight mobile
+  // screen can keep the crucial "who owes what" info while freeing
+  // height for the card lists above. Still wrapped in the outer
+  // button (for "open summary") via the parent; our chevron
+  // stopPropagation so it doesn't open the summary.
+  // Collapse chevron styled as a proper button and positioned on the
+  // LEFT of the banner — mirrors the pattern used on the trade panels.
+  const collapseChevron = onToggleCollapse ? (
+    <button
+      type="button"
+      onClick={e => { e.stopPropagation(); onToggleCollapse(); }}
+      className="w-7 h-7 shrink-0 rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 flex items-center justify-center transition-colors"
+      aria-label={collapsed ? 'Expand balance' : 'Collapse balance'}
+      title={collapsed ? 'Expand' : 'Collapse'}
+    >
+      <svg
+        className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  ) : null;
+
+  if (collapsed) {
+    return (
+      <div className={`rounded-xl border px-2 py-1.5 flex items-center gap-2 ${chrome.border} ${chrome.bg} ${glowClass}`}>
+        {collapseChevron}
+        <span className={`swu-display text-[11px] ${chrome.headline} truncate`}>
+          {balance.headline}
+        </span>
+        {actionLine && (
+          <span className="text-[11px] text-gray-300 truncate">· {actionLine}</span>
+        )}
+        {!isEmpty && !actionLine && (
+          <span className="text-[11px] text-gray-500 tabular-nums">
+            · {formatDollars(yourTotal)} / {formatDollars(theirTotal)}
+          </span>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className={`rounded-xl border px-4 py-3 transition-all ${chrome.border} ${chrome.bg} ${glowClass}`}>
-      {/* Headline — flavor */}
-      <div className={`swu-display text-sm sm:text-base text-center ${chrome.headline}`}>
+    <div className={`relative rounded-xl border px-3 py-2 sm:px-4 sm:py-3 transition-all ${chrome.border} ${chrome.bg} ${glowClass}`}>
+      {collapseChevron && (
+        <div className="absolute top-2 left-2">
+          {collapseChevron}
+        </div>
+      )}
+      {/* Headline — flavor. Smaller on mobile so it doesn't eat
+          vertical real estate below the card lists. */}
+      <div className={`swu-display text-[11px] sm:text-base text-center ${chrome.headline}`}>
         {balance.headline}
       </div>
 
       {/* Action line — the practical call to action in thematic language */}
       {actionLine && (
-        <div className="text-[13px] sm:text-sm mt-1.5 text-center text-gray-300">
+        <div className="text-[12px] sm:text-sm mt-1 sm:mt-1.5 text-center text-gray-300">
           {actionLine}
         </div>
       )}
 
       {/* Side totals with color-coded labels — emerald for Offering,
-          blue for Receiving. Gold for the gap. Gray for pricing meta. */}
+          blue for Receiving. Gray for pricing meta. */}
       {!isEmpty && (
-        <div className="mt-2 flex items-center justify-center gap-3 flex-wrap text-[11px] tabular-nums">
+        <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-[10px] sm:text-[11px] tabular-nums">
           <span className="flex items-baseline gap-1">
-            <span className="text-emerald-400/70 uppercase text-[9px] tracking-widest font-semibold">Offer</span>
+            <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
             <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
           </span>
           <span className="text-space-600" aria-hidden>·</span>
           <span className="flex items-baseline gap-1">
-            <span className="text-blue-400/70 uppercase text-[9px] tracking-widest font-semibold">Receive</span>
+            <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
             <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
           </span>
           <span className="text-space-600" aria-hidden>·</span>
@@ -92,18 +145,18 @@ export function TradeBalance({ yourCards, theirCards, percentage, priceMode }: T
       )}
 
       {missingTotal > 0 && (
-        <div className="mt-2 mx-auto max-w-md flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-xs font-bold text-red-300">
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="mt-1.5 sm:mt-2 mx-auto max-w-md flex items-center justify-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-[11px] sm:text-xs font-bold text-red-300">
+          <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
           <span>
-            {missingTotal} card{missingTotal === 1 ? '' : 's'} missing price — balance is incomplete
+            {missingTotal} card{missingTotal === 1 ? '' : 's'} missing price
           </span>
         </div>
       )}
 
       {!isEmpty && (
-        <div className="mt-2 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-gold/70 hover:text-gold transition-colors">
+        <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] font-semibold text-gold/70 hover:text-gold transition-colors">
           <span>View full summary</span>
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />

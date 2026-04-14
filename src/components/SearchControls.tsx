@@ -57,7 +57,7 @@ export function SearchControls({
     <button
       type="button"
       onClick={() => setScope(s)}
-      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+      className={`px-2 sm:px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
         scope === s
           ? 'bg-gold/20 text-gold'
           : 'text-gray-400 hover:text-gray-200'
@@ -65,7 +65,9 @@ export function SearchControls({
     >
       {label}
       {count !== null && (
-        <span className="ml-1 text-[10px] opacity-70">{count}</span>
+        // Counts are secondary info — hide on mobile so the scope
+        // toggle + Market/Low + Filters all fit on one row.
+        <span className="hidden sm:inline ml-1 text-[10px] opacity-70">{count}</span>
       )}
     </button>
   );

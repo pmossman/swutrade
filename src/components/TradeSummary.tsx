@@ -3,6 +3,7 @@ import type { TradeCard, PriceMode } from '../types';
 import { PriceModeToggle } from './PriceModeToggle';
 import { PriceSlider } from './PriceSlider';
 import { ShareButtons } from './ShareButtons';
+import { MobileActionsKebab } from './MobileActionsKebab';
 import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices, extractVariantLabel, extractBaseName } from '../services/priceService';
 import { variantBadgeColor, variantDisplayLabel } from '../utils/variantBadge';
@@ -200,18 +201,26 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onP
             <span className="w-px h-5 bg-space-700" aria-hidden />
             <PriceSlider value={percentage} onChange={onPercentageChange} />
           </div>
-          <ShareButtons />
+          {/* Desktop shows inline Link/Image pills; mobile collapses
+              them into a kebab to save header width. */}
+          <div className="hidden md:block">
+            <ShareButtons />
+          </div>
+          <div className="md:hidden">
+            <MobileActionsKebab />
+          </div>
         </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-6xl mx-auto px-4 pb-6 pt-2 sm:pt-4">
           {/* Compact balance strip — mirrors the bottom banner's pattern
-              (headline + action + color-coded totals) so the language
-              and visual hierarchy stay consistent across contexts. */}
+              (headline + action + color-coded totals). Stacks vertically
+              on mobile so the headline gets full banner width, flows
+              side-by-side on sm+. */}
           <div className={`rounded-lg border ${chrome.border} ${chrome.bg} px-4 py-3 mb-4 ${balance.tier === 'chaos' ? 'animate-pulse-crimson' : ''}`}>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="min-w-0">
                 <div className={`swu-display text-xs sm:text-sm ${chrome.headline}`}>
                   {balance.headline}
                 </div>

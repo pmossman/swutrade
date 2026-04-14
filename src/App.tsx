@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
 import { PriceModeToggle } from './components/PriceModeToggle';
@@ -9,6 +9,8 @@ import { TradeSummary } from './components/TradeSummary';
 import { ShareButtons } from './components/ShareButtons';
 import { Logo } from './components/Logo';
 import { ClearAllButton } from './components/ClearAllButton';
+import { MobileActionsKebab } from './components/MobileActionsKebab';
+import { PanelDivider } from './components/PanelDivider';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
 import { useTradeUrl } from './hooks/useTradeUrl';
@@ -44,6 +46,20 @@ function App() {
   const [yourCards, setYourCards] = useState<TradeCard[]>([]);
   const [theirCards, setTheirCards] = useState<TradeCard[]>([]);
   const [showSummary, setShowSummary] = useState(false);
+  // Per-panel collapse state — lets mobile users shrink a side they're
+  // not editing so the other gets more scroll room.
+  const [offeringCollapsed, setOfferingCollapsed] = useState(false);
+  const [receivingCollapsed, setReceivingCollapsed] = useState(false);
+  // Mobile-only: manual split ratio between Offering and Receiving
+  // panels (0 = all Receiving, 1 = all Offering). Null = auto.
+  const [splitRatio, setSplitRatio] = useState<number | null>(null);
+  const panelsRef = useRef<HTMLDivElement>(null);
+  const [bannerCollapsed, setBannerCollapsed] = useState(() => {
+    // Default-collapsed on mobile so the banner doesn't compete with
+    // the card lists for vertical space. User can expand anytime.
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 767px)').matches;
+  });
 
   const priceData = usePriceData();
   // Single shared filter-state instance so both trade sides see the
@@ -118,30 +134,42 @@ function App() {
   }, []);
 
   return (
+    <>
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
-      {/* Top bar — logo anchors the left. On mobile the controls
-          stack vertically to the right of the logo so we use the
-          horizontal space next to the wordmark instead of spilling
-          into new rows below. On md+ they flow horizontally. */}
+      {/* Top bar — logo | pricing pill | actions. All on one row.
+          Mobile hides the wordmark and collapses Share/Clear into a
+          single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <div className="flex items-center gap-3 md:gap-6">
-          <h1 className="flex items-center gap-2.5 select-none shrink-0">
-            <Logo className="w-9 h-9 shrink-0" />
-            <span className="text-sm font-bold text-gray-200 tracking-[0.12em] leading-none">
-              <span className="uppercase">SWU</span><span className="text-gold uppercase">Trade</span><span className="text-[11px] text-gray-500 font-medium">.com</span>
+        <div className="flex items-center gap-3 md:gap-4">
+          <h1 className="flex items-center select-none shrink-0">
+            {/* Logo sits flush against the "S" — the tiny gap after
+                the logo should match the inter-letter tracking so
+                it reads as a glyph in the word, not a separate icon. */}
+            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
+              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
             </span>
           </h1>
-          <div className="flex flex-col items-end gap-1.5 md:flex-row md:items-center md:flex-1 md:gap-2">
+          {/* Controls cluster — pricing + actions grouped together and
+              pushed to the right (ml-auto) so the logo/title gets
+              breathing room on the left. */}
+          <div className="ml-auto flex items-center gap-2">
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               <PriceModeToggle value={priceMode} onChange={setPriceMode} />
               <span className="w-px h-5 bg-space-700" aria-hidden />
               <PriceSlider value={percentage} onChange={setPercentage} />
             </div>
-            {(hasCards) && (
-              <div className="flex items-center gap-2 md:ml-auto">
-                <ShareButtons size="sm" />
-                <ClearAllButton onConfirm={handleClear} />
-              </div>
+            {hasCards && (
+              <>
+                {/* Desktop: inline pills. Mobile: single kebab. */}
+                <div className="hidden md:flex items-center gap-2">
+                  <ShareButtons size="sm" />
+                  <ClearAllButton onConfirm={handleClear} />
+                </div>
+                <div className="md:hidden">
+                  <MobileActionsKebab onClear={handleClear} />
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -167,9 +195,10 @@ function App() {
         )}
       </div>
 
-      {/* Trade panels — the main content, fills remaining viewport */}
+      {/* Trade panels — flex on mobile so a collapsed panel gives its
+          space to the expanded one. Grid on md+ keeps side-by-side. */}
       <div className="flex-1 min-h-0 px-3 pb-2 max-w-5xl mx-auto w-full">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 h-full">
+        <div ref={panelsRef} className="flex flex-col md:grid md:grid-cols-2 gap-3 h-full">
           <TradeSide
             label="Offering"
             cards={yourCards}
@@ -185,7 +214,15 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
+            collapsed={offeringCollapsed}
+            onToggleCollapse={() => setOfferingCollapsed(c => !c)}
+            flexBasis={offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
           />
+          {/* Mobile-only drag handle between the two panels. Collapsed
+              panels hide the divider — nothing to resize against. */}
+          {!offeringCollapsed && !receivingCollapsed && (
+            <PanelDivider containerRef={panelsRef} onRatioChange={setSplitRatio} />
+          )}
           <TradeSide
             label="Receiving"
             cards={theirCards}
@@ -201,6 +238,9 @@ function App() {
             onLoadAllSets={handleLoadAllSets}
             onPriceModeChange={setPriceMode}
             filters={filters}
+            collapsed={receivingCollapsed}
+            onToggleCollapse={() => setReceivingCollapsed(c => !c)}
+            flexBasis={offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
           />
         </div>
       </div>
@@ -217,6 +257,8 @@ function App() {
               theirCards={theirCards}
               percentage={percentage}
               priceMode={priceMode}
+              collapsed={bannerCollapsed}
+              onToggleCollapse={() => setBannerCollapsed(c => !c)}
             />
           </button>
         ) : (
@@ -282,15 +324,24 @@ function App() {
             </>
           )}
         </div>
-        {/* Legal/attribution line — tiny, muted. Keep the language
-            conservative so we never imply endorsement. */}
-        <div className="mt-1.5 text-[9px] text-gray-700 leading-snug px-2">
+        {/* Legal/attribution line — visible inline on desktop, but
+            pushed below the fold on mobile so we don't eat the main
+            vertical space. Scroll down on mobile to read it. */}
+        <div className="hidden md:block mt-1.5 text-[9px] text-gray-700 leading-snug px-2">
           SWUTrade is an unofficial fan site, not produced or endorsed by Fantasy Flight Publishing or Lucasfilm Ltd.
           Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
           Card prices are estimates — see stores for final pricing.
         </div>
       </div>
     </div>
+    {/* Mobile-only legal disclaimer pushed BELOW the 100dvh viewport
+        so it doesn't eat main-app vertical space. Scroll down to see. */}
+    <div className="md:hidden bg-space-900 text-gray-700 text-[10px] leading-snug px-4 py-4 text-center">
+      SWUTrade is an unofficial fan site, not produced or endorsed by Fantasy Flight Publishing or Lucasfilm Ltd.
+      Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
+      Card prices are estimates — see stores for final pricing.
+    </div>
+    </>
   );
 }
 

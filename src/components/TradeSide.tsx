@@ -3,6 +3,7 @@ import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { SETS, tradeCardKey } from '../types';
 import { adjustPrice, extractVariantLabel, extractBaseName, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { useCardSearch } from '../hooks/useCardSearch';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import { SearchResults } from './SearchResults';
 import { SearchControls } from './SearchControls';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
@@ -54,6 +55,13 @@ interface TradeSideProps {
   // Shared filter state (scope + hide-variants + hide-sets). Lifted to
   // App so both trade sides stay in sync in real time.
   filters: ReturnType<typeof useSearchFilters>;
+  /** When true, the card list collapses and the header shrinks to show
+   *  just the label + count + total, with a chevron to re-expand. */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  /** Optional explicit flex-basis percentage (0-1). When set, overrides
+   *  the default auto-sizing — used by the mobile panel divider. */
+  flexBasis?: number;
 }
 
 function formatPrice(price: number | null): string {
@@ -145,8 +153,15 @@ const qtyBtnColors: Record<string, string> = {
   blue: 'text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/70',
 };
 
-// Pick thumbnail size based on total card entries
-function thumbSize(cardCount: number): ThumbSize {
+// Pick thumbnail size based on total card entries. On mobile we cap
+// at `md` since even a single card at `lg` eats most of the viewport
+// and doesn't leave room for the other panel.
+function thumbSize(cardCount: number, isMobile: boolean): ThumbSize {
+  if (isMobile) {
+    if (cardCount <= 4) return 'md';
+    if (cardCount <= 10) return 'sm';
+    return 'xs';
+  }
   if (cardCount <= 2) return 'lg';
   if (cardCount <= 4) return 'md';
   if (cardCount <= 8) return 'sm';
@@ -168,7 +183,11 @@ export function TradeSide({
   onLoadAllSets,
   onPriceModeChange,
   filters,
+  collapsed,
+  onToggleCollapse,
+  flexBasis,
 }: TradeSideProps) {
+  const isMobile = useIsMobile();
   const [searchFocused, setSearchFocused] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -227,7 +246,7 @@ export function TradeSide({
   const hdr = headerColors[accentColor];
   const searchBorder = searchBorderColors[accentColor];
   const qtyBtn = qtyBtnColors[accentColor];
-  const tSize = thumbSize(cards.length);
+  const tSize = thumbSize(cards.length, isMobile);
 
   return (
     <>
@@ -363,19 +382,76 @@ export function TradeSide({
         </button>
       </div>
     </div>
-    <div className={`relative bg-space-800 rounded-xl border ${borderColor} overflow-hidden flex flex-col min-h-0`}>
+    <div
+      className={`relative bg-space-800 rounded-xl border ${borderColor} overflow-hidden flex flex-col ${collapsed ? 'flex-none' : 'min-h-0'} ${collapsed || flexBasis !== undefined ? '' : 'flex-auto'}`}
+      style={!collapsed && flexBasis !== undefined ? { flex: `0 1 ${flexBasis * 100}%` } : undefined}
+    >
       {/* Saber-bar side accent */}
       <div className={`absolute left-0 top-2 bottom-2 w-[3px] rounded-full ${saberBarColors[accentColor]}`} aria-hidden />
-      {/* Header */}
-      <div className={`flex items-center justify-between pl-4 pr-3 py-2 border-b border-space-600 shrink-0 ${hdr}`}>
+      {/* Header — collapse chevron (left), label, count when collapsed,
+          total, add button. Collapsing keeps essentials visible while
+          saving vertical space for the other panel on mobile. */}
+      <div className={`flex items-center gap-2 pl-3 pr-2 py-1.5 ${collapsed ? '' : 'border-b border-space-600'} shrink-0 ${hdr}`}>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="w-7 h-7 rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 flex items-center justify-center transition-colors"
+          aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
+          title={collapsed ? 'Expand' : 'Collapse'}
+        >
+          {/* Chevron points DOWN when expanded (content is below) and
+              SIDEWAYS when collapsed (expand-to-the-right metaphor). */}
+          <svg
+            className={`w-4 h-4 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
         <span className="swu-display text-xs sm:text-sm">{label}</span>
-        <span className="font-bold tabular-nums text-gray-100">{formatPrice(total)}</span>
+        {cards.length > 0 && (
+          <span className="text-[11px] tabular-nums text-gray-400 font-medium">
+            · {cards.length} card{cards.length === 1 ? '' : 's'}
+          </span>
+        )}
+        <span className="flex-1" aria-hidden />
+        <span className="flex items-baseline gap-1">
+          <span className="text-[9px] uppercase tracking-widest text-gray-500 font-semibold">Total</span>
+          <span className="font-bold tabular-nums text-gray-100">{formatPrice(total)}</span>
+        </span>
       </div>
+
+      {/* Slim add-action bar directly below the header — always
+          visible, no competition with label/count/total, and reads as
+          a clear "add to this side" call-to-action. Hidden when the
+          panel is collapsed. */}
+      {!collapsed && (
+        <button
+          type="button"
+          onClick={() => {
+            setSearchFocused(true);
+            setTimeout(() => overlayInputRef.current?.focus(), 50);
+          }}
+          className={`flex items-center justify-center gap-1.5 py-1.5 border-b border-space-600 text-xs font-semibold transition-colors shrink-0 ${
+            accentColor === 'blue'
+              ? 'bg-blue-900/30 hover:bg-blue-800/50 text-blue-200'
+              : 'bg-emerald-900/30 hover:bg-emerald-800/50 text-emerald-200'
+          }`}
+          aria-label={`Add cards to ${label}`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          Add card
+        </button>
+      )}
 
       {/* Card list + add-affordance at the bottom. The "Add cards" button
           sits AFTER any existing cards so it reads like the natural next
           step — a pushed-down list end, not a separate input above. */}
-      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col">
+      <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${collapsed ? 'hidden' : ''}`}>
         {cards.length === 0 ? (
           <AddCardsTile
             label={label}
@@ -521,7 +597,7 @@ export function TradeSide({
                     });
                     return (
                       <div className="shrink-0">
-                        <KebabMenu items={menuItems} size={isCompact ? 'sm' : 'md'} />
+                        <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
                       </div>
                     );
                   })()}
@@ -550,16 +626,6 @@ export function TradeSide({
                 </div>
               );
             })}
-            <AddCardsTile
-              label={label}
-              accentColor={accentColor}
-              onOpen={() => {
-                setSearchFocused(true);
-                setTimeout(() => overlayInputRef.current?.focus(), 50);
-              }}
-              setFilterLabel={setFilterLabel}
-              variant="tail"
-            />
           </div>
         )}
       </div>
@@ -577,49 +643,32 @@ function AddCardsTile({
   accentColor,
   onOpen,
   setFilterLabel,
-  variant = 'empty',
 }: {
   label: string;
   accentColor: 'emerald' | 'blue';
   onOpen: () => void;
   setFilterLabel: string | null;
-  variant?: 'empty' | 'tail';
 }) {
   const accentText = accentColor === 'emerald' ? 'text-emerald-300' : 'text-blue-300';
   const accentHoverBorder = accentColor === 'emerald' ? 'hover:border-emerald-500/50' : 'hover:border-blue-500/50';
   const accentHoverBg = accentColor === 'emerald' ? 'hover:bg-emerald-950/20' : 'hover:bg-blue-950/20';
   const accentIcon = accentColor === 'emerald' ? 'group-hover:text-emerald-300' : 'group-hover:text-blue-300';
 
-  if (variant === 'empty') {
-    return (
-      <button
-        type="button"
-        onClick={onOpen}
-        className={`group flex-1 m-3 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-space-700 ${accentHoverBorder} ${accentHoverBg} text-gray-500 transition-colors cursor-pointer px-4 py-8`}
-      >
-        <svg className={`w-8 h-8 text-space-600 ${accentIcon} transition-colors`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-        </svg>
-        <div className="text-center">
-          <div className={`text-sm font-semibold ${accentText}`}>Add cards to {label}</div>
-          {setFilterLabel && (
-            <div className="text-[11px] text-gray-600 mt-0.5">Filtered to {setFilterLabel}</div>
-          )}
-        </div>
-      </button>
-    );
-  }
-
   return (
     <button
       type="button"
       onClick={onOpen}
-      className={`group w-full px-3 py-3 flex items-center justify-center gap-2 border-t border-dashed border-space-700 ${accentHoverBg} text-gray-500 hover:text-gray-300 transition-colors`}
+      className={`group flex-1 m-3 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-space-700 ${accentHoverBorder} ${accentHoverBg} text-gray-500 transition-colors cursor-pointer px-4 py-8`}
     >
-      <svg className={`w-4 h-4 ${accentIcon} transition-colors`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+      <svg className={`w-8 h-8 text-space-600 ${accentIcon} transition-colors`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
       </svg>
-      <span className="text-xs font-medium">Add more cards</span>
+      <div className="text-center">
+        <div className={`text-sm font-semibold ${accentText}`}>Add cards to {label}</div>
+        {setFilterLabel && (
+          <div className="text-[11px] text-gray-600 mt-0.5">Filtered to {setFilterLabel}</div>
+        )}
+      </div>
     </button>
   );
 }
