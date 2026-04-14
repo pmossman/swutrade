@@ -21,20 +21,28 @@ interface CardResultsGridProps {
   hiddenSets: Set<string>;
   /** Render a single card tile. Consumers control look + click semantics. */
   renderTile: (card: CardVariant, ctx: CardRenderContext) => React.ReactNode;
-  /** Class names for the portrait and landscape grids. Defaults are tuned
-   *  for the wide trade overlay; the list picker overrides for a tighter
-   *  column count. */
+  /** Grid column classes for non-leader (portrait) groups. */
   portraitColsClass?: string;
+  /** Grid column classes for leader (landscape) groups. */
   landscapeColsClass?: string;
 }
 
 const DEFAULT_PORTRAIT_COLS = 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7';
 const DEFAULT_LANDSCAPE_COLS = 'grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5';
 
+// Single padding contract used by every surface that embeds this component,
+// so sticky set-headers and tile grids always line up visually. Sticky
+// headers extend edge-to-edge of the scroll viewport (no outer container
+// padding); the tile grids inside get the horizontal padding.
+const SECTION_PADDING_X = 'px-3 sm:px-6';
+
 /**
- * Filter-aware, set-grouped, leader-orientation-aware results grid.
- * Purely presentational — owns no state. The consumer decides how each
- * tile looks via `renderTile`.
+ * Filter-aware, set-grouped, leader-orientation-aware search results.
+ *
+ * Owns its own scroll container so consumers can't accidentally introduce
+ * top padding that would break sticky set headers (the "gap above the
+ * divider" bug). Consumers place this as a flex child — it supplies its
+ * own flex-1 min-h-0 overflow-y-auto.
  */
 export function CardResultsGrid({
   results,
@@ -50,12 +58,12 @@ export function CardResultsGrid({
   if (!query || query.length < 2) return null;
 
   if (isSearching) {
-    return <EmptyPanel>Searching…</EmptyPanel>;
+    return <CenteredMessage>Searching…</CenteredMessage>;
   }
 
   const hasResults = results.some(sg => sg.groups.length > 0);
   if (!hasResults) {
-    return <EmptyPanel>No cards found</EmptyPanel>;
+    return <CenteredMessage>No cards found</CenteredMessage>;
   }
 
   const scopedResults = results.filter(sg => {
@@ -81,58 +89,66 @@ export function CardResultsGrid({
 
   if (filteredResults.length === 0) {
     return (
-      <EmptyPanel>
+      <CenteredMessage>
         Everything matching "{query}" is hidden by your current filters.
-      </EmptyPanel>
+      </CenteredMessage>
     );
   }
 
   const showSetHeaders = filteredResults.length > 1;
 
   return (
-    <div className="space-y-8">
-      {filteredResults.map(setGroup => (
-        <section key={setGroup.setSlug}>
-          {showSetHeaders && (
-            <div className="flex items-baseline gap-2 px-2 py-2 sticky -top-px bg-space-900 z-10 mb-4 border-b border-space-700 shadow-[0_8px_12px_-8px_rgba(0,0,0,0.8)]">
-              <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">
-                {setGroup.setCode}
-              </span>
-              <span className="text-[10px] text-gray-600">{setGroup.setName}</span>
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="space-y-8 pb-6">
+        {filteredResults.map(setGroup => (
+          <section key={setGroup.setSlug}>
+            {showSetHeaders && (
+              <div
+                className={`flex items-baseline gap-2 py-2 sticky -top-px bg-space-900 z-10 mb-4 border-b border-space-700 shadow-[0_8px_12px_-8px_rgba(0,0,0,0.8)] ${SECTION_PADDING_X}`}
+              >
+                <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">
+                  {setGroup.setCode}
+                </span>
+                <span className="text-[10px] text-gray-600">{setGroup.setName}</span>
+              </div>
+            )}
+            <div className={`space-y-6 ${SECTION_PADDING_X}`}>
+              {setGroup.groups.map(group => {
+                const leaderGroup = isLeaderOrBaseGroup(group.variants);
+                const gridCols = leaderGroup ? landscapeColsClass : portraitColsClass;
+                return (
+                  <div key={`${setGroup.setSlug}-${group.baseName}`}>
+                    <div className="px-1 pb-2 text-xs font-medium text-gray-300 truncate">
+                      {group.baseName}
+                    </div>
+                    <div className={`grid ${gridCols} gap-3`}>
+                      {[...group.variants]
+                        .sort((a, b) => variantRank(extractVariantLabel(a.name)) - variantRank(extractVariantLabel(b.name)))
+                        .map(card => renderTile(card, {
+                          leaderGroup,
+                          setSlug: setGroup.setSlug,
+                          setCode: setGroup.setCode,
+                        }))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          )}
-          <div className="space-y-6">
-            {setGroup.groups.map(group => {
-              const leaderGroup = isLeaderOrBaseGroup(group.variants);
-              const gridCols = leaderGroup ? landscapeColsClass : portraitColsClass;
-              return (
-                <div key={`${setGroup.setSlug}-${group.baseName}`}>
-                  <div className="px-1 pb-2 text-xs font-medium text-gray-300 truncate">
-                    {group.baseName}
-                  </div>
-                  <div className={`grid ${gridCols} gap-3`}>
-                    {[...group.variants]
-                      .sort((a, b) => variantRank(extractVariantLabel(a.name)) - variantRank(extractVariantLabel(b.name)))
-                      .map(card => renderTile(card, {
-                        leaderGroup,
-                        setSlug: setGroup.setSlug,
-                        setCode: setGroup.setCode,
-                      }))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ))}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
 
-function EmptyPanel({ children }: { children: React.ReactNode }) {
+function CenteredMessage({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-space-800 border border-space-700 rounded-lg mt-1 p-6 text-center text-gray-500 text-sm">
-      {children}
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className={`${SECTION_PADDING_X} pt-6`}>
+        <div className="bg-space-800 border border-space-700 rounded-lg p-6 text-center text-gray-500 text-sm">
+          {children}
+        </div>
+      </div>
     </div>
   );
 }

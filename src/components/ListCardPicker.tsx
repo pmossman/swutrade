@@ -131,36 +131,34 @@ export function ListCardPicker({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
-        {!hasResults ? (
-          <div className="py-10 text-center text-xs text-gray-500">
-            Type a card name to search
-          </div>
-        ) : (
-          <CardResultsGrid
-            results={results}
-            query={query}
-            isSearching={isSearching}
-            scope={filters.scope}
-            hiddenVariants={filters.hiddenVariants}
-            hiddenSets={filters.hiddenSets}
-            // Tighter grids for the narrower drawer — one col less at each
-            // breakpoint than the trade overlay.
-            portraitColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
-            landscapeColsClass="grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
-            renderTile={(card, ctx) => (
-              <PickerTile
-                key={`${card.name}-${card.set}-${card.productId ?? ''}`}
-                card={card}
-                percentage={percentage}
-                priceMode={priceMode}
-                landscape={ctx.leaderGroup}
-                onPick={() => onPick(card)}
-              />
-            )}
-          />
-        )}
-      </div>
+      {!hasResults ? (
+        <div className="flex-1 flex items-start justify-center pt-10 text-center text-xs text-gray-500">
+          Type a card name to search
+        </div>
+      ) : (
+        <CardResultsGrid
+          results={results}
+          query={query}
+          isSearching={isSearching}
+          scope={filters.scope}
+          hiddenVariants={filters.hiddenVariants}
+          hiddenSets={filters.hiddenSets}
+          // Tighter grids for the narrower drawer — one col less at each
+          // breakpoint than the trade overlay.
+          portraitColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
+          landscapeColsClass="grid-cols-2 sm:grid-cols-2 md:grid-cols-3"
+          renderTile={(card, ctx) => (
+            <PickerTile
+              key={`${card.name}-${card.set}-${card.productId ?? ''}`}
+              card={card}
+              percentage={percentage}
+              priceMode={priceMode}
+              landscape={ctx.leaderGroup}
+              onPick={() => onPick(card)}
+            />
+          )}
+        />
+      )}
     </div>
   );
 }

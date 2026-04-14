@@ -346,28 +346,32 @@ export function TradeSide({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pb-6 max-w-6xl mx-auto w-full">
-        {!hasSearchResults && (
-          <div className="flex items-center justify-center h-full text-gray-600 text-sm">
-            Type a card name to search
-          </div>
-        )}
-        <SearchResults
-          results={search.results}
-          percentage={percentage}
-          priceMode={priceMode}
-          onAdd={onAdd}
-          onChangeQty={onChangeQty}
-          onRemove={onRemove}
-          tradeCards={cards}
-          isSearching={search.isSearching}
-          query={search.query}
-          accentColor={accentColor}
-          scope={filters.scope}
-          hiddenVariants={filters.hiddenVariants}
-          hiddenSets={filters.hiddenSets}
-        />
-      </div>
+      {/* CardResultsGrid owns its own scroll container — no external
+          top padding so sticky set headers stay flush with the viewport
+          edge. Outer flex wrapper centers the column on wide screens. */}
+      {!hasSearchResults ? (
+        <div className="flex-1 max-w-6xl mx-auto w-full flex items-center justify-center text-gray-600 text-sm">
+          Type a card name to search
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
+          <SearchResults
+            results={search.results}
+            percentage={percentage}
+            priceMode={priceMode}
+            onAdd={onAdd}
+            onChangeQty={onChangeQty}
+            onRemove={onRemove}
+            tradeCards={cards}
+            isSearching={search.isSearching}
+            query={search.query}
+            accentColor={accentColor}
+            scope={filters.scope}
+            hiddenVariants={filters.hiddenVariants}
+            hiddenSets={filters.hiddenSets}
+          />
+        </div>
+      )}
       {/* Touch-only "Done" pill. Desktop users close via the X in the header
           or Escape — tiles are the primary action, so there's no need for
           a CTA at the bottom competing with them. */}
