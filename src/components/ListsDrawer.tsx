@@ -42,12 +42,13 @@ export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerP
         <Dialog.Content
           aria-describedby={undefined}
           className={[
-            'drawer-content fixed z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
+            // Positioning/transform live in index.css under .drawer-content
+            // to avoid a Tailwind-transform vs keyframe race on first paint.
+            'drawer-content z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
             'flex flex-col',
-            // Mobile: bottom sheet
-            'inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl border-b-0',
-            // Desktop: centered modal
-            'md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2',
+            // Mobile: bottom sheet shape
+            'max-h-[85dvh] rounded-t-2xl border-b-0',
+            // Desktop: centered modal size/shape
             'md:w-[min(640px,calc(100vw-2rem))] md:max-h-[85dvh] md:rounded-2xl md:border',
           ].join(' ')}
         >

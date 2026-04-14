@@ -142,7 +142,27 @@ body::before {
 }
 
 /* Drawer / dialog — overlay fade + content slide (mobile) / zoom (desktop).
-   Bound to Radix's data-state so the exit animation runs before unmount. */
+   Positioning lives here (not in Tailwind classes) because Tailwind's
+   transform utilities race with CSS animation keyframes on first paint
+   and cause a top-left flash before the zoom-in settles. Owning the
+   resting transform via CSS keeps the animation's `from` keyframe
+   consistent with the element's base state. */
+.drawer-content {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+@media (min-width: 768px) {
+  .drawer-content {
+    top: 50%;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    transform: translate(-50%, -50%);
+  }
+}
+
 @keyframes drawer-fade-in  { from { opacity: 0; } to { opacity: 1; } }
 @keyframes drawer-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes drawer-slide-in-bottom  { from { transform: translateY(100%); } to { transform: translateY(0); } }
