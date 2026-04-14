@@ -13,6 +13,8 @@ import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
 import { ListsDrawer } from './components/ListsDrawer';
 import { BetaBadge } from './components/BetaBadge';
+import { useWants } from './hooks/useWants';
+import { useAvailable } from './hooks/useAvailable';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
@@ -72,6 +74,8 @@ function App() {
   // Single shared filter-state instance so both trade sides see the
   // same scope toggle + variant/set hide preferences in real time.
   const filters = useSearchFilters();
+  const wants = useWants();
+  const available = useAvailable();
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
@@ -167,7 +171,10 @@ function App() {
               pushed to the right (ml-auto) so the logo/title gets
               breathing room on the left. */}
           <div className="ml-auto flex items-center gap-2">
-            <ListsDrawer />
+            <ListsDrawer
+              wantsCount={wants.items.length}
+              availableCount={available.items.length}
+            />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               <PriceModeToggle value={priceMode} onChange={setPriceMode} />
               <span className="w-px h-5 bg-space-700" aria-hidden />
