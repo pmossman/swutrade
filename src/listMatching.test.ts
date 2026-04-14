@@ -21,7 +21,7 @@ function card(name: string, priceMarket: number | null = 1): CardVariant {
 function want(restriction: WantsItem['restriction']): WantsItem {
   return {
     id: 'w_1',
-    baseCardId: 'TEST_1',
+    familyId: 'test::card-1',
     qty: 1,
     restriction,
     addedAt: 0,

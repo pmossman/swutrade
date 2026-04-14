@@ -6,6 +6,7 @@ import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
+import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
 import { bestMatchForWant } from '../listMatching';
 
@@ -48,30 +49,51 @@ export function ListsDrawer({
   const availableCount = available.items.length;
   const totalCount = wantsCount + availableCount;
 
-  // Index all loaded cards for fast lookup when rendering rows.
-  //  - byBase: one sample variant per baseCardId, prefers Standard,
-  //    used for image + display name on wants rows.
-  //  - byBaseAll: all variants per baseCardId, used by bestMatchForWant
+  // Index all loaded cards for fast lookup when rendering rows. Keys
+  // here are the cross-printing family id — every printing of a card
+  // shares the same key, so a wants item saved as "any Luke" can pull
+  // Standard, Hyperspace, and Showcase variants alike.
+  //  - byFamily: one sample variant per family, prefers Standard, used
+  //    for image + display name on wants rows.
+  //  - byFamilyAll: every variant per family, used by bestMatchForWant
   //    to pick the cheapest variant satisfying a wants restriction.
   //  - byProductId: exact variant lookup for Available rows.
-  const { byBase, byBaseAll, byProductId } = useMemo(() => {
-    const byBase = new Map<string, CardVariant>();
-    const byBaseAll = new Map<string, CardVariant[]>();
+  const { byFamily, byFamilyAll, byProductId } = useMemo(() => {
+    const byFamily = new Map<string, CardVariant>();
+    const byFamilyAll = new Map<string, CardVariant[]>();
     const byProductId = new Map<string, CardVariant>();
     for (const card of allCards) {
       if (card.productId) byProductId.set(card.productId, card);
-      if (card.baseCardId) {
-        const existing = byBase.get(card.baseCardId);
-        if (!existing || card.variant === 'Standard') {
-          byBase.set(card.baseCardId, card);
-        }
-        const bucket = byBaseAll.get(card.baseCardId);
-        if (bucket) bucket.push(card);
-        else byBaseAll.set(card.baseCardId, [card]);
+      const fid = cardFamilyId(card);
+      const existing = byFamily.get(fid);
+      if (!existing || card.variant === 'Standard') {
+        byFamily.set(fid, card);
       }
+      const bucket = byFamilyAll.get(fid);
+      if (bucket) bucket.push(card);
+      else byFamilyAll.set(fid, [card]);
     }
-    return { byBase, byBaseAll, byProductId };
+    return { byFamily, byFamilyAll, byProductId };
   }, [allCards]);
+
+  // Saved-count maps for picker tile badges. Keyed by:
+  //   - wants: familyId → total qty across all wants items for that card
+  //   - available: productId → qty for that exact variant
+  const wantsSavedCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of wants.items) {
+      m.set(item.familyId, (m.get(item.familyId) ?? 0) + item.qty);
+    }
+    return m;
+  }, [wants.items]);
+
+  const availableSavedCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of available.items) {
+      m.set(item.productId, (m.get(item.productId) ?? 0) + item.qty);
+    }
+    return m;
+  }, [available.items]);
 
   // Priority-first sort for wants, insertion order otherwise
   const sortedWants = useMemo(() => {
@@ -166,17 +188,24 @@ export function ListsDrawer({
             <Tabs.Content value="wants" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
               {mode === 'picker' && tab === 'wants' ? (
                 <ListCardPicker
+                  listType="wants"
                   allCards={allCards}
                   filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
                   onPriceModeChange={onPriceModeChange}
                   title="Add to Wants"
-                  onPick={card => {
-                    if (card.baseCardId) {
-                      wants.add({ baseCardId: card.baseCardId, qty: 1, restriction: { mode: 'any' } });
-                    }
-                    setMode('list');
+                  savedCounts={wantsSavedCounts}
+                  onPick={(card, ctx) => {
+                    const variant = extractVariantLabel(card.name);
+                    // Only save a restricted variant if it's canonical —
+                    // promo-only labels like "(Judge)" or "(Top 8)" don't
+                    // match the schema enum, so those fall back to Any.
+                    const isCanonical = (CANONICAL_VARIANTS as readonly string[]).includes(variant);
+                    const restriction = (ctx.wantsMode === 'specific' && isCanonical)
+                      ? { mode: 'restricted' as const, variants: [variant as CanonicalVariant] }
+                      : { mode: 'any' as const };
+                    wants.add({ familyId: cardFamilyId(card), qty: 1, restriction });
                   }}
                   onClose={() => setMode('list')}
                 />
@@ -191,7 +220,7 @@ export function ListsDrawer({
                     ) : (
                       <ul className="flex flex-col gap-2">
                         {sortedWants.map(item => {
-                          const candidates = byBaseAll.get(item.baseCardId) ?? [];
+                          const candidates = byFamilyAll.get(item.familyId) ?? [];
                           const quickAddCard = candidates.length > 0
                             ? bestMatchForWant(item, candidates, priceMode)
                             : null;
@@ -199,7 +228,7 @@ export function ListsDrawer({
                             <WantsRow
                               key={item.id}
                               item={item}
-                              sampleCard={byBase.get(item.baseCardId) ?? null}
+                              sampleCard={byFamily.get(item.familyId) ?? null}
                               quickAddCard={quickAddCard}
                               isEditing={editingWantId === item.id}
                               onChangeQty={qty => wants.update(item.id, { qty })}
@@ -230,17 +259,17 @@ export function ListsDrawer({
             <Tabs.Content value="available" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
               {mode === 'picker' && tab === 'available' ? (
                 <ListCardPicker
+                  listType="available"
                   allCards={allCards}
                   filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
                   onPriceModeChange={onPriceModeChange}
                   title="Add to Available"
+                  savedCounts={availableSavedCounts}
                   onPick={card => {
-                    if (card.productId) {
-                      available.add({ productId: card.productId, qty: 1 });
-                    }
-                    setMode('list');
+                    if (!card.productId) return;
+                    available.add({ productId: card.productId, qty: 1 });
                   }}
                   onClose={() => setMode('list')}
                 />

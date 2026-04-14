@@ -113,9 +113,26 @@ export function groupCards(cards: CardVariant[]): CardGroup[] {
 // one from setSlug + base name so downstream code (wants lists) can key
 // off a single identifier throughout.
 export function synthesizeBaseCardId(card: CardVariant): string {
-  const slug = extractBaseName(card.name)
+  return `${card.set}:${baseNameSlug(card)}`;
+}
+
+/**
+ * Cross-printing "family" identifier. Unlike baseCardId (which comes
+ * from swuapi and differs between Standard, Hyperspace, and Showcase
+ * printings — each gets its own collector number + id), this key is
+ * stable across every printing of a card. Used by the Wants list so
+ * "any variant" genuinely spans Standard, Hyperspace, Showcase, etc.
+ *
+ * Shape: `{setSlug}::{kebab-cased base name}`
+ * Example: `jump-to-lightspeed::luke-skywalker-hero-of-yavin`
+ */
+export function cardFamilyId(card: CardVariant): string {
+  return `${card.set}::${baseNameSlug(card)}`;
+}
+
+function baseNameSlug(card: CardVariant): string {
+  return extractBaseName(card.name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  return `${card.set}:${slug}`;
 }

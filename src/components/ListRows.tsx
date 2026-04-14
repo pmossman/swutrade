@@ -140,7 +140,7 @@ export function WantsRow({
   onAddToReceiving,
 }: WantsRowProps) {
   const imgUrl = sampleCard?.productId ? cardImageUrl(sampleCard.productId, 'sm') : null;
-  const title = sampleCard?.displayName ?? sampleCard?.name ?? item.baseCardId;
+  const title = sampleCard?.displayName ?? sampleCard?.name ?? item.familyId;
 
   return (
     <RowShell imgUrl={imgUrl} title={title}>

@@ -39,7 +39,7 @@ describe('VariantRestrictionSchema', () => {
 describe('WantsItemSchema', () => {
   const base = {
     id: 'w_1',
-    baseCardId: 'SOR_005',
+    familyId: 'spark-of-rebellion::luke-skywalker-faithful-friend',
     qty: 1,
     restriction: { mode: 'any' as const },
     addedAt: Date.now(),
@@ -72,8 +72,8 @@ describe('WantsItemSchema', () => {
     expect(WantsItemSchema.safeParse({ ...base, maxUnitPrice: -1 }).success).toBe(false);
   });
 
-  it('rejects empty baseCardId', () => {
-    expect(WantsItemSchema.safeParse({ ...base, baseCardId: '' }).success).toBe(false);
+  it('rejects empty familyId', () => {
+    expect(WantsItemSchema.safeParse({ ...base, familyId: '' }).success).toBe(false);
   });
 
   it('round-trips through WantsListSchema with mixed items', () => {
@@ -82,7 +82,7 @@ describe('WantsItemSchema', () => {
       {
         ...base,
         id: 'w_2',
-        baseCardId: 'LAW_100',
+        familyId: 'a-lawless-time::some-card',
         restriction: { mode: 'restricted' as const, variants: ['Hyperspace', 'Showcase'] as const },
         isPriority: true,
       },

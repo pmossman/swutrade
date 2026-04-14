@@ -25,7 +25,12 @@ export const VariantRestrictionSchema = z.discriminatedUnion('mode', [
 
 export const WantsItemSchema = z.object({
   id: z.string().min(1),
-  baseCardId: z.string().min(1),
+  /**
+   * Cross-printing family identifier (see cardFamilyId in variants.ts).
+   * Treats Standard, Hyperspace, Showcase, etc. of the same card as one
+   * entity, so "any variant" matches every printing.
+   */
+  familyId: z.string().min(1),
   qty: z.number().int().min(1).max(99),
   restriction: VariantRestrictionSchema,
   maxUnitPrice: z.number().positive().optional(),
@@ -56,7 +61,9 @@ export const PERSIST_KEYS = {
   hideVariants: 'swu.hideVariants',
   hideSets: 'swu.hideSets',
   searchScope: 'swu.searchScope',
-  wants: 'swu.wants.v1',
+  // v2: keyed by cardFamilyId (cross-printing) rather than swuapi's
+  // baseCardId (per-printing). v1 data is not migrated — fresh start.
+  wants: 'swu.wants.v2',
   available: 'swu.available.v1',
 } as const;
 

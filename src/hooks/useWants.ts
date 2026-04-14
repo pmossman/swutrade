@@ -15,7 +15,7 @@ function newId(): string {
 }
 
 export interface WantsInput {
-  baseCardId: string;
+  familyId: string;
   qty?: number;
   restriction?: VariantRestriction;
   maxUnitPrice?: number;
@@ -25,7 +25,7 @@ export interface WantsInput {
 
 export interface WantsApi {
   items: WantsItem[];
-  /** Add a wants item. If the same baseCardId is already saved, bumps qty
+  /** Add a wants item. If the same familyId is already saved, bumps qty
    *  instead of creating a duplicate row. */
   add: (input: WantsInput) => WantsItem;
   update: (id: string, patch: Partial<Omit<WantsItem, 'id'>>) => void;
@@ -49,14 +49,15 @@ export function useWants(): WantsApi {
     let created: WantsItem | null = null;
 
     setItems(prev => {
-      const existing = prev.find(i => i.baseCardId === input.baseCardId);
+      const existing = prev.find(i => i.familyId === input.familyId);
       let next: WantsItem[];
       if (existing) {
         const bumped: WantsItem = {
           ...existing,
           qty: Math.min(99, existing.qty + qty),
-          // Allow the caller to upgrade restriction / priority on re-add.
-          ...(input.restriction ? { restriction: input.restriction } : {}),
+          // Don't override restriction on re-add — the user's previous
+          // narrowing stands (they can widen it via the inline editor).
+          // Other optional fields may be updated by the caller.
           ...(input.isPriority !== undefined ? { isPriority: input.isPriority } : {}),
           ...(input.maxUnitPrice !== undefined ? { maxUnitPrice: input.maxUnitPrice } : {}),
           ...(input.note !== undefined ? { note: input.note } : {}),
@@ -66,7 +67,7 @@ export function useWants(): WantsApi {
       } else {
         const fresh: WantsItem = {
           id: newId(),
-          baseCardId: input.baseCardId,
+          familyId: input.familyId,
           qty,
           restriction: input.restriction ?? { mode: 'any' },
           maxUnitPrice: input.maxUnitPrice,
