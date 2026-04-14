@@ -177,17 +177,18 @@ function App() {
           single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
         <div className="flex items-center gap-2 md:gap-4">
-          <h1 className="flex items-center gap-2 select-none shrink-0">
+          <h1 className="relative flex items-center select-none shrink-0">
             {/* Logo sits flush against the "S" — the tiny gap after
                 the logo should match the inter-letter tracking so
                 it reads as a glyph in the word, not a separate icon. */}
-            <span className="flex items-center">
-              <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-              <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-                <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-              </span>
+            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
+              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
             </span>
-            <BetaBadge />
+            {/* Beta tag as an absolute-positioned kicker beneath the
+                wordmark — keeps the title's natural width so the layout
+                doesn't shift between stable and beta builds. */}
+            <BetaBadge className="absolute top-full left-7 sm:left-8 mt-0.5" />
           </h1>
           {/* Controls cluster — pricing + actions grouped together and
               pushed to the right (ml-auto) so the logo/title gets
