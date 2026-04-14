@@ -1,6 +1,18 @@
-# SWU Trade
+<p align="center">
+  <a href="https://swutrade.com">
+    <img src="./public/readme-banner.svg" alt="SWU Trade — Star Wars: Unlimited Trade Calculator" width="720">
+  </a>
+</p>
 
-Balance Star Wars Unlimited card trades with live TCGPlayer market prices. Live at [swutrade.com](https://swutrade.com).
+<p align="center">
+  <a href="https://swutrade.com"><b>swutrade.com</b></a> &nbsp;·&nbsp;
+  <a href="https://github.com/pmossman/swutrade/issues">Issues</a> &nbsp;·&nbsp;
+  <a href="./ROADMAP.md">Roadmap</a>
+</p>
+
+---
+
+Balance Star Wars: Unlimited card trades with live TCGPlayer market prices.
 
 Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair.
 
