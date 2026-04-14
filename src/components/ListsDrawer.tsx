@@ -25,12 +25,12 @@ export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerP
         <button
           type="button"
           aria-label="Open my lists"
-          className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-300 hover:text-gold-bright"
+          className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-300 hover:text-gold"
         >
           <ListsIcon className="w-3.5 h-3.5" />
           <span className="hidden sm:inline tracking-wide uppercase">My Lists</span>
           {totalCount > 0 && (
-            <span className="ml-0.5 px-1.5 py-px rounded-full bg-gold/20 text-gold-bright text-[10px] font-bold leading-none">
+            <span className="ml-0.5 px-1.5 py-px rounded-full bg-gold/20 text-gold text-[10px] font-bold leading-none">
               {totalCount}
             </span>
           )}
@@ -58,7 +58,7 @@ export function ListsDrawer({ wantsCount = 0, availableCount = 0 }: ListsDrawerP
           </div>
 
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-space-800">
-            <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold-bright">
+            <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">
               My Lists
             </Dialog.Title>
             <Dialog.Close asChild>
@@ -130,7 +130,7 @@ function TabTrigger({
       className={[
         'relative flex items-center gap-1.5 px-3 py-2 text-xs font-bold tracking-[0.08em] uppercase rounded-t-md',
         'text-gray-500 hover:text-gray-300 transition-colors',
-        'data-[state=active]:text-gold-bright',
+        'data-[state=active]:text-gold',
         'after:content-[""] after:absolute after:bottom-0 after:inset-x-2 after:h-px after:bg-transparent',
         'data-[state=active]:after:bg-gold',
       ].join(' ')}

@@ -12,6 +12,8 @@ import { ClearAllButton } from './components/ClearAllButton';
 import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
 import { ListsDrawer } from './components/ListsDrawer';
+import { BetaBadge } from './components/BetaBadge';
+import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
 import { useSearchFilters } from './hooks/useVariantFilter';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -149,14 +151,17 @@ function App() {
           single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
         <div className="flex items-center gap-3 md:gap-4">
-          <h1 className="flex items-center select-none shrink-0">
+          <h1 className="flex items-center gap-2 select-none shrink-0">
             {/* Logo sits flush against the "S" — the tiny gap after
                 the logo should match the inter-letter tracking so
                 it reads as a glyph in the word, not a separate icon. */}
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
+            <span className="flex items-center">
+              <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+              <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
+                <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
+              </span>
             </span>
+            <BetaBadge />
           </h1>
           {/* Controls cluster — pricing + actions grouped together and
               pushed to the right (ml-auto) so the logo/title gets
@@ -332,6 +337,13 @@ function App() {
               </span>
             </>
           )}
+          <span className="text-space-600" aria-hidden>·</span>
+          <span
+            title={`Built ${new Date(APP_BUILD_TIME).toLocaleString()}`}
+            className={isBetaChannel() ? 'text-gold/70' : 'text-gray-500'}
+          >
+            {isBetaChannel() ? 'beta' : 'v'}&nbsp;{APP_COMMIT}
+          </span>
         </div>
         {/* Legal/attribution line — visible inline on desktop, but
             pushed below the fold on mobile so we don't eat the main

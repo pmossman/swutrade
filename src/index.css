@@ -1,5 +1,38 @@
 @import "tailwindcss";
 
+/* =========================================================================
+   SWUTrade color palette — usage invariants
+   -------------------------------------------------------------------------
+   Side identity (NEVER reuse these for non-side UI):
+     emerald-*     Offering side
+     blue-*        Receiving side
+
+   Balance tones (NEVER reuse for non-balance UI):
+     gold          balanced + neutral
+     amber-*       warning (ripple / disturbance)
+     crimson-*     alarm (great disturbance) / destructive actions
+
+   Brand & chrome:
+     gold          PRIMARY accent used across all generic UI chrome:
+                   headings, active tabs, count badges, interactive
+                   accents, hover states, etc.
+     gold-bright   RESERVED for "special moment" emphasis only —
+                   the wordmark gradient, priority stars, pulse glows.
+                   DO NOT use for generic UI chrome (it reads as a
+                   different yellow next to the primary orange-gold).
+
+   Neutrals:
+     space-900     app background
+     space-800     elevated surface background
+     space-700     dividers, borders, outlines
+     space-600     subtle chrome fills
+     gray-*        text hierarchy
+
+   When reaching for a color for new UI, start with this table. If none
+   of the existing tokens fit the semantic, extend the palette in @theme
+   rather than inlining a one-off hex.
+   ========================================================================= */
+
 @theme {
   --color-space-900: #0a0e1a;
   --color-space-800: #111627;
