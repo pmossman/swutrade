@@ -7,6 +7,7 @@ import type { AvailableApi } from '../hooks/useAvailable';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
 import { WantsRow, AvailableRow } from './ListRows';
+import { bestMatchForWant } from '../listMatching';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -16,6 +17,8 @@ interface ListsDrawerProps {
   percentage: number;
   priceMode: PriceMode;
   onPriceModeChange: (mode: PriceMode) => void;
+  onAddToOffering: (card: CardVariant) => void;
+  onAddToReceiving: (card: CardVariant) => void;
 }
 
 type ListTab = 'wants' | 'available';
@@ -33,6 +36,8 @@ export function ListsDrawer({
   percentage,
   priceMode,
   onPriceModeChange,
+  onAddToOffering,
+  onAddToReceiving,
 }: ListsDrawerProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
@@ -42,24 +47,29 @@ export function ListsDrawer({
   const availableCount = available.items.length;
   const totalCount = wantsCount + availableCount;
 
-  // Index all loaded cards for fast lookup when rendering rows. Same scan
-  // powers both wants (by baseCardId → a sample variant for img/display)
-  // and available (by productId → exact variant).
-  const { byBase, byProductId } = useMemo(() => {
+  // Index all loaded cards for fast lookup when rendering rows.
+  //  - byBase: one sample variant per baseCardId, prefers Standard,
+  //    used for image + display name on wants rows.
+  //  - byBaseAll: all variants per baseCardId, used by bestMatchForWant
+  //    to pick the cheapest variant satisfying a wants restriction.
+  //  - byProductId: exact variant lookup for Available rows.
+  const { byBase, byBaseAll, byProductId } = useMemo(() => {
     const byBase = new Map<string, CardVariant>();
+    const byBaseAll = new Map<string, CardVariant[]>();
     const byProductId = new Map<string, CardVariant>();
     for (const card of allCards) {
       if (card.productId) byProductId.set(card.productId, card);
       if (card.baseCardId) {
-        // Prefer the Standard variant as the display sample when we can
-        // find it; otherwise first-wins.
         const existing = byBase.get(card.baseCardId);
         if (!existing || card.variant === 'Standard') {
           byBase.set(card.baseCardId, card);
         }
+        const bucket = byBaseAll.get(card.baseCardId);
+        if (bucket) bucket.push(card);
+        else byBaseAll.set(card.baseCardId, [card]);
       }
     }
-    return { byBase, byProductId };
+    return { byBase, byBaseAll, byProductId };
   }, [allCards]);
 
   // Priority-first sort for wants, insertion order otherwise
@@ -179,16 +189,25 @@ export function ListsDrawer({
                       />
                     ) : (
                       <ul className="flex flex-col gap-2">
-                        {sortedWants.map(item => (
-                          <WantsRow
-                            key={item.id}
-                            item={item}
-                            sampleCard={byBase.get(item.baseCardId) ?? null}
-                            onChangeQty={qty => wants.update(item.id, { qty })}
-                            onTogglePriority={() => wants.togglePriority(item.id)}
-                            onRemove={() => wants.remove(item.id)}
-                          />
-                        ))}
+                        {sortedWants.map(item => {
+                          const candidates = byBaseAll.get(item.baseCardId) ?? [];
+                          const quickAddCard = candidates.length > 0
+                            ? bestMatchForWant(item, candidates, priceMode)
+                            : null;
+                          return (
+                            <WantsRow
+                              key={item.id}
+                              item={item}
+                              sampleCard={byBase.get(item.baseCardId) ?? null}
+                              quickAddCard={quickAddCard}
+                              onChangeQty={qty => wants.update(item.id, { qty })}
+                              onTogglePriority={() => wants.togglePriority(item.id)}
+                              onRemove={() => wants.remove(item.id)}
+                              onAddToOffering={onAddToOffering}
+                              onAddToReceiving={onAddToReceiving}
+                            />
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -233,6 +252,8 @@ export function ListsDrawer({
                             priceMode={priceMode}
                             onChangeQty={qty => available.update(item.id, { qty })}
                             onRemove={() => available.remove(item.id)}
+                            onAddToOffering={onAddToOffering}
+                            onAddToReceiving={onAddToReceiving}
                           />
                         ))}
                       </ul>

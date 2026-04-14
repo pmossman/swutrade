@@ -3,14 +3,6 @@ import type { WantsItem, AvailableItem } from '../persistence';
 import { cardImageUrl, adjustPrice, getCardPrice } from '../services/priceService';
 import { variantBadgeColor, variantDisplayLabel, extractVariantLabel } from '../variants';
 
-interface SharedChromeProps {
-  imgUrl: string | null;
-  title: string;
-  qty: number;
-  onChangeQty: (next: number) => void;
-  onRemove: () => void;
-}
-
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
     <div className="flex items-center gap-1 shrink-0">
@@ -50,7 +42,53 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
   );
 }
 
-function RowShell({ imgUrl, title, children }: SharedChromeProps & { children: React.ReactNode }) {
+interface QuickAddProps {
+  onAddToOffering: () => void;
+  onAddToReceiving: () => void;
+  disabled?: boolean;
+  disabledTitle?: string;
+}
+
+// Two small pills that push the item into Offering / Receiving. Uses the
+// same emerald/blue side-identity colors as the trade panels. When
+// disabled (e.g. a wants item whose restriction currently matches no
+// loaded variant) both pills still render so the row layout is stable,
+// but they read-only grey out.
+function QuickAddButtons({ onAddToOffering, onAddToReceiving, disabled, disabledTitle }: QuickAddProps) {
+  const base = 'shrink-0 px-2 h-6 rounded text-[10px] font-bold uppercase tracking-wider transition-colors border';
+  return (
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        type="button"
+        onClick={onAddToOffering}
+        disabled={disabled}
+        title={disabled ? disabledTitle : 'Add to Offering'}
+        className={`${base} ${
+          disabled
+            ? 'border-space-700 text-gray-700 cursor-not-allowed'
+            : 'border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/30 hover:border-emerald-500/60'
+        }`}
+      >
+        + Off
+      </button>
+      <button
+        type="button"
+        onClick={onAddToReceiving}
+        disabled={disabled}
+        title={disabled ? disabledTitle : 'Add to Receiving'}
+        className={`${base} ${
+          disabled
+            ? 'border-space-700 text-gray-700 cursor-not-allowed'
+            : 'border-blue-500/40 text-blue-300 hover:bg-blue-900/30 hover:border-blue-500/60'
+        }`}
+      >
+        + Rec
+      </button>
+    </div>
+  );
+}
+
+function RowShell({ imgUrl, title, children }: { imgUrl: string | null; title: string; children: React.ReactNode }) {
   return (
     <li className="flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/60 border border-space-700">
       <div className="w-10 h-14 shrink-0 rounded bg-space-900 overflow-hidden">
@@ -67,12 +105,26 @@ interface WantsRowProps {
   item: WantsItem;
   /** Any variant of this base card — used for image + display name. */
   sampleCard: CardVariant | null;
+  /** The variant that would actually be pushed into a trade on quick-add.
+   *  Cheapest card matching the restriction. Null when nothing matches. */
+  quickAddCard: CardVariant | null;
   onChangeQty: (next: number) => void;
   onTogglePriority: () => void;
   onRemove: () => void;
+  onAddToOffering: (card: CardVariant) => void;
+  onAddToReceiving: (card: CardVariant) => void;
 }
 
-export function WantsRow({ item, sampleCard, onChangeQty, onTogglePriority, onRemove }: WantsRowProps) {
+export function WantsRow({
+  item,
+  sampleCard,
+  quickAddCard,
+  onChangeQty,
+  onTogglePriority,
+  onRemove,
+  onAddToOffering,
+  onAddToReceiving,
+}: WantsRowProps) {
   const imgUrl = sampleCard?.productId ? cardImageUrl(sampleCard.productId, 'sm') : null;
   const title = sampleCard?.displayName ?? sampleCard?.name ?? item.baseCardId;
   const restriction = item.restriction.mode === 'any'
@@ -82,7 +134,7 @@ export function WantsRow({ item, sampleCard, onChangeQty, onTogglePriority, onRe
       : `${item.restriction.variants.length} variants`;
 
   return (
-    <RowShell imgUrl={imgUrl} title={title} qty={item.qty} onChangeQty={onChangeQty} onRemove={onRemove}>
+    <RowShell imgUrl={imgUrl} title={title}>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
@@ -97,9 +149,17 @@ export function WantsRow({ item, sampleCard, onChangeQty, onTogglePriority, onRe
           <StarIcon filled={!!item.isPriority} className="w-4 h-4" />
         </button>
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <QtyStepper qty={item.qty} onChangeQty={onChangeQty} />
-        <RemoveButton onRemove={onRemove} />
+        <div className="flex items-center gap-2">
+          <QuickAddButtons
+            onAddToOffering={() => quickAddCard && onAddToOffering(quickAddCard)}
+            onAddToReceiving={() => quickAddCard && onAddToReceiving(quickAddCard)}
+            disabled={!quickAddCard}
+            disabledTitle="No matching variant loaded"
+          />
+          <RemoveButton onRemove={onRemove} />
+        </div>
       </div>
     </RowShell>
   );
@@ -114,9 +174,20 @@ interface AvailableRowProps {
   priceMode: PriceMode;
   onChangeQty: (next: number) => void;
   onRemove: () => void;
+  onAddToOffering: (card: CardVariant) => void;
+  onAddToReceiving: (card: CardVariant) => void;
 }
 
-export function AvailableRow({ item, card, percentage, priceMode, onChangeQty, onRemove }: AvailableRowProps) {
+export function AvailableRow({
+  item,
+  card,
+  percentage,
+  priceMode,
+  onChangeQty,
+  onRemove,
+  onAddToOffering,
+  onAddToReceiving,
+}: AvailableRowProps) {
   const imgUrl = card?.productId ? cardImageUrl(card.productId, 'sm') : null;
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
@@ -124,7 +195,7 @@ export function AvailableRow({ item, card, percentage, priceMode, onChangeQty, o
   const price = card ? adjustPrice(getCardPrice(card, priceMode), percentage) : null;
 
   return (
-    <RowShell imgUrl={imgUrl} title={title} qty={item.qty} onChangeQty={onChangeQty} onRemove={onRemove}>
+    <RowShell imgUrl={imgUrl} title={title}>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
@@ -140,9 +211,17 @@ export function AvailableRow({ item, card, percentage, priceMode, onChangeQty, o
           </div>
         </div>
       </div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <QtyStepper qty={item.qty} onChangeQty={onChangeQty} />
-        <RemoveButton onRemove={onRemove} />
+        <div className="flex items-center gap-2">
+          <QuickAddButtons
+            onAddToOffering={() => card && onAddToOffering(card)}
+            onAddToReceiving={() => card && onAddToReceiving(card)}
+            disabled={!card}
+            disabledTitle="Card not currently loaded"
+          />
+          <RemoveButton onRemove={onRemove} />
+        </div>
       </div>
     </RowShell>
   );
