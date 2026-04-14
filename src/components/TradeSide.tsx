@@ -431,11 +431,11 @@ export function TradeSide({
         </span>
       </div>
 
-      {/* Slim add-action bar directly below the header — always
-          visible, no competition with label/count/total, and reads as
-          a clear "add to this side" call-to-action. Hidden when the
-          panel is collapsed. */}
-      {!collapsed && (
+      {/* Slim add-action bar directly below the header. Hidden when
+          the panel is collapsed OR when the panel is empty — in that
+          case the big dashed AddCardsTile below is the primary CTA and
+          a second +Add affordance here reads as redundant. */}
+      {!collapsed && cards.length > 0 && (
         <button
           type="button"
           onClick={() => {
