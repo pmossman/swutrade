@@ -84,19 +84,8 @@ export function TradeBalance({
     </span>
   ) : null;
 
-  // Tap behavior: collapsed → expand first; expanded → fire primary
-  // (open summary). Both can be undefined (no-op fallback).
-  const handleClick = onToggleCollapse || onPrimary
-    ? () => {
-        if (collapsed && onToggleCollapse) onToggleCollapse();
-        else if (onPrimary) onPrimary();
-        else if (onToggleCollapse) onToggleCollapse();
-      }
-    : undefined;
-
-  // Wrap as a button when the banner is interactive; static div otherwise.
-  // Whole-banner click target is more forgiving on mobile than a tiny
-  // chevron button.
+  // Collapsed state: whole pill is the expand target (single click action,
+  // no ambiguity because there's no summary affordance visible yet).
   if (collapsed) {
     const collapsedContent = (
       <div className={`flex items-center gap-2 px-2 py-1.5 ${chrome.bg}`}>
@@ -114,10 +103,10 @@ export function TradeBalance({
         )}
       </div>
     );
-    return handleClick ? (
+    return onToggleCollapse ? (
       <button
         type="button"
-        onClick={handleClick}
+        onClick={onToggleCollapse}
         aria-label="Expand balance"
         aria-expanded={false}
         className={`w-full text-left rounded-xl border ${chrome.border} ${glowClass} hover:bg-white/[0.02] active:bg-white/[0.04] transition-colors`}
@@ -129,10 +118,15 @@ export function TradeBalance({
     );
   }
 
-  const expandedContent = (
-    <>
+  // Expanded state: split into discrete click zones. The headline area
+  // (chevron + headline + actionLine) toggles collapse. The "View full
+  // summary" footer is the only thing that opens the summary modal —
+  // the body content (totals, missing-price warnings) is informational
+  // and inert to clicks.
+  const headerArea = (
+    <div className={`relative ${onToggleCollapse ? 'pl-8' : ''} pr-3 pt-1 sm:pt-1.5`}>
       {chevron && (
-        <div className="absolute top-2 left-2">
+        <div className="absolute top-1 sm:top-1.5 left-2">
           {chevron}
         </div>
       )}
@@ -144,56 +138,72 @@ export function TradeBalance({
           {actionLine}
         </div>
       )}
-      {!isEmpty && (
-        <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-[10px] sm:text-[11px] tabular-nums">
-          <span className="flex items-baseline gap-1">
-            <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
-            <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
-          </span>
-          <span className="text-space-600" aria-hidden>·</span>
-          <span className="flex items-baseline gap-1">
-            <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
-            <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
-          </span>
-          <span className="text-space-600" aria-hidden>·</span>
-          <span className="text-gray-500">
-            @ {percentage}% {priceMode === 'low' ? 'Low' : 'Market'}
-          </span>
-        </div>
+    </div>
+  );
+
+  return (
+    <div className={`rounded-xl border transition-all ${chrome.border} ${chrome.bg} ${glowClass}`}>
+      {/* Header zone — collapse toggle when interactive */}
+      {onToggleCollapse ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label="Collapse balance"
+          aria-expanded={true}
+          className="w-full text-left hover:bg-white/[0.02] active:bg-white/[0.04] transition-colors rounded-t-xl"
+        >
+          {headerArea}
+        </button>
+      ) : (
+        headerArea
       )}
-      {missingTotal > 0 && (
-        <div className="mt-1.5 sm:mt-2 mx-auto max-w-md flex items-center justify-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-[11px] sm:text-xs font-bold text-red-300">
-          <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-          </svg>
-          <span>
-            {missingTotal} card{missingTotal === 1 ? '' : 's'} missing price
-          </span>
-        </div>
-      )}
+
+      {/* Body — informational, inert to clicks. */}
+      <div className="px-3 pb-2 sm:px-4 sm:pb-3">
+        {!isEmpty && (
+          <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-[10px] sm:text-[11px] tabular-nums">
+            <span className="flex items-baseline gap-1">
+              <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
+              <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
+            </span>
+            <span className="text-space-600" aria-hidden>·</span>
+            <span className="flex items-baseline gap-1">
+              <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
+              <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
+            </span>
+            <span className="text-space-600" aria-hidden>·</span>
+            <span className="text-gray-500">
+              @ {percentage}% {priceMode === 'low' ? 'Low' : 'Market'}
+            </span>
+          </div>
+        )}
+        {missingTotal > 0 && (
+          <div className="mt-1.5 sm:mt-2 mx-auto max-w-md flex items-center justify-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-[11px] sm:text-xs font-bold text-red-300">
+            <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span>
+              {missingTotal} card{missingTotal === 1 ? '' : 's'} missing price
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Summary CTA — only this opens the summary modal. Renders only
+          when there's a primary action available (i.e. cards in trade). */}
       {!isEmpty && onPrimary && (
-        <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-1.5 text-[10px] sm:text-[11px] font-semibold text-gold/70">
+        <button
+          type="button"
+          onClick={onPrimary}
+          aria-label="Open trade summary"
+          className="w-full flex items-center justify-center gap-1.5 px-3 pb-2 sm:pb-3 text-[10px] sm:text-[11px] font-semibold text-gold/70 hover:text-gold transition-colors rounded-b-xl"
+        >
           <span>View full summary</span>
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
           </svg>
-        </div>
+        </button>
       )}
-    </>
-  );
-
-  const expandedWrapper = `relative rounded-xl border px-3 py-2 sm:px-4 sm:py-3 transition-all ${chrome.border} ${chrome.bg} ${glowClass}`;
-  return handleClick ? (
-    <button
-      type="button"
-      onClick={handleClick}
-      aria-label={onPrimary ? 'Open trade summary' : 'Collapse balance'}
-      aria-expanded={true}
-      className={`${expandedWrapper} w-full text-left hover:bg-white/[0.02] active:scale-[0.98]`}
-    >
-      {expandedContent}
-    </button>
-  ) : (
-    <div className={expandedWrapper}>{expandedContent}</div>
+    </div>
   );
 }
