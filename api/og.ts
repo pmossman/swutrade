@@ -7,6 +7,7 @@ import { inter_400, inter_700, inter_900 } from './_fonts.js';
 // Inlined at build time so the function never needs to self-fetch its own
 // (potentially auth-walled) origin to resolve card names/prices.
 import productIndex from '../public/data/product-index.json' with { type: 'json' };
+import familyIndex from '../public/data/family-index.json' with { type: 'json' };
 
 // resvg-js@2.6.2 only accepts font *file paths* (not buffers), so we write
 // the inlined base64 fonts to /tmp on cold start and hand the paths to Resvg.
@@ -36,6 +37,83 @@ interface CardInfo {
 }
 
 type ProductIndex = Record<string, CardInfo>;
+
+type FamilyEntry = { p: string; v: string; m: number | null; l: number | null; n: string };
+type FamilyIndex = Record<string, FamilyEntry[]>;
+
+// Same canonical order as src/variants.ts — kept in sync manually
+// because api/og.ts is bundled separately and doesn't import from src/.
+const CANONICAL_VARIANTS = [
+  'Standard', 'Foil', 'Hyperspace', 'Hyperspace Foil',
+  'Prestige', 'Prestige Foil', 'Serialized', 'Showcase',
+] as const;
+type CanonicalVariant = typeof CANONICAL_VARIANTS[number];
+
+function maskToVariants(mask: number): CanonicalVariant[] {
+  const out: CanonicalVariant[] = [];
+  for (let i = 0; i < CANONICAL_VARIANTS.length; i++) {
+    if (mask & (1 << i)) out.push(CANONICAL_VARIANTS[i]);
+  }
+  return out;
+}
+
+interface WantsRef {
+  familyId: string;
+  qty: number;
+  acceptedVariants: string[] | null;  // null = any
+  isPriority: boolean;
+}
+
+function decodeWants(param: string): WantsRef[] {
+  if (!param) return [];
+  const out: WantsRef[] = [];
+  for (const entry of param.split(',').filter(Boolean)) {
+    const fields = entry.split('.');
+    if (fields.length < 2) continue;
+    const [encId, qtyStr, ...flags] = fields;
+    let familyId: string;
+    try {
+      familyId = decodeURIComponent(encId);
+    } catch {
+      continue;
+    }
+    if (!familyId) continue;
+    const qty = clampQty(parseInt(qtyStr, 10));
+    let acceptedVariants: string[] | null = null;
+    let isPriority = false;
+    for (const flag of flags) {
+      if (flag === 'p') isPriority = true;
+      else if (flag.startsWith('r')) {
+        const m = parseInt(flag.slice(1), 16);
+        if (Number.isFinite(m)) {
+          const vs = maskToVariants(m);
+          if (vs.length > 0) acceptedVariants = vs;
+        }
+      }
+    }
+    out.push({ familyId, qty, acceptedVariants, isPriority });
+  }
+  return out;
+}
+
+interface AvailableRef { productId: string; qty: number }
+
+function decodeAvailableRefs(param: string): AvailableRef[] {
+  if (!param) return [];
+  const out: AvailableRef[] = [];
+  for (const entry of param.split(',').filter(Boolean)) {
+    const [productId, qtyStr] = entry.split('.');
+    if (!productId) continue;
+    out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
+  }
+  return out;
+}
+
+function clampQty(n: number): number {
+  if (!Number.isFinite(n) || n < 1) return 1;
+  if (n > 99) return 99;
+  return Math.floor(n);
+}
 
 // Fetched card images live here for the lifetime of the warm container so
 // repeat renders of the same trade (or popular cards) don't re-fetch from
@@ -271,8 +349,17 @@ function renderCardGrid(
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const y = (req.query.y as string) || '';
   const t = (req.query.t as string) || '';
+  const w = (req.query.w as string) || '';
+  const a = (req.query.a as string) || '';
   const pct = parseInt((req.query.pct as string) || '80', 10);
   const pm = req.query.pm === 'l' ? 'low' : 'market';
+
+  // List mode: render Wants + Available when those params are present
+  // and there's no active trade in the URL. Routed before the trade
+  // path so a list-only share gets a list image.
+  if (!y && !t && (w || a)) {
+    return renderListImage(req, res, w, a, pct, pm);
+  }
 
   const index = productIndex as ProductIndex;
   const yourRefs = decodeCardRefs(y);
@@ -460,4 +547,219 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'image/png');
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
   res.status(200).send(Buffer.from(png));
+}
+
+// =====================================================================
+// Shared list image — renders Wants + Available columns. Mirrors the
+// trade image layout (1200×630, two columns, header) but drops the
+// balance section since lists aren't comparable. Adds priority stars
+// to wants tiles.
+// =====================================================================
+
+async function renderListImage(
+  req: VercelRequest,
+  res: VercelResponse,
+  w: string,
+  a: string,
+  pct: number,
+  pm: 'low' | 'market',
+) {
+  const fams = familyIndex as FamilyIndex;
+  const index = productIndex as ProductIndex;
+
+  const wants = decodeWants(w);
+  const avail = decodeAvailableRefs(a);
+
+  // Resolve wants: pick cheapest variant matching the restriction.
+  const wantsResolved: ResolvedListCard[] = wants.map(want => {
+    const candidates = fams[want.familyId] ?? [];
+    const matching = want.acceptedVariants
+      ? candidates.filter(c => want.acceptedVariants!.includes(c.v))
+      : candidates;
+    if (matching.length === 0) return null;
+    const priceField = pm === 'low' ? 'l' : 'm';
+    const best = matching.reduce((b, c) => {
+      const bp = b[priceField] ?? Infinity;
+      const cp = c[priceField] ?? Infinity;
+      return cp < bp ? c : b;
+    });
+    const raw = best[priceField];
+    const price = raw !== null ? Math.round(raw * pct) / 100 : null;
+    return {
+      productId: best.p,
+      name: best.n,
+      variant: best.v,
+      qty: want.qty,
+      price,
+      isPriority: want.isPriority,
+      imageDataUri: null,
+    };
+  }).filter((c): c is ResolvedListCard => c !== null);
+
+  // Resolve available: exact productId lookup.
+  const availResolved: ResolvedListCard[] = avail.map(ref => {
+    const card = index[ref.productId];
+    if (!card) return null;
+    const raw = pm === 'low' ? card.l : card.p;
+    const price = raw !== null ? Math.round(raw * pct) / 100 : null;
+    return {
+      productId: ref.productId,
+      name: extractBaseName(card.n),
+      variant: extractVariant(card.n),
+      qty: ref.qty,
+      price,
+      isPriority: false,
+      imageDataUri: null,
+    };
+  }).filter((c): c is ResolvedListCard => c !== null);
+
+  // Fetch images in parallel — same warm-cache pattern as trade.
+  const allIds = [...wantsResolved, ...availResolved].slice(0, 60).map(c => c.productId);
+  const imageMap = new Map<string, string | null>();
+  await Promise.all(
+    Array.from(new Set(allIds)).map(async id => {
+      imageMap.set(id, await fetchCardImage(id));
+    }),
+  );
+  for (const c of wantsResolved) c.imageDataUri = imageMap.get(c.productId) ?? null;
+  for (const c of availResolved) c.imageDataUri = imageMap.get(c.productId) ?? null;
+
+  const wantsCount = wantsResolved.length;
+  const availCount = availResolved.length;
+  const subtitleParts: string[] = [];
+  if (wantsCount > 0) subtitleParts.push(`${wantsCount} want${wantsCount === 1 ? '' : 's'}`);
+  if (availCount > 0) subtitleParts.push(`${availCount} available`);
+  const subtitle = subtitleParts.join(' · ');
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e1a"/>
+      <stop offset="1" stop-color="#111627"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Header -->
+  <text x="36" y="56" font-size="32" font-weight="900" letter-spacing="3" fill="#e5e7eb">SWU<tspan fill="#F5A623">TRADE</tspan></text>
+  <text x="36" y="86" font-size="14" font-weight="700" letter-spacing="3" fill="#9ca3af">SHARED LIST${subtitle ? ` · ${subtitle.toUpperCase()}` : ''}</text>
+  <line x1="36" y1="100" x2="1164" y2="100" stroke="#1a1f2e" stroke-width="2"/>
+
+  ${renderListColumn(wantsResolved, 'Wants', '#60a5fa', LEFT_X)}
+  ${renderListColumn(availResolved, 'Available', '#34d399', RIGHT_X)}
+
+  <!-- Footer -->
+  <text x="600" y="610" font-size="12" font-weight="600" fill="#6b7280" text-anchor="middle">swutrade.com</text>
+</svg>`;
+
+  if (req.query.format === 'svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(svg);
+    return;
+  }
+
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: 2400 },
+    font: {
+      fontFiles: fontPaths,
+      loadSystemFonts: false,
+      defaultFontFamily: 'Inter',
+    },
+  });
+  const png = resvg.render().asPng();
+
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+  res.status(200).send(Buffer.from(png));
+}
+
+type ResolvedListCard = ResolvedCard & { isPriority: boolean };
+
+function renderListColumn(
+  cards: ResolvedListCard[],
+  label: string,
+  color: string,
+  x: number,
+): string {
+  let svg = '';
+  const headerBaselineY = 170;
+  const saberTop = headerBaselineY - 14;
+  const saberH = 20;
+  svg += `<rect x="${x}" y="${saberTop}" width="3" height="${saberH}" rx="1.5" fill="${color}"/>`;
+  svg += `<text x="${x + 12}" y="${headerBaselineY}" fill="${color}" font-size="16" font-weight="700" letter-spacing="2">${label.toUpperCase()}</text>`;
+  svg += `<text x="${x + COL_WIDTH}" y="${headerBaselineY}" fill="#9ca3af" font-size="14" font-weight="600" text-anchor="end">${cards.length}</text>`;
+  svg += `<line x1="${x}" y1="${headerBaselineY + 10}" x2="${x + COL_WIDTH}" y2="${headerBaselineY + 10}" stroke="${color}" stroke-opacity="0.22" stroke-width="1.5"/>`;
+
+  if (cards.length === 0) {
+    svg += `<text x="${x + COL_WIDTH / 2}" y="${GRID_TOP + 80}" fill="#4b5563" font-size="16" text-anchor="middle">Empty</text>`;
+    return svg;
+  }
+
+  const layout = gridLayout(cards.length);
+  const maxVisible = layout.cols * layout.rows;
+  const visible = cards.slice(0, maxVisible);
+  const gap = 8;
+
+  visible.forEach((card, i) => {
+    const col = i % layout.cols;
+    const row = Math.floor(i / layout.cols);
+    const tileX = x + col * (layout.tileW + gap);
+    const tileY = GRID_TOP + row * (layout.tileH + 6);
+
+    if (card.imageDataUri) {
+      svg += `<image href="${card.imageDataUri}" x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" preserveAspectRatio="xMidYMid slice"/>`;
+    } else {
+      svg += `<rect x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" fill="#1f2937" rx="3"/>`;
+      svg += `<text x="${tileX + layout.tileW / 2}" y="${tileY + layout.imgH / 2 + 6}" fill="#4b5563" font-size="16" text-anchor="middle">?</text>`;
+    }
+
+    // Qty chip — shown for any qty in lists since it represents desired
+    // count, more meaningful than in a trade where qty 1 is the default.
+    const chipW = Math.max(22, layout.tileW * 0.3);
+    const chipH = 16;
+    const chipX = tileX + layout.tileW - chipW - 3;
+    const chipY = tileY + 3;
+    svg += `<rect x="${chipX}" y="${chipY}" width="${chipW}" height="${chipH}" rx="8" fill="#000" fill-opacity="0.85" stroke="${color}" stroke-opacity="0.7" stroke-width="1"/>`;
+    svg += `<text x="${chipX + chipW / 2}" y="${chipY + 12}" fill="#fff" font-size="10" font-weight="800" text-anchor="middle">×${card.qty}</text>`;
+
+    // Priority star — top-left of the image. Only on wants.
+    if (card.isPriority) {
+      const starX = tileX + 6;
+      const starY = tileY + 14;
+      svg += `<text x="${starX}" y="${starY}" fill="#FFD700" font-size="16" font-weight="900" stroke="#000" stroke-width="0.5">★</text>`;
+    }
+
+    const lineTotal = card.price !== null ? card.price * card.qty : null;
+    const textTop = tileY + layout.imgH + 3;
+    const nameMax = Math.max(8, Math.floor(layout.tileW / (layout.nameSize * 0.55)));
+    const vbs = variantBadgeStyle(card.variant);
+
+    const nameBaselineY = textTop + layout.nameSize;
+    svg += `<text x="${tileX}" y="${nameBaselineY}" fill="#d1d5db" font-size="${layout.nameSize}" font-weight="500">${escapeXml(truncate(card.name, nameMax))}</text>`;
+
+    const pillH = layout.pillSize + 3;
+    let afterPillY = nameBaselineY;
+    if (vbs) {
+      const vlabel = card.variant === 'Hyperspace Foil' ? 'HS Foil' : card.variant;
+      const pillTextW = vlabel.length * layout.pillSize * 0.6;
+      const pillPadX = 4;
+      const pillW = Math.min(pillTextW + pillPadX * 2, layout.tileW);
+      const pillTopY = nameBaselineY + 3;
+      svg += `<rect x="${tileX}" y="${pillTopY}" width="${pillW}" height="${pillH}" rx="2" fill="${vbs.bg}"/>`;
+      svg += `<text x="${tileX + pillPadX}" y="${pillTopY + layout.pillSize + 0.5}" fill="${vbs.text}" font-size="${layout.pillSize}" font-weight="700" letter-spacing="0.3">${escapeXml(vlabel.toUpperCase())}</text>`;
+      afterPillY = pillTopY + pillH;
+    }
+
+    const priceBaselineY = afterPillY + layout.priceSize + 2;
+    const priceColor = card.price === null ? '#f87171' : '#d4a843';
+    svg += `<text x="${tileX}" y="${priceBaselineY}" fill="${priceColor}" font-size="${layout.priceSize}" font-weight="700">${escapeXml(formatPrice(lineTotal))}</text>`;
+  });
+
+  if (cards.length > maxVisible) {
+    const overflowY = GRID_TOP + layout.rows * (layout.tileH + 6) + 12;
+    svg += `<text x="${x + COL_WIDTH / 2}" y="${overflowY}" fill="#9ca3af" font-size="12" font-weight="600" text-anchor="middle">+${cards.length - maxVisible} more</text>`;
+  }
+
+  return svg;
 }

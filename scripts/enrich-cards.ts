@@ -20,6 +20,7 @@ import {
   type SwuApiCard,
 } from '../src/enrichment.js';
 import type { CardVariant } from '../src/types/index.js';
+import { cardFamilyId, extractVariantLabel } from '../src/variants.js';
 
 const SWUAPI_URL = 'https://api.swuapi.com/export/all';
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -113,6 +114,18 @@ async function main() {
   let matchedCards = 0;
   const unmatchedSets = new Set<string>();
 
+  // Family index: familyId → list of {productId, variant, prices}.
+  // Used by api/og.ts to render OG list images without needing the
+  // full per-set JSONs (those are megabytes).
+  type FamilyEntry = {
+    p: string;            // productId
+    v: string;            // variant label
+    m: number | null;     // marketPrice
+    l: number | null;     // lowPrice
+    n: string;            // display name (variant-stripped)
+  };
+  const familyIndex: Record<string, FamilyEntry[]> = {};
+
   for (const slug of slugs) {
     const setPath = join(dataDir, `${slug}.json`);
     if (!existsSync(setPath)) continue;
@@ -128,6 +141,20 @@ async function main() {
         matchedCards += 1;
       }
       totalCards += 1;
+      // Index this variant under its family.
+      if (result.productId) {
+        const fid = cardFamilyId(result);
+        const variant = result.variant || extractVariantLabel(result.name);
+        const displayName = result.displayName ?? result.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        if (!familyIndex[fid]) familyIndex[fid] = [];
+        familyIndex[fid].push({
+          p: result.productId,
+          v: variant,
+          m: result.marketPrice,
+          l: result.lowPrice,
+          n: displayName,
+        });
+      }
       return result;
     });
 
@@ -135,8 +162,14 @@ async function main() {
     writeFileSync(setPath, JSON.stringify(enriched));
   }
 
+  writeFileSync(
+    join(dataDir, 'family-index.json'),
+    JSON.stringify(familyIndex),
+  );
+
   const matchRate = totalCards > 0 ? Math.round((matchedCards / totalCards) * 100) : 0;
   console.log(`\nEnriched ${matchedCards} / ${totalCards} cards (${matchRate}%)`);
+  console.log(`Wrote family-index.json with ${Object.keys(familyIndex).length} families`);
   if (unmatchedSets.size > 0) {
     console.log(`\n⚠️  Sets with zero matches (check SET_CODE_OVERRIDES):`);
     [...unmatchedSets].sort().forEach(s => console.log(`    - ${s}`));
