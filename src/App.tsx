@@ -186,9 +186,9 @@ function App() {
               <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
             </span>
             {/* Beta tag as an absolute-positioned kicker beneath the
-                wordmark — keeps the title's natural width so the layout
-                doesn't shift between stable and beta builds. */}
-            <BetaBadge className="absolute top-full left-7 sm:left-8 mt-0.5" />
+                wordmark — text-only, hugs the wordmark baseline so it
+                doesn't extend into the trade panel below. */}
+            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
           </h1>
           {/* Controls cluster — pricing + actions grouped together and
               pushed to the right (ml-auto) so the logo/title gets

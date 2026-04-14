@@ -368,25 +368,34 @@ export function TradeSide({
         </div>
       )}
 
+      {/* Lists section rendered ALWAYS (returns null when both lists
+          are empty for this side). Stays accessible while user types
+          — bounded max-height when search is active so it doesn't
+          push results off-screen, full-fill otherwise. */}
+      <div
+        className={`shrink-0 max-w-6xl mx-auto w-full px-4 sm:px-6 pt-2 ${
+          hasSearchResults ? 'max-h-[35vh] overflow-y-auto' : ''
+        }`}
+      >
+        <TradeListsSection
+          side={accentColor === 'emerald' ? 'offering' : 'receiving'}
+          wants={wants}
+          available={available}
+          byFamilyAll={byFamilyAll}
+          byProductId={byProductId}
+          tradeCards={cards}
+          percentage={percentage}
+          priceMode={priceMode}
+          onAdd={onAdd}
+        />
+      </div>
+
       {/* CardResultsGrid owns its own scroll container — no external
           top padding so sticky set headers stay flush with the viewport
           edge. Outer flex wrapper centers the column on wide screens. */}
       {!hasSearchResults ? (
-        <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full overflow-y-auto px-4 sm:px-6 pt-2 pb-6">
-          <TradeListsSection
-            side={accentColor === 'emerald' ? 'offering' : 'receiving'}
-            wants={wants}
-            available={available}
-            byFamilyAll={byFamilyAll}
-            byProductId={byProductId}
-            tradeCards={cards}
-            percentage={percentage}
-            priceMode={priceMode}
-            onAdd={onAdd}
-          />
-          <div className="text-center text-gray-600 text-xs">
-            Or type a card name to search
-          </div>
+        <div className="flex-1 max-w-6xl mx-auto w-full flex items-center justify-center text-gray-600 text-xs px-4 sm:px-6 pb-6">
+          Or type a card name to search
         </div>
       ) : (
         <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">

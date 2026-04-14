@@ -16,7 +16,7 @@ export function BetaBadge({ className = '' }: BetaBadgeProps) {
   return (
     <span
       title={title}
-      className={`inline-flex items-center px-1.5 py-px text-[8px] font-bold uppercase tracking-[0.14em] rounded bg-gold/10 text-gold border border-gold/30 select-none ${className}`}
+      className={`inline-block text-[9px] font-bold uppercase tracking-[0.18em] leading-none text-gold/70 select-none ${className}`}
       aria-label={title}
     >
       Beta
