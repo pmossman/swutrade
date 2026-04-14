@@ -174,9 +174,11 @@ function App() {
             <ListsDrawer
               wants={wants}
               available={available}
+              filters={filters}
               allCards={allLoadedCards}
               percentage={percentage}
               priceMode={priceMode}
+              onPriceModeChange={setPriceMode}
             />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               <PriceModeToggle value={priceMode} onChange={setPriceMode} />

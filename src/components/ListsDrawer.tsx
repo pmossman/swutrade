@@ -4,15 +4,18 @@ import * as Tabs from '@radix-ui/react-tabs';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
 import { WantsRow, AvailableRow } from './ListRows';
 
 interface ListsDrawerProps {
   wants: WantsApi;
   available: AvailableApi;
+  filters: ReturnType<typeof useSearchFilters>;
   allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
+  onPriceModeChange: (mode: PriceMode) => void;
 }
 
 type ListTab = 'wants' | 'available';
@@ -22,7 +25,15 @@ type Mode = 'list' | 'picker';
  * Mobile: bottom sheet sliding up from viewport bottom.
  * Desktop: centered modal.
  */
-export function ListsDrawer({ wants, available, allCards, percentage, priceMode }: ListsDrawerProps) {
+export function ListsDrawer({
+  wants,
+  available,
+  filters,
+  allCards,
+  percentage,
+  priceMode,
+  onPriceModeChange,
+}: ListsDrawerProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
   const [mode, setMode] = useState<Mode>('list');
@@ -93,17 +104,25 @@ export function ListsDrawer({ wants, available, allCards, percentage, priceMode 
         <Dialog.Overlay className="drawer-overlay fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
+          data-mode={mode}
           className={[
             'drawer-content z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
             'flex flex-col',
+            // Mobile list mode: bottom sheet. Mobile picker mode:
+            // expands to full viewport so the search results have
+            // room to breathe (iOS address bar etc.).
             'max-h-[85dvh] rounded-t-2xl border-b-0',
-            'md:w-[min(640px,calc(100vw-2rem))] md:max-h-[85dvh] md:rounded-2xl md:border',
+            'data-[mode=picker]:max-h-[100dvh] data-[mode=picker]:h-[100dvh] data-[mode=picker]:rounded-none',
+            // Desktop: fixed modal size in either mode.
+            'md:w-[min(720px,calc(100vw-2rem))] md:max-h-[85dvh] md:h-auto md:rounded-2xl md:border md:data-[mode=picker]:max-h-[85dvh] md:data-[mode=picker]:rounded-2xl',
           ].join(' ')}
         >
-          {/* Drag-handle affordance (mobile only) */}
-          <div className="flex justify-center pt-2 md:hidden">
-            <span className="w-10 h-1 rounded-full bg-space-700" aria-hidden />
-          </div>
+          {/* Drag-handle affordance (mobile only, hidden in full-screen picker) */}
+          {mode === 'list' && (
+            <div className="flex justify-center pt-2 md:hidden">
+              <span className="w-10 h-1 rounded-full bg-space-700" aria-hidden />
+            </div>
+          )}
 
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-space-800">
             <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">
@@ -137,8 +156,10 @@ export function ListsDrawer({ wants, available, allCards, percentage, priceMode 
               {mode === 'picker' && tab === 'wants' ? (
                 <ListCardPicker
                   allCards={allCards}
+                  filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
+                  onPriceModeChange={onPriceModeChange}
                   title="Add to Wants"
                   onPick={card => {
                     if (card.baseCardId) {
@@ -180,8 +201,10 @@ export function ListsDrawer({ wants, available, allCards, percentage, priceMode 
               {mode === 'picker' && tab === 'available' ? (
                 <ListCardPicker
                   allCards={allCards}
+                  filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
+                  onPriceModeChange={onPriceModeChange}
                   title="Add to Available"
                   onPick={card => {
                     if (card.productId) {
