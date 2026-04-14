@@ -16,6 +16,7 @@ import { BetaBadge } from './components/BetaBadge';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
+import { ListView } from './components/ListView';
 import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
@@ -29,6 +30,18 @@ import {
   PriceModeSchema,
   DEFAULTS,
 } from './persistence';
+
+function detectViewMode(): 'list' | 'trade' {
+  if (typeof window === 'undefined') return 'trade';
+  const params = new URLSearchParams(window.location.search);
+  const explicit = params.get('view');
+  if (explicit === 'list') return 'list';
+  if (explicit === 'trade') return 'trade';
+  // Implicit: list view when there's a shared list and no active trade.
+  const hasListParams = params.has('w') || params.has('a');
+  const hasTradeParams = params.has('y') || params.has('t');
+  return hasListParams && !hasTradeParams ? 'list' : 'trade';
+}
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -82,6 +95,23 @@ function App() {
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
+
+  // View mode: list-view is the default landing for shared-link URLs
+  // (lists in URL but no trade). Users opt into the trade UI via the
+  // "Start a trade" CTA on the list view, which appends ?view=trade.
+  // ?view=list / ?view=trade explicitly overrides the heuristic.
+  const [viewMode, setViewMode] = useState<'list' | 'trade'>(() => detectViewMode());
+  useEffect(() => {
+    const handler = () => setViewMode(detectViewMode());
+    window.addEventListener('popstate', handler);
+    return () => window.removeEventListener('popstate', handler);
+  }, []);
+  const handleStartTrade = useCallback(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', 'trade');
+    window.history.pushState(null, '', '?' + params.toString());
+    setViewMode('trade');
+  }, []);
 
   // Load all sets on mount (static files are fast from CDN)
   useEffect(() => {
@@ -170,6 +200,22 @@ function App() {
     setYourCards([]);
     setTheirCards([]);
   }, []);
+
+  // Shared-list landing — stand-alone view with its own chrome and
+  // the "Start a trade" CTA that flips into trade mode.
+  if (viewMode === 'list' && sharedLists) {
+    return (
+      <ListView
+        sharedLists={sharedLists}
+        byFamilyAll={cardIndex.byFamilyAll}
+        byProductId={cardIndex.byProductId}
+        percentage={percentage}
+        priceMode={priceMode}
+        isAnyLoading={priceData.isAnyLoading}
+        onStartTrade={handleStartTrade}
+      />
+    );
+  }
 
   return (
     <>
