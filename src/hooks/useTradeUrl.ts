@@ -1,86 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
-
-interface TradeUrlState {
-  yourCards: TradeCard[];
-  theirCards: TradeCard[];
-  percentage: number;
-  priceMode: PriceMode;
-}
-
-interface PendingCards {
-  yours: { productId: string; qty: number }[];
-  theirs: { productId: string; qty: number }[];
-}
-
-function encodeCards(cards: TradeCard[]): string {
-  return cards
-    .filter(tc => tc.card.productId)
-    .map(tc => `${tc.card.productId}.${tc.qty}`)
-    .join(',');
-}
-
-function decodeCardRefs(param: string): { productId: string; qty: number }[] {
-  if (!param) return [];
-  return param.split(',').filter(Boolean).map(entry => {
-    const [productId, qtyStr] = entry.split('.');
-    return { productId, qty: parseInt(qtyStr, 10) || 1 };
-  });
-}
-
-function buildSearch(state: TradeUrlState): string {
-  const params = new URLSearchParams();
-  const y = encodeCards(state.yourCards);
-  const t = encodeCards(state.theirCards);
-  if (y) params.set('y', y);
-  if (t) params.set('t', t);
-  // When there's a trade, always encode pm/pct so share links carry the
-  // sharer's intent rather than picking up the receiver's persisted prefs.
-  // When there's no trade, omit them so the bare URL stays clean and
-  // localStorage preferences remain authoritative.
-  const hasTrade = Boolean(y || t);
-  if (hasTrade || state.percentage !== 80) params.set('pct', String(state.percentage));
-  if (hasTrade || state.priceMode !== 'market') {
-    params.set('pm', state.priceMode === 'low' ? 'l' : 'm');
-  }
-  return params.toString();
-}
-
-function parseUrl(): {
-  pending: PendingCards;
-  percentage: number | null;
-  priceMode: PriceMode | null;
-} | null {
-  const params = new URLSearchParams(window.location.search);
-  const y = params.get('y');
-  const t = params.get('t');
-  const pct = params.get('pct');
-  const pm = params.get('pm');
-
-  if (!y && !t && !pct && !pm) return null;
-
-  return {
-    pending: {
-      yours: decodeCardRefs(y || ''),
-      theirs: decodeCardRefs(t || ''),
-    },
-    // null means "URL didn't specify — leave current (persisted) value alone"
-    percentage: pct ? parseInt(pct, 10) || 80 : null,
-    priceMode: pm === 'l' ? 'low' : pm === 'm' ? 'market' : null,
-  };
-}
-
-function resolveCards(
-  refs: { productId: string; qty: number }[],
-  cardMap: Map<string, CardVariant>,
-): TradeCard[] {
-  const resolved: TradeCard[] = [];
-  for (const ref of refs) {
-    const card = cardMap.get(ref.productId);
-    if (card) resolved.push({ card, qty: ref.qty });
-  }
-  return resolved;
-}
+import {
+  buildTradeSearch,
+  parseTradeUrl,
+  resolveCards,
+  buildCardMap,
+  type TradeUrlState,
+  type PendingCards,
+} from '../urlCodec';
 
 export function useTradeUrl(
   state: TradeUrlState,
@@ -97,7 +24,7 @@ export function useTradeUrl(
 
   // On mount, parse URL for pending card references
   useEffect(() => {
-    const parsed = parseUrl();
+    const parsed = parseTradeUrl(window.location.search.replace(/^\?/, ''));
     if (parsed) {
       // Only track pending if there's actually something to resolve.
       // Otherwise the later-resolve effect bails early on empty allCards
@@ -117,10 +44,7 @@ export function useTradeUrl(
     if (!pendingRef.current || allCards.length === 0) return;
 
     const pending = pendingRef.current;
-    const cardMap = new Map<string, CardVariant>();
-    for (const card of allCards) {
-      if (card.productId) cardMap.set(card.productId, card);
-    }
+    const cardMap = buildCardMap(allCards);
 
     const yours = resolveCards(pending.yours, cardMap);
     const theirs = resolveCards(pending.theirs, cardMap);
@@ -144,7 +68,7 @@ export function useTradeUrl(
   useEffect(() => {
     if (!initializedRef.current) return;
 
-    const search = buildSearch(state);
+    const search = buildTradeSearch(state);
     const newUrl = search ? `?${search}` : window.location.pathname;
     const currentSearch = window.location.search.replace(/^\?/, '');
 
@@ -175,13 +99,10 @@ export function useTradeUrl(
 
   // Handle back/forward navigation
   const handlePopState = useCallback(() => {
-    const parsed = parseUrl();
+    const parsed = parseTradeUrl(window.location.search.replace(/^\?/, ''));
     suppressPushRef.current = true;
 
-    const cardMap = new Map<string, CardVariant>();
-    for (const card of allCards) {
-      if (card.productId) cardMap.set(card.productId, card);
-    }
+    const cardMap = buildCardMap(allCards);
 
     if (!parsed) {
       setYourCards([]);
