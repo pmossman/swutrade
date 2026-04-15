@@ -299,14 +299,17 @@ function PickerTile({
           ×{savedQty}
         </span>
       )}
-      <div className="px-1.5 py-1 flex items-center gap-1">
+      {/* Caption: badge + price stacked so neither gets clipped at narrow
+          mobile tile widths (HYPERSPACE + $6.02 doesn't fit on one line
+          at the 4-col breakpoint). */}
+      <div className="px-1.5 py-1 flex flex-col items-start gap-0.5">
         {showVariantBadge && variantLabel && (
           <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
             {variantLabel}
           </span>
         )}
         {price !== null && (
-          <span className="ml-auto text-[10px] text-gold font-semibold">
+          <span className="text-[10px] text-gold font-semibold">
             ${price.toFixed(2)}
           </span>
         )}
