@@ -135,6 +135,18 @@ Trade: adds a Blob dependency, but prices update without redeploys and we stop b
 
 TCGPlayer serves all card images as 5:7 portrait. Leaders are landscape in-game, so their portrait-padded thumbnails get cropped when rendered in landscape tiles. swuapi exposes `frontImageUrl` which might be the real landscape image; worth investigating when we do another visual pass.
 
+### Foil variants for SOR / SHD / TWI
+
+TCGPlayer split foil into its own product SKU starting with SEC, so we get Foil, Hyperspace Foil, Prestige Foil, etc. as first-class variants for SEC+. The first three sets (SOR, SHD, TWI) were released when TCGPlayer still used a "foil toggle" on the same product — both printings live on one productId, so our data ends up with only Standard and Hyperspace (and Showcase for leaders/bases).
+
+Foil prices for those sets exist via `https://mpapi.tcgplayer.com/v2/product/{id}/pricepoints`, which returns `[{printingType:'Normal',marketPrice,...}, {printingType:'Foil',marketPrice,...}]`. To wire them up:
+
+- Call pricepoints in `scripts/fetch-prices.ts` for dual-printing SKUs (neither `foilOnly` nor `normalOnly`); adds ~1500 extra HTTP calls across the three sets.
+- Emit a second `CardVariant` per dual-print card with `variant: 'Foil'` or `'Hyperspace Foil'` and the foil market/low.
+- Update dedup keys (`tradeCardKey`, `byProductId` maps, and anywhere else keyed off productId alone) to fold in `printing` or `variant` — both variants share the same productId.
+
+Non-trivial because the productId-as-identity assumption is load-bearing. Half-day-ish task. Park until a user actually asks for early-set foils.
+
 ### Other pending UX notes
 
 - Allow replacing cards in trade list (in-place edit)
