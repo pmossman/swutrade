@@ -243,7 +243,7 @@ export function ListsDrawer({
                       </ul>
                     )}
                   </div>
-                  <AddCardFooter onClick={() => setMode('picker')} />
+                  <AddCardFooter onClick={() => setMode('picker')} accent="blue" />
                 </>
               )}
             </Tabs.Content>
@@ -287,7 +287,7 @@ export function ListsDrawer({
                       </ul>
                     )}
                   </div>
-                  <AddCardFooter onClick={() => setMode('picker')} />
+                  <AddCardFooter onClick={() => setMode('picker')} accent="emerald" />
                 </>
               )}
             </Tabs.Content>
@@ -298,13 +298,18 @@ export function ListsDrawer({
   );
 }
 
-function AddCardFooter({ onClick }: { onClick: () => void }) {
+const ADD_CARD_ACCENT: Record<'blue' | 'emerald', string> = {
+  blue: 'bg-blue-500/10 border-blue-500/30 text-blue-200 hover:bg-blue-500/20 hover:border-blue-500/50',
+  emerald: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/20 hover:border-emerald-500/50',
+};
+
+function AddCardFooter({ onClick, accent }: { onClick: () => void; accent: 'blue' | 'emerald' }) {
   return (
     <div className="shrink-0 border-t border-space-800 p-3">
       <button
         type="button"
         onClick={onClick}
-        className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg bg-gold/10 border border-gold/30 text-gold hover:bg-gold/20 hover:border-gold/50 transition-colors text-xs font-bold tracking-[0.1em] uppercase"
+        className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border transition-colors text-xs font-bold tracking-[0.1em] uppercase ${ADD_CARD_ACCENT[accent]}`}
       >
         <PlusIcon className="w-3.5 h-3.5" />
         Add Card
