@@ -197,6 +197,7 @@ export function ListCardPicker({
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
+          onFocus={e => e.currentTarget.select()}
           placeholder="Search cards..."
           className="w-full px-3 py-2 rounded-lg bg-space-800 border border-space-700 focus:border-gold/50 focus:outline-none text-base text-gray-100 placeholder:text-gray-600"
           autoComplete="off"

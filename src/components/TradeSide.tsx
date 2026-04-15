@@ -303,6 +303,7 @@ export function TradeSide({
             type="text"
             value={search.query}
             onChange={e => search.setQuery(e.target.value)}
+            onFocus={e => e.currentTarget.select()}
             placeholder="Search cards..."
             className={`w-full bg-space-700 text-gray-100 border border-space-600 rounded-lg pl-8 pr-8 py-2 text-base placeholder-gray-500 focus:outline-none focus:ring-1 transition-all ${searchBorder}`}
             autoComplete="off"
