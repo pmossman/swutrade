@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useDeferredValue } from 'react';
+import { useMemo, useRef, useEffect, useState, useDeferredValue } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
@@ -95,10 +95,20 @@ export function ListCardPicker({
     sets: PERSIST_KEYS.pickerSelSets,
   });
   const inputRef = useRef<HTMLInputElement>(null);
+  // Available picker in browse mode: first tap on a family expands
+  // it to show all variants; a second tap commits the specific one.
+  // Keyed by familyId. Reset whenever the picker exits browse mode.
+  const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Reset expand state whenever the user leaves browse mode or shifts
+  // the filter window — the expanded family may no longer be relevant.
+  useEffect(() => {
+    setExpandedFamily(null);
+  }, [query, filters.selectedSets, filters.selectedVariants, listType]);
 
   const hasQuery = query.length >= 2;
 
@@ -113,8 +123,9 @@ export function ListCardPicker({
   // For the wants picker, collapse each family to a single tile using
   // the rep that matches the current variant filter (cheapest match, or
   // Standard when filter is empty). Available picker also collapses
-  // while browsing (too many tiles otherwise) — typing a query
-  // surfaces every variant so users can pick an exact printing.
+  // while browsing (too many tiles otherwise) — tapping a rep expands
+  // that family to show every variant, and a second tap commits the
+  // specific one. Typing a query bypasses collapse entirely.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
     const setScoped = applySelectionFilters(
       baseResults,
@@ -129,6 +140,13 @@ export function ListCardPicker({
       ...sg,
       groups: sg.groups
         .map(g => {
+          // Available picker: if this family is currently expanded,
+          // render it in full (every variant) so the user can tap
+          // the exact printing they want.
+          if (listType === 'available' && g.variants.length > 0) {
+            const fid = cardFamilyId(g.variants[0]);
+            if (fid === expandedFamily) return g;
+          }
           if (selectedVariants.length === 0) {
             return g.variants.length > 0
               ? { ...g, variants: [representativeVariant(g.variants)] }
@@ -142,7 +160,7 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [baseResults, listType, hasQuery, selectedSets, selectedVariants, priceMode]);
+  }, [baseResults, listType, hasQuery, selectedSets, selectedVariants, priceMode, expandedFamily]);
 
   // Saved-count lookup. For wants, scope by (familyId + filter
   // restriction key) so a Hyperspace-saved Luke doesn't show a count
@@ -179,6 +197,21 @@ export function ListCardPicker({
   // picker chrome (filter bar + search input) paint in a high-priority
   // render while the heavy grid fills in as a low-priority follow-up.
   const deferredResults = useDeferredValue(viewResults);
+
+  // Available picker: intercept the first tap to expand a collapsed
+  // family rather than saving. Second tap (on an expanded variant)
+  // commits normally.
+  const handlePick = (card: CardVariant, ctx: PickContext) => {
+    if (listType === 'available' && !hasQuery) {
+      const fid = cardFamilyId(card);
+      if (expandedFamily !== fid) {
+        setExpandedFamily(fid);
+        return;
+      }
+    }
+    onPick(card, ctx);
+    setExpandedFamily(null);
+  };
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -240,7 +273,7 @@ export function ListCardPicker({
               landscape={ctx.leaderGroup}
               savedQty={savedQty}
               showVariantBadge={showBadge}
-              onPick={() => onPick(card, pickContext)}
+              onPick={() => handlePick(card, pickContext)}
             />
           );
         }}
