@@ -59,6 +59,10 @@ interface WantsRowProps {
   item: WantsItem;
   /** Any variant of this base card — used for image + display name. */
   sampleCard: CardVariant | null;
+  /** Every printing of this card family in the dataset. The editor
+   *  uses this to only offer variants that actually exist — a Pyke
+   *  Sentinel never has a Prestige printing, so we don't show one. */
+  familyCandidates: CardVariant[];
   /** True when this row's restriction editor is expanded. */
   isEditing: boolean;
   onChangeQty: (next: number) => void;
@@ -78,6 +82,7 @@ function restrictionLabel(r: VariantRestriction): string {
 export function WantsRow({
   item,
   sampleCard,
+  familyCandidates,
   isEditing,
   onChangeQty,
   onTogglePriority,
@@ -120,6 +125,7 @@ export function WantsRow({
       {isEditing && (
         <RestrictionEditor
           restriction={item.restriction}
+          familyCandidates={familyCandidates}
           onChange={onChangeRestriction}
           onClose={onToggleEdit}
         />
@@ -136,10 +142,12 @@ export function WantsRow({
 
 function RestrictionEditor({
   restriction,
+  familyCandidates,
   onChange,
   onClose,
 }: {
   restriction: VariantRestriction;
+  familyCandidates: CardVariant[];
   onChange: (next: VariantRestriction) => void;
   onClose: () => void;
 }) {
@@ -201,24 +209,36 @@ function RestrictionEditor({
           Specific
         </SegmentedOption>
       </div>
-      {restriction.mode === 'restricted' && (
-        <div className="flex flex-wrap gap-1">
-          {CANONICAL_VARIANTS.map(v => {
-            const selected = restriction.variants.includes(v);
-            return (
-              <button
-                key={v}
-                type="button"
-                onClick={() => toggleVariant(v)}
-                className={`text-xs leading-none px-3 py-2 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
-                aria-pressed={selected}
-              >
-                {variantChipLabel(v)}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {restriction.mode === 'restricted' && (() => {
+        // Only surface variants that actually exist for this card
+        // family (a Pyke Sentinel has no Prestige / Serialized /
+        // Showcase printing, so those chips would be misleading).
+        // A variant already locked in the saved restriction stays
+        // visible even if the dataset doesn't know about it, so the
+        // user can still deselect stale state.
+        const existing = new Set(familyCandidates.map(c => extractVariantLabel(c.name)));
+        const relevant = CANONICAL_VARIANTS.filter(
+          v => existing.has(v) || (restriction.mode === 'restricted' && restriction.variants.includes(v)),
+        );
+        return (
+          <div className="flex flex-wrap gap-1">
+            {relevant.map(v => {
+              const selected = restriction.variants.includes(v);
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => toggleVariant(v)}
+                  className={`text-xs leading-none px-3 py-2 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
+                  aria-pressed={selected}
+                >
+                  {variantChipLabel(v)}
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }

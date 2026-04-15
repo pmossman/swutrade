@@ -72,13 +72,15 @@ interface TileBadge {
 /**
  * Badge pills for a picker tile. Communicates what a tap would save:
  *   - Available: single pill with the tile's exact variant.
- *   - Wants, no filter: single pill if the rep isn't Standard, else
- *     no badge (Standard is the implicit default).
+ *   - Wants, no filter (Any): gold "Any" pill so the user sees that
+ *     tapping saves a cross-variant want, not just the visible rep.
  *   - Wants, 1 filter variant: single pill with that variant.
  *   - Wants, 2+ filter variants: one pill per variant in its own
  *     variant color — makes the saved restriction scannable at a
  *     glance. Rendered in the same order the user selected.
  */
+const ANY_BADGE_COLOR = 'bg-gold/15 text-gold border border-gold/40';
+
 function wantsBadge(
   card: CardVariant,
   listType: PickerListType,
@@ -90,9 +92,7 @@ function wantsBadge(
     return label ? [{ text: label, colorClass: variantBadgeColor(variant) }] : null;
   }
   if (selectedVariants.length === 0) {
-    if (variant === 'Standard') return null;
-    const label = variantDisplayLabel(variant) || variant;
-    return [{ text: label, colorClass: variantBadgeColor(variant) }];
+    return [{ text: 'Any', colorClass: ANY_BADGE_COLOR }];
   }
   if (selectedVariants.length === 1) {
     const v = selectedVariants[0];

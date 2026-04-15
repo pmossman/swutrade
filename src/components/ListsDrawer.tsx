@@ -223,6 +223,7 @@ export function ListsDrawer({
                             key={item.id}
                             item={item}
                             sampleCard={sampleCard}
+                            familyCandidates={candidates}
                             isEditing={editingWantId === item.id}
                             onChangeQty={qty => wants.update(item.id, { qty })}
                             onTogglePriority={() => wants.togglePriority(item.id)}
