@@ -112,18 +112,18 @@ export function ListCardPicker({
 
   // For the wants picker, collapse each family to a single tile using
   // the rep that matches the current variant filter (cheapest match, or
-  // Standard when filter is empty). Available picker shows every variant
-  // as its own tile since productIds are exact.
+  // Standard when filter is empty). Available picker also collapses
+  // while browsing (too many tiles otherwise) — typing a query
+  // surfaces every variant so users can pick an exact printing.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
-    // Apply set filter to all surfaces; variant filter is applied
-    // differently for wants (rep collapse) vs available (straight filter).
     const setScoped = applySelectionFilters(
       baseResults,
       selectedSets,
       listType === 'available' ? selectedVariants : [],
     );
 
-    if (listType !== 'wants') return setScoped;
+    const shouldCollapse = listType === 'wants' || (listType === 'available' && !hasQuery);
+    if (!shouldCollapse) return setScoped;
 
     return setScoped.map(sg => ({
       ...sg,
@@ -142,7 +142,7 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
+  }, [baseResults, listType, hasQuery, selectedSets, selectedVariants, priceMode]);
 
   // Saved-count lookup. For wants, scope by (familyId + filter
   // restriction key) so a Hyperspace-saved Luke doesn't show a count

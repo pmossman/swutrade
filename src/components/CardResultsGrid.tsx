@@ -64,7 +64,17 @@ export function CardResultsGrid({
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="space-y-8 pb-6">
         {results.map(setGroup => (
-          <section key={setGroup.setSlug}>
+          <section
+            key={setGroup.setSlug}
+            // Browser-level virtualization: skip layout/paint for
+            // set sections that aren't near the viewport. The
+            // contain-intrinsic-size reserves approximate room so
+            // the scrollbar doesn't jump as sections render in.
+            style={{
+              contentVisibility: 'auto',
+              containIntrinsicSize: 'auto 800px',
+            }}
+          >
             {showSetHeaders && (
               <div
                 className={`flex items-baseline gap-2 py-2 sticky -top-px bg-space-900 z-10 mb-4 border-b border-space-700 shadow-[0_8px_12px_-8px_rgba(0,0,0,0.8)] ${SECTION_PADDING_X}`}
@@ -80,7 +90,13 @@ export function CardResultsGrid({
                 const leaderGroup = isLeaderOrBaseGroup(group.variants);
                 const gridCols = leaderGroup ? landscapeColsClass : portraitColsClass;
                 return (
-                  <div key={`${setGroup.setSlug}-${group.baseName}`}>
+                  <div
+                    key={`${setGroup.setSlug}-${group.baseName}`}
+                    style={{
+                      contentVisibility: 'auto',
+                      containIntrinsicSize: 'auto 220px',
+                    }}
+                  >
                     <div className="px-1 pb-2 text-xs font-medium text-gray-300 truncate">
                       {group.baseName}
                     </div>
