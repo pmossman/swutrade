@@ -15,14 +15,15 @@
 
 Balance Star Wars: Unlimited card trades with live TCGPlayer market prices.
 
-Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair. Keep personal Wants and Available lists locally, share them anonymously via link or image, and pull them into trades with one tap.
+Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair. Keep personal Wants and Available lists locally, share them anonymously via link, OS share sheet, QR code, or rendered image, and pull them into trades with one tap.
 
 ## How it works
 
 - **Cards and prices** both come from TCGPlayer's marketplace search API. `scripts/fetch-prices.ts` discovers every SWU set dynamically, pages through each one, and writes per-set JSON to `public/data/` at build time.
 - **Enrichment**: `scripts/enrich-cards.ts` joins each card to swuapi.com for `cardType`, aspects, traits, and a canonical display name. Anything that doesn't match swuapi (booster boxes, prerelease kits, token collisions) gets dropped here so the UI only ever sees real, playable cards.
 - **The client** reads the enriched static JSON directly from `/data/*.json` — no runtime API calls for price data.
-- **Lists** (Wants / Available) are persisted to `localStorage` under Zod-validated schemas; URL params `?w=…&a=…` carry them anonymously for sharing. A dedicated `/list` view renders just the shared lists with a "Start a trade" CTA.
+- **Lists** (Wants / Available) are persisted to `localStorage` under Zod-validated schemas; URL params `?w=…&a=…` carry them anonymously for sharing. A dedicated `/list` view renders the shared list as a scannable row layout with recipient-side filter controls, and "Start a trade" pipes the sender's wants straight into the Offering-side picker as an active source chip.
+- **Sharing surfaces**: the lists drawer's Share popover carries Copy link, OS share sheet (`navigator.share`), Save as image, and a QR code for in-person scanning.
 - **Refreshes** run every 2h via a GitHub Actions cron (`.github/workflows/refresh-prices.yml`) that POSTs to a Vercel deploy hook with `?buildCache=false` to force a re-fetch. See `ROADMAP.md` for the plan to move this off the deploy path.
 - **OG previews**: `middleware.ts` intercepts crawler requests to shared links (trades and lists) and returns an HTML page pointing at `/api/og`, which renders a summary image on demand.
 

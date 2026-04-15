@@ -18,7 +18,7 @@ Three invariants we protect through all of this:
 
 ## Phases
 
-### Phase 1 — Personal lists + anonymous sharing *(shipped — `v2026.04.15-stable`)*
+### Phase 1 — Personal lists + anonymous sharing *(complete — through `v2026.04.15.2-stable`)*
 
 Local-first wants and available lists. Anonymous URL-encoded sharing is a complete feature on its own — accounts (Phase 2) layer persistence and identity on top, they don't gate the core sharing UX.
 
@@ -30,11 +30,14 @@ Local-first wants and available lists. Anonymous URL-encoded sharing is a comple
 - [x] Shared Variant + Set filters with per-surface persistence; All / Main / Special presets mutually exclusive with individual set chips
 - [x] swuapi.com enrichment at build time (`baseCardId`, `cardType`, aspects, traits) + enrichment-driven filtering that drops non-card SKUs and token/leader id collisions
 - [x] Cross-printing family-id so "any variant" wants match Standard / Hyperspace / Showcase (also merges TCGPlayer name typos like Cad vs Cade Bane via `displayName`)
-- [x] URL encoding (`?w=…&a=…`) — anonymous, copy-link sharing
-- [x] OG image rendering for shared lists (`api/og.ts` + `/tmp` family-index lookup)
-- [x] Dedicated `/list` (or `?view=list`) landing view with "Start a trade" CTA
-- [x] "From the shared link" section inside the trade search overlay
-- [x] Quantity-aware to-do semantics (rows count down as cards get added to trade)
+- [x] URL encoding (`?w=…&a=…`) — anonymous sharing
+- [x] Share popover: Copy link · Share via… (`navigator.share`) · Save as image · QR code for in-person scanning
+- [x] Dense-row OG image for shared-list link previews (matches the web landing view)
+- [x] Dedicated `/list` (or `?view=list`) landing view: compact row layout with recipient-side filter controls (search + Variant + Set), surfaces multi-variant restrictions on each row, "Start a trade" CTA
+- [x] Trade-side picker source chips that narrow the grid to a personal/shared list instead of separate sidebar sections (Offering: **My available** / **They want**; Receiving: **My wants** / **They have**). Counts are qty-aware and auto-disappear when exhausted
+- [x] Start-trade handoff from `/list` auto-opens the Offering search overlay with the "They want" source chip active (and filters reset so old state can't blank the sender's cards)
+
+**Parked follow-ups (not blocking, tracked below):** BarcodeDetector scanner (in-app QR capture); foil variants for SOR / SHD / TWI (TCGPlayer early-set foil-toggle data format).
 
 ### Phase 2 — Accounts + sync (upgrade path, not gate)
 
@@ -102,6 +105,24 @@ Practical consequence: the landing banner, dedicated `/list` view, and OG image 
 Considered: a bookmark icon on each search tile so users could save cards to wants/available without leaving the trade overlay.
 
 Rejected. Trader feedback: lists tend to be stable references built when organizing a collection, not something updated in the heat of an active trade. The "closed loop" framing was theoretical — in practice most users just want to *consume* their lists during trade-building, not modify them. Dropped to keep the trade flow uncluttered.
+
+### 2026-04-15 — Source lists are filters on the picker grid, not sidebar sections
+
+The trade-search overlay used to render separate collapsible sections for "From your Available / Wants" and "From the shared link". Those sections sat between the filter bar and the main grid, competing for screen real estate and splintering the add-card action across three surfaces.
+
+Refactored into two source chips (Offering: *My available* / *They want*; Receiving: *My wants* / *They have*) that narrow the **main grid** to that subset. Variant / Set filters still apply on top. Chips carry remaining-qty counts and auto-deactivate when exhausted.
+
+Why: one grid, one mental model. The "add a card to this side" action lives in one place, and source scoping is just another filter dimension. Preserves Phase-3 / Phase-4 scalability — additional sources (sender wants under a signed-in handle, Discord community matches) can land as additional chips without changing the layout.
+
+### 2026-04-15 — Shared-list view optimizes for recipient scan speed, not card browsing
+
+The original `/list` landing rendered a tile grid identical to the picker's. Visually nice, but optimized for the wrong job: a recipient arriving from a share link needs to quickly answer "is there anything I can trade for?", not browse art.
+
+Rewrote as a compact row layout with in-view filter controls (name search + Variant + Set). Many more items fit before scrolling; multi-variant wants surface the full restriction on their row so a recipient sees every printing the sender accepts. OG image follows the same density pattern so link previews match the landing page.
+
+### 2026-04-15 — One Share action with every channel behind it
+
+Split Link / Image buttons consolidated into a single **Share** popover containing Copy link, `navigator.share` (when supported), Save as image, and a QR code. Cleaner drawer header, and new share channels (Discord invite to a handle-based share in Phase 2/4) can land as more menu entries without more chrome. QR being always-visible in the popover is deliberate — the in-person "look at my phone" handoff is a first-class use case, not a buried affordance.
 
 ### 2026-04-14 — Privacy defaults for Phase 2
 
