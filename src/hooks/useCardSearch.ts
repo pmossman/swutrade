@@ -78,22 +78,22 @@ const setOrder = Object.fromEntries(
 );
 
 // --- Smart query parsing: detect set codes and variant keywords ---
+//
+// Aliases must be unambiguous — a misclassified token routes a search
+// to the wrong set silently. Set codes (sor, jtl, sec, …) are short
+// and don't collide with English. Slug-word aliases (e.g. "judge" →
+// judge-promos) used to be auto-generated but caused real false
+// positives — "of" mapped to ashes-of-the-empire, so a swap-variant
+// seed like "Luke Skywalker - Hero of Yavin" routed the search to
+// ATE and returned nothing. Stick to set codes plus the few
+// hand-curated overrides below.
 
-// Map lowercase aliases → set slug
 const setAliases: Record<string, string> = {};
 for (const s of SETS) {
   setAliases[s.code.toLowerCase()] = s.slug;
-  // Also add slug words as aliases for common shorthand (e.g. "op" for organized-play-promos)
-  if (s.category === 'promo') {
-    // "op" → organized-play-promos, "judge" → judge-promos, etc.
-    for (const word of s.slug.split('-')) {
-      if (word.length >= 2 && !setAliases[word]) {
-        setAliases[word] = s.slug;
-      }
-    }
-  }
 }
-// Manual shorthand overrides
+// Manual shorthand overrides — short, unambiguous tokens that aren't
+// SETS[].code values but are useful day-to-day.
 setAliases['op'] = 'organized-play-promos';
 setAliases['srp'] = 'sector-and-regional-promos-season-1';
 

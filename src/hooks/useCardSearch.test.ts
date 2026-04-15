@@ -66,6 +66,19 @@ describe('parseQuery', () => {
     expect(parseQuery('hsf').variantFilter).toBe('Hyperspace Foil');
     expect(parseQuery('sc').variantFilter).toBe('Showcase');
   });
+
+  it('treats common English words like "of" / "the" / "and" as plain name terms', () => {
+    // Regression: an earlier auto-alias pass mapped slug words like
+    // "of" → ashes-of-the-empire, causing the swap-variant flow to
+    // route "Luke Skywalker - Hero of Yavin" to ATE and return zero
+    // matches.
+    const result = parseQuery('Luke Skywalker - Hero of Yavin');
+    expect(result.setSlug).toBeNull();
+    expect(result.variantFilter).toBeNull();
+    expect(result.nameTerms).toContain('of');
+    expect(result.nameTerms).toContain('hero');
+    expect(result.nameTerms).toContain('yavin');
+  });
 });
 
 describe('browseAllGroups', () => {
