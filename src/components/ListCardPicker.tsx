@@ -1,6 +1,6 @@
 import { useMemo, useRef, useEffect } from 'react';
 import type { CardVariant, PriceMode } from '../types';
-import { useCardSearch, type SetSearchGroup } from '../hooks/useCardSearch';
+import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import { PERSIST_KEYS } from '../persistence';
 import {
@@ -102,9 +102,15 @@ export function ListCardPicker({
     inputRef.current?.focus();
   }, []);
 
-  const hasResults = query.length >= 2;
+  const hasQuery = query.length >= 2;
 
   const { selectedVariants, selectedSets } = filters;
+
+  // Browse mode: when the user hasn't typed, render the whole catalog
+  // (respecting filters) so they can pick cards without having to
+  // search by name.
+  const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
+  const baseResults = hasQuery ? results : browseResults;
 
   // For the wants picker, collapse each family to a single tile using
   // the rep that matches the current variant filter (cheapest match, or
@@ -114,7 +120,7 @@ export function ListCardPicker({
     // Apply set filter to all surfaces; variant filter is applied
     // differently for wants (rep collapse) vs available (straight filter).
     const setScoped = applySelectionFilters(
-      results,
+      baseResults,
       selectedSets,
       listType === 'available' ? selectedVariants : [],
     );
@@ -138,7 +144,7 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [results, listType, selectedSets, selectedVariants, priceMode]);
+  }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
 
   // Saved-count lookup. For wants, scope by (familyId + filter
   // restriction key) so a Hyperspace-saved Luke doesn't show a count
@@ -206,42 +212,36 @@ export function ListCardPicker({
         />
       </div>
 
-      {!hasResults ? (
-        <div className="flex-1 flex items-start justify-center pt-10 text-center text-xs text-gray-500">
-          Type a card name to search
-        </div>
-      ) : (
-        <CardResultsGrid
-          results={viewResults}
-          query={query}
-          isSearching={isSearching}
-          portraitColsClass="grid-cols-4 sm:grid-cols-4 md:grid-cols-5"
-          landscapeColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
-          renderTile={(card, ctx) => {
-            const key = tileKey(card);
-            const savedQty = key ? savedCounts.get(key) ?? 0 : 0;
-            // Show variant badge when the rep represents a specific
-            // variant: always for available, and for wants whenever the
-            // filter is active OR the rep itself is non-Standard (e.g.
-            // "Any" filter but the family has no Standard printing).
-            const variant = extractVariantLabel(card.name);
-            const showBadge = listType === 'available'
-              || (listType === 'wants' && (selectedVariants.length > 0 || variant !== 'Standard'));
-            return (
-              <PickerTile
-                key={`${card.name}-${card.set}-${card.productId ?? ''}`}
-                card={card}
-                percentage={percentage}
-                priceMode={priceMode}
-                landscape={ctx.leaderGroup}
-                savedQty={savedQty}
-                showVariantBadge={showBadge}
-                onPick={() => onPick(card, pickContext)}
-              />
-            );
-          }}
-        />
-      )}
+      <CardResultsGrid
+        results={viewResults}
+        isSearching={isSearching}
+        portraitColsClass="grid-cols-4 sm:grid-cols-4 md:grid-cols-5"
+        landscapeColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
+        emptyLabel={hasQuery ? 'No cards match your filters' : 'No cards in this filter'}
+        renderTile={(card, ctx) => {
+          const key = tileKey(card);
+          const savedQty = key ? savedCounts.get(key) ?? 0 : 0;
+          // Show variant badge when the rep represents a specific
+          // variant: always for available, and for wants whenever the
+          // filter is active OR the rep itself is non-Standard (e.g.
+          // "Any" filter but the family has no Standard printing).
+          const variant = extractVariantLabel(card.name);
+          const showBadge = listType === 'available'
+            || (listType === 'wants' && (selectedVariants.length > 0 || variant !== 'Standard'));
+          return (
+            <PickerTile
+              key={`${card.name}-${card.set}-${card.productId ?? ''}`}
+              card={card}
+              percentage={percentage}
+              priceMode={priceMode}
+              landscape={ctx.leaderGroup}
+              savedQty={savedQty}
+              showVariantBadge={showBadge}
+              onPick={() => onPick(card, pickContext)}
+            />
+          );
+        }}
+      />
     </div>
   );
 }

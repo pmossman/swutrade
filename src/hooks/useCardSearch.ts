@@ -3,6 +3,60 @@ import type { CardVariant, CardGroup } from '../types';
 import { SETS } from '../types';
 import { groupCards, extractVariantLabel } from '../variants';
 
+function parseCardNumber(num: string): number {
+  const match = num.match(/^(\d+)/);
+  return match ? parseInt(match[1], 10) : 9999;
+}
+
+// Browse order: main sets first (latest main at the top — LAW before
+// JTL before LOF ... before SOR), then promo sets in declaration order.
+// This is the order users expect when scrolling the catalog — the
+// latest playable release is what they care about seeing first.
+const BROWSE_ORDER: string[] = [
+  ...SETS.filter(s => s.category === 'main').map(s => s.slug).reverse(),
+  ...SETS.filter(s => s.category === 'promo').map(s => s.slug),
+];
+
+/**
+ * Query-less browse mode: every card in the dataset, grouped by set
+ * and by base name within a set (ascending card number). Used by the
+ * search surfaces when the user hasn't typed anything — they can
+ * still scroll through the catalog while filters narrow what's
+ * visible. Capped at maxGroups to avoid rendering thousands of tiles;
+ * if the user wants more, they should narrow via filters.
+ */
+export function browseAllGroups(allCards: CardVariant[], maxGroups = 500): SetSearchGroup[] {
+  const bySet: Record<string, CardVariant[]> = {};
+  for (const card of allCards) {
+    if (!bySet[card.set]) bySet[card.set] = [];
+    bySet[card.set].push(card);
+  }
+
+  const result: SetSearchGroup[] = [];
+  let total = 0;
+  for (const slug of BROWSE_ORDER) {
+    const cards = bySet[slug];
+    if (!cards || cards.length === 0) continue;
+    const setInfo = SETS.find(s => s.slug === slug);
+    if (!setInfo) continue;
+    const groups = groupCards(cards);
+    groups.sort((a, b) =>
+      parseCardNumber(a.variants[0]?.number ?? '') - parseCardNumber(b.variants[0]?.number ?? ''),
+    );
+    const remaining = maxGroups - total;
+    if (remaining <= 0) break;
+    const limited = groups.slice(0, remaining);
+    total += limited.length;
+    result.push({
+      setSlug: slug,
+      setCode: setInfo.code,
+      setName: setInfo.name,
+      groups: limited,
+    });
+  }
+  return result;
+}
+
 export interface SetSearchGroup {
   setSlug: string;
   setCode: string;

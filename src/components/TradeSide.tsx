@@ -3,7 +3,7 @@ import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
-import { useCardSearch } from '../hooks/useCardSearch';
+import { useCardSearch, browseAllGroups } from '../hooks/useCardSearch';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
@@ -193,10 +193,20 @@ export function TradeSide({
   const allCards = useMemo(() => Object.values(setCards).flat(), [setCards]);
 
   const search = useCardSearch({ allCards, setFilter: null });
+  const hasQuery = search.query.length >= 2;
+
+  // Browse mode: when the user hasn't typed, render the whole catalog
+  // (respecting filters). Memoize per-allCards so switching between
+  // browse and search doesn't rebuild on every keystroke.
+  const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
 
   const filteredResults = useMemo(
-    () => applySelectionFilters(search.results, filters.selectedSets, filters.selectedVariants),
-    [search.results, filters.selectedSets, filters.selectedVariants],
+    () => applySelectionFilters(
+      hasQuery ? search.results : browseResults,
+      filters.selectedSets,
+      filters.selectedVariants,
+    ),
+    [hasQuery, search.results, browseResults, filters.selectedSets, filters.selectedVariants],
   );
 
   const handleClearSearch = () => {
@@ -329,14 +339,10 @@ export function TradeSide({
       </div>
 
       {/* Lists section rendered ALWAYS (returns null when both lists
-          are empty for this side). Stays accessible while user types
-          — bounded max-height when search is active so it doesn't
-          push results off-screen, full-fill otherwise. */}
-      <div
-        className={`shrink-0 max-w-6xl mx-auto w-full px-4 sm:px-6 pt-2 ${
-          hasSearchResults ? 'max-h-[35vh] overflow-y-auto' : ''
-        }`}
-      >
+          are empty for this side). Bounded max-height so the card
+          grid below always gets room — browse mode shows the full
+          catalog even without a query. */}
+      <div className="shrink-0 max-w-6xl mx-auto w-full px-4 sm:px-6 pt-2 max-h-[35vh] overflow-y-auto">
         <TradeListsSection
           side={accentColor === 'emerald' ? 'offering' : 'receiving'}
           wants={wants}
@@ -351,29 +357,22 @@ export function TradeSide({
         />
       </div>
 
-      {/* CardResultsGrid owns its own scroll container — no external
-          top padding so sticky set headers stay flush with the viewport
-          edge. Outer flex wrapper centers the column on wide screens. */}
-      {!hasSearchResults ? (
-        <div className="flex-1 max-w-6xl mx-auto w-full flex items-center justify-center text-gray-600 text-xs px-4 sm:px-6 pb-6">
-          Or type a card name to search
-        </div>
-      ) : (
-        <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
-          <SearchResults
-            results={filteredResults}
-            percentage={percentage}
-            priceMode={priceMode}
-            onAdd={onAdd}
-            onChangeQty={onChangeQty}
-            onRemove={onRemove}
-            tradeCards={cards}
-            isSearching={search.isSearching}
-            query={search.query}
-            accentColor={accentColor}
-          />
-        </div>
-      )}
+      {/* Grid only mounts when the overlay is actually shown — browse
+          mode can render hundreds of tiles, so we don't pay that DOM
+          cost while the overlay is hidden behind the main trade view. */}
+      <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
+        {showOverlay && <SearchResults
+          results={filteredResults}
+          percentage={percentage}
+          priceMode={priceMode}
+          onAdd={onAdd}
+          onChangeQty={onChangeQty}
+          onRemove={onRemove}
+          tradeCards={cards}
+          isSearching={search.isSearching}
+          accentColor={accentColor}
+        />}
+      </div>
       {/* Touch-only "Done" pill. Desktop users close via the X in the header
           or Escape — tiles are the primary action, so there's no need for
           a CTA at the bottom competing with them. */}

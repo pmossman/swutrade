@@ -13,7 +13,6 @@ interface SearchResultsProps {
   onRemove: (key: string) => void;
   tradeCards: TradeCard[];
   isSearching: boolean;
-  query: string;
   accentColor: 'emerald' | 'blue';
 }
 
@@ -28,7 +27,6 @@ export function SearchResults({
   onRemove,
   tradeCards,
   isSearching,
-  query,
   accentColor,
 }: SearchResultsProps) {
   const handleDecrement = (card: CardVariant) => {
@@ -42,7 +40,6 @@ export function SearchResults({
   return (
     <CardResultsGrid
       results={results}
-      query={query}
       isSearching={isSearching}
       renderTile={(card, ctx) => {
         const key = tradeCardKey(card);

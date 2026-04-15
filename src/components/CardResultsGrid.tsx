@@ -10,7 +10,6 @@ export interface CardRenderContext {
 
 interface CardResultsGridProps {
   results: SetSearchGroup[];
-  query: string;
   isSearching: boolean;
   /** Render a single card tile. Consumers control look + click semantics. */
   renderTile: (card: CardVariant, ctx: CardRenderContext) => React.ReactNode;
@@ -18,6 +17,8 @@ interface CardResultsGridProps {
   portraitColsClass?: string;
   /** Grid column classes for leader (landscape) groups. */
   landscapeColsClass?: string;
+  /** Message to show when results are empty. */
+  emptyLabel?: string;
 }
 
 const DEFAULT_PORTRAIT_COLS = 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8';
@@ -42,21 +43,19 @@ const SECTION_PADDING_X = 'px-3 sm:px-6';
  */
 export function CardResultsGrid({
   results,
-  query,
   isSearching,
   renderTile,
   portraitColsClass = DEFAULT_PORTRAIT_COLS,
   landscapeColsClass = DEFAULT_LANDSCAPE_COLS,
+  emptyLabel = 'No cards match your filters',
 }: CardResultsGridProps) {
-  if (!query || query.length < 2) return null;
-
   if (isSearching) {
     return <CenteredMessage>Searching…</CenteredMessage>;
   }
 
   const hasResults = results.some(sg => sg.groups.length > 0);
   if (!hasResults) {
-    return <CenteredMessage>No cards match your filters</CenteredMessage>;
+    return <CenteredMessage>{emptyLabel}</CenteredMessage>;
   }
 
   const showSetHeaders = results.length > 1;
