@@ -15,7 +15,8 @@ import {
   cardFamilyId,
   type CanonicalVariant,
 } from '../variants';
-import type { WantsItem, AvailableItem } from '../persistence';
+import type { WantsApi } from '../hooks/useWants';
+import type { AvailableApi } from '../hooks/useAvailable';
 import { CardResultsGrid } from './CardResultsGrid';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
@@ -35,13 +36,12 @@ interface ListCardPickerProps {
   allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
-  /** Wants items (when listType === 'wants') — used to compute the
-   *  saved-qty badge on each tile, scoped to the current variant
-   *  filter so the badge reflects what *another tap would dedupe with*. */
-  wantsItems?: readonly WantsItem[];
-  /** Available items (when listType === 'available') — used for
-   *  productId-keyed saved-qty badge. */
-  availableItems?: readonly AvailableItem[];
+  /** Full wants API (when listType === 'wants'). Picker reads items
+   *  for the saved-qty badge and uses update/remove to support
+   *  tap-to-decrement on already-saved tiles. */
+  wants?: WantsApi;
+  /** Full available API (when listType === 'available'). */
+  available?: AvailableApi;
   onPick: (card: CardVariant, ctx: PickContext) => void;
   onClose: () => void;
 }
@@ -81,11 +81,13 @@ export function ListCardPicker({
   allCards,
   percentage,
   priceMode,
-  wantsItems = [],
-  availableItems = [],
+  wants,
+  available,
   onPick,
   onClose,
 }: ListCardPickerProps) {
+  const wantsItems = wants?.items ?? [];
+  const availableItems = available?.items ?? [];
   const { query, setQuery, results, isSearching } = useCardSearch({
     allCards,
     setFilter: null,
@@ -174,11 +176,20 @@ export function ListCardPicker({
     }));
   }, [baseResults, listType, hasQuery, selectedSets, selectedVariants, priceMode, expandedFamily]);
 
-  // Saved-count lookup. For wants, scope by (familyId + filter
-  // restriction key) so a Hyperspace-saved Luke doesn't show a count
-  // when the filter is "Any" (different restriction → different item).
-  const savedCounts = useMemo(() => {
-    const m = new Map<string, number>();
+  // Saved-count lookup + item-id reverse index. For wants, scope by
+  // (familyId + filter restriction key) so a Hyperspace-saved Luke
+  // doesn't show a count when the filter is "Any" (different
+  // restriction → different item). The id list lets decrement find
+  // the right row to touch.
+  const { savedCounts, savedItemIds } = useMemo(() => {
+    const counts = new Map<string, number>();
+    const ids = new Map<string, string[]>();
+    const push = (key: string, id: string, qty: number) => {
+      counts.set(key, (counts.get(key) ?? 0) + qty);
+      const bucket = ids.get(key);
+      if (bucket) bucket.push(id);
+      else ids.set(key, [id]);
+    };
     if (listType === 'wants') {
       const filterKey = restrictionKeyOf(selectedVariants);
       for (const item of wantsItems) {
@@ -186,14 +197,14 @@ export function ListCardPicker({
           ? 'any'
           : restrictionKeyOf(item.restriction.variants);
         if (itemKey !== filterKey) continue;
-        m.set(item.familyId, (m.get(item.familyId) ?? 0) + item.qty);
+        push(item.familyId, item.id, item.qty);
       }
     } else {
       for (const item of availableItems) {
-        m.set(item.productId, (m.get(item.productId) ?? 0) + item.qty);
+        push(item.productId, item.id, item.qty);
       }
     }
-    return m;
+    return { savedCounts: counts, savedItemIds: ids };
   }, [listType, wantsItems, availableItems, selectedVariants]);
 
   const tileKey = (card: CardVariant): string | null => {
@@ -225,6 +236,28 @@ export function ListCardPicker({
       }
     }
     onPick(card, ctx);
+  };
+
+  // Decrement: tapping the ×N badge removes one qty. Finds the newest
+  // matching item (by pop from the id list) and decrements, or removes
+  // it entirely at qty 1.
+  const handleDecrement = (card: CardVariant) => {
+    const key = tileKey(card);
+    if (!key) return;
+    const ids = savedItemIds.get(key);
+    if (!ids || ids.length === 0) return;
+    const itemId = ids[ids.length - 1];
+    if (listType === 'wants' && wants) {
+      const item = wants.items.find(i => i.id === itemId);
+      if (!item) return;
+      if (item.qty <= 1) wants.remove(itemId);
+      else wants.update(itemId, { qty: item.qty - 1 });
+    } else if (listType === 'available' && available) {
+      const item = available.items.find(i => i.id === itemId);
+      if (!item) return;
+      if (item.qty <= 1) available.remove(itemId);
+      else available.update(itemId, { qty: item.qty - 1 });
+    }
   };
 
   return (
@@ -300,6 +333,7 @@ export function ListCardPicker({
               stacked={stacked}
               animateIn={animateIn}
               onPick={() => handlePick(card, pickContext)}
+              onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
             />
           );
         }}
@@ -322,6 +356,8 @@ interface PickerTileProps {
    *  expands to reveal its variants. */
   animateIn?: boolean;
   onPick: () => void;
+  /** Decrement one saved qty. Only passed when savedQty > 0. */
+  onDecrement?: () => void;
 }
 
 function PickerTile({
@@ -334,6 +370,7 @@ function PickerTile({
   stacked,
   animateIn,
   onPick,
+  onDecrement,
 }: PickerTileProps) {
   const variant = extractVariantLabel(card.name);
   // Display label is empty for Standard; force "Standard" here so the
@@ -410,6 +447,18 @@ function PickerTile({
           )}
         </div>
       </button>
+      {/* Decrement button — sibling of the main tile button so its
+          tap doesn't double as an add. Only shows for saved tiles. */}
+      {onDecrement && (
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onDecrement(); }}
+          aria-label={savedQty <= 1 ? 'Remove' : 'Decrease quantity'}
+          className="absolute top-1 left-1 z-[2] w-6 h-6 rounded-full bg-space-900/85 border border-space-700 text-gray-200 hover:text-crimson-light hover:border-crimson/60 flex items-center justify-center text-sm font-bold leading-none transition-colors"
+        >
+          {savedQty <= 1 ? '×' : '−'}
+        </button>
+      )}
     </div>
   );
 }

@@ -185,7 +185,7 @@ export function ListsDrawer({
                   allCards={allCards}
                   percentage={percentage}
                   priceMode={priceMode}
-                  wantsItems={wants.items}
+                  wants={wants}
                   onPick={(card, ctx) => {
                     // Variant filter (acceptedVariants) drives the saved
                     // restriction. Empty filter → any. Otherwise →
@@ -254,7 +254,7 @@ export function ListsDrawer({
                   allCards={allCards}
                   percentage={percentage}
                   priceMode={priceMode}
-                  availableItems={available.items}
+                  available={available}
                   onPick={card => {
                     if (!card.productId) return;
                     available.add({ productId: card.productId, qty: 1 });

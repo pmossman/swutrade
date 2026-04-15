@@ -1,6 +1,9 @@
+import { useMemo, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CardVariant } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
 import { variantRank, extractVariantLabel, isLeaderOrBaseGroup } from '../variants';
+import type { CardGroup } from '../types';
 
 export interface CardRenderContext {
   leaderGroup: boolean;
@@ -24,22 +27,18 @@ interface CardResultsGridProps {
 const DEFAULT_PORTRAIT_COLS = 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8';
 const DEFAULT_LANDSCAPE_COLS = 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6';
 
-// Single padding contract used by every surface that embeds this component,
-// so sticky set-headers and tile grids always line up visually. Sticky
-// headers extend edge-to-edge of the scroll viewport (no outer container
-// padding); the tile grids inside get the horizontal padding.
 const SECTION_PADDING_X = 'px-3 sm:px-6';
 
+type Row =
+  | { kind: 'header'; setSlug: string; setCode: string; setName: string }
+  | { kind: 'group'; setSlug: string; setCode: string; group: CardGroup };
+
 /**
- * Set-grouped, leader-orientation-aware search results.
- *
- * Owns its own scroll container so consumers can't accidentally introduce
- * top padding that would break sticky set headers (the "gap above the
- * divider" bug). Consumers place this as a flex child — it supplies its
- * own flex-1 min-h-0 overflow-y-auto.
- *
- * Filtering is the caller's responsibility: pass in the already-narrowed
- * results so this component stays focused on layout.
+ * Virtualized search results: only the rows currently in (or near) the
+ * viewport are mounted, regardless of how many cards the filters
+ * return. Handles the browse-all case (hundreds of tiles) without
+ * melting the mobile main thread. Row heights are measured on render
+ * so expanded Available tiles (multi-row grids) auto-size.
  */
 export function CardResultsGrid({
   results,
@@ -49,6 +48,40 @@ export function CardResultsGrid({
   landscapeColsClass = DEFAULT_LANDSCAPE_COLS,
   emptyLabel = 'No cards match your filters',
 }: CardResultsGridProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const { rows, showSetHeaders } = useMemo(() => {
+    const showHeaders = results.length > 1;
+    const r: Row[] = [];
+    for (const sg of results) {
+      if (showHeaders) {
+        r.push({ kind: 'header', setSlug: sg.setSlug, setCode: sg.setCode, setName: sg.setName });
+      }
+      for (const g of sg.groups) {
+        r.push({ kind: 'group', setSlug: sg.setSlug, setCode: sg.setCode, group: g });
+      }
+    }
+    return { rows: r, showSetHeaders: showHeaders };
+  }, [results]);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    // Rough estimates — measureElement refines per-row on render.
+    // Set headers are short; group rows contain a tile grid with
+    // baseName label (portrait tiles are taller than landscape).
+    estimateSize: i => {
+      const row = rows[i];
+      if (row.kind === 'header') return 48;
+      const leader = isLeaderOrBaseGroup(row.group.variants);
+      // Expanded groups can wrap to two visual rows at mobile widths
+      // (4-col grid fits ~4 tiles; 5+ wraps). Estimate accordingly.
+      const wrap = row.group.variants.length > 4 ? 2 : 1;
+      return (leader ? 180 : 260) * wrap;
+    },
+    overscan: 4,
+  });
+
   if (isSearching) {
     return <CenteredMessage>Searching…</CenteredMessage>;
   }
@@ -58,63 +91,85 @@ export function CardResultsGrid({
     return <CenteredMessage>{emptyLabel}</CenteredMessage>;
   }
 
-  const showSetHeaders = results.length > 1;
+  const virtualItems = virtualizer.getVirtualItems();
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="space-y-8 pb-6">
-        {results.map(setGroup => (
-          <section
-            key={setGroup.setSlug}
-            // Browser-level virtualization: skip layout/paint for
-            // set sections that aren't near the viewport. The
-            // contain-intrinsic-size reserves approximate room so
-            // the scrollbar doesn't jump as sections render in.
-            style={{
-              contentVisibility: 'auto',
-              containIntrinsicSize: 'auto 800px',
-            }}
-          >
-            {showSetHeaders && (
-              <div
-                className={`flex items-baseline gap-2 py-2 sticky -top-px bg-space-900 z-10 mb-4 border-b border-space-700 shadow-[0_8px_12px_-8px_rgba(0,0,0,0.8)] ${SECTION_PADDING_X}`}
-              >
-                <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">
-                  {setGroup.setCode}
-                </span>
-                <span className="text-[10px] text-gray-600">{setGroup.setName}</span>
-              </div>
-            )}
-            <div className={`space-y-6 ${SECTION_PADDING_X}`}>
-              {setGroup.groups.map(group => {
-                const leaderGroup = isLeaderOrBaseGroup(group.variants);
-                const gridCols = leaderGroup ? landscapeColsClass : portraitColsClass;
-                return (
-                  <div
-                    key={`${setGroup.setSlug}-${group.baseName}`}
-                    style={{
-                      contentVisibility: 'auto',
-                      containIntrinsicSize: 'auto 220px',
-                    }}
-                  >
-                    <div className="px-1 pb-2 text-xs font-medium text-gray-300 truncate">
-                      {group.baseName}
-                    </div>
-                    <div className={`grid ${gridCols} gap-3`}>
-                      {[...group.variants]
-                        .sort((a, b) => variantRank(extractVariantLabel(a.name)) - variantRank(extractVariantLabel(b.name)))
-                        .map(card => renderTile(card, {
-                          leaderGroup,
-                          setSlug: setGroup.setSlug,
-                          setCode: setGroup.setCode,
-                        }))}
-                    </div>
-                  </div>
-                );
-              })}
+    <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        className="relative w-full"
+        style={{ height: `${virtualizer.getTotalSize()}px` }}
+      >
+        {virtualItems.map(vi => {
+          const row = rows[vi.index];
+          return (
+            <div
+              key={vi.key}
+              ref={virtualizer.measureElement}
+              data-index={vi.index}
+              className="absolute inset-x-0"
+              style={{ transform: `translateY(${vi.start}px)` }}
+            >
+              {row.kind === 'header' ? (
+                <SetHeader setCode={row.setCode} setName={row.setName} first={vi.index === 0} />
+              ) : (
+                <GroupRow
+                  group={row.group}
+                  setSlug={row.setSlug}
+                  setCode={row.setCode}
+                  portraitColsClass={portraitColsClass}
+                  landscapeColsClass={landscapeColsClass}
+                  withTopSpacing={!showSetHeaders && vi.index === 0}
+                  renderTile={renderTile}
+                />
+              )}
             </div>
-          </section>
-        ))}
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SetHeader({ setCode, setName, first }: { setCode: string; setName: string; first: boolean }) {
+  return (
+    <div
+      className={`flex items-baseline gap-2 py-2 mb-3 border-b border-space-700 ${SECTION_PADDING_X} ${first ? '' : 'pt-6'}`}
+    >
+      <span className="text-[11px] font-bold text-gray-300 uppercase tracking-widest">{setCode}</span>
+      <span className="text-[10px] text-gray-600">{setName}</span>
+    </div>
+  );
+}
+
+interface GroupRowProps {
+  group: CardGroup;
+  setSlug: string;
+  setCode: string;
+  portraitColsClass: string;
+  landscapeColsClass: string;
+  withTopSpacing: boolean;
+  renderTile: (card: CardVariant, ctx: CardRenderContext) => React.ReactNode;
+}
+
+function GroupRow({
+  group,
+  setSlug,
+  setCode,
+  portraitColsClass,
+  landscapeColsClass,
+  withTopSpacing,
+  renderTile,
+}: GroupRowProps) {
+  const leaderGroup = isLeaderOrBaseGroup(group.variants);
+  const gridCols = leaderGroup ? landscapeColsClass : portraitColsClass;
+  const sortedVariants = [...group.variants].sort(
+    (a, b) => variantRank(extractVariantLabel(a.name)) - variantRank(extractVariantLabel(b.name)),
+  );
+  return (
+    <div className={`${SECTION_PADDING_X} ${withTopSpacing ? 'pt-2' : ''} pb-6`}>
+      <div className="px-1 pb-2 text-xs font-medium text-gray-300 truncate">{group.baseName}</div>
+      <div className={`grid ${gridCols} gap-3`}>
+        {sortedVariants.map(card => renderTile(card, { leaderGroup, setSlug, setCode }))}
       </div>
     </div>
   );
