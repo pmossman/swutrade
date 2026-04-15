@@ -1,17 +1,11 @@
 import { useMemo } from 'react';
 import { SETS } from '../types';
-import { CANONICAL_VARIANTS, variantBadgeColor } from '../variants';
+import { CANONICAL_VARIANTS, variantBadgeColor, variantChipLabel } from '../variants';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { CollapsibleChipFilter, Chip } from './CollapsibleChipFilter';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
 
 const MAIN_SETS = SETS.filter(s => s.category === 'main');
-
-function variantChipLabel(v: string): string {
-  if (v === 'Hyperspace Foil') return 'HS Foil';
-  if (v === 'Prestige Foil') return 'Pres Foil';
-  return v;
-}
 
 function summarize(selected: readonly string[], noneLabel: string, format: (s: string) => string = (s) => s): string {
   if (selected.length === 0) return noneLabel;

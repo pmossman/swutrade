@@ -1,7 +1,7 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { cardImageUrl, adjustPrice, getCardPrice } from '../services/priceService';
-import { variantBadgeColor, variantDisplayLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { variantBadgeColor, variantDisplayLabel, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
@@ -213,7 +213,7 @@ function RestrictionEditor({
                 className={`text-xs leading-none px-3 py-2 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
                 aria-pressed={selected}
               >
-                {v}
+                {variantChipLabel(v)}
               </button>
             );
           })}

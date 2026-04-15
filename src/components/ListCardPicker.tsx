@@ -70,38 +70,39 @@ interface TileBadge {
 }
 
 /**
- * Badge text for a picker tile. Communicates what a tap would
- * actually save — for Wants with a multi-variant filter, that's the
- * full restriction ("HS or HSF"), not just the rep's own variant.
+ * Badge pills for a picker tile. Communicates what a tap would save:
+ *   - Available: single pill with the tile's exact variant.
+ *   - Wants, no filter: single pill if the rep isn't Standard, else
+ *     no badge (Standard is the implicit default).
+ *   - Wants, 1 filter variant: single pill with that variant.
+ *   - Wants, 2+ filter variants: one pill per variant in its own
+ *     variant color — makes the saved restriction scannable at a
+ *     glance. Rendered in the same order the user selected.
  */
 function wantsBadge(
   card: CardVariant,
   listType: PickerListType,
   selectedVariants: readonly CanonicalVariant[],
-): TileBadge | null {
+): TileBadge[] | null {
   const variant = extractVariantLabel(card.name);
   if (listType === 'available') {
     const label = variant === 'Standard' ? 'Standard' : variantDisplayLabel(variant);
-    return label ? { text: label, colorClass: variantBadgeColor(variant) } : null;
+    return label ? [{ text: label, colorClass: variantBadgeColor(variant) }] : null;
   }
-  // Wants picker
   if (selectedVariants.length === 0) {
-    // Only mark a tile when the rep isn't Standard — signals that the
-    // family has no Standard printing so the visible art differs from
-    // what an "any variant" tap might imply.
     if (variant === 'Standard') return null;
     const label = variantDisplayLabel(variant) || variant;
-    return { text: label, colorClass: variantBadgeColor(variant) };
+    return [{ text: label, colorClass: variantBadgeColor(variant) }];
   }
   if (selectedVariants.length === 1) {
     const v = selectedVariants[0];
     const label = variantDisplayLabel(v) || v;
-    return { text: label, colorClass: variantBadgeColor(v) };
+    return [{ text: label, colorClass: variantBadgeColor(v) }];
   }
-  // 2+ variants: surface the full restriction so the user sees every
-  // variant the saved Want will accept on this tap.
-  const text = selectedVariants.map(v => variantShortLabel(v)).join(' or ');
-  return { text, colorClass: 'bg-gold/15 text-gold border border-gold/40' };
+  return selectedVariants.map(v => ({
+    text: variantShortLabel(v),
+    colorClass: variantBadgeColor(v),
+  }));
 }
 
 /**
@@ -336,10 +337,11 @@ interface PickerTileProps {
   priceMode: PriceMode;
   landscape: boolean;
   savedQty: number;
-  /** Caption badge above the price. Parent computes the label + color
-   *  so it can reflect either the tile's variant (Available) or the
-   *  active restriction (Wants with multi-variant filter). */
-  badge: TileBadge | null;
+  /** Caption pills above the price. Parent computes label + color so
+   *  each pill can reflect either the tile's variant (Available) or
+   *  one element of the active restriction (Wants with multi-variant
+   *  filter). */
+  badge: TileBadge[] | null;
   onPick: () => void;
   /** Decrement one saved qty. Only passed when savedQty > 0. */
   onDecrement?: () => void;
@@ -389,14 +391,21 @@ function PickerTile({
             ×{savedQty}
           </span>
         )}
-        {/* Caption: badge + price stacked so neither gets clipped at narrow
-            mobile tile widths (HYPERSPACE + $6.02 doesn't fit on one line
-            at the 4-col breakpoint). */}
+        {/* Caption: badge(s) + price stacked so neither gets clipped at
+            narrow mobile tile widths. Multi-badge rows wrap to a new
+            line if needed. */}
         <div className="px-1.5 py-1 flex flex-col items-start gap-0.5">
-          {badge && (
-            <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${badge.colorClass}`}>
-              {badge.text}
-            </span>
+          {badge && badge.length > 0 && (
+            <div className="flex flex-wrap gap-0.5">
+              {badge.map((b, i) => (
+                <span
+                  key={`${b.text}-${i}`}
+                  className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${b.colorClass}`}
+                >
+                  {b.text}
+                </span>
+              ))}
+            </div>
           )}
           {price !== null && (
             <span className="text-[10px] text-gold font-semibold">

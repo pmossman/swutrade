@@ -68,6 +68,19 @@ export function variantShortLabel(label: string): string {
   return VARIANT_SHORT[label] ?? label;
 }
 
+// Medium-length label for variant-selection chip UIs (restriction
+// editor, filter bar). More readable than the tile-badge short form
+// but tighter than the full variant name — "HS Foil" / "Pres Foil"
+// fit on a mobile chip without wrapping while still being scannable.
+const VARIANT_CHIP: Record<string, string> = {
+  'Hyperspace Foil': 'HS Foil',
+  'Prestige Foil':   'Pres Foil',
+};
+
+export function variantChipLabel(label: string): string {
+  return VARIANT_CHIP[label] ?? label;
+}
+
 // Small colored pills for card print variants — reused by the search
 // results and the enriched trade-row view. Keep these purely chromatic;
 // they shouldn't collide with side-identity colors (emerald/blue) used
