@@ -217,20 +217,6 @@ body::before {
   .drawer-content[data-state="closed"] { animation: drawer-zoom-out 140ms ease-in; }
 }
 
-/* Picker tap-to-expand: newly revealed variant tiles fade and scale
-   in from the collapsed stack position so the expansion reads as the
-   stack opening. */
-@keyframes pickerTileFanOut {
-  from {
-    opacity: 0;
-    transform: translate(-4px, -4px) scale(0.92);
-  }
-  to {
-    opacity: 1;
-    transform: translate(0, 0) scale(1);
-  }
-}
-
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

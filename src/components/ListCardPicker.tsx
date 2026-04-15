@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState, useDeferredValue } from 'react';
+import { useMemo, useRef, useEffect, useDeferredValue } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
@@ -97,20 +97,10 @@ export function ListCardPicker({
     sets: PERSIST_KEYS.pickerSelSets,
   });
   const inputRef = useRef<HTMLInputElement>(null);
-  // Available picker in browse mode: first tap on a family expands
-  // it to show all variants; a second tap commits the specific one.
-  // Keyed by familyId. Reset whenever the picker exits browse mode.
-  const [expandedFamily, setExpandedFamily] = useState<string | null>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
-
-  // Reset expand state whenever the user leaves browse mode or shifts
-  // the filter window — the expanded family may no longer be relevant.
-  useEffect(() => {
-    setExpandedFamily(null);
-  }, [query, filters.selectedSets, filters.selectedVariants, listType]);
 
   const hasQuery = query.length >= 2;
 
@@ -122,24 +112,13 @@ export function ListCardPicker({
   const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
   const baseResults = hasQuery ? results : browseResults;
 
-  // Per-family variant counts so collapsed Available tiles can show a
-  // "card stack" affordance when there's more than one printing behind
-  // the rep — signals that tapping expands to reveal the others.
-  const familyVariantCount = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const card of allCards) {
-      const fid = cardFamilyId(card);
-      m.set(fid, (m.get(fid) ?? 0) + 1);
-    }
-    return m;
-  }, [allCards]);
-
-  // For the wants picker, collapse each family to a single tile using
-  // the rep that matches the current variant filter (cheapest match, or
-  // Standard when filter is empty). Available picker also collapses
-  // while browsing (too many tiles otherwise) — tapping a rep expands
-  // that family to show every variant, and a second tap commits the
-  // specific one. Typing a query bypasses collapse entirely.
+  // Wants picker: collapse each family to a single tile using the rep
+  // that matches the current variant filter (cheapest match, or
+  // Standard when filter is empty) — a saved Want is a cross-printing
+  // entity, so showing every variant would be confusing.
+  // Available picker: show every variant as its own tile since
+  // productIds are exact. Virtualization makes this cheap even when
+  // the filter is wide.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
     const setScoped = applySelectionFilters(
       baseResults,
@@ -147,20 +126,12 @@ export function ListCardPicker({
       listType === 'available' ? selectedVariants : [],
     );
 
-    const shouldCollapse = listType === 'wants' || (listType === 'available' && !hasQuery);
-    if (!shouldCollapse) return setScoped;
+    if (listType !== 'wants') return setScoped;
 
     return setScoped.map(sg => ({
       ...sg,
       groups: sg.groups
         .map(g => {
-          // Available picker: if this family is currently expanded,
-          // render it in full (every variant) so the user can tap
-          // the exact printing they want.
-          if (listType === 'available' && g.variants.length > 0) {
-            const fid = cardFamilyId(g.variants[0]);
-            if (fid === expandedFamily) return g;
-          }
           if (selectedVariants.length === 0) {
             return g.variants.length > 0
               ? { ...g, variants: [representativeVariant(g.variants)] }
@@ -174,7 +145,7 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [baseResults, listType, hasQuery, selectedSets, selectedVariants, priceMode, expandedFamily]);
+  }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
 
   // Saved-count lookup + item-id reverse index. For wants, scope by
   // (familyId + filter restriction key) so a Hyperspace-saved Luke
@@ -220,23 +191,6 @@ export function ListCardPicker({
   // picker chrome (filter bar + search input) paint in a high-priority
   // render while the heavy grid fills in as a low-priority follow-up.
   const deferredResults = useDeferredValue(viewResults);
-
-  // Available picker: the first tap on a multi-variant family expands
-  // the stack; subsequent taps on the exposed variants commit. Single-
-  // variant families skip expansion (there's nothing behind to show).
-  // Expanded state sticks after a save so the user can tap multiple
-  // variants of the same card without re-opening the stack.
-  const handlePick = (card: CardVariant, ctx: PickContext) => {
-    if (listType === 'available' && !hasQuery) {
-      const fid = cardFamilyId(card);
-      const totalVariants = familyVariantCount.get(fid) ?? 1;
-      if (totalVariants > 1 && expandedFamily !== fid) {
-        setExpandedFamily(fid);
-        return;
-      }
-    }
-    onPick(card, ctx);
-  };
 
   // Decrement: tapping the ×N badge removes one qty. Finds the newest
   // matching item (by pop from the id list) and decrements, or removes
@@ -311,16 +265,6 @@ export function ListCardPicker({
           const variant = extractVariantLabel(card.name);
           const showBadge = listType === 'available'
             || (listType === 'wants' && (selectedVariants.length > 0 || variant !== 'Standard'));
-          const fid = cardFamilyId(card);
-          // Collapsed Available rep: stack art hints at the variants
-          // hiding behind this tile. Only stack when there's actually
-          // something to reveal (family has >1 printing).
-          const isCollapsedAvailable =
-            listType === 'available' && !hasQuery && expandedFamily !== fid;
-          const stacked = isCollapsedAvailable && (familyVariantCount.get(fid) ?? 1) > 1;
-          // Newly-revealed variants inside the currently-expanded family
-          // fade + scale in so the expansion reads as the stack opening.
-          const animateIn = listType === 'available' && expandedFamily === fid;
           return (
             <PickerTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -330,9 +274,7 @@ export function ListCardPicker({
               landscape={ctx.leaderGroup}
               savedQty={savedQty}
               showVariantBadge={showBadge}
-              stacked={stacked}
-              animateIn={animateIn}
-              onPick={() => handlePick(card, pickContext)}
+              onPick={() => onPick(card, pickContext)}
               onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
             />
           );
@@ -349,12 +291,6 @@ interface PickerTileProps {
   landscape: boolean;
   savedQty: number;
   showVariantBadge: boolean;
-  /** True when this tile represents a family with hidden variants
-   *  behind it — renders a card-stack affordance. */
-  stacked?: boolean;
-  /** Plays a fade/scale mount animation — used when a family
-   *  expands to reveal its variants. */
-  animateIn?: boolean;
   onPick: () => void;
   /** Decrement one saved qty. Only passed when savedQty > 0. */
   onDecrement?: () => void;
@@ -367,8 +303,6 @@ function PickerTile({
   landscape,
   savedQty,
   showVariantBadge,
-  stacked,
-  animateIn,
   onPick,
   onDecrement,
 }: PickerTileProps) {
@@ -381,27 +315,7 @@ function PickerTile({
   const imgUrl = cardImageUrl(card.productId, 'sm');
 
   return (
-    <div
-      className="relative"
-      style={animateIn ? { animation: 'pickerTileFanOut 220ms cubic-bezier(0.2, 0.9, 0.3, 1) both' } : undefined}
-    >
-      {/* Stack illusion: two offset card-backs behind the tile so the
-          collapsed Available rep reads as "there are more printings
-          here, tap to see them". */}
-      {stacked && (
-        <>
-          <span
-            className="absolute inset-0 rounded-lg bg-space-800 border border-space-700 pointer-events-none"
-            style={{ transform: 'translate(5px, 5px)', opacity: 0.55 }}
-            aria-hidden
-          />
-          <span
-            className="absolute inset-0 rounded-lg bg-space-800 border border-space-700 pointer-events-none"
-            style={{ transform: 'translate(2.5px, 2.5px)', opacity: 0.8 }}
-            aria-hidden
-          />
-        </>
-      )}
+    <div className="relative">
       <button
         type="button"
         onClick={onPick}
