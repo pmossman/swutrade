@@ -2,6 +2,17 @@
 
 Release notes for production cuts. Dates match the git tag (`v<date>-stable`) on `main`. Not every commit lands here — just the user-facing shape of each release.
 
+## v2026.04.15.2-stable — 2026-04-15
+
+Adds in-person and native share surfaces to the lists drawer.
+
+### Unified Share menu
+- The drawer's separate "Link" and "Image" buttons consolidate into one **Share** action that opens a popover with every channel under one roof:
+  - **Copy link** — same behavior as before.
+  - **Share via…** — invokes the OS share sheet via `navigator.share` (AirDrop on iOS, Nearby Share on Android, Messages, WhatsApp, etc.). Hidden on desktop browsers that don't implement the API.
+  - **Save as image** — same OG-image render flow, now inside the menu.
+  - **Scan to open** QR code at the bottom of the popover so a nearby player can scan with their stock camera app — no install, no permissions, cross-platform.
+
 ## v2026.04.15.1-stable — 2026-04-15
 
 Same-day follow-up focused on the shared-link receiving experience and the trade-side picker's sidebar real estate.
