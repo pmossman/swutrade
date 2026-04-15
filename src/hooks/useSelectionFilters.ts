@@ -65,24 +65,29 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
 
   const toggleSet = useCallback((slug: string) => {
     setSelectedSets(prev => {
-      const next = prev.includes(slug)
-        ? prev.filter(x => x !== slug)
-        : [...prev, slug];
+      // Individual set chips are mutually exclusive with the
+      // All/Main/Special group presets — tapping a specific set drops
+      // any active group slug so the user is unambiguously in
+      // "picking specific sets" mode.
+      const base = slug.startsWith('group:')
+        ? prev
+        : prev.filter(s => !s.startsWith('group:'));
+      const next = base.includes(slug)
+        ? base.filter(x => x !== slug)
+        : [...base, slug];
       save(keys.sets, next);
       return next;
     });
   }, [keys.sets]);
 
   const replaceGroup = useCallback((group: string | null) => {
-    setSelectedSets(prev => {
-      // Strip any existing group pseudo-slug (there are currently two —
-      // 'group:main' and 'group:special') and splice in the new one if
-      // provided. Individual set slugs pass through untouched.
-      const cleaned = prev.filter(s => !s.startsWith('group:'));
-      const next = group ? [...cleaned, group] : cleaned;
-      save(keys.sets, next);
-      return next;
-    });
+    // Group presets and individual set chips are mutually exclusive.
+    // Tapping Main/Special wipes any individual selection too — the
+    // user is switching into "broad filter" mode. Null clears the
+    // group (and individuals) outright.
+    const next = group ? [group] : [];
+    setSelectedSets(next);
+    save(keys.sets, next);
   }, [keys.sets]);
 
   const clearVariants = useCallback(() => {
