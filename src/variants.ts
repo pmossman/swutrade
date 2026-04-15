@@ -93,11 +93,22 @@ export function isLeaderOrBaseGroup(
   return variants.some(v => extractVariantLabel(v.name) === 'Showcase');
 }
 
+/**
+ * Canonical base name for a card. Prefers the enriched displayName
+ * (stable across TCGPlayer's occasional name inconsistencies — e.g.
+ * "Cad Bane" and "Cade Bane" variants of the same printing both get
+ * normalized via swuapi enrichment) and falls back to stripping the
+ * variant suffix from the raw name.
+ */
+export function cardBaseName(card: CardVariant): string {
+  return card.displayName ?? extractBaseName(card.name);
+}
+
 export function groupCards(cards: CardVariant[]): CardGroup[] {
   const groups: Record<string, CardGroup> = {};
 
   for (const card of cards) {
-    const baseName = extractBaseName(card.name);
+    const baseName = cardBaseName(card);
     if (!groups[baseName]) {
       groups[baseName] = { baseName, variants: [] };
     }
@@ -131,7 +142,7 @@ export function cardFamilyId(card: CardVariant): string {
 }
 
 function baseNameSlug(card: CardVariant): string {
-  return extractBaseName(card.name)
+  return cardBaseName(card)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
