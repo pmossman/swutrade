@@ -32,7 +32,7 @@ export function PriceSlider({ value, onChange, priceMode, onPriceModeChange }: P
         <button
           type="button"
           onClick={e => { e.stopPropagation(); toggle(); }}
-          className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition-colors ${
+          className={`flex items-center gap-1 px-2 py-0.5 md:py-1 rounded-md text-[11px] font-semibold transition-colors ${
             open
               ? 'bg-gold/25 text-gold-bright border border-gold/50'
               : 'bg-gold/15 text-gold border border-gold/30 hover:bg-gold/20'
@@ -44,16 +44,17 @@ export function PriceSlider({ value, onChange, priceMode, onPriceModeChange }: P
           }
           aria-expanded={open}
         >
-          <span className="text-[10px] text-gold/70 font-normal">TCG</span>
-          {/* Show mode inline when this pill carries both controls
-              (mobile case). Keeps the "what is currently in effect"
-              visible without an extra tap. */}
-          {priceMode && (
-            <span className="text-[10px] text-gold/70 font-normal">
-              {priceMode === 'low' ? 'Low' : 'Mkt'}
-            </span>
-          )}
-          <span className="tabular-nums">{value}%</span>
+          {/* Mobile stacks Mkt above % to keep the pill narrow. Desktop
+              drops the Mkt label since the inline Market/Low toggle
+              next door already shows it. */}
+          <span className="flex flex-col md:flex-row md:items-baseline md:gap-1 items-start leading-none">
+            {priceMode && (
+              <span className="md:hidden text-[9px] text-gold/70 font-normal">
+                {priceMode === 'low' ? 'Low' : 'Mkt'}
+              </span>
+            )}
+            <span className="tabular-nums">{value}%</span>
+          </span>
           <svg className="w-3 h-3 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
           </svg>
