@@ -120,9 +120,13 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
     window.history.pushState(null, '', '?' + params.toString());
+    // Clear any persisted filter state so the sender's wants don't
+    // land in an accidental "no matches" view if the user had a
+    // narrow filter saved from an earlier session.
+    filters.clearAll();
     setAutoOpenOfferingFromShared(true);
     setViewMode('trade');
-  }, []);
+  }, [filters]);
   const consumeAutoOpenOffering = useCallback(() => {
     setAutoOpenOfferingFromShared(false);
   }, []);

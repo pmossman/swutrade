@@ -4,6 +4,8 @@ import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
 import { useCardSearch, browseAllGroups } from '../hooks/useCardSearch';
+import { bestMatchForWant, matchesRestriction } from '../listMatching';
+import type { WantsItem } from '../persistence';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
@@ -14,7 +16,6 @@ import type { KebabMenuItem } from './KebabMenu';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { SharedLists } from '../hooks/useSharedLists';
-import { TradeListsSection } from './TradeListsSection';
 
 interface TradeSideProps {
   label: string;
@@ -193,7 +194,14 @@ export function TradeSide({
   onConsumeAutoOpen,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
+  const isOffering = accentColor === 'emerald';
   const [searchFocused, setSearchFocused] = useState(false);
+  // Source toggles: restrict the picker grid to a personal/shared
+  // subset instead of the full catalog. Mutually additive (both on
+  // unions the two sets); user's Variant/Set filters still narrow
+  // whatever source is active.
+  const [sourceMine, setSourceMine] = useState(false);
+  const [sourceTheirs, setSourceTheirs] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
 
@@ -207,13 +215,96 @@ export function TradeSide({
   // browse and search doesn't rebuild on every keystroke.
   const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
 
+  // Source-chip counts (shown in chip labels). Qty-aware: only
+  // counts items still pending after what's already been added to
+  // this side of the trade, matching the behavior users expect from
+  // a "to-do list".
+  const { mineCount, theirsCount, mineCards, theirsCards } = useMemo(() => {
+    const mine: CardVariant[] = [];
+    const theirs: CardVariant[] = [];
+    if (isOffering) {
+      for (const item of available.items) {
+        const card = byProductId.get(item.productId);
+        if (!card) continue;
+        const inTrade = cards.reduce((s, tc) => tc.card.productId === item.productId ? s + tc.qty : s, 0);
+        if (item.qty - inTrade > 0) mine.push(card);
+      }
+      if (sharedLists) {
+        for (const w of sharedLists.wants) {
+          const candidates = byFamilyAll.get(w.familyId) ?? [];
+          if (candidates.length === 0) continue;
+          const synth: WantsItem = { ...w, id: '_', addedAt: 0 };
+          const match = bestMatchForWant(synth, candidates, priceMode);
+          if (!match) continue;
+          const fids = new Set(candidates.map(c => c.productId).filter((p): p is string => !!p));
+          const inTrade = cards.reduce((s, tc) => {
+            if (!tc.card.productId || !fids.has(tc.card.productId)) return s;
+            if (!matchesRestriction(tc.card, w.restriction)) return s;
+            return s + tc.qty;
+          }, 0);
+          if (w.qty - inTrade > 0) theirs.push(match);
+        }
+      }
+    } else {
+      // Receiving side
+      for (const item of wants.items) {
+        const candidates = byFamilyAll.get(item.familyId) ?? [];
+        if (candidates.length === 0) continue;
+        const match = bestMatchForWant(item, candidates, priceMode);
+        if (!match) continue;
+        const fids = new Set(candidates.map(c => c.productId).filter((p): p is string => !!p));
+        const inTrade = cards.reduce((s, tc) => {
+          if (!tc.card.productId || !fids.has(tc.card.productId)) return s;
+          if (!matchesRestriction(tc.card, item.restriction)) return s;
+          return s + tc.qty;
+        }, 0);
+        if (item.qty - inTrade > 0) mine.push(match);
+      }
+      if (sharedLists) {
+        for (const a of sharedLists.available) {
+          const card = byProductId.get(a.productId);
+          if (!card) continue;
+          const inTrade = cards.reduce((s, tc) => tc.card.productId === a.productId ? s + tc.qty : s, 0);
+          if (a.qty - inTrade > 0) theirs.push(card);
+        }
+      }
+    }
+    return { mineCount: mine.length, theirsCount: theirs.length, mineCards: mine, theirsCards: theirs };
+  }, [isOffering, available.items, wants.items, sharedLists, byFamilyAll, byProductId, cards, priceMode]);
+
+  // If a source chip becomes empty (e.g. user adds the last card to
+  // the trade), auto-deactivate it so the grid doesn't show "No
+  // cards match your filters" inside an active filter.
+  useEffect(() => {
+    if (sourceMine && mineCount === 0) setSourceMine(false);
+  }, [sourceMine, mineCount]);
+  useEffect(() => {
+    if (sourceTheirs && theirsCount === 0) setSourceTheirs(false);
+  }, [sourceTheirs, theirsCount]);
+
+  // Build source-derived SetSearchGroups when either source chip is
+  // active. Uses browseAllGroups to lay them out with consistent set
+  // ordering / headers, just against a subset of the catalog instead
+  // of the whole thing.
+  const sourceResults = useMemo(() => {
+    if (!sourceMine && !sourceTheirs) return null;
+    const pool: CardVariant[] = [];
+    if (sourceMine) pool.push(...mineCards);
+    if (sourceTheirs) pool.push(...theirsCards);
+    return browseAllGroups(pool);
+  }, [sourceMine, sourceTheirs, mineCards, theirsCards]);
+
+  const baseResults = sourceResults
+    ? sourceResults
+    : (hasQuery ? search.results : browseResults);
+
   const filteredResults = useMemo(
     () => applySelectionFilters(
-      hasQuery ? search.results : browseResults,
+      baseResults,
       filters.selectedSets,
       filters.selectedVariants,
     ),
-    [hasQuery, search.results, browseResults, filters.selectedSets, filters.selectedVariants],
+    [baseResults, filters.selectedSets, filters.selectedVariants],
   );
   // Low-priority render so the overlay chrome can paint before hundreds
   // of browse tiles commit.
@@ -240,11 +331,12 @@ export function TradeSide({
   }, [search, onLoadAllSets]);
 
   // Shared-list handoff: when App sets autoOpenSharedLink, this side
-  // auto-opens its search overlay so the user lands directly on the
-  // "From the shared link" section. One-shot — consumed on mount.
+  // auto-opens its search overlay AND activates the "they want" source
+  // chip, dropping the user straight onto the sender's cards.
   useEffect(() => {
     if (!autoOpenSharedLink) return;
     setSearchFocused(true);
+    setSourceTheirs(true);
     onConsumeAutoOpen?.();
   }, [autoOpenSharedLink, onConsumeAutoOpen]);
 
@@ -351,30 +443,35 @@ export function TradeSide({
           )}
         </div>
       </div>
-      {/* Filter bar — variant + set collapsibles above the results.
-          Market/Low lives in the main top bar, not here. */}
-      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
+      {/* Source + variant/set filters stacked. Source chips narrow
+          the grid to a personal or shared list (replacing the
+          separate "From your X" / "From the shared link" sections
+          that used to eat screen space above the grid). */}
+      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full space-y-2">
+        {(mineCount > 0 || theirsCount > 0) && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
+              Show
+            </span>
+            {mineCount > 0 && (
+              <SourceChip
+                active={sourceMine}
+                onClick={() => setSourceMine(v => !v)}
+                label={isOffering ? 'My available' : 'My wants'}
+                count={mineCount}
+              />
+            )}
+            {theirsCount > 0 && (
+              <SourceChip
+                active={sourceTheirs}
+                onClick={() => setSourceTheirs(v => !v)}
+                label={isOffering ? 'They want' : 'They have'}
+                count={theirsCount}
+              />
+            )}
+          </div>
+        )}
         <SelectionFilterBar filters={filters} />
-      </div>
-
-      {/* Lists section rendered ALWAYS (returns null when both lists
-          are empty for this side). Bounded max-height so the card
-          grid below always gets room — browse mode shows the full
-          catalog even without a query. */}
-      <div className="shrink-0 max-w-6xl mx-auto w-full px-4 sm:px-6 pt-2 max-h-[35vh] overflow-y-auto">
-        <TradeListsSection
-          side={accentColor === 'emerald' ? 'offering' : 'receiving'}
-          wants={wants}
-          available={available}
-          sharedLists={sharedLists}
-          byFamilyAll={byFamilyAll}
-          byProductId={byProductId}
-          tradeCards={cards}
-          percentage={percentage}
-          priceMode={priceMode}
-          onAdd={onAdd}
-          expandSharedOnSignal={autoOpenSharedLink}
-        />
       </div>
 
       {/* Grid only mounts when the overlay is actually shown — browse
@@ -668,6 +765,36 @@ export function TradeSide({
       )}
     </div>
     </>
+  );
+}
+
+function SourceChip({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold transition-colors border ${
+        active
+          ? 'bg-gold/20 text-gold-bright border-gold/50'
+          : 'bg-space-800/60 text-gray-400 border-space-700 hover:text-gray-200 hover:border-gray-500'
+      }`}
+    >
+      <span>{label}</span>
+      <span className={`px-1.5 py-px rounded-full text-[10px] font-bold leading-none ${active ? 'bg-gold/30 text-gold-bright' : 'bg-space-700 text-gray-300'}`}>
+        {count}
+      </span>
+    </button>
   );
 }
 
