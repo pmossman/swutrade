@@ -148,16 +148,24 @@ async function main() {
     // swuapi is the authority on what counts as a real SWU card. If
     // this set had any real matches, we trust that everything else
     // without a recognized cardType is a non-card SKU (booster packs,
-    // spotlight decks, prerelease kits) or a TCGPlayer mismatch (e.g.
-    // an item with a stray "Credit" token match). Drop them. For
-    // sets with zero matches (e.g. Judge Promos that swuapi's set
-    // codes don't cleanly map to), keep everything — filtering on an
-    // unenriched set would nuke real cards.
+    // spotlight decks, prerelease kits) or a TCGPlayer mismatch.
+    // Token Unit / Token Upgrade matches also drop — tokens aren't
+    // sold as standalone SKUs, so those are enrichment collisions
+    // (see buildLookup note). For sets with zero matches (e.g. Judge
+    // Promos whose swuapi set codes don't cleanly map), keep
+    // everything — filtering on an unenriched set would nuke real
+    // cards.
     const cleaned = setMatched > 0
       ? enriched.filter(c => {
-          if (c.cardType !== undefined) return true;
-          droppedNonCards += 1;
-          return false;
+          if (!c.cardType) {
+            droppedNonCards += 1;
+            return false;
+          }
+          if (c.cardType === 'Token Unit' || c.cardType === 'Token Upgrade') {
+            droppedNonCards += 1;
+            return false;
+          }
+          return true;
         })
       : enriched;
 

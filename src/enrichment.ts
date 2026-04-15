@@ -44,6 +44,10 @@ export function canonicalId(setCode: string, cardNumber: string): string {
   return `${setCode.toUpperCase()}_${normalizeCardNumber(cardNumber)}`;
 }
 
+function isTokenType(type: string | undefined): boolean {
+  return type === 'Token Unit' || type === 'Token Upgrade';
+}
+
 export function buildLookup(cards: SwuApiCard[]): EnrichmentLookup {
   const byCanonicalId = new Map<string, SwuApiCard>();
   for (const card of cards) {
@@ -52,10 +56,24 @@ export function buildLookup(cards: SwuApiCard[]): EnrichmentLookup {
     // carries its original `id` for use as the baseCardId.
     const key = canonicalId(card.setCode, card.cardNumber);
     const existing = byCanonicalId.get(key);
-    // Prefer Standard variants for metadata — they're the canonical record
-    // for a card's type/aspects/traits. If we see Standard after a non-
-    // Standard, upgrade to Standard. Otherwise first-wins.
-    if (!existing || (card.variantType === 'Standard' && existing.variantType !== 'Standard')) {
+    // swuapi occasionally lists a token (e.g. "Experience" Token Upgrade
+    // under SHD_1) alongside a real card at the same canonical id
+    // ("Gar Saxon" Leader at SHD_1). The TCGPlayer product matching
+    // those positions is always the real card, never the token —
+    // tokens aren't sold as standalone SKUs — so real types win.
+    const newIsToken = isTokenType(card.type);
+    const existingIsToken = existing ? isTokenType(existing.type) : false;
+    if (!existing) {
+      byCanonicalId.set(key, card);
+      continue;
+    }
+    if (existingIsToken && !newIsToken) {
+      byCanonicalId.set(key, card);
+      continue;
+    }
+    if (!existingIsToken && newIsToken) continue;
+    // Same "tokenness" — prefer Standard variantType for metadata.
+    if (card.variantType === 'Standard' && existing.variantType !== 'Standard') {
       byCanonicalId.set(key, card);
     }
   }
