@@ -1,0 +1,76 @@
+name: E2E
+
+on:
+  push:
+    branches: [main, beta]
+  pull_request:
+
+# A second push on the same branch cancels the in-flight run so we
+# aren't running fetch-prices twice in parallel on top of each other.
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Weekly key so fetch-prices only hits TCGPlayer once per ISO
+      # week per ref — cheap enough to stay inside their rate limit
+      # while fresh enough that zero-match sets showing up in the
+      # catalog wouldn't go unnoticed for long.
+      - id: weekkey
+        run: echo "key=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache card data
+        id: datacache
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/data
+            scripts/cache
+          key: card-data-${{ steps.weekkey.outputs.key }}
+
+      - name: Fetch + enrich card data (cache miss only)
+        if: steps.datacache.outputs.cache-hit != 'true'
+        run: |
+          FETCH_PRICES=1 npm run fetch-prices
+          ENRICH=1 npm run enrich-cards
+
+      # Cache Playwright's own browser download so we don't re-pull
+      # Chromium every run.
+      - name: Cache Playwright browsers
+        id: playwrightcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwrightcache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached browser)
+        if: steps.playwrightcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run Playwright tests
+        run: npm run e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
