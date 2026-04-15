@@ -131,6 +131,18 @@ Trade: adds a Blob dependency, but prices update without redeploys and we stop b
 
 TCGPlayer serves all card images as 5:7 portrait. Leaders are landscape in-game, so their portrait-padded thumbnails get cropped when rendered in landscape tiles. swuapi exposes `frontImageUrl` which might be the real landscape image; worth investigating when we do another visual pass.
 
+### In-person list sharing surfaces *(Phase 1 follow-up)*
+
+Shared lists currently reach a recipient through copied URLs or OG-image unfurls on Discord / Slack / iMessage. That covers the "send it to me" path, but not the in-person scenarios we want to be excellent at — LGS events, tournaments, kitchen-table games — where "look at my phone" should be enough to hand off a list. Reinforces the "anonymous mode stays first-class" invariant: the most frictionless sharing is the most anonymous.
+
+Three surfaces, in rough effort order:
+
+- **QR code in the drawer share sheet.** Render a QR for the current `?w=…&a=…` URL next to the existing Link / Image buttons. Recipient scans with any stock camera app — no install, no permissions, cross-platform. Cheap: a small QR library + the URL we already generate. Probably the one we ship first.
+- **Web Share API button.** `navigator.share({ url })` invokes the OS share sheet, which surfaces AirDrop, Nearby Share, Messages, etc. automatically. Zero marginal implementation beyond a feature-detect fallback to Copy Link. Particularly useful for iPhone-to-iPhone AirDrop, which is the muscle-memory move for a lot of users.
+- **In-app QR scanner.** `BarcodeDetector` (Chromium solid, Safari partial) so a recipient can tap "Scan a list" inside SWUTrade instead of bouncing to their camera app. Nice-to-have — external camera apps already do the right thing for our URLs.
+
+Not a new phase; treat as Phase 1 distribution-channel polish. Phase 2 (accounts) makes some of this richer later — a signed-in scanner could auto-import the list rather than just navigating to the URL — but the feature lands fine without accounts.
+
 ### Foil variants for SOR / SHD / TWI
 
 TCGPlayer split foil into its own product SKU starting with SEC, so we get Foil, Hyperspace Foil, Prestige Foil, etc. as first-class variants for SEC+. The first three sets (SOR, SHD, TWI) were released when TCGPlayer still used a "foil toggle" on the same product — both printings live on one productId, so our data ends up with only Standard and Hyperspace (and Showcase for leaders/bases).
