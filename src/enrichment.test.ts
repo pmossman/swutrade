@@ -127,14 +127,37 @@ describe('enrichCard', () => {
     expect(enriched.cardType).toBeUndefined();
   });
 
-  it('synthesizes baseCardId when no swuapi match found', () => {
+  it('synthesizes baseCardId when neither number nor name matches', () => {
+    // Both lookups have to miss for the synthesized fallback to win:
+    // a unique name with a non-existent number guarantees that.
     const enriched = enrichCard(
-      tcgCard({ number: '999' }),
+      tcgCard({ number: '999', name: 'Mystery Card - Brand New' }),
       lookup,
       { slugToCode },
     );
-    expect(enriched.baseCardId).toBe('spark-of-rebellion:luke-skywalker-faithful-friend');
+    expect(enriched.baseCardId).toBe('spark-of-rebellion:mystery-card-brand-new');
     expect(enriched.displayName).toBeUndefined();
+  });
+
+  it('falls back to name lookup when the number is missing or wrong', () => {
+    // SECW shipped with empty TCGPlayer numbers in Apr 2026 — without
+    // this fallback the entire set would stay at 0% enrichment.
+    const enriched = enrichCard(
+      tcgCard({ number: '' }),
+      lookup,
+      { slugToCode },
+    );
+    expect(enriched.baseCardId).toBe('SOR_005');
+    expect(enriched.displayName).toBe('Luke Skywalker - Faithful Friend');
+  });
+
+  it('strips the trailing variant suffix before name-key lookup', () => {
+    const enriched = enrichCard(
+      tcgCard({ number: '', name: 'Luke Skywalker - Faithful Friend (Hyperspace Foil)' }),
+      lookup,
+      { slugToCode },
+    );
+    expect(enriched.baseCardId).toBe('SOR_005');
   });
 
   it('tolerates zero-padded TCGPlayer numbers', () => {

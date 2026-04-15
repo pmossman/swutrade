@@ -26,8 +26,30 @@ const SWUAPI_URL = 'https://api.swuapi.com/export/all';
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Overrides for swuapi set codes that don't match our SETS[].code. Extend
-// this as unmatched sets are discovered — an empty entry means "skip
-// enrichment for this set, keep synthesized IDs."
+// this as unmatched sets are discovered.
+//
+// Audit verified against scripts/cache/swuapi-all.json on 2026-04-15:
+//
+//   Mapped (this table)    — overrides below.
+//   Mapped by SETS[].code  — SOR, SHD, TWI, SEC, LOF, JTL, LAW, IBH (the
+//                            seven main sets + Intro Battle Hoth all
+//                            share their TCGPlayer slug with their
+//                            swuapi setCode, so no override needed).
+//   No swuapi taxonomy     — OPP (organized-play-promos), SRP (sector-and
+//                            -regional-promos-season-1), EEP (event-
+//                            exclusive-promos), ATE (ashes-of-the-empire),
+//                            SORW / SHDW / TWIW (only the 4 newest sets
+//                            have weekly-play promos in swuapi). These
+//                            stay at 0% enrichment by design — keep
+//                            synthesized baseCardIds.
+//   Splits across years    — JP (J24+J25), PRP (P25+P26). TCGPlayer's
+//                            single slug doesn't carry the year and the
+//                            collector numbers don't align cleanly across
+//                            yearly sub-sets, so a multi-code lookup
+//                            generates false matches (verified — Ki-Adi
+//                            -Mundi #2 would inherit K-2SO's metadata).
+//                            Skip until a per-card disambiguator (name +
+//                            number, or a year column) lands.
 const SET_CODE_OVERRIDES: Record<string, string> = {
   CON24: 'C24',
   CON25: 'C25',
@@ -38,10 +60,15 @@ const SET_CODE_OVERRIDES: Record<string, string> = {
   LOFW:  'LOFP',
   SECW:  'SECP',
   TS:    'TS26', // Twin Suns
-  // JP (Judge Promos) splits into J24/J25 in swuapi; our single slug can't
-  // cleanly map to multiple codes. Same for PRP → P25/P26. Leaving these
-  // to synthesize for now; can add a one-to-many join if users ask.
 };
+
+// SETS[].code values that are intentionally left unmapped. Listed
+// explicitly so the regression guard at the bottom of main() doesn't
+// fail on them — and so someone investigating a 0% set sees this
+// table and the comment above before re-doing the audit.
+const KNOWN_UNMAPPED = new Set([
+  'OPP', 'SRP', 'EEP', 'ATE', 'SORW', 'SHDW', 'TWIW', 'JP', 'PRP',
+]);
 
 function slugToSwuCode(): Record<string, string> {
   const map: Record<string, string> = {};
@@ -114,6 +141,9 @@ async function main() {
   let matchedCards = 0;
   let droppedNonCards = 0;
   const unmatchedSets = new Set<string>();
+  // Per-slug match counts feed the regression guard at the bottom.
+  const matchedPerSlug: Record<string, number> = {};
+  const totalPerSlug: Record<string, number> = {};
 
   // Family index: familyId → list of {productId, variant, prices}.
   // Used by api/og.ts to render OG list images without needing the
@@ -188,6 +218,8 @@ async function main() {
     }
 
     if (setMatched === 0 && cards.length > 0) unmatchedSets.add(slug);
+    matchedPerSlug[slug] = setMatched;
+    totalPerSlug[slug] = cards.length;
     writeFileSync(setPath, JSON.stringify(cleaned));
   }
 
@@ -205,6 +237,46 @@ async function main() {
   if (unmatchedSets.size > 0) {
     console.log(`\n⚠️  Sets with zero matches (check SET_CODE_OVERRIDES):`);
     [...unmatchedSets].sort().forEach(s => console.log(`    - ${s}`));
+  }
+
+  // Regression guard: any SETS entry whose code is mapped (via overrides
+  // OR via SETS[].code matching swuapi directly) MUST enrich at least
+  // one card. A zero-match drop usually means swuapi changed a code, our
+  // SETS table got typo'd, or an override was removed by mistake — all
+  // of which silently bake bad data into the deploy if we don't fail
+  // loud. Sets in KNOWN_UNMAPPED are excluded since they're zero by
+  // design.
+  //
+  // Skipping the check entirely when swuapi was unreachable (lookup
+  // came back empty) — the warning above already explains we're
+  // running in synthesized-IDs-only mode.
+  if (lookup.total === 0) {
+    return;
+  }
+  const regressions: Array<{ slug: string; code: string; total: number }> = [];
+  for (const set of SETS) {
+    if (KNOWN_UNMAPPED.has(set.code)) continue;
+    const total = totalPerSlug[set.slug] ?? 0;
+    if (total === 0) continue; // set wasn't in this build's manifest
+    const matched = matchedPerSlug[set.slug] ?? 0;
+    if (matched === 0) {
+      regressions.push({
+        slug: set.slug,
+        code: SET_CODE_OVERRIDES[set.code] ?? set.code,
+        total,
+      });
+    }
+  }
+  if (regressions.length > 0) {
+    console.error('\n❌ Enrichment regression — these mapped slugs got 0 matches:');
+    for (const r of regressions) {
+      console.error(`    - ${r.slug} (mapped to ${r.code}, ${r.total} cards in TCGPlayer)`);
+    }
+    console.error(
+      '\nLikely causes: swuapi changed a setCode, or SETS[].code drifted.\n' +
+      'If the zero-match is intentional, add the SETS[].code to KNOWN_UNMAPPED.',
+    );
+    process.exit(1);
   }
 }
 
