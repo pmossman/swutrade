@@ -3,6 +3,10 @@ import type { CardVariant, CardGroup, CardType } from './types';
 // Canonical display order for SWU print variants. Lower = earlier.
 // Any unknown variant sinks to the bottom of the list so it's visible
 // but doesn't muddle the established progression.
+// Order is significant: it drives the share-URL bitmask in urlCodec
+// (CANONICAL_VARIANTS.indexOf → bit position). New variants must be
+// APPENDED to preserve backward compatibility with existing ?w= links.
+// Display / sort ordering lives separately in VARIANT_ORDER below.
 export const CANONICAL_VARIANTS = [
   'Standard',
   'Foil',
@@ -12,9 +16,28 @@ export const CANONICAL_VARIANTS = [
   'Prestige Foil',
   'Serialized',
   'Showcase',
+  // Appended post-launch:
+  'Gold',
+  'Rose Gold',
 ] as const;
 
 export type CanonicalVariant = (typeof CANONICAL_VARIANTS)[number];
+
+// Event-provenance labels. Not print variants — they describe where a
+// card was awarded (regional prize wall, tournament placement) rather
+// than how it was printed. Kept outside CANONICAL_VARIANTS so the
+// restriction editor and persisted wants stay constrained to real
+// printings, but recognized in display helpers so pickers render them
+// with a distinct pill instead of the unknown-variant fallback.
+export const TOURNAMENT_PROOFS = [
+  'Champion',
+  'Finalist',
+  'Top 4',
+  'Top 8',
+  'Top 16',
+  'Day 2',
+  'Galactic Championship VIP',
+] as const;
 
 const VARIANT_ORDER: Record<string, number> = {
   'Standard': 0,
@@ -24,6 +47,19 @@ const VARIANT_ORDER: Record<string, number> = {
   'Prestige': 4,
   'Prestige Foil': 5,
   'Serialized': 6,
+  // Special finishes — sit just after Serialized in SEC and are
+  // sibling print variants, not event provenance.
+  'Gold': 7,
+  'Rose Gold': 8,
+  // Event-provenance labels land between print variants and Showcase.
+  'Regional': 40,
+  'Champion': 41,
+  'Finalist': 42,
+  'Top 4': 43,
+  'Top 8': 44,
+  'Top 16': 45,
+  'Day 2': 46,
+  'Galactic Championship VIP': 47,
   // Showcase always last
   'Showcase': 99,
 };
@@ -32,6 +68,10 @@ export function variantRank(label: string): number {
   // Unknown variants sort just before Showcase (so Showcase stays last)
   // but after all the known-ordered variants.
   return VARIANT_ORDER[label] ?? 50;
+}
+
+function isTournamentProof(label: string): boolean {
+  return (TOURNAMENT_PROOFS as readonly string[]).includes(label);
 }
 
 // Display label tuned for narrow surfaces. Most variants fit at their
@@ -62,6 +102,8 @@ const VARIANT_SHORT: Record<string, string> = {
   'Prestige Foil':   'PresF',
   'Serialized':      'Ser',
   'Showcase':        'SC',
+  'Gold':            'Gold',
+  'Rose Gold':       'R.Gold',
 };
 
 export function variantShortLabel(label: string): string {
@@ -95,14 +137,36 @@ export function variantBadgeColor(variant: string): string {
     case 'Prestige Foil':   return 'bg-pink-900/50 text-pink-300';
     case 'Serialized':      return 'bg-gold/20 text-gold';
     case 'Foil':            return 'bg-indigo-900/50 text-indigo-300';
-    default:                return 'bg-space-600 text-gray-300';
+    // SEC-era special finishes. Yellow reads as "metallic gold" without
+    // reusing the `gold` token reserved for balance chrome; rose sits
+    // far enough from crimson to stay legible.
+    case 'Gold':            return 'bg-yellow-900/50 text-yellow-300';
+    case 'Rose Gold':       return 'bg-rose-900/50 text-rose-200';
+    // Regional prize cards (SRP / OPP). Teal reads as "event-adjacent"
+    // without colliding with any print-variant pill.
+    case 'Regional':        return 'bg-teal-900/50 text-teal-300';
+    default:
+      // Tournament placements share a single violet pill — the label
+      // text ("Champion" vs "Top 8") carries the distinction, so
+      // separate hues would be noise.
+      if (isTournamentProof(variant)) return 'bg-violet-900/50 text-violet-300';
+      return 'bg-space-600 text-gray-300';
   }
 }
 
+// TCGPlayer encodes three things in the trailing parenthetical:
+//   - print variants (Hyperspace, Showcase, …) — the common case
+//   - bare collector numbers for regional-promo reprints ("(77)")
+//   - tournament placements for OP/regional prize cards ("(Finalist)")
+// Numeric parentheticals aren't variants at all; we collapse them to a
+// single "Regional" label so downstream UI doesn't render a gray pill
+// with a meaningless number.
 export function extractVariantLabel(name: string): string {
   const match = name.match(/\(([^)]+)\)\s*$/);
   if (!match) return 'Standard';
-  return match[1];
+  const raw = match[1];
+  if (/^\d+$/.test(raw)) return 'Regional';
+  return raw;
 }
 
 export function extractBaseName(name: string): string {

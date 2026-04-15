@@ -3,6 +3,7 @@ import {
   extractVariantLabel,
   extractBaseName,
   variantRank,
+  variantBadgeColor,
   isLeaderOrBaseGroup,
   synthesizeBaseCardId,
 } from './variants';
@@ -16,6 +17,53 @@ describe('extractVariantLabel', () => {
     expect(extractVariantLabel('Liberty - Draw Their Fire! (Hyperspace Foil)'))
       .toBe('Hyperspace Foil');
     expect(extractVariantLabel('Card (Showcase)')).toBe('Showcase');
+  });
+
+  it('normalizes bare numeric parentheticals to Regional', () => {
+    // SRP / OPP regional prize cards use the parenthetical for a
+    // collector index, not a print variant.
+    expect(extractVariantLabel('Karis Nemik - Freedom is a Pure Idea (77)'))
+      .toBe('Regional');
+    expect(extractVariantLabel('Mace Windu - Leaping into Action (69)'))
+      .toBe('Regional');
+  });
+
+  it('preserves tournament-placement labels as-is', () => {
+    expect(extractVariantLabel('Anakin Skywalker - Champion of Mortis (Finalist)'))
+      .toBe('Finalist');
+    expect(extractVariantLabel('Card (Top 8)')).toBe('Top 8');
+    expect(extractVariantLabel('Card (Champion)')).toBe('Champion');
+  });
+});
+
+describe('variantBadgeColor', () => {
+  const FALLBACK = 'bg-space-600 text-gray-300';
+
+  it('returns distinct pills for every canonical print variant', () => {
+    for (const v of ['Standard', 'Foil', 'Hyperspace', 'Hyperspace Foil', 'Prestige', 'Prestige Foil', 'Serialized', 'Showcase', 'Gold', 'Rose Gold']) {
+      expect(variantBadgeColor(v)).not.toBe(FALLBACK);
+    }
+  });
+
+  it('gives Gold and Rose Gold distinct colored pills', () => {
+    expect(variantBadgeColor('Gold')).toContain('yellow');
+    expect(variantBadgeColor('Rose Gold')).toContain('rose');
+    expect(variantBadgeColor('Gold')).not.toBe(variantBadgeColor('Rose Gold'));
+  });
+
+  it('returns a dedicated pill for Regional', () => {
+    expect(variantBadgeColor('Regional')).toContain('teal');
+  });
+
+  it('shares one tournament pill across all placement labels', () => {
+    const placements = ['Champion', 'Finalist', 'Top 4', 'Top 8', 'Top 16', 'Day 2', 'Galactic Championship VIP'];
+    const colors = new Set(placements.map(variantBadgeColor));
+    expect(colors.size).toBe(1);
+    expect([...colors][0]).not.toBe(FALLBACK);
+  });
+
+  it('falls back to the unknown pill for truly unrecognized labels', () => {
+    expect(variantBadgeColor('Some Brand New Variant')).toBe(FALLBACK);
   });
 });
 
@@ -37,6 +85,12 @@ describe('variantRank', () => {
     expect(variantRank('Foil')).toBeLessThan(variantRank('Hyperspace'));
     expect(variantRank('Hyperspace Foil')).toBeLessThan(variantRank('Prestige'));
     expect(variantRank('Serialized')).toBeLessThan(variantRank('Showcase'));
+  });
+
+  it('places Gold and Rose Gold after Serialized but before Showcase', () => {
+    expect(variantRank('Serialized')).toBeLessThan(variantRank('Gold'));
+    expect(variantRank('Gold')).toBeLessThan(variantRank('Rose Gold'));
+    expect(variantRank('Rose Gold')).toBeLessThan(variantRank('Showcase'));
   });
 
   it('sorts unknown variants before Showcase but after known', () => {

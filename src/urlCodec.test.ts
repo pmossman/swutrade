@@ -116,6 +116,15 @@ describe('variantsToMask / maskToVariants', () => {
   it('Showcase maps to bit 7', () => {
     expect(variantsToMask(['Showcase'])).toBe(0b10000000);
   });
+
+  it('Gold and Rose Gold land in the appended slots (backward-compat)', () => {
+    // Appended after Showcase so pre-existing share URLs with masks
+    // <= 0xff continue to decode to the same print variants.
+    expect(variantsToMask(['Gold'])).toBe(0b100000000);
+    expect(variantsToMask(['Rose Gold'])).toBe(0b1000000000);
+    expect(maskToVariants(0b100000000)).toEqual(['Gold']);
+    expect(maskToVariants(0b1000000000)).toEqual(['Rose Gold']);
+  });
 });
 
 describe('encodeWants / decodeWants', () => {

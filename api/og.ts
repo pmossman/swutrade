@@ -43,9 +43,12 @@ type FamilyIndex = Record<string, FamilyEntry[]>;
 
 // Same canonical order as src/variants.ts — kept in sync manually
 // because api/og.ts is bundled separately and doesn't import from src/.
+// Position is bit-significant for wants-URL masks; new variants must
+// be appended, never inserted.
 const CANONICAL_VARIANTS = [
   'Standard', 'Foil', 'Hyperspace', 'Hyperspace Foil',
   'Prestige', 'Prestige Foil', 'Serialized', 'Showcase',
+  'Gold', 'Rose Gold',
 ] as const;
 type CanonicalVariant = typeof CANONICAL_VARIANTS[number];
 

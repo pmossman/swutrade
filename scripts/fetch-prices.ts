@@ -39,10 +39,17 @@ interface DiscoveredSet {
   apiName: string; // Exact name for the TCGPlayer API filter
 }
 
+// Mirror of src/variants.ts::extractVariantLabel. Kept in sync manually
+// since scripts/ runs under tsx without the app's module resolution.
+// Numeric parentheticals like "(77)" are SRP / OPP regional-prize
+// collector indices — not variants — so we collapse them to the
+// "Regional" label used by variantBadgeColor.
 function extractVariant(name: string): string {
   const match = name.match(/\(([^)]+)\)\s*$/);
   if (!match) return 'Standard';
-  return match[1];
+  const raw = match[1];
+  if (/^\d+$/.test(raw)) return 'Regional';
+  return raw;
 }
 
 function buildSearchBody(setApiName: string, from: number): string {
@@ -125,7 +132,12 @@ async function discoverSets(): Promise<DiscoveredSet[]> {
 }
 
 async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]> {
-  const allCards: CardData[] = [];
+  // TCGPlayer's paginated search occasionally returns the same productId
+  // on more than one page (relevance-sorted pagination isn't stable when
+  // new listings come online mid-query). Dedupe by productId while
+  // ingesting — first occurrence wins. Conflicting prices across
+  // duplicates would indicate stale cache; log loudly if it happens.
+  const byProductId = new Map<string, CardData>();
   let from = 0;
   let totalResults = Infinity;
 
@@ -146,7 +158,9 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
 
     for (const item of results) {
       const name = item.productName || '';
-      allCards.push({
+      const productId = String(Math.round(item.productId || 0));
+      if (!productId || productId === '0') continue;
+      const card: CardData = {
         name,
         variant: extractVariant(name),
         printing: item.foilOnly ? 'Foil' : 'Normal',
@@ -156,8 +170,18 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
         lowPrice: typeof item.lowestPrice === 'number' ? item.lowestPrice : null,
         set: slug,
         setName: apiName,
-        productId: String(Math.round(item.productId || 0)),
-      });
+        productId,
+      };
+      const existing = byProductId.get(productId);
+      if (existing) {
+        if (existing.marketPrice !== card.marketPrice || existing.lowPrice !== card.lowPrice) {
+          console.warn(
+            `  ! duplicate productId ${productId} with divergent prices in ${slug} — keeping first`,
+          );
+        }
+        continue;
+      }
+      byProductId.set(productId, card);
     }
 
     from += PAGE_SIZE;
@@ -165,7 +189,7 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
     if (from < totalResults) await sleep(200);
   }
 
-  return allCards;
+  return Array.from(byProductId.values());
 }
 
 async function main() {
