@@ -233,8 +233,10 @@ function App() {
                 the logo should match the inter-letter tracking so
                 it reads as a glyph in the word, not a separate icon. */}
             <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+            {/* Mobile shortens to "ST" so the My Lists button has room
+                for its text label. "WU" and "rade" reveal at sm+. */}
             <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
+              <span className="text-gray-200 uppercase">S<span className="hidden sm:inline">WU</span></span><span className="text-gold uppercase">T<span className="hidden sm:inline">rade</span></span>
             </span>
             {/* Beta tag as an absolute-positioned kicker beneath the
                 wordmark — text-only, hugs the wordmark baseline so it
