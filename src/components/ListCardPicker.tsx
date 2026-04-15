@@ -210,19 +210,21 @@ export function ListCardPicker({
   // render while the heavy grid fills in as a low-priority follow-up.
   const deferredResults = useDeferredValue(viewResults);
 
-  // Available picker: intercept the first tap to expand a collapsed
-  // family rather than saving. Second tap (on an expanded variant)
-  // commits normally.
+  // Available picker: the first tap on a multi-variant family expands
+  // the stack; subsequent taps on the exposed variants commit. Single-
+  // variant families skip expansion (there's nothing behind to show).
+  // Expanded state sticks after a save so the user can tap multiple
+  // variants of the same card without re-opening the stack.
   const handlePick = (card: CardVariant, ctx: PickContext) => {
     if (listType === 'available' && !hasQuery) {
       const fid = cardFamilyId(card);
-      if (expandedFamily !== fid) {
+      const totalVariants = familyVariantCount.get(fid) ?? 1;
+      if (totalVariants > 1 && expandedFamily !== fid) {
         setExpandedFamily(fid);
         return;
       }
     }
     onPick(card, ctx);
-    setExpandedFamily(null);
   };
 
   return (
