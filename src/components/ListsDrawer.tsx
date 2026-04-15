@@ -161,8 +161,12 @@ export function ListsDrawer({
               className="flex gap-1 px-3 pt-2 border-b border-space-800"
               aria-label="Wants and Available lists"
             >
-              <TabTrigger value="wants" count={wantsCount}>Wants</TabTrigger>
-              <TabTrigger value="available" count={availableCount}>Available</TabTrigger>
+              {/* Color reservation mirrors the trade panels: Wants lines
+                  up with Receiving (blue) — cards the user wants to take
+                  in — and Available lines up with Offering (emerald) —
+                  cards the user has to give. */}
+              <TabTrigger value="wants" count={wantsCount} accent="blue">Wants</TabTrigger>
+              <TabTrigger value="available" count={availableCount} accent="emerald">Available</TabTrigger>
             </Tabs.List>
 
             <Tabs.Content value="wants" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
@@ -300,29 +304,45 @@ function AddCardFooter({ onClick }: { onClick: () => void }) {
   );
 }
 
+const TAB_ACCENT: Record<'blue' | 'emerald', { text: string; underline: string; badge: string }> = {
+  blue: {
+    text: 'data-[state=active]:text-blue-300',
+    underline: 'data-[state=active]:after:bg-blue-400',
+    badge: 'group-data-[state=active]:bg-blue-500/20 group-data-[state=active]:text-blue-200',
+  },
+  emerald: {
+    text: 'data-[state=active]:text-emerald-300',
+    underline: 'data-[state=active]:after:bg-emerald-400',
+    badge: 'group-data-[state=active]:bg-emerald-500/20 group-data-[state=active]:text-emerald-200',
+  },
+};
+
 function TabTrigger({
   value,
   count,
+  accent,
   children,
 }: {
   value: ListTab;
   count: number;
+  accent: 'blue' | 'emerald';
   children: React.ReactNode;
 }) {
+  const a = TAB_ACCENT[accent];
   return (
     <Tabs.Trigger
       value={value}
       className={[
-        'relative flex items-center gap-1.5 px-3 py-2 text-xs font-bold tracking-[0.08em] uppercase rounded-t-md',
+        'group relative flex items-center gap-1.5 px-3 py-2 text-xs font-bold tracking-[0.08em] uppercase rounded-t-md',
         'text-gray-500 hover:text-gray-300 transition-colors',
-        'data-[state=active]:text-gold',
+        a.text,
         'after:content-[""] after:absolute after:bottom-0 after:inset-x-2 after:h-px after:bg-transparent',
-        'data-[state=active]:after:bg-gold',
+        a.underline,
       ].join(' ')}
     >
       {children}
       {count > 0 && (
-        <span className="px-1.5 py-px rounded-full bg-space-700 text-gray-300 text-[10px] font-bold leading-none">
+        <span className={`px-1.5 py-px rounded-full bg-space-700 text-gray-300 text-[10px] font-bold leading-none transition-colors ${a.badge}`}>
           {count}
         </span>
       )}
