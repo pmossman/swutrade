@@ -112,6 +112,7 @@ async function main() {
 
   let totalCards = 0;
   let matchedCards = 0;
+  let droppedNonCards = 0;
   const unmatchedSets = new Set<string>();
 
   // Family index: familyId → list of {productId, variant, prices}.
@@ -141,25 +142,45 @@ async function main() {
         matchedCards += 1;
       }
       totalCards += 1;
-      // Index this variant under its family.
-      if (result.productId) {
-        const fid = cardFamilyId(result);
-        const variant = result.variant || extractVariantLabel(result.name);
-        const displayName = result.displayName ?? result.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-        if (!familyIndex[fid]) familyIndex[fid] = [];
-        familyIndex[fid].push({
-          p: result.productId,
-          v: variant,
-          m: result.marketPrice,
-          l: result.lowPrice,
-          n: displayName,
-        });
-      }
       return result;
     });
 
+    // swuapi is the authority on what counts as a real SWU card. If
+    // this set had any real matches, we trust that everything else
+    // without a recognized cardType is a non-card SKU (booster packs,
+    // spotlight decks, prerelease kits) or a TCGPlayer mismatch (e.g.
+    // an item with a stray "Credit" token match). Drop them. For
+    // sets with zero matches (e.g. Judge Promos that swuapi's set
+    // codes don't cleanly map to), keep everything — filtering on an
+    // unenriched set would nuke real cards.
+    const cleaned = setMatched > 0
+      ? enriched.filter(c => {
+          if (c.cardType !== undefined) return true;
+          droppedNonCards += 1;
+          return false;
+        })
+      : enriched;
+
+    // Family index: familyId → list of {productId, variant, prices}.
+    // Built from cleaned rows so OG image renders don't see products
+    // either.
+    for (const result of cleaned) {
+      if (!result.productId) continue;
+      const fid = cardFamilyId(result);
+      const variant = result.variant || extractVariantLabel(result.name);
+      const displayName = result.displayName ?? result.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      if (!familyIndex[fid]) familyIndex[fid] = [];
+      familyIndex[fid].push({
+        p: result.productId,
+        v: variant,
+        m: result.marketPrice,
+        l: result.lowPrice,
+        n: displayName,
+      });
+    }
+
     if (setMatched === 0 && cards.length > 0) unmatchedSets.add(slug);
-    writeFileSync(setPath, JSON.stringify(enriched));
+    writeFileSync(setPath, JSON.stringify(cleaned));
   }
 
   writeFileSync(
@@ -169,6 +190,9 @@ async function main() {
 
   const matchRate = totalCards > 0 ? Math.round((matchedCards / totalCards) * 100) : 0;
   console.log(`\nEnriched ${matchedCards} / ${totalCards} cards (${matchRate}%)`);
+  if (droppedNonCards > 0) {
+    console.log(`Dropped ${droppedNonCards} non-card SKUs (boosters, decks, unmatched items)`);
+  }
   console.log(`Wrote family-index.json with ${Object.keys(familyIndex).length} families`);
   if (unmatchedSets.size > 0) {
     console.log(`\n⚠️  Sets with zero matches (check SET_CODE_OVERRIDES):`);

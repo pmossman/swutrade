@@ -45,22 +45,6 @@ function extractVariant(name: string): string {
   return match[1];
 }
 
-// TCGPlayer bundles non-card SKUs (booster packs, spotlight decks,
-// prerelease kits, etc.) alongside real cards. Detect them by title
-// keyword — SWU card names don't contain these words.
-const PRODUCT_NAME_KEYWORDS = [
-  'Booster',
-  'Spotlight',
-  'Display',
-  'Prerelease',
-  'Sleeved',
-  'Bundle',
-];
-
-function isProductSku(name: string): boolean {
-  return PRODUCT_NAME_KEYWORDS.some(kw => name.includes(kw));
-}
-
 function buildSearchBody(setApiName: string, from: number): string {
   return JSON.stringify({
     algorithm: '',
@@ -162,10 +146,6 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
 
     for (const item of results) {
       const name = item.productName || '';
-      // TCGPlayer's feed includes non-card SKUs (booster boxes,
-      // spotlight decks, prerelease kits, etc). Drop them at fetch
-      // time so they never ship in the JSON the client loads.
-      if (isProductSku(name)) continue;
       allCards.push({
         name,
         variant: extractVariant(name),
