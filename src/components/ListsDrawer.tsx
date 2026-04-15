@@ -110,6 +110,15 @@ export function ListsDrawer({
         <Dialog.Content
           aria-describedby={undefined}
           data-mode={mode}
+          onEscapeKeyDown={e => {
+            // In picker mode, Esc should only close the picker and leave
+            // the drawer open — the drawer itself is dismissed by another
+            // Esc press from the list view.
+            if (mode === 'picker') {
+              e.preventDefault();
+              setMode('list');
+            }
+          }}
           className={[
             'drawer-content z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
             'flex flex-col',
