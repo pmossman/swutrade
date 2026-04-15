@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
+import { QRCodeSVG } from 'qrcode.react';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
@@ -10,6 +11,7 @@ import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
+import { Popover } from './Popover';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -417,43 +419,113 @@ function ShareListsButton({
     return `/api/og?${params.toString()}`;
   }, [shareUrl]);
 
+  const urlString = shareUrl().toString();
+  const nativeShareAvailable = typeof navigator !== 'undefined'
+    && typeof navigator.share === 'function';
+
+  const nativeShare = useCallback(async () => {
+    try {
+      await navigator.share({
+        title: 'SWU Trade — Shared list',
+        url: urlString,
+      });
+    } catch {
+      // User cancelled or API unavailable — no-op.
+    }
+  }, [urlString]);
+
   return (
     <>
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={copyLink}
-          title="Copy a share link with your lists"
-          aria-label="Copy share link"
-          className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide text-gray-400 hover:text-gold hover:bg-gold/10 transition-colors"
-        >
-          {linkCopied ? (
-            <>
-              <CheckIcon className="w-3 h-3" />
-              Copied
-            </>
-          ) : (
-            <>
-              <LinkIcon className="w-3 h-3" />
-              Link
-            </>
-          )}
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowImage(true)}
-          title="Generate a shareable image of your lists"
-          aria-label="Generate share image"
-          className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide bg-gold/10 text-gold hover:bg-gold/20 transition-colors"
-        >
-          <ImageIcon className="w-3 h-3" />
-          Image
-        </button>
-      </div>
+      <Popover
+        align="right"
+        panelClassName="p-3 w-[260px]"
+        trigger={({ open, toggle }) => (
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label="Share lists"
+            aria-expanded={open}
+            className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide bg-gold/10 text-gold hover:bg-gold/20 transition-colors"
+          >
+            <ShareIcon className="w-3 h-3" />
+            Share
+          </button>
+        )}
+      >
+        {({ close }) => (
+          <div className="flex flex-col gap-3">
+            <SharePopoverButton
+              onClick={() => { copyLink(); }}
+              icon={linkCopied ? <CheckIcon className="w-3.5 h-3.5" /> : <LinkIcon className="w-3.5 h-3.5" />}
+              label={linkCopied ? 'Copied!' : 'Copy link'}
+            />
+            {nativeShareAvailable && (
+              <SharePopoverButton
+                onClick={() => { nativeShare(); close(); }}
+                icon={<ShareIcon className="w-3.5 h-3.5" />}
+                label="Share via…"
+              />
+            )}
+            <SharePopoverButton
+              onClick={() => { setShowImage(true); close(); }}
+              icon={<ImageIcon className="w-3.5 h-3.5" />}
+              label="Save as image"
+            />
+            {/* In-person QR — recipient scans with any stock camera app.
+                Sits at the bottom since it's the secondary use case but
+                doesn't need a tap to reveal. */}
+            <div className="flex flex-col items-center gap-1.5 pt-2 border-t border-space-700">
+              <div className="text-[9px] tracking-widest uppercase text-gray-500 font-bold">
+                Scan to open
+              </div>
+              <div className="bg-white p-1.5 rounded">
+                <QRCodeSVG
+                  value={urlString}
+                  size={160}
+                  level="M"
+                  marginSize={0}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </Popover>
       {showImage && (
         <TradeImageModal imageUrl={imageUrl()} onClose={() => setShowImage(false)} />
       )}
     </>
+  );
+}
+
+function SharePopoverButton({
+  onClick,
+  icon,
+  label,
+}: {
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
+    >
+      <span className="text-gray-400">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+function ShareIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="4" cy="8" r="1.5" />
+      <circle cx="12" cy="4" r="1.5" />
+      <circle cx="12" cy="12" r="1.5" />
+      <path d="M5.3 7.2l5.4-2.4M5.3 8.8l5.4 2.4" />
+    </svg>
   );
 }
 
