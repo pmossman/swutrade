@@ -10,5 +10,20 @@ jobs:
   trigger-deploy:
     runs-on: ubuntu-latest
     steps:
+      # Silent failures are the main risk here — if the deploy hook gets
+      # rotated or the secret is dropped, the bare curl still exits 0
+      # and prices go stale without anyone noticing. Capture the HTTP
+      # status explicitly and fail the job if it isn't 2xx.
       - name: Trigger Vercel deploy hook (skip build cache so prices re-fetch)
-        run: curl -s -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}?buildCache=false"
+        run: |
+          if [ -z "${{ secrets.VERCEL_DEPLOY_HOOK }}" ]; then
+            echo "::error::VERCEL_DEPLOY_HOOK secret is unset"
+            exit 1
+          fi
+          http_code=$(curl -s -o /tmp/body.txt -w '%{http_code}' -X POST "${{ secrets.VERCEL_DEPLOY_HOOK }}?buildCache=false")
+          echo "Response: $http_code"
+          cat /tmp/body.txt || true
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "::error::Deploy hook returned $http_code — prices will go stale until fixed"
+            exit 1
+          fi
