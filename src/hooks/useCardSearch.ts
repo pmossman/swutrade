@@ -25,7 +25,7 @@ const BROWSE_ORDER: string[] = [
  * visible. Capped at maxGroups to avoid rendering thousands of tiles;
  * if the user wants more, they should narrow via filters.
  */
-export function browseAllGroups(allCards: CardVariant[], maxGroups = 500): SetSearchGroup[] {
+export function browseAllGroups(allCards: CardVariant[], maxGroups = 200): SetSearchGroup[] {
   const bySet: Record<string, CardVariant[]> = {};
   for (const card of allCards) {
     if (!bySet[card.set]) bySet[card.set] = [];

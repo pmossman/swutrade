@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect } from 'react';
+import { useMemo, useRef, useEffect, useDeferredValue } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
@@ -175,6 +175,11 @@ export function ListCardPicker({
     ? { acceptedVariants: selectedVariants }
     : {};
 
+  // Browse mode mounts hundreds of tiles — useDeferredValue lets the
+  // picker chrome (filter bar + search input) paint in a high-priority
+  // render while the heavy grid fills in as a low-priority follow-up.
+  const deferredResults = useDeferredValue(viewResults);
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* The active tab above already shows Wants vs Available, so we
@@ -211,7 +216,7 @@ export function ListCardPicker({
       </div>
 
       <CardResultsGrid
-        results={viewResults}
+        results={deferredResults}
         isSearching={isSearching}
         portraitColsClass="grid-cols-4 sm:grid-cols-4 md:grid-cols-5"
         landscapeColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"

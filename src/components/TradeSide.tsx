@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect, useDeferredValue } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
@@ -208,6 +208,9 @@ export function TradeSide({
     ),
     [hasQuery, search.results, browseResults, filters.selectedSets, filters.selectedVariants],
   );
+  // Low-priority render so the overlay chrome can paint before hundreds
+  // of browse tiles commit.
+  const deferredResults = useDeferredValue(filteredResults);
 
   const handleClearSearch = () => {
     search.clearSearch();
@@ -362,7 +365,7 @@ export function TradeSide({
           cost while the overlay is hidden behind the main trade view. */}
       <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
         {showOverlay && <SearchResults
-          results={filteredResults}
+          results={deferredResults}
           percentage={percentage}
           priceMode={priceMode}
           onAdd={onAdd}
