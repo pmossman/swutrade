@@ -123,7 +123,7 @@ export function CardTile({
         {src && !imgErrored ? (
           <img
             src={src}
-            alt={card.name}
+            alt=""
             loading="lazy"
             onError={() => setImgErrored(true)}
             onLoad={e => {

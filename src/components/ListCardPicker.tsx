@@ -377,7 +377,7 @@ function PickerTile({
           {imgUrl ? (
             <img
               src={imgUrl}
-              alt={card.name}
+              alt=""
               loading="lazy"
               className="w-full h-full object-contain"
             />

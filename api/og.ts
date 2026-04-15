@@ -676,6 +676,15 @@ async function renderListImage(
 
 type ResolvedListCard = ResolvedCard & { isPriority: boolean };
 
+// Row-based layout for list images. Optimized for recipient scanning
+// — tiny thumbnail on the left, name / variant / qty / price laid
+// out horizontally. Fits 18+ rows per column on the 1200×630 canvas
+// vs 6-ish tiles with the old grid design.
+const LIST_ROW_H = 32;
+const LIST_ROW_GAP = 4;
+const LIST_THUMB_W = 24;
+const LIST_THUMB_H = 34;
+
 function renderListColumn(
   cards: ResolvedListCard[],
   label: string,
@@ -696,68 +705,75 @@ function renderListColumn(
     return svg;
   }
 
-  const layout = gridLayout(cards.length);
-  const maxVisible = layout.cols * layout.rows;
+  // How many rows fit in the available area? Reserve ~20px at the
+  // bottom for a potential "+N more" indicator.
+  const available = GRID_HEIGHT - 20;
+  const maxVisible = Math.floor(available / (LIST_ROW_H + LIST_ROW_GAP));
   const visible = cards.slice(0, maxVisible);
-  const gap = 8;
 
   visible.forEach((card, i) => {
-    const col = i % layout.cols;
-    const row = Math.floor(i / layout.cols);
-    const tileX = x + col * (layout.tileW + gap);
-    const tileY = GRID_TOP + row * (layout.tileH + 6);
+    const rowY = GRID_TOP + i * (LIST_ROW_H + LIST_ROW_GAP);
+    const thumbX = x;
+    const thumbY = rowY + (LIST_ROW_H - LIST_THUMB_H) / 2;
+    const textX = x + LIST_THUMB_W + 10;
 
+    // Thumbnail — kept small so the row carries most of its info in
+    // text. Priority stars (wants only) sit bottom-left of the thumb.
     if (card.imageDataUri) {
-      svg += `<image href="${card.imageDataUri}" x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" preserveAspectRatio="xMidYMid slice"/>`;
+      svg += `<image href="${card.imageDataUri}" x="${thumbX}" y="${thumbY}" width="${LIST_THUMB_W}" height="${LIST_THUMB_H}" preserveAspectRatio="xMidYMid slice"/>`;
     } else {
-      svg += `<rect x="${tileX}" y="${tileY}" width="${layout.tileW}" height="${layout.imgH}" fill="#1f2937" rx="3"/>`;
-      svg += `<text x="${tileX + layout.tileW / 2}" y="${tileY + layout.imgH / 2 + 6}" fill="#4b5563" font-size="16" text-anchor="middle">?</text>`;
+      svg += `<rect x="${thumbX}" y="${thumbY}" width="${LIST_THUMB_W}" height="${LIST_THUMB_H}" fill="#1f2937" rx="2"/>`;
     }
-
-    // Qty chip — shown for any qty in lists since it represents desired
-    // count, more meaningful than in a trade where qty 1 is the default.
-    const chipW = Math.max(22, layout.tileW * 0.3);
-    const chipH = 16;
-    const chipX = tileX + layout.tileW - chipW - 3;
-    const chipY = tileY + 3;
-    svg += `<rect x="${chipX}" y="${chipY}" width="${chipW}" height="${chipH}" rx="8" fill="#000" fill-opacity="0.85" stroke="${color}" stroke-opacity="0.7" stroke-width="1"/>`;
-    svg += `<text x="${chipX + chipW / 2}" y="${chipY + 12}" fill="#fff" font-size="10" font-weight="800" text-anchor="middle">×${card.qty}</text>`;
-
-    // Priority star — top-left of the image. Only on wants.
     if (card.isPriority) {
-      const starX = tileX + 6;
-      const starY = tileY + 14;
-      svg += `<text x="${starX}" y="${starY}" fill="#FFD700" font-size="16" font-weight="900" stroke="#000" stroke-width="0.5">★</text>`;
+      svg += `<text x="${thumbX + LIST_THUMB_W - 2}" y="${thumbY + 10}" fill="#FFD700" font-size="11" font-weight="900" text-anchor="end" stroke="#000" stroke-width="0.4">★</text>`;
     }
 
+    // Right edge: price first (anchored end), qty just inside of it.
+    const rightEdge = x + COL_WIDTH;
+    const priceBaselineY = rowY + 20;
     const lineTotal = card.price !== null ? card.price * card.qty : null;
-    const textTop = tileY + layout.imgH + 3;
-    const nameMax = Math.max(8, Math.floor(layout.tileW / (layout.nameSize * 0.55)));
+    const priceColor = card.price === null ? '#f87171' : '#d4a843';
+    svg += `<text x="${rightEdge}" y="${priceBaselineY}" fill="${priceColor}" font-size="13" font-weight="700" text-anchor="end">${escapeXml(formatPrice(lineTotal))}</text>`;
+
+    let qtyRightEdge = rightEdge;
+    if (card.qty > 1) {
+      // Approximate price width so we can stack qty to its left.
+      const priceW = Math.max(40, 10 + (formatPrice(lineTotal).length * 7));
+      qtyRightEdge = rightEdge - priceW - 8;
+      svg += `<text x="${qtyRightEdge}" y="${priceBaselineY}" fill="#9ca3af" font-size="12" font-weight="700" text-anchor="end">×${card.qty}</text>`;
+      qtyRightEdge -= 24;
+    } else {
+      qtyRightEdge = rightEdge - 54;
+    }
+
+    // Variant pill between the name and the qty/price cluster.
     const vbs = variantBadgeStyle(card.variant);
-
-    const nameBaselineY = textTop + layout.nameSize;
-    svg += `<text x="${tileX}" y="${nameBaselineY}" fill="#d1d5db" font-size="${layout.nameSize}" font-weight="500">${escapeXml(truncate(card.name, nameMax))}</text>`;
-
-    const pillH = layout.pillSize + 3;
-    let afterPillY = nameBaselineY;
+    let pillRightEdge = qtyRightEdge;
     if (vbs) {
       const vlabel = card.variant === 'Hyperspace Foil' ? 'HS Foil' : card.variant;
-      const pillTextW = vlabel.length * layout.pillSize * 0.6;
+      const pillSize = 9;
+      const pillH = pillSize + 4;
+      const pillTextW = vlabel.length * pillSize * 0.6;
       const pillPadX = 4;
-      const pillW = Math.min(pillTextW + pillPadX * 2, layout.tileW);
-      const pillTopY = nameBaselineY + 3;
-      svg += `<rect x="${tileX}" y="${pillTopY}" width="${pillW}" height="${pillH}" rx="2" fill="${vbs.bg}"/>`;
-      svg += `<text x="${tileX + pillPadX}" y="${pillTopY + layout.pillSize + 0.5}" fill="${vbs.text}" font-size="${layout.pillSize}" font-weight="700" letter-spacing="0.3">${escapeXml(vlabel.toUpperCase())}</text>`;
-      afterPillY = pillTopY + pillH;
+      const pillW = pillTextW + pillPadX * 2;
+      const pillX = qtyRightEdge - pillW;
+      const pillTopY = rowY + (LIST_ROW_H - pillH) / 2;
+      svg += `<rect x="${pillX}" y="${pillTopY}" width="${pillW}" height="${pillH}" rx="2" fill="${vbs.bg}"/>`;
+      svg += `<text x="${pillX + pillPadX}" y="${pillTopY + pillSize + 1}" fill="${vbs.text}" font-size="${pillSize}" font-weight="700" letter-spacing="0.3">${escapeXml(vlabel.toUpperCase())}</text>`;
+      pillRightEdge = pillX - 8;
     }
 
-    const priceBaselineY = afterPillY + layout.priceSize + 2;
-    const priceColor = card.price === null ? '#f87171' : '#d4a843';
-    svg += `<text x="${tileX}" y="${priceBaselineY}" fill="${priceColor}" font-size="${layout.priceSize}" font-weight="700">${escapeXml(formatPrice(lineTotal))}</text>`;
+    // Card name — fills the space between thumbnail and the pill. Back
+    // off a character or two if the pill is wide.
+    const nameMaxPx = pillRightEdge - textX;
+    const nameSize = 13;
+    const nameMaxChars = Math.max(10, Math.floor(nameMaxPx / (nameSize * 0.55)));
+    const nameBaselineY = rowY + 20;
+    svg += `<text x="${textX}" y="${nameBaselineY}" fill="#e5e7eb" font-size="${nameSize}" font-weight="500">${escapeXml(truncate(card.name, nameMaxChars))}</text>`;
   });
 
   if (cards.length > maxVisible) {
-    const overflowY = GRID_TOP + layout.rows * (layout.tileH + 6) + 12;
+    const overflowY = GRID_TOP + maxVisible * (LIST_ROW_H + LIST_ROW_GAP) + 14;
     svg += `<text x="${x + COL_WIDTH / 2}" y="${overflowY}" fill="#9ca3af" font-size="12" font-weight="600" text-anchor="middle">+${cards.length - maxVisible} more</text>`;
   }
 

@@ -104,6 +104,13 @@ function App() {
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
   const [viewMode, setViewMode] = useState<'list' | 'trade'>(() => detectViewMode());
+  // Signals that the user just clicked "Start a trade" from the
+  // shared-list view. Offering-side TradeSide reads this on mount to
+  // auto-open its search overlay with the "From the shared link"
+  // section expanded, dropping the user straight into picking cards
+  // from the sender's wants. One-shot — cleared after the TradeSide
+  // consumes it.
+  const [autoOpenOfferingFromShared, setAutoOpenOfferingFromShared] = useState(false);
   useEffect(() => {
     const handler = () => setViewMode(detectViewMode());
     window.addEventListener('popstate', handler);
@@ -113,7 +120,11 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
     window.history.pushState(null, '', '?' + params.toString());
+    setAutoOpenOfferingFromShared(true);
     setViewMode('trade');
+  }, []);
+  const consumeAutoOpenOffering = useCallback(() => {
+    setAutoOpenOfferingFromShared(false);
   }, []);
 
   // Load all sets on mount (static files are fast from CDN)
@@ -330,6 +341,8 @@ function App() {
             collapsed={isMobile && offeringCollapsed}
             onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
+            autoOpenSharedLink={autoOpenOfferingFromShared}
+            onConsumeAutoOpen={consumeAutoOpenOffering}
           />
           {/* Mobile-only drag handle between the two panels. Collapsed
               panels hide the divider — nothing to resize against. */}

@@ -49,6 +49,11 @@ interface TradeSideProps {
   /** Optional explicit flex-basis percentage (0-1). When set, overrides
    *  the default auto-sizing — used by the mobile panel divider. */
   flexBasis?: number;
+  /** One-shot signal from the shared-list landing: auto-open the
+   *  search overlay with the "From the shared link" section
+   *  expanded. Consumed on mount. */
+  autoOpenSharedLink?: boolean;
+  onConsumeAutoOpen?: () => void;
 }
 
 function formatPrice(price: number | null): string {
@@ -184,6 +189,8 @@ export function TradeSide({
   collapsed,
   onToggleCollapse,
   flexBasis,
+  autoOpenSharedLink,
+  onConsumeAutoOpen,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const [searchFocused, setSearchFocused] = useState(false);
@@ -231,6 +238,15 @@ export function TradeSide({
     search.setQuery(baseName);
     setTimeout(() => overlayInputRef.current?.focus(), 50);
   }, [search, onLoadAllSets]);
+
+  // Shared-list handoff: when App sets autoOpenSharedLink, this side
+  // auto-opens its search overlay so the user lands directly on the
+  // "From the shared link" section. One-shot — consumed on mount.
+  useEffect(() => {
+    if (!autoOpenSharedLink) return;
+    setSearchFocused(true);
+    onConsumeAutoOpen?.();
+  }, [autoOpenSharedLink, onConsumeAutoOpen]);
 
   // Escape dismisses the overlay. Listening globally (not on the input)
   // so it keeps working after focus moves to a tile/button from a click.
@@ -357,6 +373,7 @@ export function TradeSide({
           percentage={percentage}
           priceMode={priceMode}
           onAdd={onAdd}
+          expandSharedOnSignal={autoOpenSharedLink}
         />
       </div>
 

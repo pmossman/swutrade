@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
@@ -39,6 +39,10 @@ interface TradeListsSectionProps {
   percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
+  /** When flipped true, the shared-link subsection auto-expands so a
+   *  user arriving from the "Start a trade" button on the list view
+   *  lands directly on the sender's cards. */
+  expandSharedOnSignal?: boolean;
 }
 
 export function TradeListsSection({
@@ -52,6 +56,7 @@ export function TradeListsSection({
   percentage,
   priceMode,
   onAdd,
+  expandSharedOnSignal,
 }: TradeListsSectionProps) {
   const isOffering = side === 'offering';
 
@@ -141,6 +146,7 @@ export function TradeListsSection({
           percentage={percentage}
           priceMode={priceMode}
           onAdd={onAdd}
+          openOnSignal={expandSharedOnSignal}
         />
       )}
     </>
@@ -187,13 +193,23 @@ interface CollapsibleSectionProps {
   percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
+  /** Pulse signal: when this flips true, expand the section. Idempotent
+   *  on false; the user's own collapse interactions still win after. */
+  openOnSignal?: boolean;
 }
 
-function CollapsibleSection({ tiles, heading, tone, percentage, priceMode, onAdd }: CollapsibleSectionProps) {
+function CollapsibleSection({ tiles, heading, tone, percentage, priceMode, onAdd, openOnSignal }: CollapsibleSectionProps) {
   // Default collapsed so these sections don't eat real estate from the
   // main card grid below — the count badge on the header draws the
   // eye when there's something here worth opening.
   const [collapsed, setCollapsed] = useState(true);
+
+  // Honor an external "please open" signal (e.g. user arriving from
+  // the shared-list start-trade flow). Runs on the flip to true only
+  // — after expansion, normal user interaction controls collapse.
+  useEffect(() => {
+    if (openOnSignal) setCollapsed(false);
+  }, [openOnSignal]);
 
   const accent = TONE_HEADER[tone];
   const chevron = TONE_CHEVRON[tone];
