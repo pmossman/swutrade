@@ -12,6 +12,11 @@ export interface SelectionFilters {
   selectedSets: string[];
   toggleVariant: (v: CanonicalVariant) => void;
   toggleSet: (slug: string) => void;
+  /** Swap the active set-group pseudo-slug, ensuring the two known
+   *  group slugs ('group:main' and 'group:special') stay mutually
+   *  exclusive. Pass null to clear the group while leaving any
+   *  individual set chips intact. */
+  replaceGroup: (group: string | null) => void;
   clearVariants: () => void;
   clearSets: () => void;
   clearAll: () => void;
@@ -68,6 +73,18 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     });
   }, [keys.sets]);
 
+  const replaceGroup = useCallback((group: string | null) => {
+    setSelectedSets(prev => {
+      // Strip any existing group pseudo-slug (there are currently two —
+      // 'group:main' and 'group:special') and splice in the new one if
+      // provided. Individual set slugs pass through untouched.
+      const cleaned = prev.filter(s => !s.startsWith('group:'));
+      const next = group ? [...cleaned, group] : cleaned;
+      save(keys.sets, next);
+      return next;
+    });
+  }, [keys.sets]);
+
   const clearVariants = useCallback(() => {
     setSelectedVariants([]);
     save(keys.variants, []);
@@ -90,6 +107,7 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     selectedSets,
     toggleVariant,
     toggleSet,
+    replaceGroup,
     clearVariants,
     clearSets,
     clearAll,

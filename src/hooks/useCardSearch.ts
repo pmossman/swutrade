@@ -22,10 +22,11 @@ const BROWSE_ORDER: string[] = [
  * and by base name within a set (ascending card number). Used by the
  * search surfaces when the user hasn't typed anything — they can
  * still scroll through the catalog while filters narrow what's
- * visible. Capped at maxGroups to avoid rendering thousands of tiles;
- * if the user wants more, they should narrow via filters.
+ * visible. Virtualization handles the render cost, so we don't cap
+ * the group count (capping would silently drop promo sets below the
+ * main sets that fill the budget first).
  */
-export function browseAllGroups(allCards: CardVariant[], maxGroups = 300): SetSearchGroup[] {
+export function browseAllGroups(allCards: CardVariant[]): SetSearchGroup[] {
   const bySet: Record<string, CardVariant[]> = {};
   for (const card of allCards) {
     if (!bySet[card.set]) bySet[card.set] = [];
@@ -33,7 +34,6 @@ export function browseAllGroups(allCards: CardVariant[], maxGroups = 300): SetSe
   }
 
   const result: SetSearchGroup[] = [];
-  let total = 0;
   for (const slug of BROWSE_ORDER) {
     const cards = bySet[slug];
     if (!cards || cards.length === 0) continue;
@@ -50,15 +50,11 @@ export function browseAllGroups(allCards: CardVariant[], maxGroups = 300): SetSe
       if (aLeader !== bLeader) return aLeader - bLeader;
       return parseCardNumber(a.variants[0]?.number ?? '') - parseCardNumber(b.variants[0]?.number ?? '');
     });
-    const remaining = maxGroups - total;
-    if (remaining <= 0) break;
-    const limited = groups.slice(0, remaining);
-    total += limited.length;
     result.push({
       setSlug: slug,
       setCode: setInfo.code,
       setName: setInfo.name,
-      groups: limited,
+      groups,
     });
   }
   return result;

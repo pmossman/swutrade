@@ -106,14 +106,18 @@ export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
         </Chip>
         <Chip
           active={filters.selectedSets.includes(MAIN_GROUP)}
-          onClick={() => filters.toggleSet(MAIN_GROUP)}
+          onClick={() => filters.replaceGroup(
+            filters.selectedSets.includes(MAIN_GROUP) ? null : MAIN_GROUP,
+          )}
           colorClass="bg-gold/15 text-gold border-gold/40"
         >
           Main
         </Chip>
         <Chip
           active={filters.selectedSets.includes(SPECIAL_GROUP)}
-          onClick={() => filters.toggleSet(SPECIAL_GROUP)}
+          onClick={() => filters.replaceGroup(
+            filters.selectedSets.includes(SPECIAL_GROUP) ? null : SPECIAL_GROUP,
+          )}
           colorClass="bg-gold/15 text-gold border-gold/40"
         >
           Special
