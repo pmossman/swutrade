@@ -30,6 +30,10 @@ function setSummaryLabel(slug: string): string {
 
 interface SelectionFilterBarProps {
   filters: SelectionFilters;
+  /** Hide the Variant filter. Available picker turns this on — every
+   *  tap there commits an exact productId, so narrowing the view by
+   *  variant would just hide cards without changing semantics. */
+  hideVariantFilter?: boolean;
 }
 
 /**
@@ -37,7 +41,7 @@ interface SelectionFilterBarProps {
  * SelectionFilters state. Set filter shows main sets by default with
  * a "Show promos" sub-expander so 20+ promo chips don't crowd the UI.
  */
-export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
+export function SelectionFilterBar({ filters, hideVariantFilter }: SelectionFilterBarProps) {
   const variantSummary = summarize(filters.selectedVariants, 'Any');
   const setSummary = useMemo(() => {
     return summarize(filters.selectedSets, 'All sets', setSummaryLabel);
@@ -45,6 +49,7 @@ export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
 
   return (
     <div className="flex items-start gap-2 flex-wrap">
+      {!hideVariantFilter && (
       <CollapsibleChipFilter
         label="Variant"
         summary={variantSummary}
@@ -81,6 +86,7 @@ export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
           );
         })}
       </CollapsibleChipFilter>
+      )}
 
       <CollapsibleChipFilter
         label="Set"

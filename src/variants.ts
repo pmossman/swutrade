@@ -48,6 +48,26 @@ export function variantDisplayLabel(label: string): string {
   return label;
 }
 
+// Tighter abbreviations for cases where we need to show multiple
+// variant labels joined together (e.g. "HS or HSF" on a wants-picker
+// tile when the user's restriction is two variants). Distinct from
+// variantDisplayLabel so standalone chips don't get abbreviated too
+// aggressively.
+const VARIANT_SHORT: Record<string, string> = {
+  'Standard':        'Std',
+  'Foil':            'Foil',
+  'Hyperspace':      'HS',
+  'Hyperspace Foil': 'HSF',
+  'Prestige':        'Pres',
+  'Prestige Foil':   'PresF',
+  'Serialized':      'Ser',
+  'Showcase':        'SC',
+};
+
+export function variantShortLabel(label: string): string {
+  return VARIANT_SHORT[label] ?? label;
+}
+
 // Small colored pills for card print variants — reused by the search
 // results and the enriched trade-row view. Keep these purely chromatic;
 // they shouldn't collide with side-identity colors (emerald/blue) used

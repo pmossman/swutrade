@@ -12,6 +12,7 @@ import {
   extractVariantLabel,
   variantBadgeColor,
   variantDisplayLabel,
+  variantShortLabel,
   cardFamilyId,
   type CanonicalVariant,
 } from '../variants';
@@ -61,6 +62,46 @@ function cheapestVariant(variants: CardVariant[], priceMode: PriceMode): CardVar
 function restrictionKeyOf(variants: readonly string[]): string {
   if (variants.length === 0) return 'any';
   return [...variants].sort().join('|');
+}
+
+interface TileBadge {
+  text: string;
+  colorClass: string;
+}
+
+/**
+ * Badge text for a picker tile. Communicates what a tap would
+ * actually save — for Wants with a multi-variant filter, that's the
+ * full restriction ("HS or HSF"), not just the rep's own variant.
+ */
+function wantsBadge(
+  card: CardVariant,
+  listType: PickerListType,
+  selectedVariants: readonly CanonicalVariant[],
+): TileBadge | null {
+  const variant = extractVariantLabel(card.name);
+  if (listType === 'available') {
+    const label = variant === 'Standard' ? 'Standard' : variantDisplayLabel(variant);
+    return label ? { text: label, colorClass: variantBadgeColor(variant) } : null;
+  }
+  // Wants picker
+  if (selectedVariants.length === 0) {
+    // Only mark a tile when the rep isn't Standard — signals that the
+    // family has no Standard printing so the visible art differs from
+    // what an "any variant" tap might imply.
+    if (variant === 'Standard') return null;
+    const label = variantDisplayLabel(variant) || variant;
+    return { text: label, colorClass: variantBadgeColor(variant) };
+  }
+  if (selectedVariants.length === 1) {
+    const v = selectedVariants[0];
+    const label = variantDisplayLabel(v) || v;
+    return { text: label, colorClass: variantBadgeColor(v) };
+  }
+  // 2+ variants: surface the full restriction so the user sees every
+  // variant the saved Want will accept on this tap.
+  const text = selectedVariants.map(v => variantShortLabel(v)).join(' or ');
+  return { text, colorClass: 'bg-gold/15 text-gold border border-gold/40' };
 }
 
 /**
@@ -117,13 +158,13 @@ export function ListCardPicker({
   // Standard when filter is empty) — a saved Want is a cross-printing
   // entity, so showing every variant would be confusing.
   // Available picker: show every variant as its own tile since
-  // productIds are exact. Virtualization makes this cheap even when
-  // the filter is wide.
+  // productIds are exact. The variant filter doesn't apply here
+  // (the UI hides it); any persisted selection is ignored.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
     const setScoped = applySelectionFilters(
       baseResults,
       selectedSets,
-      listType === 'available' ? selectedVariants : [],
+      [],
     );
 
     if (listType !== 'wants') return setScoped;
@@ -231,7 +272,11 @@ export function ListCardPicker({
       </div>
 
       <div className="px-3 pt-2 shrink-0">
-        <SelectionFilterBar filters={filters} />
+        {/* Available cards are always exact variants (keyed by
+            productId), so narrowing the view by variant would just
+            hide rows without changing what gets saved. Hide the
+            variant chip group entirely in that picker. */}
+        <SelectionFilterBar filters={filters} hideVariantFilter={listType === 'available'} />
       </div>
 
       <div className="px-3 pt-2 shrink-0">
@@ -258,13 +303,14 @@ export function ListCardPicker({
         renderTile={(card, ctx) => {
           const key = tileKey(card);
           const savedQty = key ? savedCounts.get(key) ?? 0 : 0;
-          // Show variant badge when the rep represents a specific
-          // variant: always for available, and for wants whenever the
-          // filter is active OR the rep itself is non-Standard (e.g.
-          // "Any" filter but the family has no Standard printing).
-          const variant = extractVariantLabel(card.name);
-          const showBadge = listType === 'available'
-            || (listType === 'wants' && (selectedVariants.length > 0 || variant !== 'Standard'));
+          // Badge wording reflects what a tap will actually save:
+          //   - Available: exact tile variant (productId is precise).
+          //   - Wants with 0-variant filter: tile variant only when
+          //     non-Standard (family has no Standard printing).
+          //   - Wants with 1-variant filter: the chosen variant.
+          //   - Wants with 2+ variants: "HS or HSF" so the user can
+          //     see the whole restriction they'll save on tap.
+          const badge = wantsBadge(card, listType, selectedVariants);
           return (
             <PickerTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -273,7 +319,7 @@ export function ListCardPicker({
               priceMode={priceMode}
               landscape={ctx.leaderGroup}
               savedQty={savedQty}
-              showVariantBadge={showBadge}
+              badge={badge}
               onPick={() => onPick(card, pickContext)}
               onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
             />
@@ -290,7 +336,10 @@ interface PickerTileProps {
   priceMode: PriceMode;
   landscape: boolean;
   savedQty: number;
-  showVariantBadge: boolean;
+  /** Caption badge above the price. Parent computes the label + color
+   *  so it can reflect either the tile's variant (Available) or the
+   *  active restriction (Wants with multi-variant filter). */
+  badge: TileBadge | null;
   onPick: () => void;
   /** Decrement one saved qty. Only passed when savedQty > 0. */
   onDecrement?: () => void;
@@ -302,15 +351,10 @@ function PickerTile({
   priceMode,
   landscape,
   savedQty,
-  showVariantBadge,
+  badge,
   onPick,
   onDecrement,
 }: PickerTileProps) {
-  const variant = extractVariantLabel(card.name);
-  // Display label is empty for Standard; force "Standard" here so the
-  // expanded variant grid (Available picker) has an explicit label on
-  // every tile including the base printing.
-  const variantLabel = variant === 'Standard' ? 'Standard' : variantDisplayLabel(variant);
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
 
@@ -349,9 +393,9 @@ function PickerTile({
             mobile tile widths (HYPERSPACE + $6.02 doesn't fit on one line
             at the 4-col breakpoint). */}
         <div className="px-1.5 py-1 flex flex-col items-start gap-0.5">
-          {showVariantBadge && variantLabel && (
-            <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
-              {variantLabel}
+          {badge && (
+            <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${badge.colorClass}`}>
+              {badge.text}
             </span>
           )}
           {price !== null && (
