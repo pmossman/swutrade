@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CardVariant } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
@@ -90,6 +90,14 @@ export function CardResultsGrid({
     },
     overscan: 4,
   });
+
+  // Jump to the top whenever the results identity changes — e.g. the
+  // user toggles a set filter, variant filter, or types a query.
+  // Without this, the scroll position would survive into a shorter
+  // result list and strand the user staring at empty space.
+  useEffect(() => {
+    parentRef.current?.scrollTo({ top: 0 });
+  }, [results]);
 
   if (isSearching) {
     return <CenteredMessage>Searching…</CenteredMessage>;
