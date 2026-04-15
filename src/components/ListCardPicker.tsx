@@ -35,7 +35,6 @@ interface ListCardPickerProps {
   allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
-  title: string;
   /** Wants items (when listType === 'wants') — used to compute the
    *  saved-qty badge on each tile, scoped to the current variant
    *  filter so the badge reflects what *another tap would dedupe with*. */
@@ -82,7 +81,6 @@ export function ListCardPicker({
   allCards,
   percentage,
   priceMode,
-  title,
   wantsItems = [],
   availableItems = [],
   onPick,
@@ -179,18 +177,18 @@ export function ListCardPicker({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-space-800 shrink-0">
+      {/* The active tab above already shows Wants vs Available, so we
+          don't need a redundant "Add to X" title here — just a minimal
+          back affordance for touch users (desktop can use Esc). */}
+      <div className="px-3 py-2 border-b border-space-800 shrink-0">
         <button
           type="button"
           onClick={onClose}
-          aria-label="Done"
-          className="shrink-0 text-gray-500 hover:text-gray-200 transition-colors p-1 -ml-1"
+          className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-gray-200 transition-colors"
         >
-          <BackIcon className="w-4 h-4" />
+          <BackIcon className="w-3.5 h-3.5" />
+          Back to list
         </button>
-        <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-gray-400">
-          {title}
-        </span>
       </div>
 
       <div className="px-3 pt-2 shrink-0">

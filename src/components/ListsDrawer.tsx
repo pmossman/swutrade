@@ -185,7 +185,6 @@ export function ListsDrawer({
                   allCards={allCards}
                   percentage={percentage}
                   priceMode={priceMode}
-                  title="Add to Wants"
                   wantsItems={wants.items}
                   onPick={(card, ctx) => {
                     // Variant filter (acceptedVariants) drives the saved
@@ -255,7 +254,6 @@ export function ListsDrawer({
                   allCards={allCards}
                   percentage={percentage}
                   priceMode={priceMode}
-                  title="Add to Available"
                   availableItems={available.items}
                   onPick={card => {
                     if (!card.productId) return;

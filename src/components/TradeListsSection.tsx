@@ -190,10 +190,14 @@ interface CollapsibleSectionProps {
 }
 
 function CollapsibleSection({ tiles, heading, tone, percentage, priceMode, onAdd }: CollapsibleSectionProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Default collapsed so these sections don't eat real estate from the
+  // main card grid below — the count badge on the header draws the
+  // eye when there's something here worth opening.
+  const [collapsed, setCollapsed] = useState(true);
 
   const accent = TONE_HEADER[tone];
   const chevron = TONE_CHEVRON[tone];
+  const badge = TONE_BADGE[tone];
 
   return (
     <section className={collapsed ? 'mb-3' : 'mb-6'}>
@@ -217,7 +221,9 @@ function CollapsibleSection({ tiles, heading, tone, percentage, priceMode, onAdd
         <span className="text-[10px] font-bold tracking-[0.18em] uppercase">
           {heading}
         </span>
-        <span className="text-[10px] text-gray-600">{tiles.length}</span>
+        <span className={`ml-auto shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none ${badge}`}>
+          {tiles.length}
+        </span>
       </button>
       {!collapsed && (
         <ul className="flex flex-col gap-1.5">
@@ -323,6 +329,12 @@ const TONE_CHEVRON: Record<Tone, string> = {
   emerald: 'text-emerald-400/80',
   blue:    'text-blue-400/80',
   gold:    'text-gold/80',
+};
+
+const TONE_BADGE: Record<Tone, string> = {
+  emerald: 'bg-emerald-500/20 text-emerald-200',
+  blue:    'bg-blue-500/20 text-blue-200',
+  gold:    'bg-gold/25 text-gold-bright',
 };
 
 const TONE_HOVER: Record<Tone, { border: string; bg: string; text: string }> = {
