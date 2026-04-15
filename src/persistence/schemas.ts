@@ -4,10 +4,8 @@ import { CANONICAL_VARIANTS } from '../variants';
 export const PercentageSchema = z.number().int().min(1).max(100);
 export const PriceModeSchema = z.enum(['market', 'low']);
 export const StringArraySchema = z.array(z.string());
-export const SearchScopeSchema = z.enum(['all', 'main', 'promo']);
 
 export type PriceMode = z.infer<typeof PriceModeSchema>;
-export type SearchScope = z.infer<typeof SearchScopeSchema>;
 
 // --- List feature schemas ---------------------------------------------------
 // Bumped to v1 suffix so a future breaking change can version up without
@@ -58,9 +56,13 @@ export type AvailableItem = z.infer<typeof AvailableItemSchema>;
 export const PERSIST_KEYS = {
   percentage: 'swu.pct',
   priceMode: 'swu.pm',
-  hideVariants: 'swu.hideVariants',
-  hideSets: 'swu.hideSets',
-  searchScope: 'swu.searchScope',
+  // Positive-selection filters. Empty array = "allow all". Each surface
+  // (trade search, wants/available picker) has its own persisted state
+  // so a narrow picker filter doesn't also narrow the trade view.
+  tradeSelVariants: 'swu.trade.selVariants',
+  tradeSelSets: 'swu.trade.selSets',
+  pickerSelVariants: 'swu.picker.selVariants',
+  pickerSelSets: 'swu.picker.selSets',
   // v2: keyed by cardFamilyId (cross-printing) rather than swuapi's
   // baseCardId (per-printing). v1 data is not migrated — fresh start.
   wants: 'swu.wants.v2',
@@ -70,17 +72,15 @@ export const PERSIST_KEYS = {
 export const DEFAULTS = {
   percentage: 80,
   priceMode: 'market',
-  hideVariants: [] as string[],
-  hideSets: [] as string[],
-  searchScope: 'all',
+  selVariants: [] as string[],
+  selSets: [] as string[],
   wants: [] as WantsItem[],
   available: [] as AvailableItem[],
 } as const satisfies {
   percentage: number;
   priceMode: PriceMode;
-  hideVariants: string[];
-  hideSets: string[];
-  searchScope: SearchScope;
+  selVariants: string[];
+  selSets: string[];
   wants: WantsItem[];
   available: AvailableItem[];
 };

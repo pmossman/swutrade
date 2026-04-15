@@ -1,46 +1,20 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
-import { SETS, tradeCardKey } from '../types';
+import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
 import { useCardSearch } from '../hooks/useCardSearch';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { SearchResults } from './SearchResults';
-import { SearchControls } from './SearchControls';
-import type { useSearchFilters } from '../hooks/useVariantFilter';
+import { SelectionFilterBar } from './SelectionFilterBar';
+import type { SelectionFilters } from '../hooks/useSelectionFilters';
+import { applySelectionFilters } from '../applySelectionFilters';
 import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { SharedLists } from '../hooks/useSharedLists';
 import { TradeListsSection } from './TradeListsSection';
-
-const PROMO_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
-
-// Count sets in a search result set that fall in main vs promo.
-function countSets(results: { setSlug: string; groups: unknown[] }[], kind: 'main' | 'promo'): number {
-  return results.reduce((n, sg) => {
-    const isPromo = PROMO_SLUGS.has(sg.setSlug);
-    if (kind === 'promo' ? isPromo : !isPromo) return n + sg.groups.length;
-    return n;
-  }, 0);
-}
-
-// Sets relevant to the current scope — used by the filter chips so a
-// user only sees toggles for sets they could actually encounter.
-function relevantSetsForControls(
-  results: { setSlug: string; setCode: string }[],
-  scope: 'all' | 'main' | 'promo',
-): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const sg of results) {
-    const isPromo = PROMO_SLUGS.has(sg.setSlug);
-    if (scope === 'main' && isPromo) continue;
-    if (scope === 'promo' && !isPromo) continue;
-    if (!m.has(sg.setSlug)) m.set(sg.setSlug, sg.setCode);
-  }
-  return m;
-}
 
 interface TradeSideProps {
   label: string;
@@ -55,10 +29,8 @@ interface TradeSideProps {
   setCards: Record<string, CardVariant[]>;
   isLoading: boolean;
   onLoadAllSets: () => void;
-  onPriceModeChange: (mode: PriceMode) => void;
-  // Shared filter state (scope + hide-variants + hide-sets). Lifted to
-  // App so both trade sides stay in sync in real time.
-  filters: ReturnType<typeof useSearchFilters>;
+  // Shared filter state. Lifted to App so both trade sides stay in sync.
+  filters: SelectionFilters;
   // Personal-source pickers in the search overlay's empty state pull
   // from these. Offering side surfaces Available; Receiving surfaces
   // Wants. byFamilyAll / byProductId are the same indexes the Lists
@@ -203,7 +175,6 @@ export function TradeSide({
   setCards,
   isLoading,
   onLoadAllSets,
-  onPriceModeChange,
   wants,
   available,
   sharedLists,
@@ -216,13 +187,17 @@ export function TradeSide({
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const [searchFocused, setSearchFocused] = useState(false);
-  const [filterOpen, setFilterOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayInputRef = useRef<HTMLInputElement>(null);
 
   const allCards = useMemo(() => Object.values(setCards).flat(), [setCards]);
 
   const search = useCardSearch({ allCards, setFilter: null });
+
+  const filteredResults = useMemo(
+    () => applySelectionFilters(search.results, filters.selectedSets, filters.selectedVariants),
+    [search.results, filters.selectedSets, filters.selectedVariants],
+  );
 
   const handleClearSearch = () => {
     search.clearSearch();
@@ -346,30 +321,11 @@ export function TradeSide({
           )}
         </div>
       </div>
-      {/* Unified control strip — mirrors the main view's top-bar pill
-          group pattern. Lives OUTSIDE the scroll area so it's always
-          visible, just like Market/Low was before. */}
-      {hasSearchResults && (
-        <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
-          <SearchControls
-            scope={filters.scope}
-            setScope={filters.setScope}
-            hiddenVariants={filters.hiddenVariants}
-            hiddenSets={filters.hiddenSets}
-            toggleVariant={filters.toggleVariant}
-            toggleSet={filters.toggleSet}
-            clearAll={filters.clearAll}
-            totalHidden={filters.totalHidden}
-            relevantSets={relevantSetsForControls(search.results, filters.scope)}
-            filterOpen={filterOpen}
-            setFilterOpen={setFilterOpen}
-            priceMode={priceMode}
-            onPriceModeChange={onPriceModeChange}
-            mainCount={countSets(search.results, 'main')}
-            promoCount={countSets(search.results, 'promo')}
-          />
-        </div>
-      )}
+      {/* Filter bar — variant + set collapsibles above the results.
+          Market/Low lives in the main top bar, not here. */}
+      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
+        <SelectionFilterBar filters={filters} />
+      </div>
 
       {/* Lists section rendered ALWAYS (returns null when both lists
           are empty for this side). Stays accessible while user types
@@ -404,7 +360,7 @@ export function TradeSide({
       ) : (
         <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
           <SearchResults
-            results={search.results}
+            results={filteredResults}
             percentage={percentage}
             priceMode={priceMode}
             onAdd={onAdd}
@@ -414,9 +370,6 @@ export function TradeSide({
             isSearching={search.isSearching}
             query={search.query}
             accentColor={accentColor}
-            scope={filters.scope}
-            hiddenVariants={filters.hiddenVariants}
-            hiddenSets={filters.hiddenSets}
           />
         </div>
       )}

@@ -4,7 +4,6 @@ import * as Tabs from '@radix-ui/react-tabs';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
-import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
@@ -15,11 +14,9 @@ import { TradeImageModal } from './TradeImageModal';
 interface ListsDrawerProps {
   wants: WantsApi;
   available: AvailableApi;
-  filters: ReturnType<typeof useSearchFilters>;
   allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
-  onPriceModeChange: (mode: PriceMode) => void;
 }
 
 type ListTab = 'wants' | 'available';
@@ -32,11 +29,9 @@ type Mode = 'list' | 'picker';
 export function ListsDrawer({
   wants,
   available,
-  filters,
   allCards,
   percentage,
   priceMode,
-  onPriceModeChange,
 }: ListsDrawerProps) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
@@ -175,10 +170,8 @@ export function ListsDrawer({
                 <ListCardPicker
                   listType="wants"
                   allCards={allCards}
-                  filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
-                  onPriceModeChange={onPriceModeChange}
                   title="Add to Wants"
                   wantsItems={wants.items}
                   onPick={(card, ctx) => {
@@ -247,10 +240,8 @@ export function ListsDrawer({
                 <ListCardPicker
                   listType="available"
                   allCards={allCards}
-                  filters={filters}
                   percentage={percentage}
                   priceMode={priceMode}
-                  onPriceModeChange={onPriceModeChange}
                   title="Add to Available"
                   availableItems={available.items}
                   onPick={card => {

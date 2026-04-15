@@ -20,7 +20,7 @@ import { ListView } from './components/ListView';
 import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { usePriceData } from './hooks/usePriceData';
-import { useSearchFilters } from './hooks/useVariantFilter';
+import { useSelectionFilters } from './hooks/useSelectionFilters';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -87,8 +87,11 @@ function App() {
 
   const priceData = usePriceData();
   // Single shared filter-state instance so both trade sides see the
-  // same scope toggle + variant/set hide preferences in real time.
-  const filters = useSearchFilters();
+  // same variant/set selection preferences in real time.
+  const filters = useSelectionFilters({
+    variants: PERSIST_KEYS.tradeSelVariants,
+    sets: PERSIST_KEYS.tradeSelSets,
+  });
   const wants = useWants();
   const available = useAvailable();
   const sharedLists = useSharedLists();
@@ -245,11 +248,9 @@ function App() {
             <ListsDrawer
               wants={wants}
               available={available}
-              filters={filters}
               allCards={allLoadedCards}
               percentage={percentage}
               priceMode={priceMode}
-              onPriceModeChange={setPriceMode}
             />
             <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
               {/* Market/Low is a valuable surface on desktop where there's
@@ -320,7 +321,6 @@ function App() {
             setCards={priceData.cards}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
-            onPriceModeChange={setPriceMode}
             filters={filters}
             wants={wants}
             available={available}
@@ -349,7 +349,6 @@ function App() {
             setCards={priceData.cards}
             isLoading={priceData.isAnyLoading}
             onLoadAllSets={handleLoadAllSets}
-            onPriceModeChange={setPriceMode}
             filters={filters}
             wants={wants}
             available={available}

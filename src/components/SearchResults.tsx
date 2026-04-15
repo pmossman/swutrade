@@ -2,7 +2,6 @@ import type { CardVariant, TradeCard, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
 import { CardTile } from './CardTile';
-import type { SearchScope } from '../hooks/useVariantFilter';
 import { CardResultsGrid } from './CardResultsGrid';
 
 interface SearchResultsProps {
@@ -16,9 +15,6 @@ interface SearchResultsProps {
   isSearching: boolean;
   query: string;
   accentColor: 'emerald' | 'blue';
-  scope: SearchScope;
-  hiddenVariants: Set<string>;
-  hiddenSets: Set<string>;
 }
 
 // Trade-side wrapper around CardResultsGrid. Renders each variant as a
@@ -34,9 +30,6 @@ export function SearchResults({
   isSearching,
   query,
   accentColor,
-  scope,
-  hiddenVariants,
-  hiddenSets,
 }: SearchResultsProps) {
   const handleDecrement = (card: CardVariant) => {
     const key = tradeCardKey(card);
@@ -51,9 +44,6 @@ export function SearchResults({
       results={results}
       query={query}
       isSearching={isSearching}
-      scope={scope}
-      hiddenVariants={hiddenVariants}
-      hiddenSets={hiddenSets}
       renderTile={(card, ctx) => {
         const key = tradeCardKey(card);
         const qty = tradeCards.find(tc => tradeCardKey(tc.card) === key)?.qty ?? 0;
