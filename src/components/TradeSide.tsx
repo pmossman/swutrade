@@ -444,34 +444,7 @@ export function TradeSide({
         );
       })()}
 
-      {/* Slim add-action bar directly below the header. Hidden when
-          the panel is collapsed OR when the panel is empty — in that
-          case the big dashed AddCardsTile below is the primary CTA and
-          a second +Add affordance here reads as redundant. */}
-      {!collapsed && cards.length > 0 && (
-        <button
-          type="button"
-          onClick={() => {
-            setSearchFocused(true);
-            setTimeout(() => overlayInputRef.current?.focus(), 50);
-          }}
-          className={`flex items-center justify-center gap-1.5 py-1.5 border-b border-space-600 text-xs font-semibold transition-colors shrink-0 ${
-            accentColor === 'blue'
-              ? 'bg-blue-900/30 hover:bg-blue-800/50 text-blue-200'
-              : 'bg-emerald-900/30 hover:bg-emerald-800/50 text-emerald-200'
-          }`}
-          aria-label={`Add cards to ${label}`}
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-          Add card
-        </button>
-      )}
-
-      {/* Card list + add-affordance at the bottom. The "Add cards" button
-          sits AFTER any existing cards so it reads like the natural next
-          step — a pushed-down list end, not a separate input above. */}
+      {/* Card list sits above the sticky Add Card footer below. */}
       <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${collapsed ? 'hidden' : ''}`}>
         {cards.length === 0 ? (
           <AddCardsTile
@@ -650,6 +623,30 @@ export function TradeSide({
           </div>
         )}
       </div>
+
+      {/* Sticky Add Card footer — reads as the natural "next step" after
+          the card list. Hidden when collapsed (nothing to append to) or
+          when empty (AddCardsTile above is already the CTA). */}
+      {!collapsed && cards.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setSearchFocused(true);
+            setTimeout(() => overlayInputRef.current?.focus(), 50);
+          }}
+          className={`flex items-center justify-center gap-1.5 py-1.5 border-t border-space-600 text-xs font-semibold transition-colors shrink-0 ${
+            accentColor === 'blue'
+              ? 'bg-blue-900/30 hover:bg-blue-800/50 text-blue-200'
+              : 'bg-emerald-900/30 hover:bg-emerald-800/50 text-emerald-200'
+          }`}
+          aria-label={`Add cards to ${label}`}
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          Add card
+        </button>
+      )}
     </div>
     </>
   );
