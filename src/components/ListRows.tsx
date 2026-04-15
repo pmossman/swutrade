@@ -102,10 +102,10 @@ export function WantsRow({
             type="button"
             onClick={onToggleEdit}
             aria-expanded={isEditing}
-            className="flex items-center gap-0.5 mt-0.5 text-[10px] text-gray-500 hover:text-gold transition-colors"
+            className="self-start flex items-center gap-1 mt-1 px-2 py-1 rounded-md bg-space-900/70 border border-space-700 hover:border-gold/40 text-[11px] text-gray-300 hover:text-gold transition-colors"
           >
             <span className="truncate">{restrictionLabel(item.restriction)}</span>
-            <ChevronIcon open={isEditing} className="w-2.5 h-2.5 shrink-0" />
+            <ChevronIcon open={isEditing} className="w-3 h-3 shrink-0" />
           </button>
         </div>
         <button
@@ -121,6 +121,7 @@ export function WantsRow({
         <RestrictionEditor
           restriction={item.restriction}
           onChange={onChangeRestriction}
+          onClose={onToggleEdit}
         />
       )}
       <div className="flex items-center justify-between gap-2">
@@ -136,9 +137,11 @@ export function WantsRow({
 function RestrictionEditor({
   restriction,
   onChange,
+  onClose,
 }: {
   restriction: VariantRestriction;
   onChange: (next: VariantRestriction) => void;
+  onClose: () => void;
 }) {
   const setMode = (mode: 'any' | 'restricted') => {
     if (mode === 'any') {
@@ -176,7 +179,17 @@ function RestrictionEditor({
   };
 
   return (
-    <div className="rounded-lg bg-space-900/70 border border-space-700 px-3 py-2">
+    <div className="relative rounded-lg bg-space-900/70 border border-space-700 px-3 pt-2 pb-3 pr-9">
+      <button
+        type="button"
+        aria-label="Close variant editor"
+        onClick={onClose}
+        className="absolute top-1.5 right-1.5 w-6 h-6 rounded text-gray-500 hover:text-gray-200 hover:bg-space-700 transition-colors flex items-center justify-center"
+      >
+        <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+          <path d="M4 4L12 12M4 12L12 4" />
+        </svg>
+      </button>
       <div className="flex items-center gap-1 mb-2">
         <SegmentedOption active={restriction.mode === 'any'} onClick={() => setMode('any')}>
           Any
@@ -197,7 +210,7 @@ function RestrictionEditor({
                 key={v}
                 type="button"
                 onClick={() => toggleVariant(v)}
-                className={`text-xs leading-none px-2.5 py-1.5 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
+                className={`text-xs leading-none px-3 py-2 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
                 aria-pressed={selected}
               >
                 {v}
@@ -223,7 +236,7 @@ function SegmentedOption({
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+      className={`px-3 py-2 rounded-md text-xs font-semibold transition-colors ${
         active ? 'bg-gold/20 text-gold' : 'text-gray-400 hover:text-gray-200'
       }`}
     >
