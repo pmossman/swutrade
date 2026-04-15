@@ -6,7 +6,7 @@ import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { useSearchFilters } from '../hooks/useVariantFilter';
 import { ListCardPicker } from './ListCardPicker';
-import { extractVariantLabel, cardFamilyId, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { cardFamilyId } from '../variants';
 import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
@@ -68,24 +68,9 @@ export function ListsDrawer({
     return { byFamily, byFamilyAll, byProductId };
   }, [allCards]);
 
-  // Saved-count maps for picker tile badges. Keyed by:
-  //   - wants: familyId → total qty across all wants items for that card
-  //   - available: productId → qty for that exact variant
-  const wantsSavedCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const item of wants.items) {
-      m.set(item.familyId, (m.get(item.familyId) ?? 0) + item.qty);
-    }
-    return m;
-  }, [wants.items]);
-
-  const availableSavedCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const item of available.items) {
-      m.set(item.productId, (m.get(item.productId) ?? 0) + item.qty);
-    }
-    return m;
-  }, [available.items]);
+  // Picker computes its own saved-count badges (scoped by current
+  // variant filter for wants), so we just thread the raw items
+  // through rather than pre-aggregating here.
 
   // Priority-first sort for wants, insertion order otherwise
   const sortedWants = useMemo(() => {
@@ -195,24 +180,14 @@ export function ListsDrawer({
                   priceMode={priceMode}
                   onPriceModeChange={onPriceModeChange}
                   title="Add to Wants"
-                  savedCounts={wantsSavedCounts}
+                  wantsItems={wants.items}
                   onPick={(card, ctx) => {
-                    const variant = extractVariantLabel(card.name);
-                    // Only save a restricted variant if it's canonical —
-                    // promo-only labels like "(Judge)" or "(Top 8)" don't
-                    // match the schema enum, so those fall back to Any.
-                    const isCanonical = (CANONICAL_VARIANTS as readonly string[]).includes(variant);
-                    // Force Specific when the visible tile represents a
-                    // non-Standard variant — the user's choice of tile
-                    // signals intent. Showcase Leaders especially: search
-                    // "showcase" filters the family to that single tile,
-                    // and tapping it should save Specific[Showcase], not
-                    // "any printing of this card."
-                    const visibleIsNonStandard = isCanonical && variant !== 'Standard';
-                    const useSpecific = isCanonical
-                      && (ctx.wantsMode === 'specific' || visibleIsNonStandard);
-                    const restriction = useSpecific
-                      ? { mode: 'restricted' as const, variants: [variant as CanonicalVariant] }
+                    // Variant filter (acceptedVariants) drives the saved
+                    // restriction. Empty filter → any. Otherwise →
+                    // restricted to the filter set.
+                    const accepted = ctx.acceptedVariants ?? [];
+                    const restriction = accepted.length > 0
+                      ? { mode: 'restricted' as const, variants: accepted }
                       : { mode: 'any' as const };
                     wants.add({ familyId: cardFamilyId(card), qty: 1, restriction });
                   }}
@@ -277,7 +252,7 @@ export function ListsDrawer({
                   priceMode={priceMode}
                   onPriceModeChange={onPriceModeChange}
                   title="Add to Available"
-                  savedCounts={availableSavedCounts}
+                  availableItems={available.items}
                   onPick={card => {
                     if (!card.productId) return;
                     available.add({ productId: card.productId, qty: 1 });

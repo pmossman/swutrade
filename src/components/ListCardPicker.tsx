@@ -8,18 +8,28 @@ import {
   adjustPrice,
   getCardPrice,
 } from '../services/priceService';
-import { extractVariantLabel, variantBadgeColor, variantDisplayLabel, cardFamilyId } from '../variants';
+import {
+  extractVariantLabel,
+  variantBadgeColor,
+  variantDisplayLabel,
+  cardFamilyId,
+  CANONICAL_VARIANTS,
+  type CanonicalVariant,
+} from '../variants';
+import type { WantsItem, AvailableItem } from '../persistence';
 import { CardResultsGrid } from './CardResultsGrid';
 import { SearchControls } from './SearchControls';
 
 const promoSlugs = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 
 export type PickerListType = 'wants' | 'available';
-export type PickerWantsMode = 'any' | 'specific';
 
 export interface PickContext {
-  /** For wants picker: whether the user is in 'any' or 'specific' mode. */
-  wantsMode?: PickerWantsMode;
+  /** For wants picker: the variant filter active when the user tapped.
+   *  Empty array means "any variant" — the tap should save with
+   *  restriction.mode = 'any'. Non-empty means restriction.mode =
+   *  'restricted' with these variants. */
+  acceptedVariants?: CanonicalVariant[];
 }
 
 interface ListCardPickerProps {
@@ -30,10 +40,13 @@ interface ListCardPickerProps {
   priceMode: PriceMode;
   onPriceModeChange: (mode: PriceMode) => void;
   title: string;
-  /** Count already in list, keyed by identifier:
-   *   - wants: familyId → total qty across every wants item in that family
-   *   - available: productId → qty for that exact variant */
-  savedCounts: Map<string, number>;
+  /** Wants items (when listType === 'wants') — used to compute the
+   *  saved-qty badge on each tile, scoped to the current variant
+   *  filter so the badge reflects what *another tap would dedupe with*. */
+  wantsItems?: readonly WantsItem[];
+  /** Available items (when listType === 'available') — used for
+   *  productId-keyed saved-qty badge. */
+  availableItems?: readonly AvailableItem[];
   onPick: (card: CardVariant, ctx: PickContext) => void;
   onClose: () => void;
 }
@@ -58,30 +71,42 @@ function countSets(results: SetSearchGroup[], which: 'main' | 'promo'): number {
   return n;
 }
 
-/**
- * Pick the variant best suited to represent a base card in "Any" mode.
- * Prefer Standard (cheapest common printing) so the tile reads as the
- * canonical card, not a Showcase. Falls back to the first variant when
- * Standard isn't present (e.g. promo-only cards).
- */
 function representativeVariant(variants: CardVariant[]): CardVariant {
   return variants.find(v => extractVariantLabel(v.name) === 'Standard') ?? variants[0];
 }
 
+function cheapestVariant(variants: CardVariant[], priceMode: PriceMode): CardVariant {
+  return variants.reduce((best, c) => {
+    const bp = getCardPrice(best, priceMode) ?? Infinity;
+    const cp = getCardPrice(c, priceMode) ?? Infinity;
+    return cp < bp ? c : best;
+  });
+}
+
+function restrictionKeyOf(variants: readonly string[]): string {
+  if (variants.length === 0) return 'any';
+  return [...variants].sort().join('|');
+}
+
 /**
- * Embedded card-search surface for the Lists drawer. Reuses the same
- * SearchControls + CardResultsGrid as the main trade search so filter
- * preferences and set-grouped results stay consistent across the app.
+ * Embedded card-search surface for the Lists drawer.
  *
- * Wants picker adds an Any / Specific toggle:
- *   - Any: one tile per base card; tapping saves with restriction = any.
- *   - Specific: one tile per variant; tapping saves with restriction =
- *     restricted to that variant.
+ * The wants picker carries a persistent variant filter at the top —
+ * a chip strip with "Any" + the eight canonical variants. The filter
+ * drives two things at once:
+ *   1. Tile representation: with no filter, one tile per base card with
+ *      the Standard rep. With a filter, families are narrowed to those
+ *      that have a matching variant, and the tile shows the cheapest
+ *      matching variant for that family.
+ *   2. Saved restriction on tap: the active filter becomes the wants
+ *      item's restriction. Re-tapping with the same filter bumps qty;
+ *      changing the filter and re-tapping creates a separate row.
  *
- * Picker does NOT auto-close on pick. Users stay in the search to add
- * more cards or adjust qty (re-tap bumps qty on the existing entry).
- * Tiles show a saved-count badge so users see at a glance what they've
- * already added.
+ * Available picker has no filter — productIds are exact.
+ *
+ * Picker stays open across taps. Tiles show a saved-qty badge that
+ * reflects what re-tapping would do (i.e. scoped by the current
+ * filter for wants).
  */
 export function ListCardPicker({
   listType,
@@ -91,7 +116,8 @@ export function ListCardPicker({
   priceMode,
   onPriceModeChange,
   title,
-  savedCounts,
+  wantsItems = [],
+  availableItems = [],
   onPick,
   onClose,
 }: ListCardPickerProps) {
@@ -100,7 +126,7 @@ export function ListCardPicker({
     setFilter: null,
   });
   const [filterOpen, setFilterOpen] = useState(false);
-  const [wantsMode, setWantsMode] = useState<PickerWantsMode>('any');
+  const [selectedVariants, setSelectedVariants] = useState<CanonicalVariant[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -114,27 +140,71 @@ export function ListCardPicker({
     [results, filters.scope],
   );
 
-  // In wants/Any mode, collapse each base-card group to its
-  // representative variant so the picker shows one tile per card.
+  // Wants results are always one tile per base-card family. With no
+  // filter, the rep is the Standard variant. With a filter, the rep
+  // is the cheapest variant that matches the filter, and families
+  // without any matching variant drop out entirely.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
-    if (listType !== 'wants' || wantsMode !== 'any') return results;
+    if (listType !== 'wants') return results;
     return results.map(sg => ({
       ...sg,
-      groups: sg.groups.map(g => ({
-        ...g,
-        variants: g.variants.length > 0 ? [representativeVariant(g.variants)] : [],
-      })),
+      groups: sg.groups
+        .map(g => {
+          if (selectedVariants.length === 0) {
+            return g.variants.length > 0
+              ? { ...g, variants: [representativeVariant(g.variants)] }
+              : null;
+          }
+          const matching = g.variants.filter(c => {
+            const v = extractVariantLabel(c.name);
+            return (selectedVariants as readonly string[]).includes(v);
+          });
+          if (matching.length === 0) return null;
+          return { ...g, variants: [cheapestVariant(matching, priceMode)] };
+        })
+        .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [results, listType, wantsMode]);
+  }, [results, listType, selectedVariants, priceMode]);
 
-  const pickContext: PickContext = listType === 'wants' ? { wantsMode } : {};
+  // Saved-count lookup. For wants, scope by (familyId + filter
+  // restriction key) so a Hyperspace-saved Luke doesn't show a count
+  // when the filter is "Any" (different restriction → different item).
+  const savedCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    if (listType === 'wants') {
+      const filterKey = restrictionKeyOf(selectedVariants);
+      for (const item of wantsItems) {
+        const itemKey = item.restriction.mode === 'any'
+          ? 'any'
+          : restrictionKeyOf(item.restriction.variants);
+        if (itemKey !== filterKey) continue;
+        m.set(item.familyId, (m.get(item.familyId) ?? 0) + item.qty);
+      }
+    } else {
+      for (const item of availableItems) {
+        m.set(item.productId, (m.get(item.productId) ?? 0) + item.qty);
+      }
+    }
+    return m;
+  }, [listType, wantsItems, availableItems, selectedVariants]);
 
-  // Key a tile against the saved-count map: wants counts keyed by
-  // cardFamilyId (cross-printing), available counts by productId.
   const tileKey = (card: CardVariant): string | null => {
     if (listType === 'wants') return cardFamilyId(card);
     return card.productId ?? null;
   };
+
+  const pickContext: PickContext = listType === 'wants'
+    ? { acceptedVariants: selectedVariants }
+    : {};
+
+  const toggleFilterVariant = (v: CanonicalVariant) => {
+    setSelectedVariants(prev =>
+      (prev as readonly string[]).includes(v)
+        ? prev.filter(x => x !== v)
+        : [...prev, v],
+    );
+  };
+  const clearFilter = () => setSelectedVariants([]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -150,25 +220,40 @@ export function ListCardPicker({
         <span className="text-[11px] font-bold tracking-[0.1em] uppercase text-gray-400">
           {title}
         </span>
-        {listType === 'wants' && (
-          <div className="ml-auto flex items-center gap-0.5 rounded-md bg-space-800 border border-space-700 p-0.5">
-            <WantsModeButton
-              active={wantsMode === 'any'}
-              onClick={() => setWantsMode('any')}
-              title="One tile per card; any variant accepted"
+      </div>
+
+      {/* Wants picker — persistent variant filter. Tap-to-toggle chips,
+          "Any" clears all variants. Filter drives both visible reps and
+          the saved restriction on tap. */}
+      {listType === 'wants' && (
+        <div className="px-3 pt-2 shrink-0">
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
+              Variant
+            </span>
+            <FilterChip
+              active={selectedVariants.length === 0}
+              onClick={clearFilter}
+              colorClass="bg-gold/15 text-gold border-gold/40"
             >
               Any
-            </WantsModeButton>
-            <WantsModeButton
-              active={wantsMode === 'specific'}
-              onClick={() => setWantsMode('specific')}
-              title="One tile per variant; save a specific printing"
-            >
-              Specific
-            </WantsModeButton>
+            </FilterChip>
+            {CANONICAL_VARIANTS.map(v => {
+              const active = (selectedVariants as readonly string[]).includes(v);
+              return (
+                <FilterChip
+                  key={v}
+                  active={active}
+                  onClick={() => toggleFilterVariant(v)}
+                  colorClass={variantBadgeColor(v)}
+                >
+                  {v === 'Hyperspace Foil' ? 'HS Foil' : v === 'Prestige Foil' ? 'Pres Foil' : v}
+                </FilterChip>
+              );
+            })}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="px-3 pt-2 shrink-0">
         <input
@@ -223,15 +308,13 @@ export function ListCardPicker({
           renderTile={(card, ctx) => {
             const key = tileKey(card);
             const savedQty = key ? savedCounts.get(key) ?? 0 : 0;
-            // Show variant badge when the tile represents a specific
-            // variant — always for available, always in wants/Specific,
-            // and in wants/Any when search filtered the family down to
-            // a non-Standard variant (so the user sees what they're
-            // about to save). Otherwise hide so Any tiles stay clean.
+            // Show variant badge when the rep represents a specific
+            // variant: always for available, and for wants whenever the
+            // filter is active OR the rep itself is non-Standard (e.g.
+            // "Any" filter but the family has no Standard printing).
             const variant = extractVariantLabel(card.name);
             const showBadge = listType === 'available'
-              || wantsMode === 'specific'
-              || (wantsMode === 'any' && variant !== 'Standard');
+              || (listType === 'wants' && (selectedVariants.length > 0 || variant !== 'Standard'));
             return (
               <PickerTile
                 key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -251,25 +334,23 @@ export function ListCardPicker({
   );
 }
 
-function WantsModeButton({
+function FilterChip({
   active,
   onClick,
-  title,
+  colorClass,
   children,
 }: {
   active: boolean;
   onClick: () => void;
-  title: string;
+  colorClass: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={title}
-      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide transition-colors ${
-        active ? 'bg-gold/20 text-gold' : 'text-gray-500 hover:text-gray-300'
-      }`}
+      className={`text-[10px] leading-none px-2 py-1 rounded font-bold uppercase tracking-wide transition-opacity border ${colorClass} ${active ? '' : 'opacity-30 border-transparent'}`}
+      aria-pressed={active}
     >
       {children}
     </button>
@@ -281,10 +362,7 @@ interface PickerTileProps {
   percentage: number;
   priceMode: PriceMode;
   landscape: boolean;
-  /** Current total qty of this card saved to the list (0 if not saved). */
   savedQty: number;
-  /** Show the variant badge — true for available and wants/specific,
-   *  false for wants/any where the tile represents a base card. */
   showVariantBadge: boolean;
   onPick: () => void;
 }
