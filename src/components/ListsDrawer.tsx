@@ -96,7 +96,7 @@ export function ListsDrawer({
           className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-300 hover:text-gold"
         >
           <ListsIcon className="w-3.5 h-3.5" />
-          <span className="tracking-wide uppercase">My Lists</span>
+          <span>My Lists</span>
           {totalCount > 0 && (
             <span className="ml-0.5 px-1.5 py-px rounded-full bg-gold/20 text-gold text-[10px] font-bold leading-none">
               {totalCount}
