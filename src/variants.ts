@@ -95,13 +95,17 @@ export function isLeaderOrBaseGroup(
 
 /**
  * Canonical base name for a card. Prefers the enriched displayName
- * (stable across TCGPlayer's occasional name inconsistencies — e.g.
- * "Cad Bane" and "Cade Bane" variants of the same printing both get
- * normalized via swuapi enrichment) and falls back to stripping the
- * variant suffix from the raw name.
+ * — but only when cardType is also populated, which signals the
+ * enrichment fully matched. Without cardType, swuapi occasionally
+ * matched a wrong card (e.g. a "Saw Gerrera" Standard variant got
+ * a displayName of "Credit"), so we fall back to the raw name for
+ * unenriched/mismatched rows. The downside is TCGPlayer's typo
+ * cases (Cad vs Cade Bane) only merge when cardType is present,
+ * but that's the common case for all real printings.
  */
 export function cardBaseName(card: CardVariant): string {
-  return card.displayName ?? extractBaseName(card.name);
+  if (card.displayName && card.cardType) return card.displayName;
+  return extractBaseName(card.name);
 }
 
 export function groupCards(cards: CardVariant[]): CardGroup[] {
