@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { CardVariant, CardGroup } from '../types';
 import { SETS } from '../types';
-import { groupCards, extractVariantLabel } from '../variants';
+import { groupCards, extractVariantLabel, isLeaderOrBaseGroup } from '../variants';
 
 function parseCardNumber(num: string): number {
   const match = num.match(/^(\d+)/);
@@ -40,9 +40,16 @@ export function browseAllGroups(allCards: CardVariant[], maxGroups = 500): SetSe
     const setInfo = SETS.find(s => s.slug === slug);
     if (!setInfo) continue;
     const groups = groupCards(cards);
-    groups.sort((a, b) =>
-      parseCardNumber(a.variants[0]?.number ?? '') - parseCardNumber(b.variants[0]?.number ?? ''),
-    );
+    // Leaders and bases sink to the bottom of each set — playable
+    // tradable cards (units/events/upgrades) are what people scroll
+    // for, and the leader/base splash art otherwise eats the first
+    // several rows. Within each bucket, sort ascending by card number.
+    groups.sort((a, b) => {
+      const aLeader = isLeaderOrBaseGroup(a.variants) ? 1 : 0;
+      const bLeader = isLeaderOrBaseGroup(b.variants) ? 1 : 0;
+      if (aLeader !== bLeader) return aLeader - bLeader;
+      return parseCardNumber(a.variants[0]?.number ?? '') - parseCardNumber(b.variants[0]?.number ?? '');
+    });
     const remaining = maxGroups - total;
     if (remaining <= 0) break;
     const limited = groups.slice(0, remaining);
