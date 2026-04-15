@@ -5,7 +5,7 @@ import { PriceSlider } from './PriceSlider';
 import { ShareButtons } from './ShareButtons';
 import { MobileActionsKebab } from './MobileActionsKebab';
 import { tradeCardKey } from '../types';
-import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices } from '../services/priceService';
+import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, countMissingPrices } from '../services/priceService';
 import { extractVariantLabel, extractBaseName } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
@@ -18,11 +18,6 @@ interface TradeSummaryProps {
   onPriceModeChange: (mode: PriceMode) => void;
   onPercentageChange: (value: number) => void;
   onClose: () => void;
-}
-
-function formatPrice(price: number | null): string {
-  if (price === null) return 'N/A';
-  return `$${price.toFixed(2)}`;
 }
 
 function calcTotal(cards: TradeCard[], percentage: number, priceMode: PriceMode): number {

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
-import { adjustPrice, cardImageUrl, getCardPrice, getAltPrice } from '../services/priceService';
+import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, variantBadgeColor } from '../variants';
 
 interface CardTileProps {
@@ -14,11 +14,6 @@ interface CardTileProps {
   landscape?: boolean;
   onAdd: (card: CardVariant) => void;
   onDecrement: (card: CardVariant) => void;
-}
-
-function formatPrice(price: number | null): string {
-  if (price === null) return 'N/A';
-  return `$${price.toFixed(2)}`;
 }
 
 const qtyBadgeClass: Record<string, string> = {

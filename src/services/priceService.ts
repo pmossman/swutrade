@@ -39,6 +39,16 @@ export function adjustPrice(price: number | null, percentage: number): number | 
   return Math.round(price * (percentage / 100) * 100) / 100;
 }
 
+/**
+ * Render a price for display: `$1.23` or `N/A` for null. Centralized
+ * because three call sites (trade row, trade summary, card tile)
+ * had byte-identical copies that drifted in spirit but not in shape.
+ */
+export function formatPrice(price: number | null): string {
+  if (price === null) return 'N/A';
+  return `$${price.toFixed(2)}`;
+}
+
 /** Get the active price for a card based on the price mode */
 export function getCardPrice(card: CardVariant, mode: PriceMode): number | null {
   return mode === 'low' ? card.lowPrice : card.marketPrice;

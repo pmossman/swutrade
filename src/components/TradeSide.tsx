@@ -1,9 +1,8 @@
 import { useState, useMemo, useRef, useCallback, useEffect, useDeferredValue } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
-import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
-import { extractVariantLabel, extractBaseName } from '../variants';
-import { VariantBadge } from './VariantBadge';
+import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
+import { extractBaseName } from '../variants';
 import { useCardSearch, browseAllGroups } from '../hooks/useCardSearch';
 import { bestMatchForWant, matchesRestriction } from '../listMatching';
 import type { WantsItem } from '../persistence';
@@ -12,8 +11,7 @@ import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { applySelectionFilters } from '../applySelectionFilters';
-import { KebabMenu } from './KebabMenu';
-import type { KebabMenuItem } from './KebabMenu';
+import { TradeRow, type ThumbSize } from './TradeRow';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { SharedLists } from '../hooks/useSharedLists';
@@ -58,72 +56,6 @@ interface TradeSideProps {
   onConsumeAutoOpen?: () => void;
 }
 
-function formatPrice(price: number | null): string {
-  if (price === null) return 'N/A';
-  return `$${price.toFixed(2)}`;
-}
-
-// Missing prices silently get treated as $0 in the totals, which can throw
-// off a trade by a lot — make them loud at every level (row tint, border,
-// icon) so the user can't miss them.
-const priceClass = (price: number | null, defaultClass: string) =>
-  price === null ? 'text-red-400 font-bold' : defaultClass;
-
-const MissingPriceIcon = ({ className = 'w-3.5 h-3.5' }: { className?: string }) => (
-  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-  </svg>
-);
-
-// Adaptive card image — size driven by parent
-type ThumbSize = 'xs' | 'sm' | 'md' | 'lg';
-
-function CardThumb({ productId, name, size }: { productId?: string; name: string; size: ThumbSize }) {
-  const [errored, setErrored] = useState(false);
-  const [isLandscape, setIsLandscape] = useState(false);
-  const imgSize = size === 'lg' ? 'lg' : 'md';
-  const src = cardImageUrl(productId, imgSize);
-
-  // Portrait (standard card) vs landscape (leader card). Leaders detected
-  // on image load — flip width/height so the full card shows instead of
-  // being crop-cover'd to portrait.
-  const sizeClassesPortrait: Record<ThumbSize, string> = {
-    xs: 'w-5 h-7 rounded-sm text-[8px]',
-    sm: 'w-7 h-10 rounded text-[9px]',
-    md: 'w-10 h-14 rounded-md text-[10px]',
-    lg: 'w-20 h-28 rounded-lg text-sm',
-  };
-  const sizeClassesLandscape: Record<ThumbSize, string> = {
-    xs: 'w-7 h-5 rounded-sm text-[8px]',
-    sm: 'w-10 h-7 rounded text-[9px]',
-    md: 'w-14 h-10 rounded-md text-[10px]',
-    lg: 'w-28 h-20 rounded-lg text-sm',
-  };
-  const sizeClass = (isLandscape ? sizeClassesLandscape : sizeClassesPortrait)[size];
-
-  if (!src || errored) {
-    return (
-      <div className={`${sizeClass} bg-space-600 shrink-0 flex items-center justify-center text-gray-600`}>
-        ?
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={name}
-      loading="lazy"
-      onError={() => setErrored(true)}
-      onLoad={e => {
-        const img = e.currentTarget;
-        if (img.naturalWidth > img.naturalHeight) setIsLandscape(true);
-      }}
-      className={`${sizeClass} object-cover shrink-0 bg-space-600`}
-    />
-  );
-}
-
 const headerColors: Record<string, string> = {
   emerald: 'border-emerald-500/30 text-emerald-300',
   blue: 'border-blue-500/30 text-blue-300',
@@ -140,11 +72,6 @@ const saberBarColors: Record<string, string> = {
 const searchBorderColors: Record<string, string> = {
   emerald: 'focus:border-emerald-500/50 focus:ring-emerald-500/20',
   blue: 'focus:border-blue-500/50 focus:ring-blue-500/20',
-};
-
-const qtyBtnColors: Record<string, string> = {
-  emerald: 'text-emerald-400 bg-emerald-900/30 hover:bg-emerald-900/50 active:bg-emerald-900/70',
-  blue: 'text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/70',
 };
 
 // Collapse chevron — colored to match the side accent so it reads as
@@ -369,7 +296,6 @@ export function TradeSide({
 
   const hdr = headerColors[accentColor];
   const searchBorder = searchBorderColors[accentColor];
-  const qtyBtn = qtyBtnColors[accentColor];
   const tSize = thumbSize(cards.length, isMobile);
 
   return (
@@ -577,153 +503,19 @@ export function TradeSide({
           <div className="divide-y divide-space-700">
             {cards.map(tc => {
               const key = tradeCardKey(tc.card);
-              const unitPrice = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
-              const altUnitPrice = adjustPrice(getAltPrice(tc.card, priceMode), percentage);
-              const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
-              const variant = extractVariantLabel(tc.card.name);
-
-              // Market↔Low spread. Computed off raw (unadjusted) prices so
-              // the percentage tracks the cards themselves, not the user's
-              // negotiation slider. Require BOTH a meaningful ratio and a
-              // dollar-gap floor — a $0.30 → $0.20 card is 33% but nobody
-              // cares about 10 cents.
-              const marketRaw = getCardPrice(tc.card, 'market');
-              const lowRaw = getCardPrice(tc.card, 'low');
-              const spreadDollar = (marketRaw !== null && lowRaw !== null) ? marketRaw - lowRaw : null;
-              const spreadPct = (marketRaw !== null && lowRaw !== null && marketRaw > 0)
-                ? (marketRaw - lowRaw) / marketRaw
-                : null;
-              const spreadHigh = spreadPct !== null && spreadPct >= 0.25 && (spreadDollar ?? 0) >= 0.5;
-
-              const rowPads: Record<ThumbSize, string> = {
-                lg: 'px-3 py-3 gap-3',
-                md: 'px-2.5 py-1.5 gap-2',
-                sm: 'px-2 py-1 gap-1.5',
-                xs: 'px-1.5 py-0.5 gap-1.5',
-              };
-              const isCompact = tSize === 'sm' || tSize === 'xs';
-              const isLarge = tSize === 'lg';
-
-              const tcgUrl = cardTcgPlayerUrl(tc.card.productId);
-              const missingPrice = unitPrice === null;
-              // Loud red border + tinted background when a row has no price —
-              // these line items contribute $0 to the total and are easy to
-              // gloss over otherwise.
-              const rowClasses = missingPrice
-                ? `group flex items-center ${rowPads[tSize]} border-l-4 border-red-500 bg-red-950/30`
-                : `group flex items-center ${rowPads[tSize]} hover:bg-space-700/30 transition-colors`;
-
-              const spreadBadge = spreadHigh && spreadPct !== null ? (
-                <span
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 text-[9px] font-semibold leading-none"
-                  title={`Wide spread: Market $${(marketRaw ?? 0).toFixed(2)} vs Low $${(lowRaw ?? 0).toFixed(2)}`}
-                >
-                  Δ{Math.round(spreadPct * 100)}%
-                </span>
-              ) : null;
-
               return (
-                <div key={key} className={rowClasses}>
-                  <div className="shrink-0">
-                    <CardThumb productId={tc.card.productId} name={tc.card.name} size={tSize} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {missingPrice && (
-                        <span className="text-red-400 shrink-0" title="No price data">
-                          <MissingPriceIcon className={isCompact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
-                        </span>
-                      )}
-                      <span className={`text-gray-100 leading-tight ${isLarge ? 'text-sm font-semibold' : isCompact ? 'text-[11px] truncate' : 'text-xs truncate'}`}>
-                        {extractBaseName(tc.card.name)}
-                      </span>
-                      <VariantBadge variant={variant} shrink />
-                      {isLarge && spreadBadge}
-                    </div>
-                    {!isCompact && !isLarge && (
-                      <div className="flex items-center gap-1.5 flex-wrap leading-tight mt-0.5 text-[10px] text-gray-500">
-                        {spreadBadge}
-                        <span>
-                          <span className="text-gray-400">{priceMode === 'market' ? 'Mkt' : 'Low'}</span>{' '}
-                          <span className={priceClass(unitPrice, '')}>{formatPrice(unitPrice)}</span> ea
-                          {altUnitPrice !== null && (
-                            <span className="text-gray-600 ml-1">
-                              <span className="text-gray-600">{priceMode === 'market' ? 'Low' : 'Mkt'}</span> {formatPrice(altUnitPrice)}
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    )}
-                    {isLarge && (
-                      <div className="mt-1 flex items-center gap-2 text-xs">
-                        <span className="flex items-baseline gap-1">
-                          <span className="text-[9px] uppercase tracking-wide text-gray-500">{priceMode === 'market' ? 'Mkt' : 'Low'}</span>
-                          <span className={`tabular-nums ${priceClass(unitPrice, 'text-gray-400')}`}>
-                            {formatPrice(unitPrice)}
-                          </span>
-                        </span>
-                        {altUnitPrice !== null && (
-                          <span className="flex items-baseline gap-1 text-gray-600">
-                            <span className="text-[9px] uppercase tracking-wide">{priceMode === 'market' ? 'Low' : 'Mkt'}</span>
-                            <span className="tabular-nums">{formatPrice(altUnitPrice)}</span>
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {/* Secondary actions collapsed behind a kebab to keep
-                      the row scannable. Qty controls stay primary. */}
-                  {(() => {
-                    const menuItems: KebabMenuItem[] = [];
-                    if (tcgUrl) {
-                      menuItems.push({
-                        label: 'View on TCGPlayer',
-                        href: tcgUrl,
-                        icon: (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        ),
-                      });
-                    }
-                    menuItems.push({
-                      label: 'Swap variant',
-                      onClick: () => handleReplace(tc.card),
-                      icon: (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3l4 4m0 0l-4 4m4-4H4m4 14l-4-4m0 0l4-4m-4 4h16" />
-                        </svg>
-                      ),
-                    });
-                    return (
-                      <div className="shrink-0">
-                        <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
-                      </div>
-                    );
-                  })()}
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={() => tc.qty <= 1 ? onRemove(key) : onChangeQty(key, -1)}
-                      className={`${isCompact ? 'w-5 h-5 text-[10px]' : tSize === 'lg' ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${tc.qty <= 1 ? 'text-red-400 bg-red-900/30 hover:bg-red-900/50' : qtyBtn}`}
-                      aria-label={tc.qty <= 1 ? 'Remove' : 'Decrease quantity'}
-                    >
-                      {tc.qty <= 1 ? '×' : '−'}
-                    </button>
-                    <span className={`${isCompact ? 'w-4 text-[10px]' : tSize === 'lg' ? 'w-6 text-sm' : 'w-5 text-xs'} text-center font-bold text-gray-200 tabular-nums`}>
-                      {tc.qty}
-                    </span>
-                    <button
-                      onClick={() => onChangeQty(key, 1)}
-                      className={`${isCompact ? 'w-5 h-5 text-[10px]' : tSize === 'lg' ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qtyBtn}`}
-                      aria-label="Increase quantity"
-                    >
-                      +
-                    </button>
-                  </div>
-                  <span className={`${isCompact ? 'text-[10px] w-11' : isLarge ? 'text-sm w-16' : 'text-xs w-14'} font-semibold tabular-nums shrink-0 text-right ${priceClass(lineTotal, 'text-gold')}`}>
-                    {formatPrice(lineTotal)}
-                  </span>
-                </div>
+                <TradeRow
+                  key={key}
+                  card={tc.card}
+                  qty={tc.qty}
+                  percentage={percentage}
+                  priceMode={priceMode}
+                  size={tSize}
+                  accentColor={accentColor}
+                  onChangeQty={delta => onChangeQty(key, delta)}
+                  onRemove={() => onRemove(key)}
+                  onReplace={() => handleReplace(tc.card)}
+                />
               );
             })}
           </div>
