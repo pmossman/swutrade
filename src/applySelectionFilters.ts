@@ -2,18 +2,20 @@ import type { SetSearchGroup } from './hooks/useCardSearch';
 import { SETS } from './types';
 import { extractVariantLabel } from './variants';
 
-/** Pseudo-slug that groups all promo sets into a single filter chip. */
-export const PROMOS_GROUP = 'promos';
+/** Pseudo-slugs that group sets by category for single-tap selection. */
+export const MAIN_GROUP = 'group:main';
+export const SPECIAL_GROUP = 'group:special';
 
-const PROMO_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
+const MAIN_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
+const SPECIAL_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 
 /**
  * Apply positive selection filters to a flat list of search result
  * groups. Empty selection means "allow all" for that dimension.
  *
- * The set filter supports the 'promos' pseudo-slug which matches any
- * promo-category set, so a single "Promos" chip can stand in for the
- * 20+ individual promo printings.
+ * The set filter supports two pseudo-slugs, MAIN_GROUP and
+ * SPECIAL_GROUP, which match any set in that category — so a user
+ * can opt into the whole category with one chip.
  *
  * Set groups that end up with no visible cards are dropped so the
  * results don't render empty sections.
@@ -46,10 +48,15 @@ export function applySelectionFilters(
 function buildSetMatcher(selected: readonly string[]): ((slug: string) => boolean) | null {
   if (selected.length === 0) return null;
   const exact = new Set<string>();
-  let includePromos = false;
+  let includeMain = false;
+  let includeSpecial = false;
   for (const entry of selected) {
-    if (entry === PROMOS_GROUP) includePromos = true;
+    if (entry === MAIN_GROUP) includeMain = true;
+    else if (entry === SPECIAL_GROUP) includeSpecial = true;
     else exact.add(entry);
   }
-  return (slug: string) => exact.has(slug) || (includePromos && PROMO_SLUGS.has(slug));
+  return (slug: string) =>
+    exact.has(slug)
+    || (includeMain && MAIN_SLUGS.has(slug))
+    || (includeSpecial && SPECIAL_SLUGS.has(slug));
 }

@@ -3,7 +3,7 @@ import { SETS } from '../types';
 import { CANONICAL_VARIANTS, variantBadgeColor } from '../variants';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { CollapsibleChipFilter, Chip } from './CollapsibleChipFilter';
-import { PROMOS_GROUP } from '../applySelectionFilters';
+import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
 
 const MAIN_SETS = SETS.filter(s => s.category === 'main');
 
@@ -23,7 +23,8 @@ function summarize(selected: readonly string[], noneLabel: string, format: (s: s
 const SET_CODE_BY_SLUG = new Map(SETS.map(s => [s.slug, s.code] as const));
 
 function setSummaryLabel(slug: string): string {
-  if (slug === PROMOS_GROUP) return 'Promos';
+  if (slug === MAIN_GROUP) return 'Main';
+  if (slug === SPECIAL_GROUP) return 'Special';
   return SET_CODE_BY_SLUG.get(slug) ?? slug;
 }
 
@@ -103,6 +104,21 @@ export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
         >
           All
         </Chip>
+        <Chip
+          active={filters.selectedSets.includes(MAIN_GROUP)}
+          onClick={() => filters.toggleSet(MAIN_GROUP)}
+          colorClass="bg-gold/15 text-gold border-gold/40"
+        >
+          Main
+        </Chip>
+        <Chip
+          active={filters.selectedSets.includes(SPECIAL_GROUP)}
+          onClick={() => filters.toggleSet(SPECIAL_GROUP)}
+          colorClass="bg-gold/15 text-gold border-gold/40"
+        >
+          Special
+        </Chip>
+        <span className="w-px h-5 bg-space-700 mx-1" aria-hidden />
         {MAIN_SETS.map(s => (
           <Chip
             key={s.slug}
@@ -112,12 +128,6 @@ export function SelectionFilterBar({ filters }: SelectionFilterBarProps) {
             {s.code}
           </Chip>
         ))}
-        <Chip
-          active={filters.selectedSets.includes(PROMOS_GROUP)}
-          onClick={() => filters.toggleSet(PROMOS_GROUP)}
-        >
-          Promos
-        </Chip>
       </CollapsibleChipFilter>
 
     </div>
