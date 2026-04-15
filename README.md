@@ -7,21 +7,24 @@
 <p align="center">
   <a href="https://swutrade.com"><b>swutrade.com</b></a> &nbsp;·&nbsp;
   <a href="https://github.com/pmossman/swutrade/issues">Issues</a> &nbsp;·&nbsp;
-  <a href="./ROADMAP.md">Roadmap</a>
+  <a href="./ROADMAP.md">Roadmap</a> &nbsp;·&nbsp;
+  <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
 ---
 
 Balance Star Wars: Unlimited card trades with live TCGPlayer market prices.
 
-Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair.
+Pick cards for each side of a trade, see running totals, and figure out who owes what to make it fair. Keep personal Wants and Available lists locally, share them anonymously via link or image, and pull them into trades with one tap.
 
 ## How it works
 
 - **Cards and prices** both come from TCGPlayer's marketplace search API. `scripts/fetch-prices.ts` discovers every SWU set dynamically, pages through each one, and writes per-set JSON to `public/data/` at build time.
-- **The client** reads those static JSON files directly from `/data/*.json` — no runtime API calls for price data.
+- **Enrichment**: `scripts/enrich-cards.ts` joins each card to swuapi.com for `cardType`, aspects, traits, and a canonical display name. Anything that doesn't match swuapi (booster boxes, prerelease kits, token collisions) gets dropped here so the UI only ever sees real, playable cards.
+- **The client** reads the enriched static JSON directly from `/data/*.json` — no runtime API calls for price data.
+- **Lists** (Wants / Available) are persisted to `localStorage` under Zod-validated schemas; URL params `?w=…&a=…` carry them anonymously for sharing. A dedicated `/list` view renders just the shared lists with a "Start a trade" CTA.
 - **Refreshes** run every 2h via a GitHub Actions cron (`.github/workflows/refresh-prices.yml`) that POSTs to a Vercel deploy hook with `?buildCache=false` to force a re-fetch. See `ROADMAP.md` for the plan to move this off the deploy path.
-- **OG previews**: `middleware.ts` intercepts crawler requests to share links and returns an HTML page pointing at `/api/og`, which renders a trade summary image on demand.
+- **OG previews**: `middleware.ts` intercepts crawler requests to shared links (trades and lists) and returns an HTML page pointing at `/api/og`, which renders a summary image on demand.
 
 ## Stack
 
@@ -45,22 +48,27 @@ npm run fetch-prices:force
 | Script | What it does |
 | --- | --- |
 | `dev` | Vite dev server |
-| `build` | Fetch prices (cached) → typecheck → build |
-| `build:fresh` | Force a price refetch, then build |
+| `build` | Fetch prices (cached) → enrich → typecheck → build |
+| `build:fresh` | Force a price refetch and enrichment refetch, then build |
 | `fetch-prices` | Incremental price fetch into `public/data/` |
 | `fetch-prices:force` | Re-fetch everything, ignoring cache |
+| `enrich-cards` | Join TCGPlayer data with swuapi metadata (uses cached swuapi unless stale) |
+| `enrich-cards:force` | Force a fresh swuapi fetch before enriching |
 | `gen:fonts` | Rebuild the font subset used by the OG image route |
+| `test` | Vitest |
 | `lint` | ESLint |
 | `preview` | Preview the production build |
 
 ## Layout
 
 ```
-api/          Vercel functions — OG image, on-demand price proxy, search
-middleware.ts Serves OG preview HTML to crawlers on shared trade URLs
-scripts/      Build-time price fetcher + font subsetter for the OG image
-src/          React app
-public/data/  Baked per-set price JSON (shipped with each deploy)
+api/           Vercel functions — OG image, on-demand price proxy, search
+middleware.ts  Serves OG preview HTML to crawlers on shared trade/list URLs
+scripts/       Build-time price fetcher + swuapi enricher + font subsetter
+src/           React app (trade surface, lists drawer, shared picker)
+public/data/   Baked per-set price JSON + family-index (shipped with each deploy)
+CHANGELOG.md   Release notes by tag
+ROADMAP.md     Vision, phases, design-decision log
 ```
 
 ## Attribution

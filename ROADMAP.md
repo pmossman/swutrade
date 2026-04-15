@@ -18,27 +18,23 @@ Three invariants we protect through all of this:
 
 ## Phases
 
-### Phase 1 — Personal lists + anonymous sharing *(in progress)*
+### Phase 1 — Personal lists + anonymous sharing *(shipped — `v2026.04.15-stable`)*
 
 Local-first wants and available lists. Anonymous URL-encoded sharing is a complete feature on its own — accounts (Phase 2) layer persistence and identity on top, they don't gate the core sharing UX.
 
 **Shipped:**
 - [x] Data model + Zod persistence (`swu.wants.v2`, `swu.available.v1`)
-- [x] Lists drawer shell (Radix Dialog + Tabs)
-- [x] List rows with qty, priority toggle (wants), delete
-- [x] Embedded card picker for adding items (reuses `CardSearchBrowser`)
-- [x] Inline variant restriction editor
-- [x] swuapi.com enrichment at build time (`baseCardId`, `cardType`, aspects, traits)
-- [x] Cross-printing family-id so "any variant" wants match Standard / Hyperspace / Showcase
-- [x] Empty-state integration in trade search (with shared-link sender-list section)
+- [x] Lists drawer (Radix Dialog + Tabs) with color-coded Wants / Available tabs
+- [x] List rows with qty stepper, priority toggle, delete, inline variant-restriction editor (only offers variants that actually exist for the card family)
+- [x] Embedded card picker with a browse-all default, `@tanstack/react-virtual` virtualization, sticky set header, tap-to-decrement, restriction-aware variant pills, colored variant labels
+- [x] Shared Variant + Set filters with per-surface persistence; All / Main / Special presets mutually exclusive with individual set chips
+- [x] swuapi.com enrichment at build time (`baseCardId`, `cardType`, aspects, traits) + enrichment-driven filtering that drops non-card SKUs and token/leader id collisions
+- [x] Cross-printing family-id so "any variant" wants match Standard / Hyperspace / Showcase (also merges TCGPlayer name typos like Cad vs Cade Bane via `displayName`)
 - [x] URL encoding (`?w=…&a=…`) — anonymous, copy-link sharing
-- [x] Phase-3-style "From the shared link" section in recipient's empty state
+- [x] OG image rendering for shared lists (`api/og.ts` + `/tmp` family-index lookup)
+- [x] Dedicated `/list` (or `?view=list`) landing view with "Start a trade" CTA
+- [x] "From the shared link" section inside the trade search overlay
 - [x] Quantity-aware to-do semantics (rows count down as cards get added to trade)
-
-**Open — anonymous list-sharing polish:**
-- [ ] **Landing banner on shared link** — recipient lands and sees a dismissible "Someone shared their lists with you" notice rather than having to discover it inside the add-card overlay.
-- [ ] **OG image for shared lists** — extend `api/og.ts` so a `?w=…&a=…` URL gets a Discord/Slack/iMessage unfurl rendering the cards as a grid. We already have the resvg pipeline.
-- [ ] **Dedicated `/list` (or `?view=list`) view** — a full-page rendering of just the shared lists, not gated behind the add-card overlay. Click "Start trade" to flip into trade mode with the shared lists pre-loaded.
 
 ### Phase 2 — Accounts + sync (upgrade path, not gate)
 
@@ -150,5 +146,4 @@ Non-trivial because the productId-as-identity assumption is load-bearing. Half-d
 ### Other pending UX notes
 
 - Allow replacing cards in trade list (in-place edit)
-- Keep search open + Done button + qty shown inline in search
 - Creator credit footer refinement
