@@ -9,21 +9,24 @@ import {
 } from '../services/priceService';
 import {
   extractVariantLabel,
-  variantBadgeColor,
   variantChipLabel,
-  CANONICAL_VARIANTS,
   type CanonicalVariant,
 } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { bestMatchForWant } from '../listMatching';
 import type { WantsItem, VariantRestriction } from '../persistence';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
+import {
+  toggleVariantReducer,
+  toggleSetReducer,
+  replaceGroupReducer,
+} from '../hooks/useSelectionFilters';
+import { VariantChipGroup, SetChipGroup } from './SelectionFilterBar';
+import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
 import { Logo } from './Logo';
 import { BetaBadge } from './BetaBadge';
-import { CollapsibleChipFilter, Chip } from './CollapsibleChipFilter';
 
-const MAIN_SETS = SETS.filter(s => s.category === 'main');
-const MAIN_SET_SLUGS = new Set(MAIN_SETS.map(s => s.slug));
+const MAIN_SET_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
 const SPECIAL_SET_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 const SET_CODE_BY_SLUG = new Map(SETS.map(s => [s.slug, s.code] as const));
 
@@ -160,41 +163,30 @@ export function ListView({
   const missingAvailable = declaredAvailable - availableRows.length;
   const hasMissing = missingWants > 0 || missingAvailable > 0;
 
-  const toggleVariant = (v: CanonicalVariant) => {
-    setSelectedVariants(prev =>
-      prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v],
-    );
-  };
-  const toggleSet = (slug: string) => {
-    setSelectedSets(prev => {
-      const base = slug.startsWith('group:')
-        ? prev.filter(s => !s.startsWith('group:'))
-        : prev.filter(s => !s.startsWith('group:'));
-      if (slug.startsWith('group:')) {
-        return base.includes(slug) ? base.filter(s => s !== slug) : [...base, slug];
-      }
-      return prev.includes(slug)
-        ? prev.filter(x => x !== slug)
-        : [...base.filter(s => s !== slug), slug];
-    });
-  };
+  // Filter handlers route through the same reducers useSelectionFilters
+  // uses, so this surface and the trade overlay (which uses the
+  // persisted hook) have identical mutual-exclusion semantics — group
+  // presets wipe individual chips, individual chips drop active groups.
+  const toggleVariant = (v: CanonicalVariant) =>
+    setSelectedVariants(prev => toggleVariantReducer(prev, v));
+  const toggleSet = (slug: string) =>
+    setSelectedSets(prev => toggleSetReducer(prev, slug));
+  const selectGroup = (group: string | null) =>
+    setSelectedSets(replaceGroupReducer(group));
+  const clearVariants = () => setSelectedVariants([]);
+  const clearSets = () => setSelectedSets([]);
   const clearFilters = () => {
     setQuery('');
-    setSelectedVariants([]);
-    setSelectedSets([]);
+    clearVariants();
+    clearSets();
   };
 
   const hasAnyFilter = query.length > 0 || selectedVariants.length > 0 || selectedSets.length > 0;
-  const variantSummary = selectedVariants.length === 0
-    ? 'Any'
-    : selectedVariants.length === 1
-      ? variantChipLabel(selectedVariants[0])
-      : `${selectedVariants.length} selected`;
-  const setSummary = selectedSets.length === 0
-    ? 'All sets'
-    : selectedSets.length === 1
-      ? (selectedSets[0] === MAIN_GROUP ? 'Main' : selectedSets[0] === SPECIAL_GROUP ? 'Special' : SET_CODE_BY_SLUG.get(selectedSets[0]) ?? selectedSets[0])
-      : `${selectedSets.length} selected`;
+  const variantSummary = summarizeSelection(selectedVariants, 'Any', variantChipLabel);
+  const setSummary = useMemo(
+    () => summarizeSelection(selectedSets, 'All sets', setSummaryLabel),
+    [selectedSets],
+  );
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
@@ -253,84 +245,19 @@ export function ListView({
           spellCheck={false}
         />
         <div className="flex items-start gap-2 flex-wrap">
-          <CollapsibleChipFilter
-            label="Variant"
+          <VariantChipGroup
             summary={variantSummary}
-            action={selectedVariants.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setSelectedVariants([])}
-                className="text-[10px] text-gray-500 hover:text-gold transition-colors"
-              >
-                Clear
-              </button>
-            ) : undefined}
-          >
-            <Chip
-              active={selectedVariants.length === 0}
-              onClick={() => setSelectedVariants([])}
-              colorClass="bg-gold/15 text-gold border-gold/40"
-            >
-              Any
-            </Chip>
-            {CANONICAL_VARIANTS.map(v => (
-              <Chip
-                key={v}
-                active={selectedVariants.includes(v)}
-                onClick={() => toggleVariant(v)}
-                colorClass={variantBadgeColor(v)}
-              >
-                {variantChipLabel(v)}
-              </Chip>
-            ))}
-          </CollapsibleChipFilter>
-
-          <CollapsibleChipFilter
-            label="Set"
+            selectedVariants={selectedVariants}
+            onToggle={toggleVariant}
+            onClear={clearVariants}
+          />
+          <SetChipGroup
             summary={setSummary}
-            action={selectedSets.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setSelectedSets([])}
-                className="text-[10px] text-gray-500 hover:text-gold transition-colors"
-              >
-                Clear
-              </button>
-            ) : undefined}
-          >
-            <Chip
-              active={selectedSets.length === 0}
-              onClick={() => setSelectedSets([])}
-              colorClass="bg-gold/15 text-gold border-gold/40"
-            >
-              All
-            </Chip>
-            <Chip
-              active={selectedSets.includes(MAIN_GROUP)}
-              onClick={() => toggleSet(MAIN_GROUP)}
-              colorClass="bg-gold/15 text-gold border-gold/40"
-            >
-              Main
-            </Chip>
-            <Chip
-              active={selectedSets.includes(SPECIAL_GROUP)}
-              onClick={() => toggleSet(SPECIAL_GROUP)}
-              colorClass="bg-gold/15 text-gold border-gold/40"
-            >
-              Special
-            </Chip>
-            <span className="w-px h-5 bg-space-700 mx-1" aria-hidden />
-            {MAIN_SETS.map(s => (
-              <Chip
-                key={s.slug}
-                active={selectedSets.includes(s.slug)}
-                onClick={() => toggleSet(s.slug)}
-              >
-                {s.code}
-              </Chip>
-            ))}
-          </CollapsibleChipFilter>
-
+            selectedSets={selectedSets}
+            onToggleSet={toggleSet}
+            onSelectGroup={selectGroup}
+            onClear={clearSets}
+          />
           {hasAnyFilter && (
             <button
               type="button"
