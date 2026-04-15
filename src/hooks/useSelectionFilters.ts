@@ -7,6 +7,42 @@ import {
 } from '../persistence';
 import type { CanonicalVariant } from '../variants';
 
+// --- Pure reducers ---------------------------------------------------------
+// Extracted so the mutual-exclusion rules between individual set chips and
+// the Main/Special group presets can be tested without a React renderer.
+
+export function toggleVariantReducer<T extends string>(prev: readonly T[], v: T): T[] {
+  return (prev as readonly string[]).includes(v)
+    ? prev.filter(x => x !== v)
+    : [...prev, v];
+}
+
+/**
+ * Toggle an individual set slug. Tapping a specific set drops any active
+ * group preset ('group:main' / 'group:special') so the user can't end up in
+ * an ambiguous "Main preset + also this one main set" state — they're
+ * either narrowing by preset or by specific sets, not both. Tapping a
+ * group slug itself preserves other group slugs (but in practice presets
+ * are mutually exclusive, see replaceGroupReducer).
+ */
+export function toggleSetReducer(prev: readonly string[], slug: string): string[] {
+  const base = slug.startsWith('group:')
+    ? prev
+    : prev.filter(s => !s.startsWith('group:'));
+  return base.includes(slug)
+    ? base.filter(x => x !== slug)
+    : [...base, slug];
+}
+
+/**
+ * Swap the active group preset. Clears any individual set chips so the
+ * user is unambiguously in "broad filter" mode. Pass null to clear
+ * everything.
+ */
+export function replaceGroupReducer(group: string | null): string[] {
+  return group ? [group] : [];
+}
+
 export interface SelectionFilters {
   selectedVariants: CanonicalVariant[];
   selectedSets: string[];
@@ -55,9 +91,7 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
 
   const toggleVariant = useCallback((v: CanonicalVariant) => {
     setSelectedVariants(prev => {
-      const next = (prev as readonly string[]).includes(v)
-        ? prev.filter(x => x !== v)
-        : [...prev, v];
+      const next = toggleVariantReducer(prev, v);
       save(keys.variants, next);
       return next;
     });
@@ -65,27 +99,14 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
 
   const toggleSet = useCallback((slug: string) => {
     setSelectedSets(prev => {
-      // Individual set chips are mutually exclusive with the
-      // All/Main/Special group presets — tapping a specific set drops
-      // any active group slug so the user is unambiguously in
-      // "picking specific sets" mode.
-      const base = slug.startsWith('group:')
-        ? prev
-        : prev.filter(s => !s.startsWith('group:'));
-      const next = base.includes(slug)
-        ? base.filter(x => x !== slug)
-        : [...base, slug];
+      const next = toggleSetReducer(prev, slug);
       save(keys.sets, next);
       return next;
     });
   }, [keys.sets]);
 
   const replaceGroup = useCallback((group: string | null) => {
-    // Group presets and individual set chips are mutually exclusive.
-    // Tapping Main/Special wipes any individual selection too — the
-    // user is switching into "broad filter" mode. Null clears the
-    // group (and individuals) outright.
-    const next = group ? [group] : [];
+    const next = replaceGroupReducer(group);
     setSelectedSets(next);
     save(keys.sets, next);
   }, [keys.sets]);

@@ -110,13 +110,13 @@ const variantAliases: Record<string, string> = {
   'sc': 'Showcase',
 };
 
-interface ParsedQuery {
+export interface ParsedQuery {
   nameTerms: string[];
   setSlug: string | null;
   variantFilter: string | null;
 }
 
-function parseQuery(raw: string): ParsedQuery {
+export function parseQuery(raw: string): ParsedQuery {
   const tokens = raw.toLowerCase().trim().split(/\s+/);
   let setSlug: string | null = null;
   let variantFilter: string | null = null;
@@ -135,7 +135,7 @@ function parseQuery(raw: string): ParsedQuery {
   return { nameTerms, setSlug, variantFilter };
 }
 
-function localSearch(allCards: CardVariant[], query: string, setFilter: string | null): SetSearchGroup[] {
+export function localSearch(allCards: CardVariant[], query: string, setFilter: string | null): SetSearchGroup[] {
   const parsed = parseQuery(query);
   const { nameTerms, setSlug: querySetSlug, variantFilter } = parsed;
 

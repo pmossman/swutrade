@@ -15,8 +15,11 @@ import {
  * bumps qty rather than creating a duplicate row. Different keys
  * (e.g., Hyperspace vs Hyperspace Foil restrictions on the same
  * card) are tracked as separate items.
+ *
+ * Exported for tests and for downstream code that wants to correlate
+ * a picker's active-filter key with a saved want's restriction key.
  */
-function restrictionKey(r: VariantRestriction): string {
+export function restrictionKey(r: VariantRestriction): string {
   if (r.mode === 'any') return 'any';
   return [...r.variants].sort().join('|');
 }
@@ -24,6 +27,57 @@ function restrictionKey(r: VariantRestriction): string {
 function newId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return `w_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// Pure reducer factored out of the hook so the dedup-by-(familyId,
+// restriction) invariant can be tested without a React renderer.
+// The caller supplies id + now generators so tests can pin them.
+export interface WantsAddDeps {
+  newId: () => string;
+  now: () => number;
+}
+
+export function wantsAddReducer(
+  items: readonly WantsItem[],
+  input: WantsInput,
+  deps: WantsAddDeps,
+): { items: WantsItem[]; created: WantsItem } {
+  const qty = Math.min(99, Math.max(1, input.qty ?? 1));
+  const inputRestriction = input.restriction ?? { mode: 'any' as const };
+  const inputKey = restrictionKey(inputRestriction);
+
+  const existing = items.find(
+    i => i.familyId === input.familyId && restrictionKey(i.restriction) === inputKey,
+  );
+
+  if (existing) {
+    const bumped: WantsItem = {
+      ...existing,
+      qty: Math.min(99, existing.qty + qty),
+      ...(input.isPriority !== undefined ? { isPriority: input.isPriority } : {}),
+      ...(input.maxUnitPrice !== undefined ? { maxUnitPrice: input.maxUnitPrice } : {}),
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    };
+    return {
+      items: items.map(i => (i.id === existing.id ? bumped : i)),
+      created: bumped,
+    };
+  }
+
+  const fresh: WantsItem = {
+    id: deps.newId(),
+    familyId: input.familyId,
+    qty,
+    restriction: inputRestriction,
+    maxUnitPrice: input.maxUnitPrice,
+    note: input.note,
+    isPriority: input.isPriority || undefined,
+    addedAt: deps.now(),
+  };
+  return {
+    items: [...items, fresh],
+    created: fresh,
+  };
 }
 
 export interface WantsInput {
@@ -57,49 +111,13 @@ export function useWants(): WantsApi {
   }, []);
 
   const add = useCallback((input: WantsInput): WantsItem => {
-    const qty = Math.min(99, Math.max(1, input.qty ?? 1));
     let created: WantsItem | null = null;
-
-    const inputRestriction = input.restriction ?? { mode: 'any' as const };
-    const inputKey = restrictionKey(inputRestriction);
-
     setItems(prev => {
-      // Dedupe by (familyId + restriction signature) so tapping the
-      // Hyperspace tile and the Standard tile of the same card produce
-      // separate items rather than collapsing into one bumped qty with
-      // the wrong restriction.
-      const existing = prev.find(
-        i => i.familyId === input.familyId && restrictionKey(i.restriction) === inputKey,
-      );
-      let next: WantsItem[];
-      if (existing) {
-        const bumped: WantsItem = {
-          ...existing,
-          qty: Math.min(99, existing.qty + qty),
-          ...(input.isPriority !== undefined ? { isPriority: input.isPriority } : {}),
-          ...(input.maxUnitPrice !== undefined ? { maxUnitPrice: input.maxUnitPrice } : {}),
-          ...(input.note !== undefined ? { note: input.note } : {}),
-        };
-        created = bumped;
-        next = prev.map(i => (i.id === existing.id ? bumped : i));
-      } else {
-        const fresh: WantsItem = {
-          id: newId(),
-          familyId: input.familyId,
-          qty,
-          restriction: input.restriction ?? { mode: 'any' },
-          maxUnitPrice: input.maxUnitPrice,
-          note: input.note,
-          isPriority: input.isPriority || undefined,
-          addedAt: Date.now(),
-        };
-        created = fresh;
-        next = [...prev, fresh];
-      }
-      writePersisted(PERSIST_KEYS.wants, next);
-      return next;
+      const result = wantsAddReducer(prev, input, { newId, now: Date.now });
+      created = result.created;
+      writePersisted(PERSIST_KEYS.wants, result.items);
+      return result.items;
     });
-
     // setState callback is synchronous with React 19's useState — `created`
     // is populated before we return.
     return created as unknown as WantsItem;
