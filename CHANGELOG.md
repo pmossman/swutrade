@@ -2,6 +2,31 @@
 
 Release notes for production cuts. Dates match the git tag (`v<date>-stable`) on `main`. Not every commit lands here — just the user-facing shape of each release.
 
+## v2026.04.15.1-stable — 2026-04-15
+
+Same-day follow-up focused on the shared-link receiving experience and the trade-side picker's sidebar real estate.
+
+### Shared-list landing view
+- Rewritten as a compact row layout — tiny thumbnail, name, set code, variant pill, qty, price per row — so a recipient can scan a long list without pagination.
+- Ephemeral filter controls (text search + Variant + Set) to let recipients narrow to the subset they care about.
+- Wants that carry a multi-variant restriction surface the whole restriction on the row (e.g. `HS / HSF / Std`) rather than just the cheapest-matching rep.
+
+### Start-a-trade handoff
+- Clicking "Start a trade" from a shared-list link now drops the user straight into the Offering side's search overlay with the "They want" source chip pre-activated — so the sender's wants are already the grid's contents.
+- Variant / Set filters reset on this handoff so a persisted filter from an earlier session can't accidentally zero out the shared list.
+
+### Trade picker: source chips replace sidebar sections
+- The "From your Available" and "From the shared link · They want" collapsibles are gone. Their contents now flow into the main grid via two pill-toggle chips above the filters:
+  - Offering side: **My available** · **They want**
+  - Receiving side: **My wants** · **They have**
+- Each chip carries a remaining-qty count (items still pending after what's already been added to this side of the trade) and auto-deactivates when that count hits zero.
+
+### OG image
+- Link-preview layout switched from a grid of card tiles (~6 per column) to a dense row list (~18 per column). Matches the web list view so the preview and the landing page look like the same thing.
+
+### Polish
+- Lazy-loaded card images use `alt=""` so the alt text doesn't flash in as tiles scroll into the virtualized viewport.
+
 ## v2026.04.15-stable — 2026-04-15
 
 The Wants / Available lists feature fully lands, plus a picker rewrite and several rounds of filter/mobile polish. First post-baseline release since `v2026.04.14-stable`.
