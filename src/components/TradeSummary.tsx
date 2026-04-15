@@ -6,7 +6,8 @@ import { ShareButtons } from './ShareButtons';
 import { MobileActionsKebab } from './MobileActionsKebab';
 import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, getCardPrice, countMissingPrices } from '../services/priceService';
-import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
+import { extractVariantLabel, extractBaseName } from '../variants';
+import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 
 interface TradeSummaryProps {
@@ -82,16 +83,11 @@ function SummaryTile({ tc, percentage, priceMode, accentColor }: {
       </div>
       <div className="px-1.5 py-1 leading-tight">
         <div className="text-[10px] text-gray-300 truncate">{extractBaseName(tc.card.name)}</div>
-        {(() => {
-          const variant = extractVariantLabel(tc.card.name);
-          const label = variantDisplayLabel(variant);
-          if (!label) return null;
-          return (
-            <span className={`inline-block max-w-full truncate align-middle text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
-              {label}
-            </span>
-          );
-        })()}
+        <VariantBadge
+          variant={extractVariantLabel(tc.card.name)}
+          size="xs"
+          className="inline-block max-w-full truncate align-middle"
+        />
         <div className={`text-[11px] font-bold tabular-nums ${missingPrice ? 'text-red-400' : 'text-gold'}`}>
           {formatPrice(lineTotal)}
         </div>

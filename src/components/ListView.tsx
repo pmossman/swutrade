@@ -10,11 +10,11 @@ import {
 import {
   extractVariantLabel,
   variantBadgeColor,
-  variantDisplayLabel,
   variantChipLabel,
   CANONICAL_VARIANTS,
   type CanonicalVariant,
 } from '../variants';
+import { VariantBadge } from './VariantBadge';
 import { bestMatchForWant } from '../listMatching';
 import type { WantsItem, VariantRestriction } from '../persistence';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
@@ -454,7 +454,6 @@ interface ListRowProps {
 function ListRow({ row, tone, percentage, priceMode }: ListRowProps) {
   const { card, qty, restriction, isPriority } = row;
   const variant = extractVariantLabel(card.name);
-  const variantLabel = variantDisplayLabel(variant);
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
   const display = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '');
@@ -493,11 +492,9 @@ function ListRow({ row, tone, percentage, priceMode }: ListRowProps) {
             <span className="text-[9px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide bg-gold/15 text-gold border border-gold/30">
               {restrictionLabel}
             </span>
-          ) : variantLabel ? (
-            <span className={`text-[9px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
-              {variantLabel}
-            </span>
-          ) : null}
+          ) : (
+            <VariantBadge variant={variant} />
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0 text-right">

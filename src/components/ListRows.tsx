@@ -1,7 +1,8 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { cardImageUrl, adjustPrice, getCardPrice } from '../services/priceService';
-import { variantBadgeColor, variantDisplayLabel, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { VariantBadge } from './VariantBadge';
 
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
@@ -287,7 +288,6 @@ export function AvailableRow({
   const imgUrl = card?.productId ? cardImageUrl(card.productId, 'sm') : null;
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
-  const variantLabel = variantDisplayLabel(variant);
   const price = card ? adjustPrice(getCardPrice(card, priceMode), percentage) : null;
 
   return (
@@ -296,11 +296,7 @@ export function AvailableRow({
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            {variantLabel && (
-              <span className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(variant)}`}>
-                {variantLabel}
-              </span>
-            )}
+            <VariantBadge variant={variant} size="xs" />
             {price !== null && (
               <span className="text-[10px] text-gold font-semibold">${price.toFixed(2)}</span>
             )}

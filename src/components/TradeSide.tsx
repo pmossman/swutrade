@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useCallback, useEffect, useDeferredValue } f
 import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import { adjustPrice, cardImageUrl, cardTcgPlayerUrl, getCardPrice, getAltPrice } from '../services/priceService';
-import { extractVariantLabel, extractBaseName, variantBadgeColor, variantDisplayLabel } from '../variants';
+import { extractVariantLabel, extractBaseName } from '../variants';
+import { VariantBadge } from './VariantBadge';
 import { useCardSearch, browseAllGroups } from '../hooks/useCardSearch';
 import { bestMatchForWant, matchesRestriction } from '../listMatching';
 import type { WantsItem } from '../persistence';
@@ -636,18 +637,7 @@ export function TradeSide({
                       <span className={`text-gray-100 leading-tight ${isLarge ? 'text-sm font-semibold' : isCompact ? 'text-[11px] truncate' : 'text-xs truncate'}`}>
                         {extractBaseName(tc.card.name)}
                       </span>
-                      {(() => {
-                        // Show a styled variant pill in place of the
-                        // raw "(Hyperspace Foil)" suffix — consistent
-                        // with the tile/summary badges.
-                        const label = variantDisplayLabel(variant);
-                        if (!label) return null;
-                        return (
-                          <span className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide shrink-0 ${variantBadgeColor(variant)}`}>
-                            {label}
-                          </span>
-                        );
-                      })()}
+                      <VariantBadge variant={variant} shrink />
                       {isLarge && spreadBadge}
                     </div>
                     {!isCompact && !isLarge && (
