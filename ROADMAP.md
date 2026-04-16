@@ -6,13 +6,16 @@ Living document: long-term vision, phased plan, design decisions, and parked ide
 
 ## Vision
 
-SWUTrade began as a trade balancer — two parties, two sides, price math. The next horizon is making it a **trading hub**: users curate what they want and have, trades pull from personal and social sources, and a Discord community layer turns individual lists into matchmaking.
+SWUTrade began as a trade balancer — two parties, two sides, price math. The next horizon is making it a **trading hub** for the local / in-person trading experience: users curate what they want and have, trades pull from personal and social sources, and a Discord community layer plugs into the regional server where a lot of real-world trading is already coordinated.
 
-Three invariants we protect through all of this:
+**Core mission**: make local / in-person trading easier and more delightful. The concrete behaviors we're serving are the ones that already happen in any regional SWU Discord — wants lists posted as plain text that nobody finds a week later, "anyone bringing X to the tournament Saturday?", trade agreements evaporating between Discord and the LGS. SWUTrade is the structured backbone under those conversations.
+
+Four invariants we protect through all of this:
 
 1. **Anonymous mode stays first-class.** The core trade calculator works without an account, forever. Accounts are strictly additive — cloud sync and community features. A new player should be able to use the site for the first time, balance a trade, and share the link, all without signing in.
 2. **The trade window is the center of gravity.** Lists, shared links, Discord matches — all of it feeds cards INTO the trade. The trade UI is the destination, not the side feature.
 3. **Variant semantics are asymmetric.** Wants are predicates (`any` / specific variants). Available is concrete (exact productId). Matchmaking only works if we honor this everywhere.
+4. **The web app authors; Discord converses.** (Phase 4+.) Rich authoring of objects — lists, trade proposals, visit announcements — lives in the web app where the UX can support card pickers, date pickers, and balancer math. The bot is a broadcast transport: it renders those objects into Discord channels and DMs, and accepts one-tap responses to pushed notifications. It does not try to become an authoring surface.
 
 ---
 
@@ -62,26 +65,118 @@ Anonymous users continue using URL-encoded shares. When they sign in, their exis
 
 ### Phase 4 — Discord community layer
 
-**4a. Discovery (web app):** Discord OAuth with `guilds` scope; surface "cards from people in your mutual servers" as another section in the add-card empty state. Per-guild opt-in toggle so users control where they appear. "3 people want your Darth Vader" badges on available cards.
+Phase 4 exists to serve the actual texture of local in-person trading as it
+already plays out in a regional Discord server (e.g. San Diego SWU): someone
+drops a wants list in plain text, someone else asks "anyone bringing X to
+Game Empire Saturday?", trades get agreed to in DMs and then evaporate by
+Tuesday because nobody wrote it down. SWUTrade's job is to be the structured
+backbone underneath that conversation — lists, matches, agreements, meetup
+intent as first-class data — while Discord stays the conversation.
 
-**4b. The bot:** HTTP Interactions model (signed webhooks, no persistent WebSocket) so it runs on Vercel Functions alongside the web app. Slash commands: `/wants`, `/offer`, `/matches @user`. Optional match-notification channels per server.
+**Architectural principle — bot as broadcast transport, not input surface.**
+All authoring happens in the web app, where the UX can support card pickers,
+autocomplete, variant restrictions, calendar inputs, and trade balancing.
+Anything the user wants to *publish* to Discord (share a list, announce a
+visit, propose a trade) is triggered from the web app; the bot's job is to
+render the resulting embed into the right channel or DM. The only input the
+bot accepts directly is (1) one-tap button responses to pushed notifications
+("Accept" / "Decline" on a trade proposal DM) and (2) eventual read-only
+query commands (`/whohas <card>`). It does not author or mutate objects on
+its own. See the design-decisions log for the full rationale.
 
-**4c. Local trading:** Self-declared LGS tags in profile settings. "4 traders at Cool Stuff Games have cards you want." Discord server affiliation is the primary locality signal, but store tags add specificity for in-person events.
+**Three-axis consent model for signed-in users.** Signing in does not imply
+opting into community noise. Three orthogonal toggles:
 
-### Phase 5 — Trading network
+  - **Discoverability**: others in shared servers can see my profile / match
+    with me / see my wants in community rollups. *Default on.*
+  - **Location & schedule presence**: I tag LGSs, announce visits, appear in
+    "who's going to X Saturday" results. *Default off — active opt-in.*
+  - **Bot DMs to me**: unsolicited notifications (match alerts, meetup
+    reminders). *Default off except for direct transactional pings* (a trade
+    proposal addressed specifically to me — that's not spam, it's mail).
 
-The full **Discover → Match → Propose → Negotiate → Complete → Remember** lifecycle.
+Enrollment is per-guild. Signing in does not auto-join any server's trading
+community; user picks which shared servers to enroll in. A valid use case is
+"sign in, sync my list, never enroll in any server" — passive sync users are
+first-class.
 
-**Proposals:** Build a trade (manually or from the matchmaker), tap "Send to @alice." Proposal is a frozen price snapshot so it doesn't shift under either party. Alice gets a notification (in-app badge + Discord DM via the Phase 4 bot). She can accept, counter-offer, or decline. Counters thread as a negotiation history — each counter is its own snapshot.
+---
 
-**Completion:** Both sides accept → trade is "completed" (no enforcement — physical cards). Both users' wants/available lists auto-update: remove traded cards from available, remove satisfied wants. The moment the trade moves from `trade_proposals` to `trade_history`.
+**v1 scope** (drop-into-a-server demo):
 
-**Relationships:** "People I've traded with" ranked by frequency, recency, total value. "Preferred traders" — manually starred or auto-promoted after N successful trades. Trust signals feed back into matchmaker scoring — familiar traders rank higher.
+  - Discord OAuth with `guilds` scope; new `user_guild_memberships` table.
+  - **Per-guild enrollment UI** on the web: "You're in 3 Discord servers
+    with SWUTrade installed; want to join any of their trading communities?"
+    with a Maybe-Later that doesn't guilt.
+  - **Account-level settings page**: profile visibility (public / Discord-only
+    / private), bot-DM category toggles.
+  - **Per-guild settings** inside each enrolled server: include in community
+    rollups, announce to channel, appear in read-only queries.
+  - **Community source** in the card picker's empty state — cards wanted /
+    held by members of a shared + enrolled server. Popular-wants badges gain
+    guild-scoped variants: "3 in Star Wars SD want this".
+  - **"Share my list to Discord"** action in the Lists drawer. User picks
+    channel; bot posts a rich embed.
+  - **Bot as broadcast transport**: signed HTTP Interactions endpoint for
+    button responses, outbound broadcast endpoint invoked by our backend.
+  - **Trade proposals** (previously Phase 5) elevate into Phase 4 v1 because
+    they're the natural first use of bot DMs: web-authored, bot-delivered,
+    accepted/countered/declined via one-tap DM buttons.
+  - **No slash commands in v1.** Wait for demonstrated need before building
+    read-only query commands.
 
-**Data model additions:**
-- `trade_proposals` (id, from_user, to_user, status, your_cards JSONB, their_cards JSONB, percentage, price_mode, totals, parent_id FK→self for counter-threading, created_at, expires_at)
-- `trader_connections` (user_a, user_b, trade_count, last_trade_at, is_preferred)
-- `notifications` (id, user_id, type, payload JSONB, read, created_at)
+**v2 scope** (once settings infrastructure is proven):
+
+  - **LGS directory** as a server-admin-managed object. Admins with Discord
+    `MANAGE_GUILD` permission can add / rename / deactivate LGSs via a web
+    admin page at `/guilds/<id>/admin`. Server-scoped initially; an LGS added
+    by admins of N different servers can be promoted to a global entity
+    (e.g. a single "Cool Stuff Games" shared across several SoCal Discords).
+  - **LGS presence — schedule, not just tag.** Members set a "usually at"
+    in profile. Separately, they can announce specific visits
+    ("going to Game Empire Sat 6pm") — web-authored, bot-broadcast to the
+    server's configured channel. Visits expire when the event passes, so
+    there's no stale "I still need this" debris.
+  - **Meetup-aware matching**: "4 traders going to Game Empire Sat: Alice
+    (wants your Vader), Bob (has your Luke)…" scoped to the visit window.
+  - **Match-alert DMs** — the spammiest category. Depends on the
+    notifications settings being well-tuned in v1 before we ship.
+  - **Read-only query slash commands** (`/whohas <card>`, `/whowants <card>`)
+    if users in the live server reach for them. Otherwise skip.
+
+**Non-goals (explicitly):**
+
+  - Slash commands that author or mutate objects (`/goingto`, `/trade`, etc).
+    Authoring stays in the web app; the bot relays the output.
+  - Gateway bot (persistent WebSocket). HTTP Interactions runs on Vercel
+    Functions alongside the web app — one infra surface.
+  - The bot reading channel messages or scraping conversation.
+
+**Data-model sketch:**
+
+  - `user_guild_memberships` — `(user_id, guild_id, enrolled, include_in_rollups, announce_visits_channel, appear_in_queries, joined_at)`
+  - `user_settings` — `(user_id, profile_visibility ∈ {public, discord, private}, dm_trade_proposals, dm_match_alerts, dm_meetup_reminders)`
+  - `lgs` *(v2)* — `(id, name, guild_id, promoted_to_global, address?, …)`
+  - `user_lgs` *(v2)* — usual LGS(s) a user plays at
+  - `lgs_visits` *(v2)* — `(id, user_id, lgs_id, visit_at, created_at, cancelled_at)`
+  - `trade_proposals` — `(id, from_user, to_user, status, your_cards, their_cards, percentage, price_mode, parent_id FK→self, created_at, expires_at)`
+
+### Phase 5 — Trading network (post-Phase-4)
+
+The full **Discover → Match → Propose → Negotiate → Complete → Remember**
+lifecycle on top of the Phase 4 primitives. Trade proposals themselves ship
+in Phase 4 v1 (web-authored, bot-delivered); Phase 5 layers the longer-lived
+relationship features: counter-offer threading, trader reputation,
+auto-update of wants/available on completion, and the "preferred traders"
+system that feeds back into matchmaker scoring. Trust signals (trade count,
+recency, preferred-trader flag) become inputs to the matchmaker so familiar
+traders rank higher.
+
+**Data-model additions beyond Phase 4's `trade_proposals`:**
+
+  - `trader_connections` — `(user_a, user_b, trade_count, last_trade_at, is_preferred)`
+  - `trade_history` — completed proposals, promoted out of `trade_proposals`
+  - `notifications` — `(id, user_id, type, payload JSONB, read, created_at)` — lightweight in-app inbox for users who opted out of bot DMs but still want a record
 
 ---
 
@@ -147,6 +242,44 @@ Split Link / Image buttons consolidated into a single **Share** popover containi
 Wants: public by default (makes discovery meaningful), togglable to private per user.
 Available: private by default (supply is leverage), shared only to users in mutual opted-in Discord guilds once Phase 4 lands.
 
+### 2026-04-16 — Bot is broadcast transport; authoring stays in the web app
+
+Considered: a Discord-first model where users author via slash commands (`/goingto`, `/trade`, `/mywants edit`, etc). Rejected.
+
+Chose: **the web app is the canonical authoring surface; the bot's primary job is to render structured snapshots of web objects into Discord as rich embeds + DMs.** The bot accepts input in exactly two narrow cases: (1) one-tap button responses to pushed notifications (Accept / Counter / Decline on a trade-proposal DM) and (2) read-only query slash commands if users actually reach for them later (`/whohas <card>`). Never authors or mutates non-trivial objects directly.
+
+Why: Discord UI can't host the card picker, variant restrictions, trade balancer, or calendar inputs that our web UX already does well. Slash-command authoring would be a strictly worse parallel version of every feature we've already built. This matches how mature Discord integrations work (Linear, Vercel, GitHub bot) — they broadcast rich events and receive one-tap actions, they don't try to become the product.
+
+Consequence: no `/goingto`, `/trade`, `/mylist edit` in Phase 4. Visit announcements, list shares, trade proposals are all *web-authored → bot-delivered*. Supersedes the framing in the 2026-04-14 "HTTP Interactions bot" entry which implied a slash-command-driven trading flow.
+
+### 2026-04-16 — Three-axis consent model for signed-in community features
+
+Signing in ≠ opting into community noise. Previous draft assumed a signed-in user implicitly joined their servers' trading communities and accepted match-alert DMs. Wrong — that makes the app annoying for the passive-sync user.
+
+Three orthogonal toggles with deliberately conservative defaults:
+
+1. **Discoverability** — profile visible, match-eligible, counted in community rollups. *Default on.* This is the baseline of "I joined the community layer."
+2. **Location & schedule presence** — LGS tagging, visit announcements, appearing in "who's going to X" queries. *Default off.* Physical-presence disclosure is a meaningful step beyond discoverability.
+3. **Bot DMs to me** — unsolicited push (match alerts, meetup reminders). *Default off.* Direct transactional mail (a trade proposal addressed specifically to me) is the sole exception — that's mail, not spam.
+
+Granularity is mostly per-guild with an account-level layer for app-wide concerns (profile visibility, DM categories). Enrollment in a server's trading community is always affirmative: signing in does not auto-join any server.
+
+Why: this protects the largest likely user segment (sign in for sync + passive browsing) from features optimized for the most engaged segment (meetup coordinators). It also makes each broadcast-capable feature gateable — we can't ship "announce your visit" without shipping the toggle to opt out of broadcasting, so the noise controls stay in lockstep with the noise.
+
+### 2026-04-16 — LGS directory is a web object, server-admin-curated
+
+Considered: letting users self-declare LGSs as free text, or letting anyone add to a shared list via `/lgs add` bot command. Both rejected.
+
+Chose: **LGSs are persistent objects curated by server admins via a web admin page** at `/guilds/<id>/admin`, gated on the viewer's Discord `MANAGE_GUILD` permission (available from the guild OAuth scope, no separate role system). Server-scoped initially; an LGS added by admins of N different servers can be promoted to a global entity so a single "Cool Stuff Games" is shared across, e.g., multiple SoCal Discords.
+
+Consequence: no `/lgs add` slash command. Visit announcements and "usual LGS" tags *reference* entries from the directory (via autocomplete / dropdown), they never *create* new ones. Consistent with the broader bot-is-broadcast-transport principle — LGSs are objects, and object mutation happens in the web app.
+
+### 2026-04-16 — Trade proposals elevate from Phase 5 into Phase 4 v1
+
+Previously slotted in Phase 5 as part of the "full lifecycle" (proposals + counter-offers + relationships + trust-weighted matchmaking). Moved the proposal primitive itself into Phase 4 v1 because it's the cleanest first use of the bot-as-DM-transport: web-authored (sender builds the trade in the balancer), bot-delivered (recipient gets a DM with a frozen snapshot + Accept/Counter/Decline buttons), response is a one-tap button interaction (fits the "bot as input only for responses to pushed notifications" rule).
+
+Phase 5 still owns the longer-lived relationship features: counter-offer threading, reputation, trader-connection scoring feeding matchmaker, auto-update of wants/available on completion. Proposals just happen earlier because they're load-bearing for the demo and depend only on primitives Phase 4 is already building.
+
 ---
 
 ## Parked technical improvements
@@ -199,20 +332,6 @@ Non-trivial because the productId-as-identity assumption is load-bearing. Half-d
 - **Price sparklines** — tiny 30-day inline chart on card rows (trade view, list view, profile). Beautiful but needs 30 days of history before it's useful.
 - **Collection value tracker** — sum a user's available list's market value per day. "Your collection: $247 (+$12 this week)." Shown on the profile page or in the drawer.
 - **Price alerts** — "Notify me when X drops below $Y." Needs a notification channel: Discord DM via the Phase 4 bot, or an in-app badge on next visit.
-
-### Matchmaking preview (Phase 2.5 — no Discord needed)
-
-Read-only cross-user matching: "3 people want your Darth Vader Hyperspace." Query public `wants_items` that overlap with the current user's `available_items` by family_id. No new tables — just an aggregate query + a UI surface (badge on the Available tab, or a "Matches" section in the drawer).
-
-Full matchmaking (mutual "I have what you want AND you have what I want") is Phase 4 territory with Discord guild scoping. But the one-directional "who wants my cards?" version ships with what we have now and is the single most compelling reason to sign in.
-
-### Trade history
-
-Save completed trades to a `trades` table (id, user_id, your_cards JSONB, their_cards JSONB, percentage, price_mode, total_yours, total_theirs, created_at). "Save this trade" button on the trade summary. "My Trades" section in the drawer shows past trades with dates + totals. Useful for in-person events: "what did we agree on last time?"
-
-### Popular wants (community signal)
-
-Aggregate most-wanted cards across all users with public wants lists. "Trending" section in the search overlay's empty state, or a badge on cards that many people want. Zero new tables — just a cached aggregate query on `wants_items` grouped by `family_id`. Makes the app feel alive.
 
 ### Other pending UX notes
 
