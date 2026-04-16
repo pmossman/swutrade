@@ -9,29 +9,55 @@ interface AccountMenuProps {
  * Header-level account affordance. Mobile-first: collapses to a pure
  * icon at narrow widths and surfaces the username inline on desktop.
  *
- * Signed-in state opens a popover rather than logging out on tap —
- * the previous inline "click avatar = immediate logout" was a papercut
- * trap and blocked a durable home for future account actions
- * (profile link, settings, guild membership, etc).
- *
- * Signed-out state stays a plain CTA: one action, no menu needed.
+ * Both signed-in and signed-out states open a popover rather than
+ * firing their primary action on tap:
+ *   - Signed-in: previous inline "tap = immediate logout" was a
+ *     papercut trap; popover surfaces profile + sign out deliberately.
+ *   - Signed-out: tapping the Discord icon used to yank the user
+ *     straight to OAuth. Now a short popover introduces what signing
+ *     in unlocks before the commit, and the CTA is a plain <a> tag
+ *     — anchor navigation is more reliable for cross-origin redirects
+ *     on mobile Safari than window.location.href from an onClick.
  */
 export function AccountMenu({ auth }: AccountMenuProps) {
-  const { user, isLoading, login, logout } = auth;
+  const { user, isLoading, logout } = auth;
 
   if (isLoading) return null;
 
   if (!user) {
     return (
-      <button
-        type="button"
-        onClick={login}
-        aria-label="Sign in with Discord"
-        className="flex items-center gap-1 px-2 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
+      <Popover
+        align="right"
+        panelClassName="p-3 w-[220px]"
+        trigger={({ open, toggle }) => (
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label="Sign in"
+            aria-expanded={open}
+            className="flex items-center gap-1 px-2 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
+          >
+            <DiscordIcon className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign in</span>
+          </button>
+        )}
       >
-        <DiscordIcon className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Sign in</span>
-      </button>
+        {() => (
+          <div className="flex flex-col gap-2">
+            <div className="text-sm font-semibold text-gray-100">Sign in</div>
+            <p className="text-[11px] text-gray-500 leading-relaxed">
+              Sync your lists across devices, share a profile page, and match trades with other users.
+            </p>
+            <a
+              href="/api/auth/discord"
+              className="mt-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-bold transition-colors"
+            >
+              <DiscordIcon className="w-3.5 h-3.5" />
+              Continue with Discord
+            </a>
+          </div>
+        )}
+      </Popover>
     );
   }
 

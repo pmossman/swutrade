@@ -44,6 +44,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     serialize('swu_oauth_state', state, cookieOpts),
     serialize('swu_oauth_verifier', codeVerifier, cookieOpts),
   ]);
+  // Prevent bfcache / intermediary caches from serving a stale 302.
+  // Mobile Safari was observed rendering a blank Discord page on
+  // first tap that only resolved on refresh — scoping this response
+  // as uncacheable removes that class of surprise.
+  res.setHeader('Cache-Control', 'no-store');
 
   res.redirect(302, url.toString());
 }
