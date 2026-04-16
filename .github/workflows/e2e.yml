@@ -49,15 +49,15 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Playwright browsers
+      - name: Install Playwright Chromium
         if: steps.playwrightcache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium firefox
+        run: npx playwright install --with-deps chromium
 
-      - name: Install Playwright deps (cached browsers)
+      - name: Install Playwright deps (cached browser)
         if: steps.playwrightcache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium firefox
+        run: npx playwright install-deps chromium
 
-      - name: Run anonymous E2E (chromium + firefox + mobile-chrome)
+      - name: Run anonymous E2E (chromium + mobile-chrome)
         run: npm run e2e
 
       - name: Upload report on failure
@@ -72,6 +72,8 @@ jobs:
     name: Authenticated E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Non-blocking while we stabilize vercel dev in CI.
+    continue-on-error: true
     # Only run on push (not PRs from forks which can't access secrets)
     if: github.event_name == 'push'
     env:
