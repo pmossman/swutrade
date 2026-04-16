@@ -6,6 +6,7 @@ import { getDb } from '../../lib/db.js';
 import { users } from '../../lib/schema.js';
 import { eq } from 'drizzle-orm';
 import { getRedirectUri } from './discord.js';
+import { syncGuildMemberships } from '../../lib/guildSync.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { code, state } = req.query as { code?: string; state?: string };
@@ -86,6 +87,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       avatarUrl,
     });
   }
+
+  // Phase 4: pull the user's guild memberships now that we have a
+  // fresh access token. Non-blocking — any failure logs and proceeds
+  // to sign-in so OAuth isn't coupled to Discord's guilds endpoint
+  // availability.
+  await syncGuildMemberships(discordUser.id, tokens.accessToken());
 
   await createSession(req, res, {
     userId: discordUser.id,

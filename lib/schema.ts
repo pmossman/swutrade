@@ -18,9 +18,85 @@ export const users = pgTable('users', {
   avatarUrl: text('avatar_url'),
   wantsPublic: boolean('wants_public').default(true).notNull(),
   availablePublic: boolean('available_public').default(false).notNull(),
+  // Phase 4 — account-level settings. Three-axis consent model:
+  //   profileVisibility gates all profile discoverability
+  //   dm* toggles gate bot-pushed notifications (default off except
+  //     trade proposals, which are direct transactional mail)
+  // Per-guild toggles live in user_guild_memberships.
+  profileVisibility: text('profile_visibility', { enum: ['public', 'discord', 'private'] })
+    .default('public')
+    .notNull(),
+  dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
+  dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),
+  dmMeetupReminders: boolean('dm_meetup_reminders').default(false).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * Registry of every Discord guild that SWUTrade's bot has been
+ * installed into. Written when Discord fires `GUILD_CREATE` at the
+ * bot on install (and when someone runs the install OAuth flow);
+ * deleted on `GUILD_DELETE` / bot kick.
+ *
+ * Used to filter the enrollment UI: a user is only offered community
+ * features for guilds in `user_guild_memberships ∩ bot_installed_guilds`.
+ * Prevents the enrollment screen from enumerating every server the user
+ * has ever joined and keeps "enrollable" synonymous with "has the bot
+ * actually installed, so the features will work here."
+ *
+ * Bot not built yet — table stays empty for now, reserved so the
+ * schema + query layer don't need reworking when it ships.
+ */
+export const botInstalledGuilds = pgTable('bot_installed_guilds', {
+  guildId: text('guild_id').primaryKey(),
+  guildName: text('guild_name').notNull(),
+  guildIcon: text('guild_icon'),
+  installedAt: timestamp('installed_at', { withTimezone: true }).defaultNow().notNull(),
+  // Discord user id of whoever ran the install flow. Informational —
+  // not used for authorization decisions.
+  installedByUserId: text('installed_by_user_id'),
+});
+
+/**
+ * Record of which Discord guilds a user belongs to + their Phase-4
+ * consent state for each. Enrollment is affirmative — signing in
+ * populates rows here (via the Discord `guilds` OAuth scope) but
+ * `enrolled=false` by default. A user has to explicitly opt into
+ * each server's trading community via the settings UI.
+ *
+ * Refreshed on each sign-in so membership reflects Discord reality
+ * (leaving a server removes the row; joining one adds it).
+ */
+export const userGuildMemberships = pgTable(
+  'user_guild_memberships',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    guildId: text('guild_id').notNull(),
+    // Cached guild metadata — Discord's guild list endpoint returns
+    // these alongside the id so we might as well store them for the
+    // enrollment UI without a second fetch per render.
+    guildName: text('guild_name').notNull(),
+    guildIcon: text('guild_icon'),
+    // True if the viewer has Discord `MANAGE_GUILD` in this server.
+    // Gate for the `/guilds/<id>/admin` LGS-directory page (v2).
+    canManage: boolean('can_manage').default(false).notNull(),
+    // Per-guild consent flags. Only meaningful when enrolled=true.
+    enrolled: boolean('enrolled').default(false).notNull(),
+    includeInRollups: boolean('include_in_rollups').default(false).notNull(),
+    appearInQueries: boolean('appear_in_queries').default(false).notNull(),
+    // v2 — channel for outbound "visit announcement" broadcasts.
+    announceVisitsChannelId: text('announce_visits_channel_id'),
+    joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique('user_guild_unique').on(t.userId, t.guildId),
+  ],
+);
 
 export const wantsItems = pgTable(
   'wants_items',

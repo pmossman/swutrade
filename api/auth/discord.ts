@@ -30,7 +30,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   );
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
-  const url = discord.createAuthorizationURL(state, codeVerifier, ['identify']);
+  // `guilds` scope unlocks Phase 4 — we hit `GET /users/@me/guilds`
+  // on callback to populate user_guild_memberships, which drives
+  // per-server enrollment + community source in the card picker.
+  // `identify` remains the baseline for username + avatar.
+  const url = discord.createAuthorizationURL(state, codeVerifier, ['identify', 'guilds']);
 
   const cookieOpts = {
     httpOnly: true,
