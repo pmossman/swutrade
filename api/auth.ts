@@ -85,6 +85,7 @@ export async function handleDiscordStart(req: VercelRequest, res: VercelResponse
   // on callback to populate user_guild_memberships. `identify`
   // remains the baseline for username + avatar.
   const url = discord.createAuthorizationURL(state, codeVerifier, ['identify', 'guilds']);
+  const destination = url.toString();
 
   const cookieOpts = {
     httpOnly: true,
@@ -98,12 +99,47 @@ export async function handleDiscordStart(req: VercelRequest, res: VercelResponse
     serialize('swu_oauth_state', state, cookieOpts),
     serialize('swu_oauth_verifier', codeVerifier, cookieOpts),
   ]);
-  // Prevent bfcache / intermediary caches from serving a stale 302.
-  // Mobile Safari was observed rendering a blank Discord page on
-  // first tap that only resolved on refresh.
   res.setHeader('Cache-Control', 'no-store');
 
-  res.redirect(302, url.toString());
+  // HTML interstitial instead of a bare 302. iOS Safari has a known
+  // cross-origin-redirect race where a 302 from our origin → a
+  // JS-heavy target (discord.com/oauth2/authorize) can strand the
+  // user on a permanent white screen that only resolves on refresh.
+  // Giving Safari a real HTML document to render first (with
+  // cookies already set in the response headers) lets the browser
+  // fully commit to our response before navigating cross-origin,
+  // avoiding the race. Refresh parity: the <meta refresh> covers
+  // no-JS fallback, the <script> fires immediately when JS is on,
+  // the <a> is a last-resort manual path.
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(200).send(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0; url=${htmlEscape(destination)}">
+<title>Signing in…</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0a0e1a; color: #e5e7eb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  p { text-align: center; }
+  a { color: #F5A623; }
+</style>
+</head>
+<body>
+<p>Redirecting to Discord… <a href="${htmlEscape(destination)}">tap here if nothing happens</a>.</p>
+<script>window.location.replace(${JSON.stringify(destination)});</script>
+</body>
+</html>`);
+}
+
+/** Tiny HTML-escape helper for embedding URLs in attributes. */
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export async function handleCallback(req: VercelRequest, res: VercelResponse) {

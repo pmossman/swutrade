@@ -46,12 +46,14 @@ export function mockRequest(opts: {
 export function mockResponse(): VercelResponse & {
   _status: number;
   _json: unknown;
+  _body: string | null;
   _headers: Record<string, string | string[]>;
   _redirectUrl: string | null;
 } {
   const res = {
     _status: 200,
     _json: null,
+    _body: null as string | null,
     _headers: {} as Record<string, string | string[]>,
     _redirectUrl: null as string | null,
     status(code: number) {
@@ -60,6 +62,10 @@ export function mockResponse(): VercelResponse & {
     },
     json(data: unknown) {
       res._json = data;
+      return res;
+    },
+    send(body: string | Buffer) {
+      res._body = typeof body === 'string' ? body : body.toString('utf8');
       return res;
     },
     setHeader(key: string, value: string | string[]) {

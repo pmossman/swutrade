@@ -66,18 +66,42 @@ describe('GET /api/auth/discord', () => {
     vi.unstubAllEnvs();
   });
 
+  /**
+   * Extract the Discord URL that the interstitial will redirect to.
+   * The interstitial embeds the same URL in three places (meta
+   * refresh, visible anchor, script). Pulling from the script is
+   * the least ambiguous — it's JSON-stringified, so a single
+   * quoted value.
+   */
+  function extractRedirectFromInterstitial(body: string): string {
+    const match = body.match(/window\.location\.replace\((".*?")\)/);
+    if (!match) throw new Error('Interstitial missing window.location.replace');
+    return JSON.parse(match[1]) as string;
+  }
+
   it('stamps the generated Discord URL with a redirect_uri matching the request Host', async () => {
     const req = mockRequest({ headers: { host: 'beta.swutrade.com' } });
     const res = mockResponse();
     await handler(req, res);
 
-    expect(res._status).toBe(302);
-    expect(res._redirectUrl).toBeTruthy();
-    const url = new URL(res._redirectUrl!);
+    expect(res._status).toBe(200);
+    expect(res._body).toBeTruthy();
+    const url = new URL(extractRedirectFromInterstitial(res._body!));
     expect(url.hostname).toBe('discord.com');
     expect(url.searchParams.get('redirect_uri')).toBe(
       'https://beta.swutrade.com/api/auth/callback',
     );
+  });
+
+  it('returns an HTML interstitial (iOS Safari cross-origin redirect workaround)', async () => {
+    const req = mockRequest({ headers: { host: 'beta.swutrade.com' } });
+    const res = mockResponse();
+    await handler(req, res);
+
+    expect(res._headers['content-type']).toContain('text/html');
+    expect(res._body).toContain('<meta http-equiv="refresh"');
+    expect(res._body).toContain('window.location.replace');
+    expect(res._body).toContain('tap here if nothing happens');
   });
 
   it('sets oauth state + verifier cookies scoped to path=/', async () => {
@@ -124,7 +148,7 @@ describe('GET /api/auth/discord', () => {
     expect(stateCookie).toBeDefined();
     const stateValue = stateCookie!.split(';')[0].split('=')[1];
 
-    const url = new URL(res._redirectUrl!);
+    const url = new URL(extractRedirectFromInterstitial(res._body!));
     expect(url.searchParams.get('state')).toBe(stateValue);
   });
 });
