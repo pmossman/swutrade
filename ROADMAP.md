@@ -170,6 +170,32 @@ Foil prices for those sets exist via `https://mpapi.tcgplayer.com/v2/product/{id
 
 Non-trivial because the productId-as-identity assumption is load-bearing. Half-day-ish task. Park until a user actually asks for early-set foils.
 
+### Price movers + history (requires daily snapshot infra)
+
+**Today:** prices are point-in-time — the app knows what a card costs right now, but not whether it's trending up or down.
+
+**Infra:** add a `price_snapshots` table (`product_id text, date date, market_price numeric, low_price numeric`, ~7K rows/day). Populated by the price-refresh cron — each run diffs against the latest snapshot and inserts a new row only when the date changes. Neon free tier handles ~2.5M rows/year comfortably.
+
+**Features this unlocks (each independent):**
+- **Biggest gainers / losers this week** — surface in the search overlay's empty state so traders spot mispriced cards. Query: compare today's snapshot to 7-day-ago, sort by absolute or relative delta.
+- **Price sparklines** — tiny 30-day inline chart on card rows (trade view, list view, profile). Beautiful but needs 30 days of history before it's useful.
+- **Collection value tracker** — sum a user's available list's market value per day. "Your collection: $247 (+$12 this week)." Shown on the profile page or in the drawer.
+- **Price alerts** — "Notify me when X drops below $Y." Needs a notification channel: Discord DM via the Phase 4 bot, or an in-app badge on next visit.
+
+### Matchmaking preview (Phase 2.5 — no Discord needed)
+
+Read-only cross-user matching: "3 people want your Darth Vader Hyperspace." Query public `wants_items` that overlap with the current user's `available_items` by family_id. No new tables — just an aggregate query + a UI surface (badge on the Available tab, or a "Matches" section in the drawer).
+
+Full matchmaking (mutual "I have what you want AND you have what I want") is Phase 4 territory with Discord guild scoping. But the one-directional "who wants my cards?" version ships with what we have now and is the single most compelling reason to sign in.
+
+### Trade history
+
+Save completed trades to a `trades` table (id, user_id, your_cards JSONB, their_cards JSONB, percentage, price_mode, total_yours, total_theirs, created_at). "Save this trade" button on the trade summary. "My Trades" section in the drawer shows past trades with dates + totals. Useful for in-person events: "what did we agree on last time?"
+
+### Popular wants (community signal)
+
+Aggregate most-wanted cards across all users with public wants lists. "Trending" section in the search overlay's empty state, or a badge on cards that many people want. Zero new tables — just a cached aggregate query on `wants_items` grouped by `family_id`. Makes the app feel alive.
+
 ### Other pending UX notes
 
 - Allow replacing cards in trade list (in-place edit)
