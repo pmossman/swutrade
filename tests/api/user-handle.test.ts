@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describeWithDb, } from './helpers.js';
+import { it, expect, beforeEach, afterEach } from 'vitest';
 import handler from '../../api/user/[handle].js';
 import { mockRequest, mockResponse, createTestUser, insertWant, insertAvailable } from './helpers.js';
 
-describe('GET /api/user/[handle]', () => {
+describeWithDb('GET /api/user/[handle]', () => {
   let fixture: Awaited<ReturnType<typeof createTestUser>>;
 
   beforeEach(async () => {

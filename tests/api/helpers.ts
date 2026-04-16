@@ -1,12 +1,21 @@
 import { config } from 'dotenv';
 config({ path: '.env.local' });
 
+import { describe } from 'vitest';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { sealData } from 'iron-session';
 import { getDb } from '../../lib/db.js';
 import { users, wantsItems, availableItems, trades } from '../../lib/schema.js';
 import { eq } from 'drizzle-orm';
 import { restrictionKey } from '../../lib/shared.js';
+
+/**
+ * Use instead of `describe` in API tests — skips the entire suite
+ * when POSTGRES_URL isn't set (e.g., fork PRs without secrets).
+ */
+export const describeWithDb = process.env.POSTGRES_URL
+  ? describe
+  : describe.skip;
 
 // --- Mock Request / Response ------------------------------------------------
 

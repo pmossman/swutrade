@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describeWithDb, } from './helpers.js';
+import { it, expect } from 'vitest';
 import handler from '../../api/auth/me.js';
 import { mockRequest, mockResponse, sealTestCookie, createTestUser } from './helpers.js';
 
-describe('GET /api/auth/me', () => {
+describeWithDb('GET /api/auth/me', () => {
   it('returns { user: null } when no session cookie is present', async () => {
     const req = mockRequest();
     const res = mockResponse();

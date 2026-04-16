@@ -8,6 +8,10 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # API integration tests (tests/api/) need DB access.
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
     steps:
       - uses: actions/checkout@v4
 
@@ -18,17 +22,18 @@ jobs:
 
       - run: npm ci
 
-      # Typecheck the whole project (src + tests). Runs with --force to
-      # bypass the incremental tsbuildinfo cache, matching what Vercel
-      # does on a cold build — catches issues a warm local cache hides.
+      # Write .env.local so dotenv-based imports in test helpers work.
+      - name: Write env file
+        if: env.POSTGRES_URL != ''
+        run: |
+          echo "SESSION_SECRET=$SESSION_SECRET" >> .env.local
+          echo "POSTGRES_URL=$POSTGRES_URL" >> .env.local
+
       - name: TypeScript
         run: npx tsc -b --force
 
-      - name: Unit tests
+      - name: Unit + API tests
         run: npx vitest run
 
-      # Vite bundle build. Skips fetch-prices / enrich-cards since those
-      # hit external APIs and would slow CI without adding signal —
-      # tsc + vitest above cover the code surface.
       - name: Vite build
         run: npx vite build

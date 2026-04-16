@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describeWithDb, } from './helpers.js';
+import { it, expect, beforeEach, afterEach } from 'vitest';
 import handler from '../../api/trades.js';
 import { mockRequest, mockResponse, sealTestCookie, createTestUser } from './helpers.js';
 
-describe('/api/trades', () => {
+describeWithDb('/api/trades', () => {
   let fixture: Awaited<ReturnType<typeof createTestUser>>;
   let cookie: string;
 
