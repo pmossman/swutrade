@@ -29,6 +29,9 @@ test.describe('Curator: build lists and share', () => {
     await page.getByRole('button', { name: 'Open my lists' }).click();
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
+    // Wait for Radix Dialog mount animation to settle — on slow CI runners
+    // the portal's content can detach mid-click during the animation.
+    await dialog.getByRole('tab', { name: /^wants/i }).waitFor({ state: 'attached' });
 
     // --- Wants: Hyperspace-only restriction ---------------------------------
     await dialog.getByRole('tab', { name: /^wants/i }).click();
@@ -89,6 +92,7 @@ test.describe('Curator: build lists and share', () => {
     await page.getByRole('button', { name: 'Open my lists' }).click();
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole('tab', { name: /^wants/i }).waitFor({ state: 'attached' });
 
     await dialog.getByRole('tab', { name: /^wants/i }).click();
 
