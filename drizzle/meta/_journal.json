@@ -8,6 +8,13 @@
       "when": 1776315953486,
       "tag": "0000_even_flatman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776323392407,
+      "tag": "0001_new_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

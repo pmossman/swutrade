@@ -7,6 +7,7 @@ import {
   numeric,
   timestamp,
   unique,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
@@ -63,3 +64,25 @@ export const availableItems = pgTable(
     unique('available_user_product').on(t.userId, t.productId),
   ],
 );
+
+export const trades = pgTable('trades', {
+  id: text('id').primaryKey(),
+  userId: text('user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  yourCards: jsonb('your_cards').notNull().$type<TradeCardSnapshot[]>(),
+  theirCards: jsonb('their_cards').notNull().$type<TradeCardSnapshot[]>(),
+  percentage: integer('percentage').notNull(),
+  priceMode: text('price_mode').notNull(),
+  totalYours: numeric('total_yours').notNull(),
+  totalTheirs: numeric('total_theirs').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export interface TradeCardSnapshot {
+  productId: string;
+  name: string;
+  variant: string;
+  qty: number;
+  unitPrice: number | null;
+}

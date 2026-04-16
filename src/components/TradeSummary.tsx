@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { TradeCard, PriceMode } from '../types';
 import { PriceModeToggle } from './PriceModeToggle';
 import { PriceSlider } from './PriceSlider';
@@ -9,6 +9,7 @@ import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, countMissingPrice
 import { extractVariantLabel, extractBaseName } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface TradeSummaryProps {
   yourCards: TradeCard[];
@@ -143,6 +144,9 @@ function SidePanel({ cards, percentage, priceMode, label, accentColor }: {
 }
 
 export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onPriceModeChange, onPercentageChange, onClose }: TradeSummaryProps) {
+  const { user } = useAuthContext();
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -159,6 +163,36 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onP
   const missingCount = countMissingPrices(yourCards, priceMode) + countMissingPrices(theirCards, priceMode);
 
   // Thematic action line, matching the pattern in the bottom balance bar.
+  const handleSave = useCallback(async () => {
+    if (!user || saveState === 'saving' || saveState === 'saved') return;
+    setSaveState('saving');
+    try {
+      const snapshot = (cards: TradeCard[]) =>
+        cards.map(tc => ({
+          productId: tc.card.productId ?? '',
+          name: extractBaseName(tc.card.name),
+          variant: extractVariantLabel(tc.card.name),
+          qty: tc.qty,
+          unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
+        }));
+      await fetch('/api/trades', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          yourCards: snapshot(yourCards),
+          theirCards: snapshot(theirCards),
+          percentage,
+          priceMode,
+          totalYours: yourTotal,
+          totalTheirs: theirTotal,
+        }),
+      });
+      setSaveState('saved');
+    } catch {
+      setSaveState('error');
+    }
+  }, [user, saveState, yourCards, theirCards, percentage, priceMode, yourTotal, theirTotal]);
+
   let actionLine: React.ReactNode = null;
   if (balance.tier !== 'balanced' && balance.absDiff >= 0.01) {
     const amount = `$${balance.absDiff.toFixed(2)}`;
@@ -235,6 +269,40 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onP
               </div>
             </div>
           </div>
+
+          {/* Save trade button — only for signed-in users */}
+          {user && (
+            <div className="mb-4 flex justify-center">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saveState === 'saving' || saveState === 'saved'}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors ${
+                  saveState === 'saved'
+                    ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
+                    : saveState === 'error'
+                      ? 'bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25'
+                      : 'bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60'
+                }`}
+              >
+                {saveState === 'saved' ? (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                    Saved
+                  </>
+                ) : saveState === 'saving' ? (
+                  'Saving…'
+                ) : saveState === 'error' ? (
+                  'Retry save'
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                    Save this trade
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {missingCount > 0 && (
             <div className="mb-4 mx-auto max-w-md flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-xs font-bold text-red-300">
