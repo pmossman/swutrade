@@ -52,7 +52,7 @@ interface ListViewProps {
   percentage: number;
   priceMode: PriceMode;
   isAnyLoading: boolean;
-  onStartTrade: (fromHandle?: string) => void;
+  onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
 }
 
 /**

@@ -127,7 +127,7 @@ function App() {
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
-  const handleStartTrade = useCallback((fromHandle?: string) => {
+  const handleStartTrade = useCallback((fromHandle?: string, autoBalance?: boolean) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
     // Exit profile view when starting a trade from a profile page.
@@ -138,6 +138,12 @@ function App() {
     // the matchmaker can pre-fill and the recipient-side features
     // (Phase 3b) can reference them.
     if (fromHandle) params.set('from', fromHandle);
+    // autoBalance is a one-shot signal — "the user explicitly asked
+    // for a balanced trade, apply it automatically when the banner
+    // mounts". The banner strips it from the URL after applying so
+    // reloads and shared URLs don't keep re-triggering.
+    if (autoBalance) params.set('autoBalance', '1');
+    else params.delete('autoBalance');
     window.history.pushState(null, '', '?' + params.toString());
     // Clear any persisted filter state so the sender's wants don't
     // land in an accidental "no matches" view if the user had a

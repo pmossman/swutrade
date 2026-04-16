@@ -46,7 +46,7 @@ interface ProfileViewProps {
   percentage: number;
   priceMode: PriceMode;
   isAnyLoading: boolean;
-  onStartTrade: (fromHandle?: string) => void;
+  onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
 }
 
 export function ProfileView({
@@ -134,7 +134,7 @@ export function ProfileView({
           <div className="ml-auto">
             <button
               type="button"
-              onClick={() => onStartTrade(profile.user.handle)}
+              onClick={() => onStartTrade(profile.user.handle, true)}
               className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
             >
               Start a trade
