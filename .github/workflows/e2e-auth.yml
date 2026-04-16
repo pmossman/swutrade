@@ -1,0 +1,70 @@
+name: Authenticated E2E
+
+# Triggered by Vercel's deployment status webhook — runs only after
+# the preview deploy succeeds, so the auth tests hit the real stack
+# (API functions + Neon DB) at the exact preview URL, not a local
+# vercel dev that's hard to boot in CI.
+on:
+  deployment_status:
+
+concurrency:
+  group: e2e-auth-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Auth E2E against preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event.deployment_status.state == 'success'
+    env:
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+      POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+      PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.target_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Write .env.local so test helpers can read SESSION_SECRET + DB URL
+      - name: Write env file
+        run: |
+          echo "SESSION_SECRET=$SESSION_SECRET" >> .env.local
+          echo "POSTGRES_URL=$POSTGRES_URL" >> .env.local
+          echo "POSTGRES_URL_NON_POOLING=$POSTGRES_URL_NON_POOLING" >> .env.local
+          echo "PLAYWRIGHT_BASE_URL=$PLAYWRIGHT_BASE_URL" >> .env.local
+
+      - name: Cache Playwright browsers
+        id: playwrightcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwrightcache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached browser)
+        if: steps.playwrightcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Seed test user
+        run: npx tsx e2e/helpers/seed.ts
+
+      - name: Run authenticated E2E against ${{ github.event.deployment_status.target_url }}
+        run: npm run e2e:auth
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-auth
+          path: playwright-report/
+          retention-days: 7

@@ -59,11 +59,12 @@ export async function signIn(context: BrowserContext, user: TestUser = TEST_USER
     { password: secret, ttl: 60 * 60 * 24 },
   );
 
+  const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000';
   await context.addCookies([
     {
       name: 'swu_session',
       value: sealed,
-      url: 'http://localhost:3000',
+      url: baseURL,
       httpOnly: true,
       sameSite: 'Lax',
     },
