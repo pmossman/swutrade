@@ -22,6 +22,7 @@ jobs:
       POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
       POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
       PLAYWRIGHT_BASE_URL: ${{ github.event.deployment_status.target_url }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
     steps:
       - uses: actions/checkout@v4
 

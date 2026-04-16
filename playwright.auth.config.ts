@@ -3,11 +3,14 @@ import { defineConfig, devices } from '@playwright/test';
 
 config({ path: '.env.local' });
 
+const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+
 /**
- * Authenticated e2e tests — run against `vercel dev` (port 3000)
- * which serves both the Vite frontend AND the API functions.
+ * Authenticated e2e tests.
  *
- * Run: npm run e2e:auth
+ * Locally: runs against `vercel dev` (port 3000).
+ * CI: runs against the Vercel preview URL (set via PLAYWRIGHT_BASE_URL),
+ *     with VERCEL_AUTOMATION_BYPASS_SECRET to get past deployment protection.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -19,18 +22,20 @@ export default defineConfig({
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000',
     trace: 'on-first-retry',
+    // Bypass Vercel Deployment Protection on preview URLs.
+    ...(bypassSecret ? {
+      extraHTTPHeaders: {
+        'x-vercel-protection-bypass': bypassSecret,
+      },
+    } : {}),
   },
   projects: [
     { name: 'chromium', use: devices['Desktop Chrome'] },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL ? undefined : {
-    command: process.env.CI
-      ? 'npx vercel dev --listen 3000 --token "$VERCEL_TOKEN"'
-      : 'vercel dev --listen 3000',
+    command: 'vercel dev --listen 3000',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: true,
     timeout: 60_000,
-    stdout: 'pipe',
-    stderr: 'pipe',
   },
 });
