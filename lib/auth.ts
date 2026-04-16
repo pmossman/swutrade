@@ -8,23 +8,25 @@ export interface SessionData {
   avatarUrl: string | null;
 }
 
-const sessionOptions: SessionOptions = {
-  password: process.env.SESSION_SECRET!,
-  cookieName: 'swu_session',
-  cookieOptions: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 60 * 60 * 24 * 30,
-    path: '/',
-  },
-};
+function getSessionOptions(): SessionOptions {
+  return {
+    password: process.env.SESSION_SECRET!,
+    cookieName: 'swu_session',
+    cookieOptions: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 30,
+      path: '/',
+    },
+  };
+}
 
 export async function getSession(
   req: VercelRequest,
   res: VercelResponse,
 ): Promise<SessionData | null> {
-  const session = await getIronSession<SessionData>(req, res, sessionOptions);
+  const session = await getIronSession<SessionData>(req, res, getSessionOptions());
   if (!session.userId) return null;
   return {
     userId: session.userId,
@@ -39,7 +41,7 @@ export async function createSession(
   res: VercelResponse,
   data: SessionData,
 ): Promise<void> {
-  const session = await getIronSession<SessionData>(req, res, sessionOptions);
+  const session = await getIronSession<SessionData>(req, res, getSessionOptions());
   session.userId = data.userId;
   session.username = data.username;
   session.handle = data.handle;
@@ -51,7 +53,7 @@ export async function destroySession(
   req: VercelRequest,
   res: VercelResponse,
 ): Promise<void> {
-  const session = await getIronSession<SessionData>(req, res, sessionOptions);
+  const session = await getIronSession<SessionData>(req, res, getSessionOptions());
   session.destroy();
 }
 
