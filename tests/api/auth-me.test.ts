@@ -1,6 +1,6 @@
 import { describeWithDb, } from './helpers.js';
 import { it, expect } from 'vitest';
-import handler from '../../api/auth/me.js';
+import { handleMe as handler } from '../../api/auth.js';
 import { mockRequest, mockResponse, sealTestCookie, createTestUser } from './helpers.js';
 
 describeWithDb('GET /api/auth/me', () => {

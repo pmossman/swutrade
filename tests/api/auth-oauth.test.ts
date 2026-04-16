@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mockRequest, mockResponse } from './helpers.js';
-import handler, { getRedirectUri } from '../../api/auth/discord.js';
+import { handleDiscordStart as handler, getRedirectUri } from '../../api/auth.js';
 
 describe('getRedirectUri', () => {
   const origVercelUrl = process.env.VERCEL_URL;
