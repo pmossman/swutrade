@@ -12,6 +12,7 @@ import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
 import { Popover } from './Popover';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -372,6 +373,7 @@ function ShareListsButton({
   wantsItems: WantsApi['items'];
   availableItems: AvailableApi['items'];
 }) {
+  const { user } = useAuthContext();
   const [linkCopied, setLinkCopied] = useState(false);
   const [showImage, setShowImage] = useState(false);
 
@@ -386,8 +388,13 @@ function ShareListsButton({
     // List shares default to list-view landing — clear any lingering
     // ?view=trade so the recipient lands on the dedicated /list view.
     url.searchParams.delete('view');
+    // Identify the sender when the user is signed in. Recipients see
+    // "from @handle" on the shared-list landing and, when signed in
+    // themselves, get the matchmaker pre-filled with this handle.
+    if (user) url.searchParams.set('from', user.handle);
+    else url.searchParams.delete('from');
     return url;
-  }, [wantsItems, availableItems]);
+  }, [wantsItems, availableItems, user]);
 
   const copyLink = useCallback(async () => {
     const url = shareUrl().toString();

@@ -42,12 +42,17 @@ interface ResolvedRow {
 
 interface ListViewProps {
   sharedLists: SharedLists;
+  /** When the sender identified themselves via ?from=<handle> on the
+   *  share URL, the header shows a "From @handle" chip linking to
+   *  their public profile. Plumbed through to the matchmaker too, so
+   *  "Start a trade" lands the recipient on a pre-filled handle. */
+  senderHandle: string | null;
   byFamilyAll: Map<string, CardVariant[]>;
   byProductId: Map<string, CardVariant>;
   percentage: number;
   priceMode: PriceMode;
   isAnyLoading: boolean;
-  onStartTrade: () => void;
+  onStartTrade: (fromHandle?: string) => void;
 }
 
 /**
@@ -67,6 +72,7 @@ interface ListViewProps {
  */
 export function ListView({
   sharedLists,
+  senderHandle,
   byFamilyAll,
   byProductId,
   percentage,
@@ -202,7 +208,7 @@ export function ListView({
           <div className="ml-auto">
             <button
               type="button"
-              onClick={onStartTrade}
+              onClick={() => onStartTrade(senderHandle ?? undefined)}
               className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
             >
               <span>Start a trade</span>
@@ -212,13 +218,27 @@ export function ListView({
             </button>
           </div>
         </div>
-        <div className="mt-3 flex items-baseline gap-2">
+        <div className="mt-3 flex items-baseline gap-2 flex-wrap">
           <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Shared list</span>
           <span className="text-[11px] text-gray-600">
             {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
             {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
             {availableRows.length > 0 && `${availableRows.length} available`}
           </span>
+          {senderHandle && (
+            <>
+              <span className="text-gray-700" aria-hidden>·</span>
+              <span className="text-[11px] text-gray-600">
+                from{' '}
+                <a
+                  href={`/?profile=${encodeURIComponent(senderHandle)}`}
+                  className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
+                >
+                  @{senderHandle}
+                </a>
+              </span>
+            </>
+          )}
         </div>
       </header>
 
@@ -304,10 +324,13 @@ export function ListView({
       </main>
 
       <footer className="shrink-0 px-3 sm:px-6 pb-4 text-center text-[10px] text-gray-600 max-w-5xl mx-auto w-full">
-        <span>Anonymous list shared via SWUTrade · </span>
+        <span>
+          {senderHandle ? `Shared by @${senderHandle} via SWUTrade` : 'Anonymous list shared via SWUTrade'}
+          {' · '}
+        </span>
         <button
           type="button"
-          onClick={onStartTrade}
+          onClick={() => onStartTrade(senderHandle ?? undefined)}
           className="text-gold/80 hover:text-gold underline transition-colors"
         >
           Start a trade with these cards

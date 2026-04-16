@@ -56,4 +56,18 @@ test.describe('Shared list URL roundtrip', () => {
       timeout: 5_000,
     });
   });
+
+  test('?from=<handle> surfaces a sender link pointing at the profile', async ({ page }) => {
+    await page.goto(SHARE_URL + '&from=pmoss');
+    await expect(page.getByText('SHARED LIST')).toBeVisible({ timeout: 10_000 });
+
+    // Header gains a "@pmoss" link that navigates to /?profile=pmoss.
+    const senderLink = page.getByRole('link', { name: '@pmoss' }).first();
+    await expect(senderLink).toBeVisible();
+    await expect(senderLink).toHaveAttribute('href', /\/\?profile=pmoss/);
+
+    // Footer swaps its attribution copy from "Anonymous list" to the
+    // sender's handle.
+    await expect(page.getByText(/Shared by @pmoss via SWUTrade/)).toBeVisible();
+  });
 });

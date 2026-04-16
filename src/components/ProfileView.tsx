@@ -46,7 +46,7 @@ interface ProfileViewProps {
   percentage: number;
   priceMode: PriceMode;
   isAnyLoading: boolean;
-  onStartTrade: () => void;
+  onStartTrade: (fromHandle?: string) => void;
 }
 
 export function ProfileView({
@@ -134,7 +134,7 @@ export function ProfileView({
           <div className="ml-auto">
             <button
               type="button"
-              onClick={onStartTrade}
+              onClick={() => onStartTrade(profile.user.handle)}
               className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
             >
               Start a trade
@@ -218,7 +218,7 @@ export function ProfileView({
         <span>@{profile.user.handle}'s public list on SWUTrade · </span>
         <button
           type="button"
-          onClick={onStartTrade}
+          onClick={() => onStartTrade(profile.user.handle)}
           className="text-gold/80 hover:text-gold underline transition-colors"
         >
           Start a trade

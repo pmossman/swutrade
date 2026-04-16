@@ -13,6 +13,10 @@ interface MatchmakerInputProps {
   wants: WantsApi;
   available: AvailableApi;
   onApplyMatch: (yourCards: TradeCard[], theirCards: TradeCard[]) => void;
+  /** Optional handle to pre-populate the input — used when a signed-in
+   *  user opens a ?from=<handle> link. They can click Find trade
+   *  directly without retyping the handle. */
+  initialHandle?: string;
 }
 
 interface RemoteProfile {
@@ -28,9 +32,21 @@ export function MatchmakerInput({
   wants,
   available,
   onApplyMatch,
+  initialHandle,
 }: MatchmakerInputProps) {
   const { user } = useAuthContext();
-  const [handle, setHandle] = useState('');
+  // Read ?from= off the URL as a fallback to the explicit prop so a
+  // Profile → Start a trade hop (which pushes ?from=<handle> to the
+  // URL immediately before this component mounts for the first time)
+  // still pre-populates. The App-level useSenderHandle latches on
+  // App mount, before the URL gains ?from=, so we can't rely on it
+  // alone here.
+  const [handle, setHandle] = useState(() => {
+    if (initialHandle) return initialHandle;
+    if (typeof window === 'undefined') return '';
+    const params = new URLSearchParams(window.location.search);
+    return params.get('from')?.trim().replace(/^@/, '') ?? '';
+  });
   const [status, setStatus] = useState<'idle' | 'loading' | 'no-match' | 'error'>('idle');
   const [matchInfo, setMatchInfo] = useState<{
     username: string;
@@ -39,6 +55,7 @@ export function MatchmakerInput({
     offeringTotal: number;
     receivingTotal: number;
   } | null>(null);
+  const [lastSearchedHandle, setLastSearchedHandle] = useState<string | null>(null);
 
   const findMatch = useCallback(async () => {
     const trimmed = handle.trim().replace(/^@/, '');
@@ -55,6 +72,8 @@ export function MatchmakerInput({
       }
       if (!res.ok) throw new Error();
       const profile: RemoteProfile = await res.json();
+
+      setLastSearchedHandle(profile.user.handle);
 
       if (!profile.wants && !profile.available) {
         setStatus('no-match');
@@ -100,7 +119,8 @@ export function MatchmakerInput({
   }, [handle, wants.items, available.items, allCards, priceMode, percentage, onApplyMatch]);
 
   if (!user) return null;
-  if (wants.items.length === 0 && available.items.length === 0) return null;
+
+  const selfEmpty = wants.items.length === 0 && available.items.length === 0;
 
   return (
     <div className="flex flex-col gap-2 px-3 pb-3 max-w-5xl mx-auto w-full">
@@ -126,7 +146,38 @@ export function MatchmakerInput({
       </div>
       {status === 'no-match' && (
         <div className="text-xs text-gray-500 px-1">
-          No card overlap found — you and this user don't have matching wants/available.
+          {selfEmpty ? (
+            <>
+              Save wants or available cards in <strong className="text-gray-300">My Lists</strong> to match against this user.
+              {lastSearchedHandle && (
+                <>
+                  {' '}
+                  <a
+                    href={`/?profile=${encodeURIComponent(lastSearchedHandle)}`}
+                    className="text-gold hover:text-gold-bright underline"
+                  >
+                    View @{lastSearchedHandle}'s profile
+                  </a>
+                  {' '}in the meantime.
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              No card overlap found — you and this user don't have matching wants/available.
+              {lastSearchedHandle && (
+                <>
+                  {' '}
+                  <a
+                    href={`/?profile=${encodeURIComponent(lastSearchedHandle)}`}
+                    className="text-gold hover:text-gold-bright underline"
+                  >
+                    View their profile
+                  </a>
+                </>
+              )}
+            </>
+          )}
         </div>
       )}
       {status === 'error' && (

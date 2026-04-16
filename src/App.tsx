@@ -16,6 +16,7 @@ import { BetaBadge } from './components/BetaBadge';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
+import { useSenderHandle } from './hooks/useSenderHandle';
 import { ListView } from './components/ListView';
 import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
@@ -104,6 +105,7 @@ function App() {
   const available = useAvailable();
   const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
+  const senderHandle = useSenderHandle();
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
@@ -125,9 +127,17 @@ function App() {
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
-  const handleStartTrade = useCallback(() => {
+  const handleStartTrade = useCallback((fromHandle?: string) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
+    // Exit profile view when starting a trade from a profile page.
+    // detectViewMode prioritizes ?profile= over ?view= so we have to
+    // drop it, otherwise the view won't actually flip.
+    params.delete('profile');
+    // Carry the sender / viewed-profile handle forward as ?from= so
+    // the matchmaker can pre-fill and the recipient-side features
+    // (Phase 3b) can reference them.
+    if (fromHandle) params.set('from', fromHandle);
     window.history.pushState(null, '', '?' + params.toString());
     // Clear any persisted filter state so the sender's wants don't
     // land in an accidental "no matches" view if the user had a
@@ -144,6 +154,15 @@ function App() {
   useEffect(() => {
     priceData.loadAllSets();
   }, [priceData.loadAllSets]);
+
+  // Re-render every minute so the footer's "X ago" labels (prices,
+  // build age) advance even while the user is idle. Cheap — one
+  // setState per minute at the root is imperceptible.
+  const [, setMinuteTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setMinuteTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Sync trade state to/from URL for sharing and back/forward navigation
   const allLoadedCards = useMemo(() => Object.values(priceData.cards).flat(), [priceData.cards]);
@@ -250,6 +269,7 @@ function App() {
     return (
       <ListView
         sharedLists={sharedLists}
+        senderHandle={senderHandle}
         byFamilyAll={cardIndex.byFamilyAll}
         byProductId={cardIndex.byProductId}
         percentage={percentage}
@@ -373,13 +393,16 @@ function App() {
         )}
       </div>
 
-      {/* Matchmaker: enter a handle, app suggests a balanced trade */}
+      {/* Matchmaker: enter a handle, app suggests a balanced trade.
+          Pre-filled with the sender handle when the recipient arrived
+          via a ?from=<handle> share link or profile view. */}
       <MatchmakerInput
         allCards={allLoadedCards}
         percentage={percentage}
         priceMode={priceMode}
         wants={wants}
         available={available}
+        initialHandle={senderHandle ?? undefined}
         onApplyMatch={(yours, theirs) => {
           setYourCards(yours);
           setTheirCards(theirs);
@@ -522,6 +545,9 @@ function App() {
             className={isBetaChannel() ? 'text-gold/70' : 'text-gray-500'}
           >
             {isBetaChannel() ? 'beta' : 'v'}&nbsp;{APP_COMMIT}
+            {isBetaChannel() && (
+              <span className="text-gold/40"> · built {timeAgo(APP_BUILD_TIME)}</span>
+            )}
           </span>
           {user && syncStatus !== 'idle' && (
             <>

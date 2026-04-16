@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
 import { TradeImageModal } from './TradeImageModal';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface MobileActionsKebabProps {
   /** Clear-all callback. Omit in contexts where the destructive
@@ -15,16 +16,24 @@ interface MobileActionsKebabProps {
  * three rows on a narrow viewport. Desktop still shows the pills.
  */
 export function MobileActionsKebab({ onClear }: MobileActionsKebabProps) {
+  const { user } = useAuthContext();
   const [showImage, setShowImage] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
   const handleCopyLink = useCallback(async () => {
+    // Stamp outgoing share URLs with the sender's handle when signed
+    // in. Mirrors ShareButtons so mobile and desktop share the same
+    // Phase-3b recipient experience.
+    const url = new URL(window.location.href);
+    if (user) url.searchParams.set('from', user.handle);
+    else url.searchParams.delete('from');
+    const href = url.toString();
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(href);
     } catch {
       // Fall back to execCommand if needed; silent if both fail
       const input = document.createElement('input');
-      input.value = window.location.href;
+      input.value = href;
       document.body.appendChild(input);
       input.select();
       document.execCommand('copy');
@@ -32,7 +41,7 @@ export function MobileActionsKebab({ onClear }: MobileActionsKebabProps) {
     }
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
-  }, []);
+  }, [user]);
 
   const handleClear = useCallback(() => {
     if (!onClear) return;

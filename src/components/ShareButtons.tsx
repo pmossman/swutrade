@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { TradeImageModal } from './TradeImageModal';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface ShareButtonsProps {
   size?: 'sm' | 'md';
@@ -8,19 +9,33 @@ interface ShareButtonsProps {
 }
 
 export function ShareButtons({ size = 'md', onInteract }: ShareButtonsProps) {
+  const { user } = useAuthContext();
   const [linkCopied, setLinkCopied] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+
+  // Rebuild the share URL from current location so we can stamp
+  // ?from=<handle> on outgoing links when the user is signed in.
+  // Falls back to the raw href when not signed in (keeps anonymous
+  // share behavior unchanged).
+  const buildShareHref = useCallback((): string => {
+    if (typeof window === 'undefined') return '';
+    const url = new URL(window.location.href);
+    if (user) url.searchParams.set('from', user.handle);
+    else url.searchParams.delete('from');
+    return url.toString();
+  }, [user]);
 
   const handleCopyLink = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation();
     onInteract?.(e);
+    const href = buildShareHref();
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(href);
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     } catch {
       const input = document.createElement('input');
-      input.value = window.location.href;
+      input.value = href;
       document.body.appendChild(input);
       input.select();
       document.execCommand('copy');
@@ -28,7 +43,7 @@ export function ShareButtons({ size = 'md', onInteract }: ShareButtonsProps) {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
     }
-  }, [onInteract]);
+  }, [onInteract, buildShareHref]);
 
   const handleOpenImage = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
