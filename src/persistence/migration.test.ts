@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WantsListSchema, AvailableListSchema, DEFAULTS } from './schemas';
+import { WantsListSchema, AvailableListSchema } from './schemas';
 
 describe('Schema migration resilience', () => {
   describe('WantsListSchema', () => {
