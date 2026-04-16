@@ -117,6 +117,16 @@ jobs:
               STATE=$(gh api "$URL" --jq '.[0].state // empty' 2>/dev/null)
               TARGET=$(gh api "$URL" --jq '.[0].target_url // empty' 2>/dev/null)
               echo "  Deploy state: $STATE ($TARGET)"
+              # Short-circuit on terminal failure states. Without this
+              # a failed deploy eats the full ~10 minute poll loop
+              # while the e2e job downstream waits on its own timeout,
+              # masking the actual error behind a generic CI timeout.
+              case "$STATE" in
+                failure|error)
+                  echo "::error::Vercel deployment reported state=$STATE at $TARGET"
+                  exit 1
+                  ;;
+              esac
               if [ "$STATE" = "success" ] && [ -n "$TARGET" ]; then
                 # Verify we can reach it (with bypass header)
                 HTTP=$(curl -s -o /dev/null -w '%{http_code}' \

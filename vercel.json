@@ -2,6 +2,9 @@
   "rewrites": [
     { "source": "/u/:handle", "destination": "/?profile=:handle" },
     { "source": "/u/:handle/:tab", "destination": "/?profile=:handle&tab=:tab" },
+    { "source": "/api/me/guilds/:guildId", "destination": "/api/me?action=guild&guildId=:guildId" },
+    { "source": "/api/me/guilds", "destination": "/api/me?action=guilds" },
+    { "source": "/api/me/settings", "destination": "/api/me?action=settings" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

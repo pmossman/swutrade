@@ -1,8 +1,10 @@
 import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach } from 'vitest';
-import settingsHandler from '../../api/me/settings.js';
-import guildSettingsHandler from '../../api/me/guilds/[guildId].js';
-import guildsListHandler from '../../api/me/guilds.js';
+import {
+  handleSettings as settingsHandler,
+  handleGuildsList as guildsListHandler,
+  handleGuildPut as guildSettingsHandler,
+} from '../../api/me.js';
 import {
   mockRequest,
   mockResponse,
