@@ -1,6 +1,44 @@
+import { deflateSync, inflateSync } from 'fflate';
 import type { TradeCard, CardVariant, PriceMode } from './types';
 import type { WantsItem, AvailableItem, VariantRestriction } from './persistence';
 import { CANONICAL_VARIANTS, type CanonicalVariant } from './variants';
+
+// --- Param compression -------------------------------------------------------
+// Wants/Available params can get very long for big lists because each
+// familyId embeds the full set-slug + card-name-slug. Deflate + base64url
+// drops a typical 20-card list from ~1200 chars to ~400. Compressed
+// values are prefixed with `~` so the decoder can distinguish them from
+// legacy uncompressed params (familyIds always start with a letter).
+
+const COMPRESS_PREFIX = '~';
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromBase64Url(str: string): Uint8Array {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function compressParam(text: string): string {
+  if (!text) return text;
+  const bytes = new TextEncoder().encode(text);
+  const deflated = deflateSync(bytes, { level: 9 });
+  return COMPRESS_PREFIX + toBase64Url(deflated);
+}
+
+function decompressParam(param: string): string {
+  if (!param.startsWith(COMPRESS_PREFIX)) return param;
+  const deflated = fromBase64Url(param.slice(COMPRESS_PREFIX.length));
+  const bytes = inflateSync(deflated);
+  return new TextDecoder().decode(bytes);
+}
 
 export interface TradeUrlState {
   yourCards: TradeCard[];
@@ -77,7 +115,7 @@ export function parseTradeUrl(search: string): ParsedTradeUrl | null {
       yours: decodeCardRefs(y || ''),
       theirs: decodeCardRefs(t || ''),
     },
-    percentage: pct ? parseInt(pct, 10) || 80 : null,
+    percentage: pct ? clampPct(parseInt(pct, 10)) : null,
     priceMode: pm === 'l' ? 'low' : pm === 'm' ? 'market' : null,
   };
 }
@@ -141,7 +179,7 @@ export function maskToVariants(mask: number): CanonicalVariant[] {
 export type WantsUrlEntry = Pick<WantsItem, 'familyId' | 'qty' | 'restriction' | 'isPriority'>;
 export type AvailableUrlEntry = Pick<AvailableItem, 'productId' | 'qty'>;
 
-export function encodeWants(items: readonly WantsUrlEntry[]): string {
+function encodeWantsRaw(items: readonly WantsUrlEntry[]): string {
   return items.map(w => {
     const parts = [encodeURIComponent(w.familyId), String(clampQty(w.qty))];
     if (w.restriction.mode === 'restricted' && w.restriction.variants.length > 0) {
@@ -152,10 +190,15 @@ export function encodeWants(items: readonly WantsUrlEntry[]): string {
   }).join(',');
 }
 
+export function encodeWants(items: readonly WantsUrlEntry[]): string {
+  return compressParam(encodeWantsRaw(items));
+}
+
 export function decodeWants(param: string): WantsUrlEntry[] {
   if (!param) return [];
+  const raw = decompressParam(param);
   const out: WantsUrlEntry[] = [];
-  for (const entry of param.split(',').filter(Boolean)) {
+  for (const entry of raw.split(',').filter(Boolean)) {
     const fields = entry.split('.');
     if (fields.length < 2) continue;
     const [encId, qtyStr, ...flags] = fields;
@@ -184,19 +227,29 @@ export function decodeWants(param: string): WantsUrlEntry[] {
   return out;
 }
 
-export function encodeAvailable(items: readonly AvailableUrlEntry[]): string {
+function encodeAvailableRaw(items: readonly AvailableUrlEntry[]): string {
   return items.map(a => `${a.productId}.${clampQty(a.qty)}`).join(',');
+}
+
+export function encodeAvailable(items: readonly AvailableUrlEntry[]): string {
+  return compressParam(encodeAvailableRaw(items));
 }
 
 export function decodeAvailable(param: string): AvailableUrlEntry[] {
   if (!param) return [];
+  const raw = decompressParam(param);
   const out: AvailableUrlEntry[] = [];
-  for (const entry of param.split(',').filter(Boolean)) {
+  for (const entry of raw.split(',').filter(Boolean)) {
     const [productId, qtyStr] = entry.split('.');
     if (!productId) continue;
     out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
   }
   return out;
+}
+
+function clampPct(n: number): number {
+  if (!Number.isFinite(n)) return 80;
+  return Math.min(100, Math.max(1, n));
 }
 
 function clampQty(n: number): number {

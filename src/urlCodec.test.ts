@@ -95,6 +95,13 @@ describe('urlCodec', () => {
       { productId: '1001', qty: 1 },
     ]);
   });
+
+  it('clamps pct to [1, 100]', () => {
+    expect(parseTradeUrl('y=1001.1&pct=999')!.percentage).toBe(100);
+    expect(parseTradeUrl('y=1001.1&pct=0')!.percentage).toBe(1);
+    expect(parseTradeUrl('y=1001.1&pct=-5')!.percentage).toBe(1);
+    expect(parseTradeUrl('y=1001.1&pct=50')!.percentage).toBe(50);
+  });
 });
 
 describe('variantsToMask / maskToVariants', () => {
@@ -148,12 +155,22 @@ describe('encodeWants / decodeWants', () => {
     expect(decoded).toEqual(wants);
   });
 
-  it('URL-encodes special chars in familyId', () => {
+  it('produces a compressed output starting with ~', () => {
     const encoded = encodeWants([wants[0]]);
-    // "::" is not a literal in the encoded form; gets percent-encoded
+    // Compressed params start with ~ and contain base64url characters.
+    expect(encoded.startsWith('~')).toBe(true);
+    // FamilyId's "::" shouldn't leak into the compressed output.
     expect(encoded).not.toContain('::');
-    // The actual special char "%3A" comes from URL-encoding ":"
-    expect(encoded).toContain('%3A');
+  });
+
+  it('decodes legacy uncompressed params (backward compat)', () => {
+    // Old-format URLs without the ~ prefix still work.
+    const legacy = 'jump-to-lightspeed%3A%3Aluke-skywalker-hero-of-yavin.2.r4.p';
+    const decoded = decodeWants(legacy);
+    expect(decoded).toHaveLength(1);
+    expect(decoded[0].familyId).toBe('jump-to-lightspeed::luke-skywalker-hero-of-yavin');
+    expect(decoded[0].qty).toBe(2);
+    expect(decoded[0].isPriority).toBe(true);
   });
 
   it('omits restriction segment for any-mode items', () => {

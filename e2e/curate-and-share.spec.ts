@@ -70,16 +70,18 @@ test.describe('Curator: build lists and share', () => {
 
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     expect(clip).toContain('?');
+    // Both w= and a= params present (compressed; values start with ~).
     expect(clip).toMatch(/[?&]w=/);
     expect(clip).toMatch(/[?&]a=/);
-    // productId . qty — we added one available at qty 1.
-    expect(clip).toContain(`a=${LUKE_JTL_HYPERSPACE}.1`);
-    // Decode fully so the assertion is stable regardless of whether
-    // URLSearchParams.set double-wraps %3A (which it does today).
-    const decoded = decodeURIComponent(decodeURIComponent(clip));
-    expect(decoded).toContain('jump-to-lightspeed::luke-skywalker-hero-of-yavin');
-    // Hyperspace restriction = bit 2 → mask = 4 → hex "4".
-    expect(decoded).toMatch(/jump-to-lightspeed::luke-skywalker-hero-of-yavin\.1\.r4/);
+    // Round-trip: visit the copied URL and verify the list view renders
+    // the same items we built. This is the strongest assertion because
+    // it exercises both the encoder (share popover) and the decoder
+    // (page load) end-to-end — independent of internal format.
+    await page.goto(clip);
+    await expect(page.getByText('SHARED LIST')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Luke Skywalker - Hero of Yavin').first()).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test('dedup by (familyId + restriction): Hyperspace-only and Any-variant for the same card create TWO rows', async ({ page }) => {
