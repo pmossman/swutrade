@@ -5,9 +5,10 @@ import { describe } from 'vitest';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { sealData } from 'iron-session';
 import { getDb } from '../../lib/db.js';
-import { users, wantsItems, availableItems, trades } from '../../lib/schema.js';
+import { users, wantsItems, availableItems, trades, userGuildMemberships, botInstalledGuilds } from '../../lib/schema.js';
 import { eq } from 'drizzle-orm';
 import { restrictionKey } from '../../lib/shared.js';
+import type { DiscordClient, DiscordGuildSummary } from '../../lib/discordClient.js';
 
 /**
  * Use instead of `describe` in API tests — skips the entire suite
@@ -151,4 +152,92 @@ export async function insertAvailable(userId: string, productId: string, qty = 1
     qty,
     addedAt: Date.now(),
   });
+}
+
+// --- Phase 4 guild fixtures -------------------------------------------------
+
+/**
+ * Insert a row into `bot_installed_guilds`. Returns a cleanup function
+ * tests can call from afterEach.
+ */
+export async function installBotInGuild(guildId: string, opts: {
+  guildName?: string;
+  guildIcon?: string | null;
+} = {}): Promise<() => Promise<void>> {
+  const db = getDb();
+  await db.insert(botInstalledGuilds).values({
+    guildId,
+    guildName: opts.guildName ?? `Test Guild ${guildId}`,
+    guildIcon: opts.guildIcon ?? null,
+  }).onConflictDoNothing();
+  return async () => {
+    await db.delete(botInstalledGuilds).where(eq(botInstalledGuilds.guildId, guildId)).catch(() => {});
+  };
+}
+
+/**
+ * Insert a row into `user_guild_memberships`. Pair with
+ * `installBotInGuild` when the guild needs to appear as enrollable.
+ */
+export async function createGuildMembership(userId: string, guildId: string, opts: {
+  enrolled?: boolean;
+  includeInRollups?: boolean;
+  appearInQueries?: boolean;
+  canManage?: boolean;
+  guildName?: string;
+} = {}): Promise<() => Promise<void>> {
+  const db = getDb();
+  const enrolled = opts.enrolled ?? false;
+  await db.insert(userGuildMemberships).values({
+    id: `ugm-${userId}-${guildId}`,
+    userId,
+    guildId,
+    guildName: opts.guildName ?? `Test Guild ${guildId}`,
+    guildIcon: null,
+    canManage: opts.canManage ?? false,
+    enrolled,
+    includeInRollups: opts.includeInRollups ?? enrolled,
+    appearInQueries: opts.appearInQueries ?? enrolled,
+  });
+  return async () => {
+    await db.delete(userGuildMemberships)
+      .where(eq(userGuildMemberships.id, `ugm-${userId}-${guildId}`))
+      .catch(() => {});
+  };
+}
+
+/**
+ * Convenience: put two users into the same installed guild with
+ * both enrolled. Useful for community-source / match tests.
+ */
+export async function createMutualGuildMembership(
+  userA: string,
+  userB: string,
+  guildId: string,
+  opts: { enrolled?: boolean } = {},
+): Promise<() => Promise<void>> {
+  const cleanups = [
+    await installBotInGuild(guildId),
+    await createGuildMembership(userA, guildId, { enrolled: opts.enrolled ?? true }),
+    await createGuildMembership(userB, guildId, { enrolled: opts.enrolled ?? true }),
+  ];
+  return async () => {
+    for (const fn of cleanups.reverse()) await fn();
+  };
+}
+
+/**
+ * In-memory `DiscordClient` for tests. Seed with the guild list a
+ * given access token should return; `getUserGuilds` is a lookup.
+ * Use from tests that exercise `syncGuildMemberships` without
+ * hitting real Discord.
+ */
+export function createFakeDiscordClient(
+  guildsByAccessToken: Record<string, DiscordGuildSummary[]> = {},
+): DiscordClient {
+  return {
+    async getUserGuilds(accessToken: string): Promise<DiscordGuildSummary[]> {
+      return guildsByAccessToken[accessToken] ?? [];
+    },
+  };
 }

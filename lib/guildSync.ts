@@ -1,18 +1,7 @@
 import { and, eq, notInArray } from 'drizzle-orm';
 import { getDb } from './db.js';
 import { userGuildMemberships } from './schema.js';
-
-/**
- * Discord's `GET /users/@me/guilds` response shape (subset we care
- * about). `permissions` is a stringified bitfield — we check for
- * MANAGE_GUILD (bit 5, 0x20) to gate the LGS-admin page in v2.
- */
-interface DiscordGuildSummary {
-  id: string;
-  name: string;
-  icon: string | null;
-  permissions?: string;
-}
+import { createDiscordClient, type DiscordClient } from './discordClient.js';
 
 const MANAGE_GUILD = 0x20n;
 
@@ -30,23 +19,20 @@ const MANAGE_GUILD = 0x20n;
  *
  * Failures are non-fatal: we log and return. Sign-in should proceed
  * with stale (or empty) guild data rather than block the user.
+ *
+ * Takes the DiscordClient as a parameter so tests can inject a fake
+ * without stubbing global fetch. Production callers use the default.
  */
 export async function syncGuildMemberships(
   userId: string,
   accessToken: string,
+  discord: DiscordClient = createDiscordClient(),
 ): Promise<void> {
-  let guilds: DiscordGuildSummary[];
+  let guilds;
   try {
-    const res = await fetch('https://discord.com/api/users/@me/guilds', {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!res.ok) {
-      console.error('syncGuildMemberships: Discord guilds fetch failed', res.status);
-      return;
-    }
-    guilds = (await res.json()) as DiscordGuildSummary[];
+    guilds = await discord.getUserGuilds(accessToken);
   } catch (err) {
-    console.error('syncGuildMemberships: fetch threw', err);
+    console.error('syncGuildMemberships: Discord fetch threw', err);
     return;
   }
 
@@ -87,7 +73,7 @@ export async function syncGuildMemberships(
 
   // Prune: rows where the guild_id is NOT in the freshly fetched set.
   // If the user left every server, guildIds is [] and we'd drop all
-  // their rows — that's correct behaviour, so no empty-list guard.
+  // their rows — that's correct behaviour.
   if (guildIds.length > 0) {
     await db
       .delete(userGuildMemberships)

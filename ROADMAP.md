@@ -280,6 +280,18 @@ Previously slotted in Phase 5 as part of the "full lifecycle" (proposals + count
 
 Phase 5 still owns the longer-lived relationship features: counter-offer threading, reputation, trader-connection scoring feeding matchmaker, auto-update of wants/available on completion. Proposals just happen earlier because they're load-bearing for the demo and depend only on primitives Phase 4 is already building.
 
+### 2026-04-16 — CI stays mocked; real-Discord coverage is layered on top
+
+Considered: pointing CI at a dedicated Discord test server and having every PR exercise real Discord API calls. Rejected.
+
+Chose: **mocked CI as the merge gate, with two additional layers specifically to close the gaps mocking leaves open** — a nightly contract-drift check hitting real Discord, and a written manual Tier-3 runbook exercised in a dedicated test server before any promotion to main. See `PHASE4_TESTING.md` for the live spec.
+
+Why: the user correctly insists on a high standard — "green CI means all features definitely work in production." Real-Discord-in-CI *sounds* like the way to uphold that, but it fails the standard in practice: Discord rate limits (50 req/s global, 5 req/5s per channel) throttle concurrent CI runs, network flake produces spurious failures that train devs to hit "retry" on legitimate red runs, cleanup state across test runs is brittle, and the merge gate becomes coupled to a third party's uptime. Worse, ~90% of Discord-related bugs are on our side of the wire (payload construction, response parsing, signature verification) — none of which need a real round-trip to catch.
+
+The standard is upheld instead by four disciplines enumerated in `PHASE4_TESTING.md`: a typed `DiscordClient` abstraction so contract changes become compile errors, mocked responses captured from real Discord calls (not hand-crafted), a signature-verification test that exercises the real verification path with a locally-generated keypair, and a nightly contract-drift job that catches Discord-side schema changes within 24h without blocking merges. Every Discord-integrated feature ships with a parallel Tier-3 entry in the runbook — that's a non-optional shipping requirement, same as unit tests.
+
+Consequence: no bot token in CI secrets. CI runs offline relative to Discord. The dedicated test server exists for manual smoke tests only. This is deliberate.
+
 ---
 
 ## Parked technical improvements
