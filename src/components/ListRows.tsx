@@ -273,6 +273,9 @@ interface AvailableRowProps {
   card: CardVariant | null;
   percentage: number;
   priceMode: PriceMode;
+  /** Count of other signed-in users who have this card's family on
+   *  their public wants list. 0 or undefined hides the badge. */
+  wantCount?: number;
   onChangeQty: (next: number) => void;
   onRemove: () => void;
 }
@@ -282,6 +285,7 @@ export function AvailableRow({
   card,
   percentage,
   priceMode,
+  wantCount,
   onChangeQty,
   onRemove,
 }: AvailableRowProps) {
@@ -289,16 +293,25 @@ export function AvailableRow({
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
   const price = card ? adjustPrice(getCardPrice(card, priceMode), percentage) : null;
+  const showWantBadge = typeof wantCount === 'number' && wantCount > 0;
 
   return (
     <RowShell imgUrl={imgUrl} title={title}>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
-          <div className="flex items-center gap-1.5 mt-0.5">
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
             <VariantBadge variant={variant} size="xs" />
             {price !== null && (
               <span className="text-[10px] text-gold font-semibold">${price.toFixed(2)}</span>
+            )}
+            {showWantBadge && (
+              <span
+                className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-200"
+                title={`${wantCount} other user${wantCount === 1 ? '' : 's'} want this on their public list`}
+              >
+                {wantCount} want{wantCount === 1 ? 's' : ''} this
+              </span>
             )}
           </div>
         </div>

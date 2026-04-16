@@ -13,6 +13,7 @@ import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
 import { useAuthContext } from '../contexts/AuthContext';
 import { preventAutoFocus } from '../utils/dialogFocus';
+import { usePopularWants } from '../hooks/usePopularWants';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -79,6 +80,22 @@ export function ListsDrawer({
       return a.addedAt - b.addedAt;
     });
   }, [wants.items]);
+
+  // "Popular wants" — how many other users have each of our available
+  // cards' families on their public wants list. Signed-in only:
+  // surfaces the social payoff of having an account without requiring
+  // matchmaking to be initiated. Anonymous users see their list plain.
+  const { user } = useAuthContext();
+  const availableFamilyIds = useMemo<string[]>(() => {
+    if (!user) return [];
+    const ids = new Set<string>();
+    for (const item of available.items) {
+      const card = byProductId.get(item.productId);
+      if (card) ids.add(cardFamilyId(card));
+    }
+    return [...ids];
+  }, [user, available.items, byProductId]);
+  const wantCounts = usePopularWants(availableFamilyIds);
 
   // Close the picker whenever the drawer or tab changes.
   const handleTabChange = (next: ListTab) => {
@@ -274,17 +291,22 @@ export function ListsDrawer({
                       />
                     ) : (
                       <ul className="flex flex-col gap-2">
-                        {available.items.map(item => (
-                          <AvailableRow
-                            key={item.id}
-                            item={item}
-                            card={byProductId.get(item.productId) ?? null}
-                            percentage={percentage}
-                            priceMode={priceMode}
-                            onChangeQty={qty => available.update(item.id, { qty })}
-                            onRemove={() => available.remove(item.id)}
-                          />
-                        ))}
+                        {available.items.map(item => {
+                          const card = byProductId.get(item.productId) ?? null;
+                          const fid = card ? cardFamilyId(card) : null;
+                          return (
+                            <AvailableRow
+                              key={item.id}
+                              item={item}
+                              card={card}
+                              percentage={percentage}
+                              priceMode={priceMode}
+                              wantCount={fid ? wantCounts[fid] : undefined}
+                              onChangeQty={qty => available.update(item.id, { qty })}
+                              onRemove={() => available.remove(item.id)}
+                            />
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
