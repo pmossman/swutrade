@@ -30,8 +30,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   let tokens;
   try {
     tokens = await discord.validateAuthorizationCode(code, codeVerifier);
-  } catch {
-    return res.status(400).json({ error: 'Failed to exchange code — try signing in again' });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('OAuth token exchange failed:', msg, 'redirect_uri:', getRedirectUri());
+    return res.status(400).json({ error: 'Failed to exchange code — try signing in again', detail: msg });
   }
 
   const userRes = await fetch('https://discord.com/api/users/@me', {
