@@ -5,6 +5,34 @@ export default function middleware(request: Request) {
   const url = new URL(request.url);
   const ua = request.headers.get('user-agent') || '';
 
+  // Profile URLs: /u/<handle> → simple OG tags with the user's name.
+  // No OG image for now — just text metadata for Discord/Twitter unfurls.
+  const profileMatch = url.pathname.match(/^\/u\/([^/]+)/);
+  if (profileMatch && CRAWLER_PATTERN.test(ua)) {
+    const handle = decodeURIComponent(profileMatch[1]);
+    const title = `@${handle} on SWU Trade`;
+    const description = `View ${handle}'s Star Wars Unlimited trade lists`;
+    const canonicalUrl = url.toString();
+    return new Response(`<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="UTF-8"><title>${title}</title>
+  <meta property="og:title" content="${title}">
+  <meta property="og:description" content="${description}">
+  <meta property="og:url" content="${canonicalUrl}">
+  <meta property="og:type" content="profile">
+  <meta property="og:site_name" content="SWU Trade">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="${title}">
+  <meta name="twitter:description" content="${description}">
+</head><body><p>Redirecting…</p></body></html>`, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 's-maxage=3600, stale-while-revalidate=86400',
+      },
+    });
+  }
+
   // Only intercept requests to root path that carry shareable params
   // (trade or list).
   const hasTrade = url.searchParams.has('y') || url.searchParams.has('t');
@@ -96,5 +124,5 @@ export default function middleware(request: Request) {
 }
 
 export const config = {
-  matcher: '/',
+  matcher: ['/', '/u/:path*'],
 };

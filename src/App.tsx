@@ -33,10 +33,12 @@ import {
 import { useAuthContext } from './contexts/AuthContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
+import { ProfileView } from './components/ProfileView';
 
-function detectViewMode(): 'list' | 'trade' {
+function detectViewMode(): 'list' | 'trade' | 'profile' {
   if (typeof window === 'undefined') return 'trade';
   const params = new URLSearchParams(window.location.search);
+  if (params.has('profile')) return 'profile';
   const explicit = params.get('view');
   if (explicit === 'list') return 'list';
   if (explicit === 'trade') return 'trade';
@@ -109,7 +111,7 @@ function App() {
   // (lists in URL but no trade). Users opt into the trade UI via the
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
-  const [viewMode, setViewMode] = useState<'list' | 'trade'>(() => detectViewMode());
+  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile'>(() => detectViewMode());
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
@@ -224,6 +226,22 @@ function App() {
     setYourCards([]);
     setTheirCards([]);
   }, []);
+
+  // Profile view — /u/<handle> shows a user's public lists.
+  if (viewMode === 'profile') {
+    const profileHandle = new URLSearchParams(window.location.search).get('profile') ?? '';
+    return (
+      <ProfileView
+        handle={profileHandle}
+        byFamilyAll={cardIndex.byFamilyAll}
+        byProductId={cardIndex.byProductId}
+        percentage={percentage}
+        priceMode={priceMode}
+        isAnyLoading={priceData.isAnyLoading}
+        onStartTrade={handleStartTrade}
+      />
+    );
+  }
 
   // Shared-list landing — stand-alone view with its own chrome and
   // the "Start a trade" CTA that flips into trade mode.
