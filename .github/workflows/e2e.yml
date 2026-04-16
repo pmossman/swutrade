@@ -5,14 +5,13 @@ on:
     branches: [main, beta]
   pull_request:
 
-# A second push on the same branch cancels the in-flight run so we
-# aren't running fetch-prices twice in parallel on top of each other.
 concurrency:
   group: e2e-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  playwright:
+  anonymous:
+    name: Anonymous E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -25,10 +24,6 @@ jobs:
 
       - run: npm ci
 
-      # Weekly key so fetch-prices only hits TCGPlayer once per ISO
-      # week per ref — cheap enough to stay inside their rate limit
-      # while fresh enough that zero-match sets showing up in the
-      # catalog wouldn't go unnoticed for long.
       - id: weekkey
         run: echo "key=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
 
@@ -47,8 +42,73 @@ jobs:
           FETCH_PRICES=1 npm run fetch-prices
           ENRICH=1 npm run enrich-cards
 
-      # Cache Playwright's own browser download so we don't re-pull
-      # Chromium every run.
+      - name: Cache Playwright browsers
+        id: playwrightcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.playwrightcache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Install Playwright deps (cached browsers)
+        if: steps.playwrightcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium firefox
+
+      - name: Run anonymous E2E (chromium + firefox + mobile-chrome)
+        run: npm run e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-anonymous
+          path: playwright-report/
+          retention-days: 7
+
+  authenticated:
+    name: Authenticated E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run on push (not PRs from forks which can't access secrets)
+    if: github.event_name == 'push'
+    env:
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+      POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - id: weekkey
+        run: echo "key=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache card data
+        id: datacache
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/data
+            scripts/cache
+          key: card-data-${{ steps.weekkey.outputs.key }}
+
+      - name: Fetch + enrich card data (cache miss only)
+        if: steps.datacache.outputs.cache-hit != 'true'
+        run: |
+          FETCH_PRICES=1 npm run fetch-prices
+          ENRICH=1 npm run enrich-cards
+
       - name: Cache Playwright browsers
         id: playwrightcache
         uses: actions/cache@v4
@@ -64,13 +124,27 @@ jobs:
         if: steps.playwrightcache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
-      - name: Run Playwright tests
-        run: npm run e2e
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      # Write .env.local so vercel dev + test helpers can read secrets
+      - name: Write env file
+        run: |
+          echo "SESSION_SECRET=$SESSION_SECRET" >> .env.local
+          echo "POSTGRES_URL=$POSTGRES_URL" >> .env.local
+          echo "POSTGRES_URL_NON_POOLING=$POSTGRES_URL_NON_POOLING" >> .env.local
+
+      # Link the project so vercel dev can serve API functions
+      - name: Link Vercel project
+        run: vercel link --yes --token "$VERCEL_TOKEN"
+
+      - name: Run authenticated E2E tests
+        run: npm run e2e:auth
 
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-auth
           path: playwright-report/
           retention-days: 7

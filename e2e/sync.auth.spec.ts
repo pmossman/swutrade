@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { signIn, createIsolatedUser, ensureTestUser, cleanupTestUser, type TestUser } from './helpers/auth';
 
 test.describe('Server sync', () => {
+  test.describe.configure({ mode: 'serial' });
   let user: TestUser;
 
   test.beforeEach(async ({ context }) => {

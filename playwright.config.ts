@@ -1,14 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Headless e2e tests against the Vite dev server. Kept narrow on purpose —
- * unit tests cover pure logic; these exercise interaction flows that
- * cross hook + render + URL boundaries (the surface where the
- * parseQuery slug-alias bug hid for months).
+ * Headless e2e tests against the Vite dev server.
  *
- * Spawns its own dev server when none is running. CI relies on this
- * — local devs can also point at an already-running `npm run dev` to
- * iterate faster (Playwright detects the existing port).
+ * Local: `npm run e2e` runs chromium only for speed.
+ * CI: runs chromium + firefox + mobile-chrome for cross-browser coverage.
+ * Add `--project chromium` locally to skip other browsers.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -18,12 +15,19 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: undefined,
   reporter: process.env.CI ? 'github' : 'list',
+  expect: {
+    toHaveScreenshot: { maxDiffPixelRatio: 0.01 },
+  },
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
   },
   projects: [
     { name: 'chromium', use: devices['Desktop Chrome'] },
+    ...(process.env.CI ? [
+      { name: 'firefox', use: devices['Desktop Firefox'] },
+      { name: 'mobile-chrome', use: { ...devices['Pixel 7'] } },
+    ] : []),
   ],
   webServer: {
     command: 'npm run dev',
