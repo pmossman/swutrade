@@ -116,7 +116,7 @@ function App() {
   // (lists in URL but no trade). Users opt into the trade UI via the
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
-  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile'>(() => detectViewMode());
+  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile' | 'settings'>(() => detectViewMode());
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
