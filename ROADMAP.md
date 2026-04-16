@@ -54,16 +54,34 @@ Anonymous users continue using URL-encoded shares. When they sign in, their exis
 - Public profile URLs: `swutrade.com/u/<handle>` for a user's wants (available stays private by default — see *Privacy defaults* below)
 - Conflict resolution: last-write-wins per item (lists are small, not collaborative)
 
-### Phase 3 — Shared trade links carry sender context
+### Phase 3 — Matchmaker + shared trade context
 
-- Trade links gain `?from=<handle>` (signed-in sender) or `?wl=<shortcode>` (anonymous embed). Recipient sees a new source in the add-card empty state: *"What @handle wants"*.
-- Signed-in recipient sees a further slice: *"From @handle's wants that you have available"* — inline match preview for the pair.
+**3a. Trade matchmaker:** Enter another user's handle (or scan their QR) → app fetches their public lists → cross-references both directions (their wants ∩ your available, your wants ∩ their available) → suggests the fairest balanced trade. Pure function, greedy algorithm: sort overlap pools by price, alternately pull from each side until totals balance within the user's percentage threshold. Pre-populates both sides of the trade view.
+
+**3b. Sender context in trade links:** Trade links gain `?from=<handle>` (signed-in sender) or `?wl=<shortcode>` (anonymous embed). Recipient sees a new source chip: *"What @handle wants"*. Signed-in recipient sees *"From @handle's wants that you have available"* — inline match preview for the pair.
 
 ### Phase 4 — Discord community layer
 
-**4a. Discovery (web app):** Discord OAuth with `guilds` scope; surface "cards from people in your mutual servers" as another section in the add-card empty state. Per-guild opt-in toggle so users control where they appear.
+**4a. Discovery (web app):** Discord OAuth with `guilds` scope; surface "cards from people in your mutual servers" as another section in the add-card empty state. Per-guild opt-in toggle so users control where they appear. "3 people want your Darth Vader" badges on available cards.
 
 **4b. The bot:** HTTP Interactions model (signed webhooks, no persistent WebSocket) so it runs on Vercel Functions alongside the web app. Slash commands: `/wants`, `/offer`, `/matches @user`. Optional match-notification channels per server.
+
+**4c. Local trading:** Self-declared LGS tags in profile settings. "4 traders at Cool Stuff Games have cards you want." Discord server affiliation is the primary locality signal, but store tags add specificity for in-person events.
+
+### Phase 5 — Trading network
+
+The full **Discover → Match → Propose → Negotiate → Complete → Remember** lifecycle.
+
+**Proposals:** Build a trade (manually or from the matchmaker), tap "Send to @alice." Proposal is a frozen price snapshot so it doesn't shift under either party. Alice gets a notification (in-app badge + Discord DM via the Phase 4 bot). She can accept, counter-offer, or decline. Counters thread as a negotiation history — each counter is its own snapshot.
+
+**Completion:** Both sides accept → trade is "completed" (no enforcement — physical cards). Both users' wants/available lists auto-update: remove traded cards from available, remove satisfied wants. The moment the trade moves from `trade_proposals` to `trade_history`.
+
+**Relationships:** "People I've traded with" ranked by frequency, recency, total value. "Preferred traders" — manually starred or auto-promoted after N successful trades. Trust signals feed back into matchmaker scoring — familiar traders rank higher.
+
+**Data model additions:**
+- `trade_proposals` (id, from_user, to_user, status, your_cards JSONB, their_cards JSONB, percentage, price_mode, totals, parent_id FK→self for counter-threading, created_at, expires_at)
+- `trader_connections` (user_a, user_b, trade_count, last_trade_at, is_preferred)
+- `notifications` (id, user_id, type, payload JSONB, read, created_at)
 
 ---
 
