@@ -149,6 +149,7 @@ jobs:
       POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
       PLAYWRIGHT_BASE_URL: ${{ needs.wait-for-deploy.outputs.url }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      DOTENV_CONFIG_QUIET: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
