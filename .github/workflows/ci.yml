@@ -5,24 +5,24 @@ on:
     branches: [main, beta]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ── Step 1: Type check + unit/API tests + build ──────────────
   check:
+    name: Types + Tests + Build
     runs-on: ubuntu-latest
     env:
-      # API integration tests (tests/api/) need DB access.
       SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
       POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
+        with: { node-version: '20', cache: 'npm' }
       - run: npm ci
 
-      # Write .env.local so dotenv-based imports in test helpers work.
       - name: Write env file
         if: env.POSTGRES_URL != ''
         run: |
@@ -37,3 +37,125 @@ jobs:
 
       - name: Vite build
         run: npx vite build
+
+  # ── Step 2: Anonymous E2E (runs in parallel with check) ──────
+  e2e-anonymous:
+    name: E2E (Anonymous)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+
+      - id: weekkey
+        run: echo "key=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache card data
+        id: datacache
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/data
+            scripts/cache
+          key: card-data-${{ steps.weekkey.outputs.key }}
+
+      - name: Fetch + enrich card data (cache miss only)
+        if: steps.datacache.outputs.cache-hit != 'true'
+        run: |
+          FETCH_PRICES=1 npm run fetch-prices
+          ENRICH=1 npm run enrich-cards
+
+      - name: Cache Playwright browsers
+        id: playwrightcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwrightcache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached)
+        if: steps.playwrightcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run anonymous E2E
+        run: npm run e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-anonymous, path: playwright-report/, retention-days: 7 }
+
+  # ── Step 3: Wait for Vercel preview deploy ───────────────────
+  wait-for-deploy:
+    name: Wait for Vercel Deploy
+    runs-on: ubuntu-latest
+    needs: [check]
+    # Only on push (PRs from forks won't have a Vercel deploy)
+    if: github.event_name == 'push'
+    timeout-minutes: 10
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Wait for deployment
+        id: deploy
+        uses: patrickedqvist/wait-for-vercel-preview@v1.3.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          max_timeout: 300
+          check_interval: 15
+
+  # ── Step 4: Authenticated E2E against the preview URL ────────
+  e2e-authenticated:
+    name: E2E (Authenticated)
+    runs-on: ubuntu-latest
+    needs: [wait-for-deploy]
+    if: needs.wait-for-deploy.outputs.url != ''
+    timeout-minutes: 10
+    env:
+      SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+      POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+      PLAYWRIGHT_BASE_URL: ${{ needs.wait-for-deploy.outputs.url }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+
+      - name: Write env file
+        run: |
+          echo "SESSION_SECRET=$SESSION_SECRET" >> .env.local
+          echo "POSTGRES_URL=$POSTGRES_URL" >> .env.local
+          echo "POSTGRES_URL_NON_POOLING=$POSTGRES_URL_NON_POOLING" >> .env.local
+          echo "PLAYWRIGHT_BASE_URL=$PLAYWRIGHT_BASE_URL" >> .env.local
+          echo "VERCEL_AUTOMATION_BYPASS_SECRET=$VERCEL_AUTOMATION_BYPASS_SECRET" >> .env.local
+
+      - name: Cache Playwright browsers
+        id: playwrightcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwrightcache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright deps (cached)
+        if: steps.playwrightcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Seed test user
+        run: npx tsx e2e/helpers/seed.ts
+
+      - name: Run authenticated E2E against ${{ needs.wait-for-deploy.outputs.url }}
+        run: npm run e2e:auth
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-auth, path: playwright-report/, retention-days: 7 }
