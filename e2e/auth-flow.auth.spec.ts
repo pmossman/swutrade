@@ -25,10 +25,14 @@ test.describe('Authenticated state', () => {
     await page.goto('/');
     await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
-    // The username text is inside a button — click it to trigger logout.
-    await page.getByRole('button', { name: user.username }).click();
+    // New account-menu flow: tap the avatar pill opens a popover
+    // instead of logging out immediately (the old behavior was a
+    // papercut — one accidental tap killed the session). Sign out
+    // lives inside the popover.
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('button', { name: 'Sign out' }).click();
 
     // Logout does a fetch then clears React state — may take a moment.
-    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /Sign in/i })).toBeVisible({ timeout: 10_000 });
   });
 });

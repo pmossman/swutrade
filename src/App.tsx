@@ -36,6 +36,7 @@ import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
 import { MatchmakerInput } from './components/MatchmakerInput';
+import { AccountMenu } from './components/AccountMenu';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' {
   if (typeof window === 'undefined') return 'trade';
@@ -61,7 +62,8 @@ function timeAgo(iso: string): string {
 }
 
 function App() {
-  const { user, isLoading: authLoading, login, logout } = useAuthContext();
+  const auth = useAuthContext();
+  const { user } = auth;
 
   // Persist the user's preferred pricing knobs across sessions. The raw
   // setters bypass localStorage so URL-driven updates (share links,
@@ -305,35 +307,7 @@ function App() {
               pushed to the right (ml-auto) so the logo/title gets
               breathing room on the left. */}
           <div className="ml-auto flex items-center gap-1.5 md:gap-2">
-            {!authLoading && (
-              user ? (
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="flex items-center gap-1.5 px-2 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-                >
-                  {user.avatarUrl && (
-                    <img
-                      src={user.avatarUrl}
-                      alt=""
-                      className="w-5 h-5 rounded-full"
-                    />
-                  )}
-                  <span className="hidden sm:inline">{user.username}</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={login}
-                  className="flex items-center gap-1 px-2 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-                >
-                  <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="currentColor" aria-hidden>
-                    <path d="M13.545 2.907a13.2 13.2 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.2 12.2 0 0 0-3.658 0 8 8 0 0 0-.412-.833.05.05 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.04.04 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032q.003.022.021.037a13.3 13.3 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019q.463-.63.818-1.329a.05.05 0 0 0-.01-.057.05.05 0 0 0-.018-.011 8.8 8.8 0 0 1-1.248-.595.05.05 0 0 1-.005-.084q.124-.093.248-.19a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.05.05 0 0 1 .053.007q.121.1.248.19a.05.05 0 0 1-.004.084 8.3 8.3 0 0 1-1.249.594.05.05 0 0 0-.03.058.05.05 0 0 0 .003.01q.36.698.818 1.329a.05.05 0 0 0 .056.019 13.2 13.2 0 0 0 4.001-2.02.05.05 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.03.03 0 0 0-.02-.019" />
-                  </svg>
-                  <span>Sign in</span>
-                </button>
-              )
-            )}
+            <AccountMenu auth={auth} />
             <ListsDrawer
               wants={wants}
               available={available}
