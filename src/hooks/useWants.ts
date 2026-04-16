@@ -8,6 +8,27 @@ import {
   type WantsItem,
   type VariantRestriction,
 } from '../persistence';
+import { CANONICAL_VARIANTS } from '../variants';
+
+/**
+ * Collapse a "restricted to every canonical variant" restriction back
+ * to { mode: 'any' }. Matches two cases:
+ *   - all current canonical variants selected (10)
+ *   - all original canonical variants selected (8, pre-Gold/Rose-Gold)
+ */
+export function normalizeRestriction(r: VariantRestriction): VariantRestriction {
+  if (r.mode === 'any') return r;
+  const selected = new Set(r.variants);
+  if (CANONICAL_VARIANTS.every(v => selected.has(v))) return { mode: 'any' };
+  const ORIGINAL_COUNT = 8;
+  if (
+    r.variants.length === ORIGINAL_COUNT &&
+    CANONICAL_VARIANTS.slice(0, ORIGINAL_COUNT).every(v => selected.has(v))
+  ) {
+    return { mode: 'any' };
+  }
+  return r;
+}
 
 /**
  * Stable signature for a restriction. Two wants items with the same
@@ -103,7 +124,17 @@ export interface WantsApi {
 
 export function useWants(): WantsApi {
   const [items, setItems] = useState<WantsItem[]>(
-    () => readPersisted(PERSIST_KEYS.wants, WantsListSchema, DEFAULTS.wants),
+    () => {
+      const raw = readPersisted(PERSIST_KEYS.wants, WantsListSchema, DEFAULTS.wants);
+      const normalized = raw.map(item => {
+        const nr = normalizeRestriction(item.restriction);
+        return nr === item.restriction ? item : { ...item, restriction: nr };
+      });
+      if (normalized.some((item, i) => item !== raw[i])) {
+        writePersisted(PERSIST_KEYS.wants, normalized);
+      }
+      return normalized;
+    },
   );
 
   const persist = useCallback((next: WantsItem[]) => {

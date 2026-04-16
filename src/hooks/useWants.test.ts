@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { wantsAddReducer, restrictionKey } from './useWants';
+import { wantsAddReducer, restrictionKey, normalizeRestriction } from './useWants';
 import type { WantsItem } from '../persistence';
+import { CANONICAL_VARIANTS } from '../variants';
 
 function makeDeps(idSeed = 0, startTime = 1000) {
   let idSeq = idSeed;
@@ -35,6 +36,36 @@ describe('restrictionKey', () => {
   it('distinguishes different restriction sets', () => {
     expect(restrictionKey({ mode: 'restricted', variants: ['Hyperspace'] }))
       .not.toBe(restrictionKey({ mode: 'restricted', variants: ['Hyperspace Foil'] }));
+  });
+});
+
+describe('normalizeRestriction', () => {
+  it('passes through mode: any unchanged', () => {
+    const r = { mode: 'any' as const };
+    expect(normalizeRestriction(r)).toBe(r);
+  });
+
+  it('collapses all 10 current canonical variants to any', () => {
+    const r = { mode: 'restricted' as const, variants: [...CANONICAL_VARIANTS] };
+    expect(normalizeRestriction(r)).toEqual({ mode: 'any' });
+  });
+
+  it('collapses the original 8 canonical variants to any', () => {
+    const r = {
+      mode: 'restricted' as const,
+      variants: CANONICAL_VARIANTS.slice(0, 8) as unknown as typeof CANONICAL_VARIANTS[number][],
+    };
+    expect(normalizeRestriction(r)).toEqual({ mode: 'any' });
+  });
+
+  it('preserves a genuine partial restriction', () => {
+    const r = { mode: 'restricted' as const, variants: ['Hyperspace' as const, 'Showcase' as const] };
+    expect(normalizeRestriction(r)).toBe(r);
+  });
+
+  it('preserves a single-variant restriction', () => {
+    const r = { mode: 'restricted' as const, variants: ['Foil' as const] };
+    expect(normalizeRestriction(r)).toBe(r);
   });
 });
 
