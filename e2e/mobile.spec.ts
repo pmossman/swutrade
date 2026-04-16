@@ -14,12 +14,11 @@ test.describe('Mobile viewport sanity', () => {
   test('app fits, top bar collapses to kebab, search overlay covers the viewport', async ({ page }) => {
     await page.goto('/');
 
-    // Top bar chrome: logo + My Lists + pricing pill are primary; on
-    // mobile Share / Clear fold into a single kebab ("Trade actions"),
-    // but it only appears once cards are present — so just verify the
-    // visible-at-idle controls.
+    // Top bar chrome at idle: logo + account + My Lists. Pricing
+    // controls moved into the balance bar body and Share/Clear only
+    // appear once cards are present, so only the icon-only lists
+    // button is guaranteed visible up here on an empty mobile view.
     await expect(page.getByRole('button', { name: 'Open my lists' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /TCG Market/ })).toBeVisible();
 
     // Both trade panels render — on mobile they stack vertically.
     await expect(page.getByRole('button', { name: 'Add cards to Offering' })).toBeVisible();

@@ -96,24 +96,20 @@ export function ListsDrawer({
         <button
           type="button"
           aria-label="Open my lists"
-          className="relative flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
+          className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 h-8 rounded-lg border transition-colors text-xs font-medium ${
+            totalCount > 0
+              // Populated: tint the whole pill so it reads as "you're
+              // using this feature" rather than as a Discord-style
+              // unread-notification dot.
+              ? 'bg-gold/10 border-gold/30 text-gold hover:bg-gold/15 hover:border-gold/50'
+              : 'bg-space-800/60 border-space-700 text-gray-400 hover:bg-space-800 hover:border-gold/40 hover:text-gold'
+          }`}
         >
           <ListsIcon className="w-3.5 h-3.5" />
           {/* Label collapses on mobile to save row real estate; the
               aria-label keeps the control discoverable for assistive
               tech. */}
           <span className="hidden sm:inline">My Lists</span>
-          {/* "Has saved items" indicator. Early feedback showed a
-              numeric badge here was read as "number of lists", not
-              "number of saved cards" — a dot removes the ambiguity
-              while still signaling there's content inside. Exact
-              counts live on the tabs within the drawer. */}
-          {totalCount > 0 && (
-            <span
-              aria-hidden
-              className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-gold"
-            />
-          )}
         </button>
       </Dialog.Trigger>
 

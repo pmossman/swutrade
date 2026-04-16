@@ -1,12 +1,16 @@
 import type { TradeCard, PriceMode } from '../types';
 import { adjustPrice, getCardPrice, countMissingPrices } from '../services/priceService';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
+import { PriceSlider } from './PriceSlider';
+import { PriceModeToggle } from './PriceModeToggle';
 
 interface TradeBalanceProps {
   yourCards: TradeCard[];
   theirCards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
+  onPercentageChange: (value: number) => void;
+  onPriceModeChange: (mode: PriceMode) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   /** Primary action when the banner is tapped while expanded — opens
@@ -31,6 +35,8 @@ export function TradeBalance({
   theirCards,
   percentage,
   priceMode,
+  onPercentageChange,
+  onPriceModeChange,
   collapsed = false,
   onToggleCollapse,
   onPrimary,
@@ -158,25 +164,38 @@ export function TradeBalance({
         headerArea
       )}
 
-      {/* Body — informational, inert to clicks. */}
+      {/* Body — totals (informational) + interactive pricing controls.
+          Pricing used to live in the top header but belongs here: the
+          controls modify the totals we're looking at, so having them
+          side-by-side closes that cause/effect loop. Controls render
+          even on empty trades so users can set defaults before building. */}
       <div className="px-3 pb-2 sm:px-4 sm:pb-3">
-        {!isEmpty && (
-          <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-[10px] sm:text-[11px] tabular-nums">
-            <span className="flex items-baseline gap-1">
-              <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
-              <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
-            </span>
-            <span className="text-space-600" aria-hidden>·</span>
-            <span className="flex items-baseline gap-1">
-              <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
-              <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
-            </span>
-            <span className="text-space-600" aria-hidden>·</span>
-            <span className="text-gray-500">
-              @ {percentage}% {priceMode === 'low' ? 'Low' : 'Market'}
-            </span>
-          </div>
-        )}
+        <div className="mt-1.5 sm:mt-2 flex items-center justify-center gap-2 sm:gap-3 flex-wrap text-[10px] sm:text-[11px] tabular-nums">
+          {!isEmpty && (
+            <>
+              <span className="flex items-baseline gap-1">
+                <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
+                <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
+              </span>
+              <span className="text-space-600" aria-hidden>·</span>
+              <span className="flex items-baseline gap-1">
+                <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
+                <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
+              </span>
+              <span className="text-space-600" aria-hidden>·</span>
+            </>
+          )}
+          <span className="flex items-center gap-1.5 text-gray-500">
+            <span className="text-[10px] sm:text-[11px]">@</span>
+            <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
+            {/* Toggle is visible inline here, so the slider doesn't
+                need its own mobile mode-label/popover-toggle fallback. */}
+            <PriceSlider
+              value={percentage}
+              onChange={onPercentageChange}
+            />
+          </span>
+        </div>
         {missingTotal > 0 && (
           <div className="mt-1.5 sm:mt-2 mx-auto max-w-md flex items-center justify-center gap-1.5 px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-md bg-red-950/60 border border-red-500/60 text-[11px] sm:text-xs font-bold text-red-300">
             <svg className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

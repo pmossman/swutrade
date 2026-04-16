@@ -1,8 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
-import { PriceModeToggle } from './components/PriceModeToggle';
-import { PriceSlider } from './components/PriceSlider';
 import { TradeSide } from './components/TradeSide';
 import { TradeBalance } from './components/TradeBalance';
 import { TradeSummary } from './components/TradeSummary';
@@ -35,8 +33,8 @@ import { useAuthContext } from './contexts/AuthContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
-import { MatchmakerInput } from './components/MatchmakerInput';
 import { AccountMenu } from './components/AccountMenu';
+import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' {
   if (typeof window === 'undefined') return 'trade';
@@ -315,22 +313,10 @@ function App() {
               percentage={percentage}
               priceMode={priceMode}
             />
-            <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
-              {/* Market/Low is a valuable surface on desktop where there's
-                  room. On mobile it'd push TCG% off the right edge, so we
-                  fold it into the TCG% popover instead (PriceSlider below
-                  renders it on mobile). */}
-              <div className="hidden md:flex items-center gap-1.5">
-                <PriceModeToggle value={priceMode} onChange={setPriceMode} />
-                <span className="w-px h-5 bg-space-700" aria-hidden />
-              </div>
-              <PriceSlider
-                value={percentage}
-                onChange={setPercentage}
-                priceMode={priceMode}
-                onPriceModeChange={setPriceMode}
-              />
-            </div>
+            {/* Pricing controls (% + Market/Low) used to sit here. They
+                moved into TradeBalance body so they live next to the
+                totals they modify — mobile header is uncluttered and
+                the controls are semantically adjacent to their output. */}
             {hasCards && (
               <>
                 {/* Desktop: inline pills. Mobile: single kebab. */}
@@ -367,16 +353,20 @@ function App() {
         )}
       </div>
 
-      {/* Matchmaker: enter a handle, app suggests a balanced trade.
-          Pre-filled with the sender handle when the recipient arrived
-          via a ?from=<handle> share link or profile view. */}
-      <MatchmakerInput
+      {/* Auto-balance prompt: only surfaces when a signed-in recipient
+          arrives via ?from=<handle> on an empty trade. Replaces the
+          always-visible matchmaker input — "enter a random handle" is
+          a thin use case that belongs to Phase 4 (guild-scoped
+          discovery), not permanent chrome here. */}
+      <AutoBalanceBanner
+        senderHandle={senderHandle}
+        isSignedIn={!!user}
+        hasCards={hasCards}
         allCards={allLoadedCards}
         percentage={percentage}
         priceMode={priceMode}
         wants={wants}
         available={available}
-        initialHandle={senderHandle ?? undefined}
         onApplyMatch={(yours, theirs) => {
           setYourCards(yours);
           setTheirCards(theirs);
@@ -452,6 +442,8 @@ function App() {
           theirCards={theirCards}
           percentage={percentage}
           priceMode={priceMode}
+          onPercentageChange={setPercentage}
+          onPriceModeChange={setPriceMode}
           collapsed={isMobile && bannerCollapsed}
           onToggleCollapse={isMobile ? () => setBannerCollapsed(c => !c) : undefined}
           onPrimary={hasCards ? () => setShowSummary(true) : undefined}
