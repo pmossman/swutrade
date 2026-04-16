@@ -21,10 +21,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Invalid state — try signing in again' });
   }
 
+  const redirectUri = getRedirectUri(req);
   const discord = new Discord(
     process.env.DISCORD_CLIENT_ID!,
     process.env.DISCORD_CLIENT_SECRET!,
-    getRedirectUri(),
+    redirectUri,
   );
 
   let tokens;
@@ -32,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     tokens = await discord.validateAuthorizationCode(code, codeVerifier);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('OAuth token exchange failed:', msg, 'redirect_uri:', getRedirectUri());
+    console.error('OAuth token exchange failed:', msg, 'redirect_uri:', redirectUri);
     return res.status(400).json({ error: 'Failed to exchange code — try signing in again', detail: msg });
   }
 

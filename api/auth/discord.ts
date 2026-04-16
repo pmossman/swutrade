@@ -2,32 +2,39 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Discord, generateState, generateCodeVerifier } from 'arctic';
 import { serialize } from 'cookie';
 
-export function getRedirectUri(): string {
-  const host = process.env.VERCEL_URL ?? 'localhost:3000';
-  if (host.includes('localhost') || host.includes('127.0.0.1')) {
-    return `http://${host}/api/auth/callback`;
-  }
-  const prodHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? host;
-  return `https://${prodHost}/api/auth/callback`;
-}
-
-function getDiscord() {
-  return new Discord(
-    process.env.DISCORD_CLIENT_ID!,
-    process.env.DISCORD_CLIENT_SECRET!,
-    getRedirectUri(),
-  );
+/**
+ * Redirect URI must match the *request origin* — not a hardcoded
+ * production host — so OAuth state cookies land and can be read back
+ * on the same domain. Previously this pinned every deployment to
+ * `swutrade.com`, which broke `beta.swutrade.com` sign-in: state
+ * cookies were scoped to `beta.*` but Discord redirected back to the
+ * apex, where those cookies were invisible and `storedState` was
+ * always undefined.
+ *
+ * Every host that can initiate sign-in must also be registered in
+ * the Discord application's OAuth2 Redirects list.
+ */
+export function getRedirectUri(req: VercelRequest): string {
+  const host = req.headers.host ?? process.env.VERCEL_URL ?? 'localhost:3000';
+  const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+  const protocol = isLocal ? 'http' : 'https';
+  return `${protocol}://${host}/api/auth/callback`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const discord = getDiscord();
+  const redirectUri = getRedirectUri(req);
+  const discord = new Discord(
+    process.env.DISCORD_CLIENT_ID!,
+    process.env.DISCORD_CLIENT_SECRET!,
+    redirectUri,
+  );
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const url = discord.createAuthorizationURL(state, codeVerifier, ['identify']);
 
   const cookieOpts = {
     httpOnly: true,
-    secure: !getRedirectUri().startsWith('http://'),
+    secure: !redirectUri.startsWith('http://'),
     sameSite: 'lax' as const,
     maxAge: 600,
     path: '/',
