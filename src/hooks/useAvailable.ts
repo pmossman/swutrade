@@ -67,6 +67,8 @@ export interface AvailableApi {
   update: (id: string, patch: Partial<Omit<AvailableItem, 'id'>>) => void;
   remove: (id: string) => void;
   clear: () => void;
+  /** Replace the entire list (used by server sync writeback). */
+  setAll: (items: AvailableItem[]) => void;
 }
 
 export function useAvailable(): AvailableApi {
@@ -108,5 +110,7 @@ export function useAvailable(): AvailableApi {
 
   const clear = useCallback(() => persist([]), [persist]);
 
-  return { items, add, update, remove, clear };
+  const setAll = useCallback((next: AvailableItem[]) => persist(next), [persist]);
+
+  return { items, add, update, remove, clear, setAll };
 }

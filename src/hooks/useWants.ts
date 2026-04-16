@@ -97,6 +97,8 @@ export interface WantsApi {
   remove: (id: string) => void;
   togglePriority: (id: string) => void;
   clear: () => void;
+  /** Replace the entire list (used by server sync writeback). */
+  setAll: (items: WantsItem[]) => void;
 }
 
 export function useWants(): WantsApi {
@@ -150,5 +152,7 @@ export function useWants(): WantsApi {
 
   const clear = useCallback(() => persist([]), [persist]);
 
-  return { items, add, update, remove, togglePriority, clear };
+  const setAll = useCallback((next: WantsItem[]) => persist(next), [persist]);
+
+  return { items, add, update, remove, togglePriority, clear, setAll };
 }

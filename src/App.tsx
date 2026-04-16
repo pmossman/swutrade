@@ -31,6 +31,7 @@ import {
   DEFAULTS,
 } from './persistence';
 import { useAuthContext } from './contexts/AuthContext';
+import { useServerSync } from './hooks/useServerSync';
 
 function detectViewMode(): 'list' | 'trade' {
   if (typeof window === 'undefined') return 'trade';
@@ -97,6 +98,7 @@ function App() {
   });
   const wants = useWants();
   const available = useAvailable();
+  const syncStatus = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
@@ -485,6 +487,20 @@ function App() {
           >
             {isBetaChannel() ? 'beta' : 'v'}&nbsp;{APP_COMMIT}
           </span>
+          {user && syncStatus !== 'idle' && (
+            <>
+              <span className="text-space-600" aria-hidden>·</span>
+              <span className={
+                syncStatus === 'syncing' ? 'text-gold/70 animate-pulse' :
+                syncStatus === 'error' ? 'text-red-400' :
+                syncStatus === 'offline' ? 'text-gray-600' : 'text-gray-500'
+              }>
+                {syncStatus === 'syncing' ? 'Syncing…' :
+                 syncStatus === 'error' ? 'Sync error' :
+                 syncStatus === 'offline' ? 'Offline' : ''}
+              </span>
+            </>
+          )}
         </div>
         {/* Legal/attribution line — visible inline on desktop, but
             pushed below the fold on mobile so we don't eat the main
