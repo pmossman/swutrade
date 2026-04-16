@@ -32,6 +32,7 @@ import {
 } from './persistence';
 import { useAuthContext } from './contexts/AuthContext';
 import { useServerSync } from './hooks/useServerSync';
+import { MigrationDialog } from './components/MigrationDialog';
 
 function detectViewMode(): 'list' | 'trade' {
   if (typeof window === 'undefined') return 'trade';
@@ -98,7 +99,7 @@ function App() {
   });
   const wants = useWants();
   const available = useAvailable();
-  const syncStatus = useServerSync(wants, available, user);
+  const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
@@ -427,6 +428,9 @@ function App() {
           onPrimary={hasCards ? () => setShowSummary(true) : undefined}
         />
       </div>
+
+      {/* Migration prompt on first sign-in with local items */}
+      {migrationPrompt && <MigrationDialog prompt={migrationPrompt} />}
 
       {/* Trade summary overlay */}
       {showSummary && (
