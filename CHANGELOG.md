@@ -2,6 +2,39 @@
 
 Release notes for production cuts. Dates match the git tag (`v<date>-stable`) on `main`. Not every commit lands here — just the user-facing shape of each release.
 
+## v2026.04.16-stable — 2026-04-16
+
+Foundation-hardening pass before Phase 2 (accounts + sync). No new user-facing features — the scope was code quality, data integrity, test coverage, and component architecture. Everything below is internal.
+
+### Data integrity
+- **34 duplicate product rows removed** from the TCGPlayer fetch pipeline. Cards that appeared twice in the picker grid (e.g., Luthen Rael in SEC) are now deduped at ingest with a build-time uniqueness guard.
+- **Gold and Rose Gold** variants recognized as first-class print variants (42 SEC cards promoted from gray "unknown" pills to yellow / rose pills). Appended to `CANONICAL_VARIANTS` — existing share-link bitmasks stay backward-compatible.
+- **SRP / OPP regional-prize cards** relabeled: numeric parentheticals like `(77)` collapse to a teal "Regional" pill; tournament-placement labels (Champion, Finalist, Top 4/8/16, Day 2) get a shared violet pill. Previously rendered as unlabeled gray unknowns.
+- **Enrichment** gained a name-based fallback for sets where TCGPlayer ships empty collector numbers (SECW). Match rate: 93.58% → 94.16% (+40 cards). A regression guard now fails the build if any mapped set drops to 0% enrichment.
+- **Share URLs compressed** via deflate + base64url (`fflate`). A 20-card wants list goes from ~1200 chars to ~530 chars (57% reduction). Old uncompressed links still decode correctly.
+
+### Bug fixes
+- **`pct=999` in URL** no longer inflates prices 9.99x — `parseTradeUrl` now clamps the percentage to [1, 100].
+- **Trade qty stepper** capped at 99 — clicking + past 99 previously went to 100, 101, etc.
+- **Search query misrouting** fixed: promo-set slug words like "of", "the", "force" were auto-aliased to set codes, so the swap-variant flow's seeded query "Luke Skywalker - Hero of Yavin" routed to Ashes of the Empire and returned nothing. Aliases now restricted to unambiguous set codes + 2 hand-curated overrides.
+
+### Test coverage
+- **74 → 143 unit tests** across 5 new test files. Load-bearing pure logic extracted from hooks into testable reducers: `wantsAddReducer`, `availableAddReducer`, `toggleSetReducer`, `replaceGroupReducer`. `applySelectionFilters`, `browseAllGroups`, `parseQuery`, and `localSearch` now have dedicated suites.
+- **17 Playwright e2e specs** added, covering: app boot, search + set-code aliases, trade flow + qty stepper + URL roundtrip, swap-variant kebab, shared-list landing → start-trade handoff → source-chip activation, curator build-and-share (clipboard round-trip), wants dedup through the UI, drawer interactions (tab switch + restriction editor + priority toggle + remove), qty-aware source chip, and mobile viewport sanity at 390×844.
+- **E2e wired into CI** via a new GitHub Actions workflow with weekly-cached card data so fetch-prices only hits TCGPlayer once per ISO week. Playwright browser cached per lockfile hash.
+
+### Component architecture
+- **`TradeSide.tsx`** reduced from 838 → 393 LOC (−53%) via three extractions:
+  - `TradeRow` — trade-panel card row (thumbnail, variant pill, spread badge, qty stepper, kebab menu).
+  - `TradeSearchOverlay` — full-screen card picker with encapsulated `useCardSearch`. Parent communicates via `open/onDismiss` + declarative `seed` prop (matches the existing `autoOpenSharedLink` one-shot convention). Source chips generalized to `SourceChipConfig[]` so Phase 3/4 can add new sources without overlay edits.
+  - `VariantBadge` — single source of truth for variant-pill chrome, collapsed from 4 inline duplicates.
+- **Filter chip groups** (`VariantChipGroup`, `SetChipGroup`) shared between the trade overlay's `SelectionFilterBar` and the shared-list `ListView`. ListView's set-filter mutual-exclusion semantics unified with the trade overlay (group presets now clear individual chips, matching the hook's `replaceGroupReducer`).
+- **`formatPrice`** deduplicated from 3 inline copies into `priceService.ts`.
+- **`PickerTile`** gained an `aria-label` so screen readers (and e2e tests) can identify each tile in the drawer picker.
+
+### CI / build
+- **Refresh-prices cron** now checks the deploy hook's HTTP status and fails the workflow on non-2xx, so a rotated or revoked `VERCEL_DEPLOY_HOOK` secret can't silently succeed while prices go stale.
+
 ## v2026.04.15.2-stable — 2026-04-15
 
 Adds in-person and native share surfaces to the lists drawer.
