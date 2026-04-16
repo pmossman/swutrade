@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import type { MigrationPrompt } from '../hooks/useServerSync';
+import { preventAutoFocus } from '../utils/dialogFocus';
 
 interface MigrationDialogProps {
   prompt: MigrationPrompt;
@@ -15,6 +16,7 @@ export function MigrationDialog({ prompt }: MigrationDialogProps) {
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
+          onOpenAutoFocus={preventAutoFocus}
           className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(420px,calc(100vw-2rem))] bg-space-900 border border-space-700 rounded-2xl shadow-2xl p-6 text-gray-100"
         >
           <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">

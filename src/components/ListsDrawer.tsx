@@ -11,8 +11,8 @@ import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
-import { Popover } from './Popover';
 import { useAuthContext } from '../contexts/AuthContext';
+import { preventAutoFocus } from '../utils/dialogFocus';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -118,6 +118,7 @@ export function ListsDrawer({
         <Dialog.Content
           aria-describedby={undefined}
           data-mode={mode}
+          onOpenAutoFocus={preventAutoFocus}
           onEscapeKeyDown={e => {
             // In picker mode, Esc should only close the picker and leave
             // the drawer open — the drawer itself is dismissed by another
@@ -139,13 +140,6 @@ export function ListsDrawer({
             'md:w-[min(720px,calc(100vw-2rem))] md:max-h-[85dvh] md:h-auto md:rounded-2xl md:border md:data-[mode=picker]:max-h-[85dvh] md:data-[mode=picker]:rounded-2xl',
           ].join(' ')}
         >
-          {/* Drag-handle affordance (mobile only, hidden in full-screen picker) */}
-          {mode === 'list' && (
-            <div className="flex justify-center pt-2 md:hidden">
-              <span className="w-10 h-1 rounded-full bg-space-700" aria-hidden />
-            </div>
-          )}
-
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-space-800">
             <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">
               My Lists
@@ -448,60 +442,89 @@ function ShareListsButton({
 
   return (
     <>
-      <Popover
-        align="right"
-        panelClassName="p-3 w-[260px]"
-        trigger={({ open, toggle }) => (
+      {/* Radix Dialog instead of an anchored popover: the popover
+          variant got its QR clipped against the viewport bottom on
+          mobile when the parent drawer was already near full height.
+          A centered modal has its own viewport scroll envelope and
+          fits the QR at a comfortably scannable size. */}
+      <Dialog.Root>
+        <Dialog.Trigger asChild>
           <button
             type="button"
-            onClick={toggle}
             aria-label="Share lists"
-            aria-expanded={open}
             className="flex items-center gap-1 px-2 h-7 rounded text-[10px] font-bold uppercase tracking-wide bg-gold/10 text-gold hover:bg-gold/20 transition-colors"
           >
             <ShareIcon className="w-3 h-3" />
             Share
           </button>
-        )}
-      >
-        {({ close }) => (
-          <div className="flex flex-col gap-3">
-            <SharePopoverButton
-              onClick={() => { copyLink(); }}
-              icon={linkCopied ? <CheckIcon className="w-3.5 h-3.5" /> : <LinkIcon className="w-3.5 h-3.5" />}
-              label={linkCopied ? 'Copied!' : 'Copy link'}
-            />
-            {nativeShareAvailable && (
+        </Dialog.Trigger>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
+          <Dialog.Content
+            aria-describedby={undefined}
+            onOpenAutoFocus={preventAutoFocus}
+            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(320px,calc(100vw-2rem))] max-h-[90dvh] overflow-y-auto bg-space-900 border border-space-700 rounded-2xl shadow-2xl p-4"
+          >
+            <div className="flex items-center justify-between gap-3 pb-3 border-b border-space-800 mb-3">
+              <Dialog.Title className="text-sm font-bold tracking-[0.1em] uppercase text-gold">
+                Share list
+              </Dialog.Title>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  className="text-gray-500 hover:text-gray-200 transition-colors"
+                >
+                  <CloseIcon className="w-4 h-4" />
+                </button>
+              </Dialog.Close>
+            </div>
+
+            <div className="flex flex-col gap-2">
               <SharePopoverButton
-                onClick={() => { nativeShare(); close(); }}
-                icon={<ShareIcon className="w-3.5 h-3.5" />}
-                label="Share via…"
+                onClick={() => { copyLink(); }}
+                icon={linkCopied ? <CheckIcon className="w-3.5 h-3.5" /> : <LinkIcon className="w-3.5 h-3.5" />}
+                label={linkCopied ? 'Copied!' : 'Copy link'}
               />
-            )}
-            <SharePopoverButton
-              onClick={() => { setShowImage(true); close(); }}
-              icon={<ImageIcon className="w-3.5 h-3.5" />}
-              label="Save as image"
-            />
-            {/* In-person QR — recipient scans with any stock camera app.
-                Sits at the bottom since it's the secondary use case but
-                doesn't need a tap to reveal. */}
-            <div className="flex flex-col items-center gap-1.5 pt-2 border-t border-space-700">
-              <div className="text-[9px] tracking-widest uppercase text-gray-500 font-bold">
-                Scan to open
-              </div>
-              <div className="bg-white p-1.5 rounded">
-                <QRCodeSVG
-                  value={urlString}
-                  size={160}
-                  level="M"
-                  marginSize={0}
+              {nativeShareAvailable && (
+                <Dialog.Close asChild>
+                  <SharePopoverButton
+                    onClick={nativeShare}
+                    icon={<ShareIcon className="w-3.5 h-3.5" />}
+                    label="Share via…"
+                  />
+                </Dialog.Close>
+              )}
+              <Dialog.Close asChild>
+                <SharePopoverButton
+                  onClick={() => setShowImage(true)}
+                  icon={<ImageIcon className="w-3.5 h-3.5" />}
+                  label="Save as image"
                 />
+              </Dialog.Close>
+
+              {/* In-person QR — recipient scans with any stock camera app.
+                  The centered-modal layout guarantees the code is never
+                  clipped, so we can render at a comfortable scannable
+                  size without having to worry about where the trigger
+                  lives on screen. */}
+              <div className="flex flex-col items-center gap-1.5 pt-3 mt-1 border-t border-space-700">
+                <div className="text-[9px] tracking-widest uppercase text-gray-500 font-bold">
+                  Scan to open
+                </div>
+                <div className="bg-white p-2 rounded">
+                  <QRCodeSVG
+                    value={urlString}
+                    size={200}
+                    level="M"
+                    marginSize={0}
+                  />
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </Popover>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
       {showImage && (
         <TradeImageModal imageUrl={imageUrl()} onClose={() => setShowImage(false)} />
       )}
