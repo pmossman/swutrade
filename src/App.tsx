@@ -34,6 +34,7 @@ import { useAuthContext } from './contexts/AuthContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
+import { MatchmakerInput } from './components/MatchmakerInput';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' {
   if (typeof window === 'undefined') return 'trade';
@@ -371,6 +372,19 @@ function App() {
           ) : null
         )}
       </div>
+
+      {/* Matchmaker: enter a handle, app suggests a balanced trade */}
+      <MatchmakerInput
+        allCards={allLoadedCards}
+        percentage={percentage}
+        priceMode={priceMode}
+        wants={wants}
+        available={available}
+        onApplyMatch={(yours, theirs) => {
+          setYourCards(yours);
+          setTheirCards(theirs);
+        }}
+      />
 
       {/* Trade panels — flex on mobile so a collapsed panel gives its
           space to the expanded one. Grid on md+ keeps side-by-side. */}
