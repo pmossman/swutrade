@@ -1,14 +1,22 @@
 import { test, expect } from '@playwright/test';
-import { signIn, TEST_USER } from './helpers/auth';
+import { signIn, createIsolatedUser, ensureTestUser, cleanupTestUser, type TestUser } from './helpers/auth';
 
 test.describe('Server sync', () => {
+  let user: TestUser;
+
   test.beforeEach(async ({ context }) => {
-    await signIn(context);
+    user = createIsolatedUser();
+    await ensureTestUser(user);
+    await signIn(context, user);
+  });
+
+  test.afterEach(async () => {
+    await cleanupTestUser(user);
   });
 
   test('wants survive localStorage wipe (restored from server)', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Open the drawer and add a want via the picker.
     await page.getByRole('button', { name: 'Open my lists' }).click();
@@ -49,7 +57,7 @@ test.describe('Server sync', () => {
       localStorage.removeItem('swu.available.v1');
     });
     await page.reload();
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Reopen drawer — the want should still be there.
     await page.getByRole('button', { name: 'Open my lists' }).click();
@@ -62,7 +70,7 @@ test.describe('Server sync', () => {
 
   test('available items sync to server and back', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Add an available item via the drawer.
     await page.getByRole('button', { name: 'Open my lists' }).click();

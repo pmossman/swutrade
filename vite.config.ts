@@ -22,9 +22,13 @@ export default defineConfig({
     __APP_COMMIT__: JSON.stringify(resolveCommit()),
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
-  // @ts-expect-error vitest extends the vite config; unifies discovery so
-  // `npx vitest run` doesn't try to load Playwright specs as unit tests.
+  // @ts-expect-error vitest extends the vite config
   test: {
+    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist', 'e2e/**', '**/playwright/**'],
+    pool: 'threads',
+    poolOptions: {
+      threads: { maxThreads: 4 },
+    },
   },
 })

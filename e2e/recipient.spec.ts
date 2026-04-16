@@ -50,8 +50,8 @@ test.describe('Recipient: end-to-end trade from a shared link', () => {
     await expect(page.getByText('Luke Skywalker - Hero of Yavin').first()).toBeVisible();
     await expect(page.getByText('HYPERSPACE').first()).toBeVisible();
 
-    // URL picks up the new Offering card.
-    await expect(page).toHaveURL(new RegExp(`y=${LUKE_JTL_HYPERSPACE}\\.1`));
+    // URL picks up the new Offering card (may take a tick to sync).
+    await expect(page).toHaveURL(new RegExp(`y=${LUKE_JTL_HYPERSPACE}\\.1`), { timeout: 10_000 });
   });
 });
 

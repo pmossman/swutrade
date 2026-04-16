@@ -68,11 +68,10 @@ export function useTradeUrl(
   useEffect(() => {
     if (!initializedRef.current) return;
 
-    // Don't rewrite the URL when we're on a non-trade view — profile
-    // and list views own their own params that useTradeUrl doesn't
-    // understand.
+    // Don't rewrite the URL when we're on the profile view — it owns
+    // its own ?profile= param that useTradeUrl doesn't understand.
     const currentParams = new URLSearchParams(window.location.search);
-    if (currentParams.has('profile') || currentParams.has('view')) return;
+    if (currentParams.has('profile')) return;
 
     const search = buildTradeSearch(state);
     const newUrl = search ? `?${search}` : window.location.pathname;
