@@ -98,7 +98,26 @@ touches a Discord-adjacent code path.
 
 ### After shipping Slice 2 (settings + enrollment UI)
 
-_To be filled in when Slice 2 lands._
+- [ ] Sign in fresh (or open `/?settings=1` via account menu) and
+  verify the Settings page renders with the correct defaults —
+  profile visibility `public`, only "Trade proposals sent to me"
+  checked among the bot DM categories.
+- [ ] Change profile visibility to `Discord only`, reload the page,
+  verify the value stuck.
+- [ ] Toggle a bot DM category on, reload, verify it's still on.
+- [ ] Verify the Discord servers section shows the expected
+  empty-state ("SWUTrade's bot isn't installed in any of your
+  Discord servers yet") — expected while the bot is unbuilt and
+  `bot_installed_guilds` is empty.
+- [ ] If you manually insert a row into `bot_installed_guilds` for
+  one of your Discord servers, reload, verify that server appears
+  under "enrollable" and the others fall into "Other servers."
+  Enroll, verify the card highlights + sub-toggles appear.
+  Disenroll, verify sub-toggles disappear and DB flags all clear.
+  (Reminder: manually `DELETE` the `bot_installed_guilds` row
+  when done if you didn't intend to keep it.)
+- [ ] Keyboard-only flow: tab through the settings page, verify
+  every interactive element has visible focus + correct order.
 
 ### After shipping Slice 3 (community source in picker)
 

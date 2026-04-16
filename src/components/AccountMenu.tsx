@@ -112,6 +112,15 @@ export function AccountMenu({ auth }: AccountMenuProps) {
             My profile
           </a>
 
+          <a
+            href="/?settings=1"
+            onClick={close}
+            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
+          >
+            <SettingsIcon className="w-3.5 h-3.5 text-gray-400" />
+            Settings
+          </a>
+
           <button
             type="button"
             onClick={() => { void logout(); close(); }}
@@ -155,6 +164,15 @@ function SignOutIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M10 11.5L13 8l-3-3.5M13 8H6M7 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H7" />
+    </svg>
+  );
+}
+
+function SettingsIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.2v2M8 12.8v2M14.8 8h-2M3.2 8h-2M12.8 3.2L11.4 4.6M4.6 11.4l-1.4 1.4M12.8 12.8L11.4 11.4M4.6 4.6L3.2 3.2" />
     </svg>
   );
 }
