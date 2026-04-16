@@ -189,7 +189,7 @@ function App() {
     return (key: string, delta: number) => {
       setter(prev =>
         prev
-          .map(tc => tradeCardKey(tc.card) === key ? { ...tc, qty: tc.qty + delta } : tc)
+          .map(tc => tradeCardKey(tc.card) === key ? { ...tc, qty: Math.min(99, tc.qty + delta) } : tc)
           .filter(tc => tc.qty > 0)
       );
     };
