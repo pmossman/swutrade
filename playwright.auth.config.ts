@@ -1,14 +1,11 @@
 import { config } from 'dotenv';
 import { defineConfig, devices } from '@playwright/test';
 
-// Load .env.local so SESSION_SECRET is available for cookie sealing.
 config({ path: '.env.local' });
 
 /**
  * Authenticated e2e tests — run against `vercel dev` (port 3000)
- * which serves both the Vite frontend AND the API functions. The
- * anonymous tests in playwright.config.ts use plain `vite` (port
- * 5173) and don't need API endpoints.
+ * which serves both the Vite frontend AND the API functions.
  *
  * Run: npm run e2e:auth
  */
@@ -27,9 +24,13 @@ export default defineConfig({
     { name: 'chromium', use: devices['Desktop Chrome'] },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL ? undefined : {
-    command: 'vercel dev --listen 3000',
+    command: process.env.CI
+      ? 'npx vercel dev --listen 3000 --token "$VERCEL_TOKEN"'
+      : 'vercel dev --listen 3000',
     url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 30_000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 60_000,
+    stdout: 'pipe',
+    stderr: 'pipe',
   },
 });

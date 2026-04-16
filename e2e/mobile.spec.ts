@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 
-// iPhone 14-ish viewport. Avoid devices['iPhone 14'] since it pulls
-// in webkit; we only install chromium in CI.
+// iPhone 14-ish viewport. isMobile + hasTouch are Chromium-only —
+// skip this spec on Firefox/WebKit via the project filter.
+test.skip(({ browserName }) => browserName !== 'chromium', 'Mobile emulation is Chromium-only');
+
 test.use({
   viewport: { width: 390, height: 844 },
   isMobile: true,
