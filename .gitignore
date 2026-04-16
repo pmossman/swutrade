@@ -31,3 +31,4 @@ playwright/.cache/
 *.sln
 *.sw?
 .vercel
+.env*.local

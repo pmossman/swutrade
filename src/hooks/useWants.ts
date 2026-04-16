@@ -16,8 +16,7 @@ import {
  * (e.g., Hyperspace vs Hyperspace Foil restrictions on the same
  * card) are tracked as separate items.
  *
- * Exported for tests and for downstream code that wants to correlate
- * a picker's active-filter key with a saved want's restriction key.
+ * Shared with API sync endpoints via lib/shared.ts re-export.
  */
 export function restrictionKey(r: VariantRestriction): string {
   if (r.mode === 'any') return 'any';
