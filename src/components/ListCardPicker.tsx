@@ -360,11 +360,19 @@ function PickerTile({
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
 
+  // Compose an accessible name from the card art + badge text so
+  // screen readers (and e2e tests) can identify each tile. The image
+  // is decorative (alt="") since the text covers it.
+  const displayName = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  const badgeText = badge?.map(b => b.text).join(' ') ?? '';
+  const ariaLabel = `Add ${displayName}${badgeText ? ' ' + badgeText : ''} to list`;
+
   return (
     <div className="relative">
       <button
         type="button"
         onClick={onPick}
+        aria-label={ariaLabel}
         className={`group relative flex flex-col items-stretch w-full rounded-lg bg-space-800/95 border transition-all text-left overflow-hidden active:scale-[0.98] ${
           savedQty > 0
             ? 'border-gold/40 hover:border-gold/60'
