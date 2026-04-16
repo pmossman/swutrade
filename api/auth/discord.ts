@@ -2,35 +2,32 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Discord, generateState, generateCodeVerifier } from 'arctic';
 import { serialize } from 'cookie';
 
-const discord = new Discord(
-  process.env.DISCORD_CLIENT_ID!,
-  process.env.DISCORD_CLIENT_SECRET!,
-  getRedirectUri(),
-);
-
-function getRedirectUri(): string {
-  if (process.env.VERCEL_ENV === 'development') {
-    return 'http://localhost:3000/api/auth/callback';
+export function getRedirectUri(): string {
+  const host = process.env.VERCEL_URL ?? 'localhost:3000';
+  if (host.includes('localhost') || host.includes('127.0.0.1')) {
+    return `http://${host}/api/auth/callback`;
   }
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/auth/callback`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api/auth/callback`;
-  }
-  return 'http://localhost:3000/api/auth/callback';
+  const prodHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? host;
+  return `https://${prodHost}/api/auth/callback`;
 }
 
-export { discord };
+function getDiscord() {
+  return new Discord(
+    process.env.DISCORD_CLIENT_ID!,
+    process.env.DISCORD_CLIENT_SECRET!,
+    getRedirectUri(),
+  );
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const discord = getDiscord();
   const state = generateState();
   const codeVerifier = generateCodeVerifier();
   const url = discord.createAuthorizationURL(state, codeVerifier, ['identify']);
 
   const cookieOpts = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: !getRedirectUri().startsWith('http://'),
     sameSite: 'lax' as const,
     maxAge: 600,
     path: '/',

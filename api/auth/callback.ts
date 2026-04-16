@@ -5,19 +5,7 @@ import { createSession } from '../../lib/auth.js';
 import { getDb } from '../../lib/db.js';
 import { users } from '../../lib/schema.js';
 import { eq } from 'drizzle-orm';
-
-function getRedirectUri(): string {
-  if (process.env.VERCEL_ENV === 'development') {
-    return 'http://localhost:3000/api/auth/callback';
-  }
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/auth/callback`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api/auth/callback`;
-  }
-  return 'http://localhost:3000/api/auth/callback';
-}
+import { getRedirectUri } from './discord.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { code, state } = req.query as { code?: string; state?: string };
@@ -66,7 +54,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const db = getDb();
 
-  // Upsert: create on first login, update profile on subsequent logins.
   const existing = await db.select().from(users).where(eq(users.discordId, discordUser.id)).limit(1);
 
   let handle: string;
@@ -83,7 +70,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .replace(/[^a-z0-9_-]/g, '')
       .slice(0, 32) || 'user';
 
-    // Handle collision: append random suffix.
     const handleTaken = await db.select().from(users).where(eq(users.handle, handle)).limit(1);
     if (handleTaken.length > 0) {
       handle = `${handle}-${Math.random().toString(36).slice(2, 6)}`;
