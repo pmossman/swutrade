@@ -7,9 +7,14 @@ import { users } from '../../lib/schema.js';
 import { eq } from 'drizzle-orm';
 
 function getRedirectUri(): string {
+  if (process.env.VERCEL_ENV === 'development') {
+    return 'http://localhost:3000/api/auth/callback';
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/auth/callback`;
+  }
   if (process.env.VERCEL_URL) {
-    const host = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-    return `https://${host}/api/auth/callback`;
+    return `https://${process.env.VERCEL_URL}/api/auth/callback`;
   }
   return 'http://localhost:3000/api/auth/callback';
 }

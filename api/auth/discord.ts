@@ -9,10 +9,14 @@ const discord = new Discord(
 );
 
 function getRedirectUri(): string {
+  if (process.env.VERCEL_ENV === 'development') {
+    return 'http://localhost:3000/api/auth/callback';
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/api/auth/callback`;
+  }
   if (process.env.VERCEL_URL) {
-    const proto = process.env.VERCEL_ENV === 'production' ? 'https' : 'https';
-    const host = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
-    return `${proto}://${host}/api/auth/callback`;
+    return `https://${process.env.VERCEL_URL}/api/auth/callback`;
   }
   return 'http://localhost:3000/api/auth/callback';
 }
