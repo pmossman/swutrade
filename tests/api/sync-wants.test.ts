@@ -1,6 +1,6 @@
 import { describeWithDb, } from './helpers.js';
 import { it, expect, beforeEach, afterEach } from 'vitest';
-import handler from '../../api/sync/wants.js';
+import { handleWants as handler } from '../../api/sync.js';
 import { mockRequest, mockResponse, sealTestCookie, createTestUser, insertWant } from './helpers.js';
 
 describeWithDb('/api/sync/wants', () => {
