@@ -116,11 +116,18 @@ on `/?counter=<id>` see an error.
    `discord_dm_message_id`) to show the countered status + strip
    buttons.
 5. DM the original proposer with the counter. Same embed shape as
-   a fresh proposal, but with a "Countered your proposal from
-   <relative time>" sub-header and a preview field showing what
-   THEY originally proposed vs. what the counter shifts to. The
-   Accept/Counter/Decline buttons on THIS DM's `custom_id` embed
+   a fresh proposal — focused on what's being proposed NOW, not
+   the full history. One extra "Counter to your earlier proposal"
+   sub-header gives enough context; deep history lives in the web
+   detail view. Accept/Counter/Decline buttons on THIS DM carry
    the new trade id, so the chain continues.
+
+   Rationale: Discord DMs are a notification surface, not a
+   browser. If we tried to render two, three, or ten levels of
+   history in one embed, we'd hit the 4096-char description cap
+   AND overwhelm the reader on mobile. Principle: **each DM shows
+   the single decision point in front of you.** The web app's
+   trade detail view owns chain visualization.
 
 ### Chain termination
 
@@ -207,11 +214,6 @@ Non-goals for slice 4:
 
 ## Risks / things to sanity-check before starting
 
-- **Message length on chain DMs**: Discord embed descriptions cap
-  at 4096 chars. Rendering "what was originally proposed" +
-  "what's now proposed" in the same embed could hit that on big
-  trades. Plan: compact side-by-side table; fall back to a link
-  if overflow.
 - **Race: proposer accepts while recipient is composing a counter**.
   The counter endpoint must re-check `status === 'pending'` at
   submit time. If the proposer-side has a cancel button in the UI,
