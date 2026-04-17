@@ -54,17 +54,23 @@ test.describe('Settings view', () => {
   test('changing profile visibility persists', async ({ page }) => {
     await page.goto('/?settings=1');
 
-    await page.getByLabel('Profile visibility').selectOption('discord');
+    // Default is 'discord' — change to 'public' to verify the round-trip.
+    // Picking any value different from the default is fine here; we care
+    // that the control + API + DB stay in sync, not which value lands.
+    await page.getByLabel('Profile visibility').selectOption('public');
 
     await expect.poll(async () => {
       const s = await getUserSettings(user.userId);
       return s?.profileVisibility;
-    }, { timeout: 5_000 }).toBe('discord');
+    }, { timeout: 5_000 }).toBe('public');
   });
 
   test('shows an empty-state when no bot-installed guilds are available', async ({ page }) => {
-    // Seed a membership in a guild where the bot is NOT installed — it
-    // should land in "other servers", not the enrollable section.
+    // Seed a membership in a guild where the bot is NOT installed.
+    // As of Phase 4b we deliberately DON'T enumerate these — a user
+    // with 60 random Discord servers doesn't want them listed in
+    // settings. The guild name should stay off-screen; an "Invite
+    // SWUTrade bot" block shows in its place.
     cleanups.push(await createGuildMembership(user.userId, `lurker-${user.userId}`, {
       guildName: 'Elsewhere',
     }));
@@ -72,7 +78,9 @@ test.describe('Settings view', () => {
     await page.goto('/?settings=1');
     await expect(page.getByText(/SWUTrade's bot isn't installed in any of your Discord servers yet/i))
       .toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('Elsewhere')).toBeVisible();
+    await expect(page.getByText(/Want SWUTrade in another server\?/i)).toBeVisible();
+    // The bot-less guild name must NOT appear on the page.
+    await expect(page.getByText('Elsewhere')).toHaveCount(0);
   });
 
   test('enrolling flips the bundle + shows the sub-toggles', async ({ page }) => {
