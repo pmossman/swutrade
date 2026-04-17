@@ -33,6 +33,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleGuildPut(req, res);
     case 'community':
       return handleCommunity(req, res);
+    case 'community-members':
+      return handleCommunityMembers(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -355,4 +357,200 @@ export async function handleCommunity(req: VercelRequest, res: VercelResponse) {
     wantFamilyIds: wantFamilyRows.map(r => r.familyId),
     availableProductIds: availableProductRows.map(r => r.productId),
   });
+}
+
+// --- community members (directory) ------------------------------------------
+
+/**
+ * Per-user breakdown of community members the viewer can see: one
+ * entry per user in a mutually-enrolled + appear-in-queries guild.
+ * The CommunityView browses this to find trading partners. The
+ * rollup endpoint (`handleCommunity`) is the aggregated counterpart
+ * — it tells the viewer WHAT exists; this tells them WHO has it.
+ *
+ * Gating (symmetric — both sides consent to the "queries" surface):
+ *   - Viewer: enrolled=true + appearInQueries=true in ≥1 guild with
+ *     the bot installed. A viewer who doesn't want to be queryable
+ *     themselves also can't query others.
+ *   - Member: enrolled=true + appearInQueries=true in ≥1 of those
+ *     same guilds.
+ *   - Member: profileVisibility != 'private'. The directory links
+ *     to /u/handle; dead links would confuse, so we drop private
+ *     profiles from the listing even if they're query-visible.
+ *   - Viewer's own row always excluded.
+ *
+ * Privacy layering inside each member entry:
+ *   - `wantFamilyIds` populated only when member.wantsPublic=true.
+ *   - `availableProductIds` populated only when member.availablePublic=true.
+ *   - Totals are reported even when lists are private — the count
+ *     "this user has N wants" isn't leakage of WHICH cards, and
+ *     signals worth-approaching-them-off-platform. (We can gate
+ *     these later if that turns out to be wrong.)
+ *
+ * Response payload grows linearly with guild size + list length; for
+ * a 50-member guild where everyone has 100 wants the body is well
+ * under 100KB. Client does overlap computation locally so we don't
+ * need to look up familyId ↔ productId on the server.
+ */
+export interface CommunityMember {
+  userId: string;
+  handle: string;
+  username: string;
+  avatarUrl: string | null;
+  mutualGuildNames: string[];
+  wantsPublic: boolean;
+  availablePublic: boolean;
+  wantsTotal: number;
+  availableTotal: number;
+  wantFamilyIds: string[];
+  availableProductIds: string[];
+}
+
+export async function handleCommunityMembers(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  const db = getDb();
+
+  const viewerGuilds = await db
+    .select({ guildId: userGuildMemberships.guildId })
+    .from(userGuildMemberships)
+    .where(and(
+      eq(userGuildMemberships.userId, session.userId),
+      eq(userGuildMemberships.enrolled, true),
+      eq(userGuildMemberships.appearInQueries, true),
+    ));
+
+  if (viewerGuilds.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ members: [] });
+  }
+
+  const guildIds = viewerGuilds.map(g => g.guildId);
+
+  // Candidate memberships in mutual guilds.
+  const memberRows = await db
+    .select({
+      userId: userGuildMemberships.userId,
+      guildId: userGuildMemberships.guildId,
+      guildName: userGuildMemberships.guildName,
+    })
+    .from(userGuildMemberships)
+    .where(and(
+      inArray(userGuildMemberships.guildId, guildIds),
+      eq(userGuildMemberships.enrolled, true),
+      eq(userGuildMemberships.appearInQueries, true),
+      ne(userGuildMemberships.userId, session.userId),
+    ));
+
+  if (memberRows.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ members: [] });
+  }
+
+  const candidateUserIds = Array.from(new Set(memberRows.map(r => r.userId)));
+
+  // User records — skip private profiles now so subsequent queries
+  // don't bother fetching their wants/available.
+  const userRows = await db
+    .select({
+      id: users.id,
+      handle: users.handle,
+      username: users.username,
+      avatarUrl: users.avatarUrl,
+      wantsPublic: users.wantsPublic,
+      availablePublic: users.availablePublic,
+      profileVisibility: users.profileVisibility,
+    })
+    .from(users)
+    .where(inArray(users.id, candidateUserIds));
+
+  const visibleUsers = userRows.filter(u => u.profileVisibility !== 'private');
+  if (visibleUsers.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ members: [] });
+  }
+  const visibleIds = visibleUsers.map(u => u.id);
+
+  // Wants + available only for users whose lists are public, but
+  // totals for everyone (cheap and useful without leaking contents).
+  const wantsPublicIds = visibleUsers.filter(u => u.wantsPublic).map(u => u.id);
+  const availablePublicIds = visibleUsers.filter(u => u.availablePublic).map(u => u.id);
+
+  const wantsRows = wantsPublicIds.length > 0
+    ? await db
+        .select({ userId: wantsItems.userId, familyId: wantsItems.familyId })
+        .from(wantsItems)
+        .where(inArray(wantsItems.userId, wantsPublicIds))
+    : [];
+
+  const availableRows = availablePublicIds.length > 0
+    ? await db
+        .select({ userId: availableItems.userId, productId: availableItems.productId })
+        .from(availableItems)
+        .where(inArray(availableItems.userId, availablePublicIds))
+    : [];
+
+  // Totals — one count(*) grouped by user_id across everyone
+  // visible, regardless of *_public. Used for "this user has N
+  // wants" display even when the contents are hidden.
+  const wantsTotals = await db
+    .select({ userId: wantsItems.userId, familyId: wantsItems.familyId })
+    .from(wantsItems)
+    .where(inArray(wantsItems.userId, visibleIds));
+  const availableTotals = await db
+    .select({ userId: availableItems.userId, productId: availableItems.productId })
+    .from(availableItems)
+    .where(inArray(availableItems.userId, visibleIds));
+
+  // Group everything by userId for shape assembly.
+  const guildsByUser = new Map<string, string[]>();
+  for (const m of memberRows) {
+    const list = guildsByUser.get(m.userId) ?? [];
+    if (!list.includes(m.guildName)) list.push(m.guildName);
+    guildsByUser.set(m.userId, list);
+  }
+
+  const wantsByUser = new Map<string, Set<string>>();
+  for (const w of wantsRows) {
+    const s = wantsByUser.get(w.userId) ?? new Set();
+    s.add(w.familyId);
+    wantsByUser.set(w.userId, s);
+  }
+  const availByUser = new Map<string, Set<string>>();
+  for (const a of availableRows) {
+    const s = availByUser.get(a.userId) ?? new Set();
+    s.add(a.productId);
+    availByUser.set(a.userId, s);
+  }
+
+  const wantsTotalByUser = new Map<string, Set<string>>();
+  for (const w of wantsTotals) {
+    const s = wantsTotalByUser.get(w.userId) ?? new Set();
+    s.add(w.familyId);
+    wantsTotalByUser.set(w.userId, s);
+  }
+  const availTotalByUser = new Map<string, Set<string>>();
+  for (const a of availableTotals) {
+    const s = availTotalByUser.get(a.userId) ?? new Set();
+    s.add(a.productId);
+    availTotalByUser.set(a.userId, s);
+  }
+
+  const members: CommunityMember[] = visibleUsers.map(u => ({
+    userId: u.id,
+    handle: u.handle,
+    username: u.username,
+    avatarUrl: u.avatarUrl,
+    mutualGuildNames: guildsByUser.get(u.id) ?? [],
+    wantsPublic: u.wantsPublic,
+    availablePublic: u.availablePublic,
+    wantsTotal: wantsTotalByUser.get(u.id)?.size ?? 0,
+    availableTotal: availTotalByUser.get(u.id)?.size ?? 0,
+    wantFamilyIds: u.wantsPublic ? Array.from(wantsByUser.get(u.id) ?? []) : [],
+    availableProductIds: u.availablePublic ? Array.from(availByUser.get(u.id) ?? []) : [],
+  }));
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ members });
 }

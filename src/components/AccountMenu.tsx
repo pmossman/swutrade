@@ -102,6 +102,15 @@ export function AccountMenu({ auth }: AccountMenuProps) {
           </div>
 
           <a
+            href="/?community=1"
+            onClick={close}
+            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
+          >
+            <CommunityIcon className="w-3.5 h-3.5 text-gray-400" />
+            Community
+          </a>
+
+          <a
             href="/?settings=1"
             onClick={close}
             className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
@@ -136,6 +145,19 @@ function ChevronDown({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M4 6l4 4 4-4" />
+    </svg>
+  );
+}
+
+// Two stylized silhouettes: reads unambiguously as "community of
+// people" at 14px without needing detail that would turn muddy.
+function CommunityIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="6" cy="5.5" r="2.2" />
+      <path d="M1.75 13.25a4.25 4.25 0 0 1 8.5 0" />
+      <circle cx="11.25" cy="6.25" r="1.75" />
+      <path d="M10 11a3.25 3.25 0 0 1 4.5 1.75" />
     </svg>
   );
 }

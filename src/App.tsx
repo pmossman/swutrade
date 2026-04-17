@@ -37,11 +37,13 @@ import { ProfileView } from './components/ProfileView';
 import { AccountMenu } from './components/AccountMenu';
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
+import { CommunityView } from './components/CommunityView';
 
-function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' {
+function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' {
   if (typeof window === 'undefined') return 'trade';
   const params = new URLSearchParams(window.location.search);
   if (params.get('settings') === '1') return 'settings';
+  if (params.get('community') === '1') return 'community';
   if (params.has('profile')) return 'profile';
   const explicit = params.get('view');
   if (explicit === 'list') return 'list';
@@ -273,6 +275,24 @@ function App() {
       setViewMode(detectViewMode());
     };
     return <SettingsView onClose={goHome} />;
+  }
+
+  if (viewMode === 'community') {
+    const goHome = () => {
+      const params = new URLSearchParams(window.location.search);
+      params.delete('community');
+      const search = params.toString();
+      window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
+      setViewMode(detectViewMode());
+    };
+    return (
+      <CommunityView
+        byProductId={cardIndex.byProductId}
+        wants={wants}
+        available={available}
+        onClose={goHome}
+      />
+    );
   }
 
   // Profile view — /u/<handle> shows a user's public lists.

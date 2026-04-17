@@ -7,6 +7,7 @@
     { "source": "/api/me/guilds", "destination": "/api/me?action=guilds" },
     { "source": "/api/me/settings", "destination": "/api/me?action=settings" },
     { "source": "/api/me/community", "destination": "/api/me?action=community" },
+    { "source": "/api/me/community-members", "destination": "/api/me?action=community-members" },
     { "source": "/api/sync/wants", "destination": "/api/sync?kind=wants" },
     { "source": "/api/sync/available", "destination": "/api/sync?kind=available" },
     { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
