@@ -86,7 +86,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body: rawBody,
     publicKeyHex: publicKey,
   });
-  if (!verified) {
+  // Optional fallback: a test-only public key lets e2e specs on
+  // Preview deploys sign interactions with a known test keypair
+  // and exercise the full signature-verify + dispatch path without
+  // needing a real human click in Discord. Set only on Preview —
+  // never on Production. If a forged interaction is ever an issue,
+  // rotate / unset this env var to disable.
+  const testPublicKey = process.env.DISCORD_APP_PUBLIC_KEY_TEST;
+  const verifiedWithTestKey = !verified && testPublicKey
+    ? verifyDiscordSignature({ signature, timestamp, body: rawBody, publicKeyHex: testPublicKey })
+    : false;
+  if (!verified && !verifiedWithTestKey) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
