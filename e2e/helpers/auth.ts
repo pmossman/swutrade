@@ -28,9 +28,18 @@ let isolatedCounter = 0;
  * Create a unique test user identity for specs that need parallel
  * isolation. Does NOT seed the DB — call `ensureTestUser()` after
  * if the spec hits sync/profile/trades endpoints.
+ *
+ * The suffix combines `crypto.randomUUID` with a module-level
+ * counter. Each Playwright worker is a separate Node process with
+ * its own memory, so a per-process counter alone collides across
+ * workers at the same Date.now() millisecond (observed in CI: two
+ * workers both producing `test-iso-<ts>-1` and racing on the
+ * users_pkey INSERT). UUID gives cross-process uniqueness; the
+ * counter keeps sequences readable within one worker.
  */
 export function createIsolatedUser(): TestUser {
-  const suffix = `${Date.now()}-${++isolatedCounter}`;
+  const uuid = crypto.randomUUID().slice(0, 8);
+  const suffix = `${++isolatedCounter}-${uuid}`;
   return {
     userId: `test-iso-${suffix}`,
     username: `ISO Test ${suffix}`,
