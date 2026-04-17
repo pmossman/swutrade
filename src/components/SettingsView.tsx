@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Logo } from './Logo';
-import { BetaBadge } from './BetaBadge';
+import { PageHeader } from './ui/PageHeader';
+import { LoadingState } from './ui/states';
 import {
   useAccountSettings,
   type ProfileVisibility,
@@ -34,31 +34,9 @@ export function SettingsView({ onClose }: SettingsViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <h1 className="relative flex items-center select-none shrink-0">
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Back"
-              className="flex items-center gap-1 px-3 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-            >
-              <BackIcon className="w-3.5 h-3.5" />
-              Back
-            </button>
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Settings</span>
-        </div>
-      </header>
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
+        <PageHeader onBack={onClose} kicker="Settings" />
+      </div>
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         <AccountSection account={account} />
@@ -80,7 +58,7 @@ function AccountSection({ account }: { account: ReturnType<typeof useAccountSett
         Account
       </h2>
 
-      {status === 'loading' && <LoadingLine />}
+      {status === 'loading' && <LoadingState />}
       {status === 'error' && !settings && (
         <ErrorLine>Couldn't load your settings. Try refreshing.</ErrorLine>
       )}
@@ -282,7 +260,7 @@ function GuildsSection({
         <ErrorLine>Couldn't refresh from Discord. Try again in a moment.</ErrorLine>
       )}
 
-      {status === 'loading' && <LoadingLine />}
+      {status === 'loading' && <LoadingState />}
       {status === 'error' && enrollable.length === 0 && (
         <ErrorLine>Couldn't load your Discord memberships. Try refreshing.</ErrorLine>
       )}
@@ -421,20 +399,8 @@ function GuildAvatar({ guild, size = 'md' }: { guild: GuildMembershipSummary; si
 
 // --- Shared bits ------------------------------------------------------------
 
-function LoadingLine() {
-  return <div className="text-xs text-gray-500 animate-pulse">Loading…</div>;
-}
-
 function ErrorLine({ children }: { children: React.ReactNode }) {
   return <div className="text-xs text-red-300 mb-3">{children}</div>;
-}
-
-function BackIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M10 4l-4 4 4 4" />
-    </svg>
-  );
 }
 
 function RefreshIcon({ className }: { className?: string }) {

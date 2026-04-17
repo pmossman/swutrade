@@ -23,8 +23,7 @@ import {
 } from '../hooks/useSelectionFilters';
 import { VariantChipGroup, SetChipGroup } from './SelectionFilterBar';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
-import { Logo } from './Logo';
-import { BetaBadge } from './BetaBadge';
+import { PageHeader } from './ui/PageHeader';
 
 const MAIN_SET_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
 const SPECIAL_SET_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
@@ -197,49 +196,43 @@ export function ListView({
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
       <header className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <h1 className="relative flex items-center select-none shrink-0">
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={() => onStartTrade(senderHandle ?? undefined)}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
-            >
-              <span>Start a trade</span>
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M3 8h10M9 4l4 4-4 4" />
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div className="mt-3 flex items-baseline gap-2 flex-wrap">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Shared list</span>
-          <span className="text-[11px] text-gray-600">
-            {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
-            {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
-            {availableRows.length > 0 && `${availableRows.length} available`}
-          </span>
-          {senderHandle && (
-            <>
-              <span className="text-gray-700" aria-hidden>·</span>
+        <PageHeader
+          kicker={
+            <div className="flex items-baseline gap-2 flex-wrap">
+              <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Shared list</span>
               <span className="text-[11px] text-gray-600">
-                from{' '}
-                <a
-                  href={`/?profile=${encodeURIComponent(senderHandle)}`}
-                  className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
-                >
-                  @{senderHandle}
-                </a>
+                {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
+                {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
+                {availableRows.length > 0 && `${availableRows.length} available`}
               </span>
-            </>
-          )}
-        </div>
+              {senderHandle && (
+                <>
+                  <span className="text-gray-700" aria-hidden>·</span>
+                  <span className="text-[11px] text-gray-600">
+                    from{' '}
+                    <a
+                      href={`/?profile=${encodeURIComponent(senderHandle)}`}
+                      className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
+                    >
+                      @{senderHandle}
+                    </a>
+                  </span>
+                </>
+              )}
+            </div>
+          }
+        >
+          <button
+            type="button"
+            onClick={() => onStartTrade(senderHandle ?? undefined)}
+            className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+          >
+            <span>Start a trade</span>
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M3 8h10M9 4l4 4-4 4" />
+            </svg>
+          </button>
+        </PageHeader>
       </header>
 
       {hasMissing && !isAnyLoading && (

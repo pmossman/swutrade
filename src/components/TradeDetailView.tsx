@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Logo } from './Logo';
-import { BetaBadge } from './BetaBadge';
+import { PageHeader } from './ui/PageHeader';
+import { StatusBadge } from './ui/StatusBadge';
+import { LoadingState, ErrorState } from './ui/states';
 import {
   useTradeDetail,
   type CardSnapshot,
-  type TradeStatus,
   type UserStub,
 } from '../hooks/useTradeDetail';
 
@@ -39,45 +39,19 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <h1 className="relative flex items-center select-none shrink-0">
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Back"
-              className="flex items-center gap-1 px-3 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-            >
-              <BackIcon className="w-3.5 h-3.5" />
-              Back
-            </button>
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Trade proposal</span>
-        </div>
-      </header>
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
+        <PageHeader onBack={onClose} kicker="Trade proposal" />
+      </div>
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full" data-testid="trade-detail">
-        {status === 'loading' && (
-          <div className="mt-6 text-xs text-gray-500 animate-pulse">Loading…</div>
-        )}
+        {status === 'loading' && <LoadingState className="mt-6" />}
         {status === 'not-found' && (
-          <div className="mt-6 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-sm text-red-300">
+          <ErrorState className="mt-6">
             Trade not found — it may have been deleted or sent to someone else.
-          </div>
+          </ErrorState>
         )}
         {status === 'error' && (
-          <div className="mt-6 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-sm text-red-300">
-            Couldn't load this trade. Try refreshing.
-          </div>
+          <ErrorState className="mt-6">Couldn't load this trade. Try refreshing.</ErrorState>
         )}
 
         {status === 'ready' && trade && (
@@ -95,7 +69,7 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
                   @{(trade.viewerIsProposer ? trade.recipient : trade.proposer)?.handle ?? 'unknown'}
                 </div>
               </div>
-              <StatusBadge status={trade.status} />
+              <StatusBadge status={trade.status} size="md" />
             </section>
 
             {/* Chain context */}
@@ -178,23 +152,6 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
   );
 }
 
-function StatusBadge({ status }: { status: TradeStatus }) {
-  const variants: Record<TradeStatus, { label: string; cls: string }> = {
-    pending: { label: 'Pending', cls: 'bg-gold/20 border-gold/40 text-gold' },
-    accepted: { label: 'Accepted', cls: 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200' },
-    declined: { label: 'Declined', cls: 'bg-red-500/20 border-red-400/50 text-red-200' },
-    cancelled: { label: 'Cancelled', cls: 'bg-space-700/60 border-space-600 text-gray-400' },
-    expired: { label: 'Expired', cls: 'bg-space-700/60 border-space-600 text-gray-400' },
-    countered: { label: 'Countered', cls: 'bg-purple-500/20 border-purple-400/50 text-purple-200' },
-  };
-  const v = variants[status];
-  return (
-    <span className={`px-2 py-0.5 rounded-md border text-[10px] tracking-wider uppercase font-bold shrink-0 ${v.cls}`}>
-      {v.label}
-    </span>
-  );
-}
-
 function CounterpartAvatar({ user }: { user: UserStub | null }) {
   if (user?.avatarUrl) {
     return <img src={user.avatarUrl} alt="" className="w-10 h-10 rounded-full shrink-0" />;
@@ -254,14 +211,6 @@ function CardGroup({
         </ul>
       )}
     </section>
-  );
-}
-
-function BackIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M10 4l-4 4 4 4" />
-    </svg>
   );
 }
 

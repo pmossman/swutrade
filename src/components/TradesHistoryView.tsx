@@ -1,7 +1,8 @@
-import { Logo } from './Logo';
-import { BetaBadge } from './BetaBadge';
+import { PageHeader } from './ui/PageHeader';
+import { StatusBadge } from './ui/StatusBadge';
+import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import { useTradesList, type TradeListEntry } from '../hooks/useTradesList';
-import type { TradeStatus, UserStub } from '../hooks/useTradeDetail';
+import type { UserStub } from '../hooks/useTradeDetail';
 
 interface TradesHistoryViewProps {
   onClose: () => void;
@@ -19,49 +20,20 @@ export function TradesHistoryView({ onClose }: TradesHistoryViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <h1 className="relative flex items-center select-none shrink-0">
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Back"
-              className="flex items-center gap-1 px-3 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-            >
-              <BackIcon className="w-3.5 h-3.5" />
-              Back
-            </button>
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">My trades</span>
-        </div>
-      </header>
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
+        <PageHeader onBack={onClose} kicker="My trades" />
+      </div>
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full" data-testid="trades-history">
-        {status === 'loading' && (
-          <div className="mt-6 text-xs text-gray-500 animate-pulse">Loading…</div>
-        )}
+        {status === 'loading' && <LoadingState className="mt-6" />}
         {status === 'error' && (
-          <div className="mt-6 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-sm text-red-300">
-            Couldn't load your trades. Try refreshing.
-          </div>
+          <ErrorState className="mt-6">Couldn't load your trades. Try refreshing.</ErrorState>
         )}
         {status === 'ready' && proposals.length === 0 && (
-          <div className="mt-6 rounded-lg border border-space-700 bg-space-800/40 px-4 py-6 text-sm text-gray-400 leading-relaxed">
-            <p className="font-semibold text-gray-200 mb-2">No trade proposals yet.</p>
-            <p className="text-xs text-gray-500">
-              Send one from a community member's profile — or when someone proposes a trade to you,
-              it'll show up here too.
-            </p>
-          </div>
+          <EmptyState className="mt-6" title="No trade proposals yet.">
+            Send one from a community member's profile — or when someone proposes a trade to you,
+            it'll show up here too.
+          </EmptyState>
         )}
         {status === 'ready' && proposals.length > 0 && (
           <ul className="flex flex-col gap-2 mt-5">
@@ -111,7 +83,7 @@ function TradeRow({ proposal }: { proposal: TradeListEntry }) {
           <span>{relativeTime(proposal.updatedAt)}</span>
         </div>
       </div>
-      <StatusChip status={proposal.status} />
+      <StatusBadge status={proposal.status} />
     </a>
   );
 }
@@ -143,23 +115,6 @@ function CounterpartAvatar({ user }: { user: UserStub | null }) {
   );
 }
 
-function StatusChip({ status }: { status: TradeStatus }) {
-  const variants: Record<TradeStatus, { label: string; cls: string }> = {
-    pending: { label: 'Pending', cls: 'bg-gold/15 border-gold/30 text-gold' },
-    accepted: { label: 'Accepted', cls: 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200' },
-    declined: { label: 'Declined', cls: 'bg-red-500/15 border-red-400/40 text-red-200' },
-    cancelled: { label: 'Cancelled', cls: 'bg-space-700 border-space-600 text-gray-400' },
-    expired: { label: 'Expired', cls: 'bg-space-700 border-space-600 text-gray-400' },
-    countered: { label: 'Countered', cls: 'bg-purple-500/15 border-purple-400/40 text-purple-200' },
-  };
-  const v = variants[status];
-  return (
-    <span className={`px-2 py-0.5 rounded-md border text-[10px] tracking-wider uppercase font-bold shrink-0 ${v.cls}`}>
-      {v.label}
-    </span>
-  );
-}
-
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -168,12 +123,4 @@ function relativeTime(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function BackIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M10 4l-4 4 4 4" />
-    </svg>
-  );
 }

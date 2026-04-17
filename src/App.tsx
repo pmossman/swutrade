@@ -5,12 +5,11 @@ import { TradeSide } from './components/TradeSide';
 import { TradeBalance } from './components/TradeBalance';
 import { TradeSummary } from './components/TradeSummary';
 import { ShareButtons } from './components/ShareButtons';
-import { Logo } from './components/Logo';
 import { ClearAllButton } from './components/ClearAllButton';
 import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
 import { ListsDrawer } from './components/ListsDrawer';
-import { BetaBadge } from './components/BetaBadge';
+import { PageHeader } from './components/ui/PageHeader';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
@@ -391,50 +390,32 @@ function App() {
           Mobile hides the wordmark and collapses Share/Clear into a
           single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <div className="flex items-center gap-2 md:gap-4">
-          <h1 className="relative flex items-center select-none shrink-0">
-            {/* Logo sits flush against the "S" — the tiny gap after
-                the logo should match the inter-letter tracking so
-                it reads as a glyph in the word, not a separate icon. */}
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            {/* Beta tag as an absolute-positioned kicker beneath the
-                wordmark — text-only, hugs the wordmark baseline so it
-                doesn't extend into the trade panel below. */}
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          {/* Controls cluster — pricing + actions grouped together and
-              pushed to the right (ml-auto) so the logo/title gets
-              breathing room on the left. */}
-          <div className="ml-auto flex items-center gap-1.5 md:gap-2">
-            <AccountMenu auth={auth} />
-            <ListsDrawer
-              wants={wants}
-              available={available}
-              allCards={allLoadedCards}
-              percentage={percentage}
-              priceMode={priceMode}
-            />
-            {/* Pricing controls (% + Market/Low) used to sit here. They
-                moved into TradeBalance body so they live next to the
-                totals they modify — mobile header is uncluttered and
-                the controls are semantically adjacent to their output. */}
-            {hasCards && (
-              <>
-                {/* Desktop: inline pills. Mobile: single kebab. */}
-                <div className="hidden md:flex items-center gap-2">
-                  <ShareButtons size="sm" />
-                  <ClearAllButton onConfirm={handleClear} />
-                </div>
-                <div className="md:hidden">
-                  <MobileActionsKebab onClear={handleClear} />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+        <PageHeader>
+          <AccountMenu auth={auth} />
+          <ListsDrawer
+            wants={wants}
+            available={available}
+            allCards={allLoadedCards}
+            percentage={percentage}
+            priceMode={priceMode}
+          />
+          {/* Pricing controls (% + Market/Low) used to sit here. They
+              moved into TradeBalance body so they live next to the
+              totals they modify — mobile header is uncluttered and
+              the controls are semantically adjacent to their output. */}
+          {hasCards && (
+            <>
+              {/* Desktop: inline pills. Mobile: single kebab. */}
+              <div className="hidden md:flex items-center gap-2">
+                <ShareButtons size="sm" />
+                <ClearAllButton onConfirm={handleClear} />
+              </div>
+              <div className="md:hidden">
+                <MobileActionsKebab onClear={handleClear} />
+              </div>
+            </>
+          )}
+        </PageHeader>
       </div>
 
       {/* Error messages */}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Logo } from './Logo';
-import { BetaBadge } from './BetaBadge';
+import { PageHeader } from './ui/PageHeader';
+import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
 import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
@@ -103,47 +103,25 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <div className="flex items-center gap-3">
-          <h1 className="relative flex items-center select-none shrink-0">
-            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-            </span>
-            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
-          </h1>
-          <div className="ml-auto">
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Back"
-              className="flex items-center gap-1 px-3 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
-            >
-              <BackIcon className="w-3.5 h-3.5" />
-              Back
-            </button>
-          </div>
-        </div>
-        <div className="mt-3">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Community</span>
-        </div>
-      </header>
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
+        <PageHeader onBack={onClose} kicker="Community" />
+      </div>
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         <section className="mt-6" aria-labelledby="community-heading">
           <h2 id="community-heading" className="sr-only">Community members</h2>
 
-          {status === 'loading' && (
-            <div className="text-xs text-gray-500 animate-pulse">Loading community…</div>
-          )}
+          {status === 'loading' && <LoadingState label="Loading community…" />}
           {status === 'error' && (
-            <div className="text-xs text-red-300">
-              Couldn't load the community directory. Try refreshing.
-            </div>
+            <ErrorState>Couldn't load the community directory. Try refreshing.</ErrorState>
           )}
 
           {status === 'ready' && members.length === 0 && (
-            <EmptyState />
+            <EmptyState title="No one to trade with yet.">
+              Enroll in a Discord server on the Settings page and turn on
+              "Appear in who-has queries" — you'll see members of that
+              server who've done the same here.
+            </EmptyState>
           )}
 
           {status === 'ready' && members.length > 0 && (
@@ -274,23 +252,3 @@ function Avatar({ avatarUrl, username }: { avatarUrl: string | null; username: s
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="rounded-lg bg-space-800/40 border border-space-700 px-4 py-6 text-sm text-gray-400 leading-relaxed">
-      <p className="font-semibold text-gray-200 mb-2">No one to trade with yet.</p>
-      <p className="text-xs text-gray-500">
-        Enroll in a Discord server on the Settings page and turn on
-        "Appear in who-has queries" — you'll see members of that
-        server who've done the same here.
-      </p>
-    </div>
-  );
-}
-
-function BackIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M10 4l-4 4 4 4" />
-    </svg>
-  );
-}

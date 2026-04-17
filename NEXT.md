@@ -37,30 +37,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. Design-system primitives *(Foundation bundle, part 4 — biggest)*
-
-**Why:** `<PageHeader>` chrome is duplicated across 7 files. Button heights (h-7 / h-8 / h-9) drift per view. `StatusBadge` exists as two near-duplicates between TradeDetailView + TradesHistoryView. Loading / empty / error states have ad-hoc visual language. Extracting these gives every future slice a smaller surface to edit and keeps views visually consistent.
-
-**What ships:**
-- `<PageHeader back title kicker>` — replaces the Logo + SWUTrade wordmark + BetaBadge + back button chrome in `App.tsx`, `ProfileView`, `CommunityView`, `SettingsView`, `TradesHistoryView`, `TradeDetailView`, `ListView`.
-- `<Button variant={'primary'|'secondary'|'danger'} size={'md'|'sm'|'xs'}>` — locked heights (md=h-9, sm=h-8, xs=h-7). Replaces drift across views.
-- `<StatusBadge status={TradeStatus} size={'md'|'sm'}>` — single source for the pending/accepted/declined/cancelled/expired/countered chips.
-- `<LoadingState label?>`, `<EmptyState icon label cta?>`, `<ErrorState>` primitives — replace ad-hoc inline patterns.
-
-**Scope boundary:** this slice **extracts + migrates current call sites**. Doesn't change visual design. If extraction reveals a deeper issue (e.g., header should have a notification slot), that's a separate slice.
-
-**Done when:**
-- [ ] 5 component files added in `src/components/ui/` (or similar) with typed props.
-- [ ] All existing call sites migrated; `git grep -l 'Logo className="w-6 h-6 sm:w-7 sm:h-7"'` returns only the new `PageHeader`.
-- [ ] Status badge duplication in TradeDetailView + TradesHistoryView eliminated.
-- [ ] Full vitest + e2e suite green (no visual regressions).
-- [ ] Between-slice ritual passes.
-
-**Pointers:** UX_REVIEW CF2, CF3, CF4, CF8.
-
----
-
-### 2. Copy + context fixes *(Foundation bundle, part 5)*
+### 1. Copy + context fixes *(Foundation bundle, part 5)*
 
 **Why:** Many small clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
 
@@ -83,7 +60,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 3. Test-file dedup *(Foundation bundle, part 6)*
+### 2. Test-file dedup *(Foundation bundle, part 6)*
 
 **Why:** `makeFakeBot()` is defined in 4 test files, each slightly different. Proposal-row seeding helpers are in 4 test files, each slightly different. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Consolidation is small, one-shot, pays off immediately on the next schema touch.
 
@@ -151,6 +128,13 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-17 — Foundation slice 4: design-system primitives
+New `src/components/ui/` dir with `PageHeader`, `StatusBadge`, and a `states.tsx` module exporting `LoadingState` / `EmptyState` / `ErrorState`. `PageHeader` consolidates the duplicated Logo + SWUTrade wordmark + BetaBadge chrome; it accepts `onBack` (back button), `kicker` (string or ReactNode), and right-side action children. Migrated all 7 sites: App.tsx, ProfileView, CommunityView, SettingsView, TradesHistoryView, TradeDetailView, ListView — `grep` confirms the wordmark classes now appear only inside PageHeader itself. StatusBadge has `size: 'sm' | 'md'` preserving the opacity delta between the history-row and detail-header variants; two local definitions deleted. LoadingState / ErrorState / EmptyState replace the `animate-pulse` + red-card + empty-card patterns in CommunityView, SettingsView (`LoadingLine` removed), TradesHistoryView, TradeDetailView. Full-page loading takeovers (ProfileView) kept as-is — different layout context, out of scope.
+
+**Button primitive deferred** — planned but dropped. The primary CTAs in ProfileView/ListView are a mix of `<a>` and `<button>` tags (Propose is an anchor link, Start-a-trade is a button), which needs a polymorphic component rather than a plain `<button>` wrapper. And the existing inline buttons use `font-bold` while the back buttons use `font-medium` — a single primitive that covers both visual weights without divergence needs more design thought. Net -235 LOC without it; Button extraction can come as its own slice when a real call site forces the polymorphic question.
+
+Full vitest (290/290) + browser smoke on home and settings render identical to pre-slice.
 
 ### 2026-04-17 — Foundation slice 3: accessibility foundation
 Global `:focus-visible` rule in `src/index.css` — 2px gold outline with 2px offset and a `.no-focus-ring` escape hatch. `.hit-area-44` utility class that places a centered transparent 44×44 `::before` pseudo-element on small buttons; applied to QtyStepper + / −, RemoveButton, priority-star, and restriction-editor close in `ListRows.tsx`. Verified in-browser: focus ring renders on tabbed buttons, pseudo-element produces the expected 44×44 hit rect (elementFromPoint at all four 44×44 corners hits the host; a 60×60 test falls through). Avatar `aria-label` ask dropped — current `alt=""` is correct a11y practice because the enclosing `<a>` already contains the visible @handle text, so screen readers announce identity via link content; adding aria-label would *replace* the richer announcement.
