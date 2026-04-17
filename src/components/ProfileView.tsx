@@ -196,56 +196,13 @@ export function ProfileView({
       </header>
 
       <main className="flex-1 px-3 sm:px-6 pb-8 pt-4 max-w-5xl mx-auto w-full">
-        {wantsRows.length === 0 && availableRows.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-center text-gray-500 py-20">
-            {profile.wants === null && profile.available === null
-              ? 'This user\'s lists are private.'
-              : 'No items in this user\'s public lists.'}
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {wantsRows.length > 0 && (
-              <section>
-                <div className="flex items-baseline gap-2 pb-2 mb-3 border-b text-blue-300 border-blue-500/30">
-                  <span className="text-xs sm:text-sm font-bold tracking-[0.18em] uppercase">Wants</span>
-                  <span className="text-[11px] text-gray-600">{wantsRows.length}</span>
-                </div>
-                <ul className="flex flex-col divide-y divide-space-800">
-                  {wantsRows.map(row => (
-                    <ProfileRow
-                      key={row.key}
-                      card={row.card}
-                      qty={row.qty}
-                      restriction={row.restriction}
-                      isPriority={row.isPriority}
-                      percentage={percentage}
-                      priceMode={priceMode}
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-            {availableRows.length > 0 && (
-              <section>
-                <div className="flex items-baseline gap-2 pb-2 mb-3 border-b text-emerald-300 border-emerald-500/30">
-                  <span className="text-xs sm:text-sm font-bold tracking-[0.18em] uppercase">Available</span>
-                  <span className="text-[11px] text-gray-600">{availableRows.length}</span>
-                </div>
-                <ul className="flex flex-col divide-y divide-space-800">
-                  {availableRows.map(row => (
-                    <ProfileRow
-                      key={row.key}
-                      card={row.card}
-                      qty={row.qty}
-                      percentage={percentage}
-                      priceMode={priceMode}
-                    />
-                  ))}
-                </ul>
-              </section>
-            )}
-          </div>
-        )}
+        <ProfileLists
+          profile={profile}
+          wantsRows={wantsRows}
+          availableRows={availableRows}
+          percentage={percentage}
+          priceMode={priceMode}
+        />
       </main>
 
       <footer className="shrink-0 px-3 sm:px-6 pb-4 text-center text-[10px] text-gray-600 max-w-5xl mx-auto w-full">
@@ -259,6 +216,148 @@ export function ProfileView({
         </button>
       </footer>
     </div>
+  );
+}
+
+type ListTab = 'wants' | 'available';
+
+interface ProfileListRow {
+  key: string;
+  card: CardVariant;
+  qty: number;
+  restriction?: VariantRestriction;
+  isPriority?: boolean;
+}
+
+/**
+ * Tabbed view of a profile's wants + available lists. Previously the
+ * two sections stacked vertically — if a user was there to check what
+ * someone had *available*, they had to scroll past the entire wants
+ * list to get there. Tabs put both one click away and make the fact
+ * that both lists exist visible at a glance via the tab labels.
+ *
+ * Default active tab: the first tab with items. If both are empty or
+ * both are private, falls back to Wants — either way the tab body
+ * renders the relevant empty-state explainer.
+ */
+function ProfileLists({
+  profile,
+  wantsRows,
+  availableRows,
+  percentage,
+  priceMode,
+}: {
+  profile: ProfileData;
+  wantsRows: ProfileListRow[];
+  availableRows: ProfileListRow[];
+  percentage: number;
+  priceMode: PriceMode;
+}) {
+  const [tab, setTab] = useState<ListTab>(() => {
+    if (wantsRows.length > 0) return 'wants';
+    if (availableRows.length > 0) return 'available';
+    return 'wants';
+  });
+
+  const wantsPrivate = profile.wants === null;
+  const availPrivate = profile.available === null;
+  const activeRows = tab === 'wants' ? wantsRows : availableRows;
+  const activeIsPrivate = tab === 'wants' ? wantsPrivate : availPrivate;
+  const activeLabel = tab === 'wants' ? 'wants' : 'available';
+
+  return (
+    <div>
+      {/* Tab bar — the accent on the active tab carries the same
+          blue/emerald identity the sections used previously, so the
+          visual language for "wants vs available" stays consistent
+          with the trade editor's side coloring (from the profile
+          owner's perspective: wants = their receiving = blue,
+          available = their offering = emerald). */}
+      <div
+        role="tablist"
+        aria-label="Profile lists"
+        className="flex gap-6 border-b border-space-800 mb-4"
+      >
+        <ProfileListTab
+          tab="wants"
+          active={tab === 'wants'}
+          count={wantsRows.length}
+          isPrivate={wantsPrivate}
+          onSelect={setTab}
+        />
+        <ProfileListTab
+          tab="available"
+          active={tab === 'available'}
+          count={availableRows.length}
+          isPrivate={availPrivate}
+          onSelect={setTab}
+        />
+      </div>
+
+      <div role="tabpanel" aria-label={`${activeLabel} list`}>
+        {activeIsPrivate ? (
+          <div className="text-center text-gray-500 py-16 text-sm">
+            This user's {activeLabel} list is private.
+          </div>
+        ) : activeRows.length === 0 ? (
+          <div className="text-center text-gray-500 py-16 text-sm">
+            No items in this user's public {activeLabel} list.
+          </div>
+        ) : (
+          <ul className="flex flex-col divide-y divide-space-800">
+            {activeRows.map(row => (
+              <ProfileRow
+                key={row.key}
+                card={row.card}
+                qty={row.qty}
+                restriction={row.restriction}
+                isPriority={row.isPriority}
+                percentage={percentage}
+                priceMode={priceMode}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProfileListTab({
+  tab,
+  active,
+  count,
+  isPrivate,
+  onSelect,
+}: {
+  tab: ListTab;
+  active: boolean;
+  count: number;
+  isPrivate: boolean;
+  onSelect: (t: ListTab) => void;
+}) {
+  const label = tab === 'wants' ? 'Wants' : 'Available';
+  const accent = tab === 'wants' ? 'text-blue-300 border-blue-400' : 'text-emerald-300 border-emerald-400';
+  const inactive = 'text-gray-500 border-transparent hover:text-gray-300';
+  // Show "private" instead of a count when the list is gated — count
+  // would be 0 and misleading. The tab itself stays clickable so
+  // users can still land on the panel and read the explainer.
+  const badge = isPrivate ? 'private' : String(count);
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={() => onSelect(tab)}
+      className={`flex items-baseline gap-2 pb-2 -mb-px border-b-2 transition-colors ${
+        active ? accent : inactive
+      }`}
+    >
+      <span className="text-xs sm:text-sm font-bold tracking-[0.18em] uppercase">{label}</span>
+      <span className={`text-[11px] ${isPrivate ? 'italic text-gray-600' : 'text-gray-600'}`}>
+        {badge}
+      </span>
+    </button>
   );
 }
 

@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Profile lists → tabs (UX fix)
+ProfileView's stacked Wants-then-Available sections became tabs. Scanning someone's available cards no longer requires scrolling past their entire wants list, and both lists' existence is visible at a glance via the tab bar. Default tab is the first with items; private/empty states are rendered per-tab so each panel explains its own state. Kept the existing blue (wants) / emerald (available) accent colors as the active-tab underline — preserves the side-color invariants from the profile owner's perspective without any palette changes.
+
 ### 2026-04-17 — Profile nav + CTA cleanup (UX fix)
 ProfileView grows a Back button in the PageHeader (history.back() for same-origin referrer, else `/`) so clicking into a community member no longer strands the user. Header CTA pair collapsed: "Propose a trade" + "Just balance" → single "Trade with @handle" primary when viewing someone else, still "Start a trade" on own-profile or signed-out. The two old buttons auto-filled the same trade — the only real difference was whether Send-to-Discord rendered, not enough to justify user-facing choice. Also excludes `dev-seed-%` ids from `/api/trending` aggregation so seeded fakes don't skew community trends (+ fixes the trending test that started failing after the law-hyperspace seed landed).
 
