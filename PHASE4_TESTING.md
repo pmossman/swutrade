@@ -121,7 +121,24 @@ touches a Discord-adjacent code path.
 
 ### After shipping Slice 3 (community source in picker)
 
-_To be filled in when Slice 3 lands._
+- [ ] Sign in + make sure you're enrolled (+ rollups on) in at
+  least one guild where `bot_installed_guilds` has a row. Seed a
+  row manually via Neon if the bot isn't built yet.
+- [ ] Manually seed a second user in the same guild via SQL (fake
+  user row + user_guild_memberships with enrolled=true +
+  includeInRollups=true) and give them a wants entry you
+  (the viewer) can also provide from your available list.
+- [ ] Open the Offering picker — verify "Community wants N" chip
+  appears with the right count.
+- [ ] Tap the chip — the grid should scope to those cards.
+- [ ] Give yourself a want that matches what the peer has
+  available (again via SQL seed), open Receiving picker, verify
+  "Community has N" chip with the right count.
+- [ ] Turn your `includeInRollups` off on the settings page →
+  chip shouldn't appear. (Rollups off means you contribute to
+  nothing, but also means you CAN still see others — this step
+  just verifies the settings integration hasn't regressed.)
+- [ ] Clean up the manually seeded rows in Neon when done.
 
 ### After shipping the bot (Phase 4 v1 final slice)
 

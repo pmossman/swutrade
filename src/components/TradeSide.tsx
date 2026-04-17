@@ -16,6 +16,7 @@ import {
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { SharedLists } from '../hooks/useSharedLists';
+import { cardFamilyId } from '../variants';
 
 interface TradeSideProps {
   label: string;
@@ -54,6 +55,14 @@ interface TradeSideProps {
    *  search overlay with the "They want" source chip active. */
   autoOpenSharedLink?: boolean;
   onConsumeAutoOpen?: () => void;
+  /** Phase-4 community rollup. For Offering: familyIds other enrolled
+   *  guild members want (we scope to cards the viewer has available).
+   *  For Receiving: productIds other enrolled members have available
+   *  (we scope to cards matching the viewer's wants). Empty lists are
+   *  the baseline for non-signed-in users or viewers with no enrolled
+   *  guilds — the chip just doesn't render. */
+  communityWantFamilyIds?: readonly string[];
+  communityAvailableProductIds?: readonly string[];
 }
 
 const headerColors: Record<string, string> = {
@@ -115,6 +124,8 @@ export function TradeSide({
   flexBasis,
   autoOpenSharedLink,
   onConsumeAutoOpen,
+  communityWantFamilyIds,
+  communityAvailableProductIds,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';
@@ -179,18 +190,85 @@ export function TradeSide({
     return { mineCards: mine, theirsCards: theirs };
   }, [isOffering, available.items, wants.items, sharedLists, byFamilyAll, byProductId, cards, priceMode]);
 
-  const sourceChips = useMemo<SourceChipConfig[]>(() => [
-    {
-      id: 'mine',
-      label: isOffering ? 'My available' : 'My wants',
-      cards: mineCards,
-    },
-    {
-      id: 'theirs',
-      label: isOffering ? 'They want' : 'They have',
-      cards: theirsCards,
-    },
-  ], [isOffering, mineCards, theirsCards]);
+  // Community chip — cards that other members of the viewer's
+  // enrolled Discord guilds want or have available, intersected with
+  // the viewer's own inventory/wishlist so the chip surfaces
+  // actionable matches instead of a firehose.
+  //   Offering side: familyIds community wants ∩ my available → give
+  //                  the viewer a "here's what you could offload" pool.
+  //   Receiving side: productIds community has ∩ my wants → "here's
+  //                   what you could pick up" pool.
+  const communityCards = useMemo<CardVariant[]>(() => {
+    if (isOffering) {
+      if (!communityWantFamilyIds || communityWantFamilyIds.length === 0) return [];
+      const wanted = new Set(communityWantFamilyIds);
+      const out: CardVariant[] = [];
+      for (const item of available.items) {
+        const card = byProductId.get(item.productId);
+        if (!card) continue;
+        if (!wanted.has(cardFamilyId(card))) continue;
+        const inTrade = cards.reduce(
+          (s, tc) => tc.card.productId === item.productId ? s + tc.qty : s,
+          0,
+        );
+        if (item.qty - inTrade > 0) out.push(card);
+      }
+      return out;
+    }
+    // Receiving side: pick up community-available cards matching my wants.
+    if (!communityAvailableProductIds || communityAvailableProductIds.length === 0) return [];
+    const myWantFamilies = new Map<string, typeof wants.items[number]>();
+    for (const w of wants.items) myWantFamilies.set(w.familyId, w);
+    const out: CardVariant[] = [];
+    for (const productId of communityAvailableProductIds) {
+      const card = byProductId.get(productId);
+      if (!card) continue;
+      const want = myWantFamilies.get(cardFamilyId(card));
+      if (!want) continue;
+      if (!matchesRestriction(card, want.restriction)) continue;
+      const inTrade = cards.reduce(
+        (s, tc) => tc.card.productId === productId ? s + tc.qty : s,
+        0,
+      );
+      if (want.qty - inTrade > 0) out.push(card);
+    }
+    return out;
+  }, [
+    isOffering,
+    communityWantFamilyIds,
+    communityAvailableProductIds,
+    available.items,
+    wants.items,
+    byProductId,
+    cards,
+  ]);
+
+  const sourceChips = useMemo<SourceChipConfig[]>(() => {
+    const chips: SourceChipConfig[] = [
+      {
+        id: 'mine',
+        label: isOffering ? 'My available' : 'My wants',
+        cards: mineCards,
+      },
+      {
+        id: 'theirs',
+        label: isOffering ? 'They want' : 'They have',
+        cards: theirsCards,
+      },
+    ];
+    // Community chip only appears when there's something to show —
+    // the overlay hides zero-card chips anyway, but keeping it out of
+    // the list entirely is cheaper + avoids a flicker while the
+    // rollup fetch resolves.
+    if (communityCards.length > 0) {
+      chips.push({
+        id: 'community',
+        label: isOffering ? 'Community wants' : 'Community has',
+        cards: communityCards,
+      });
+    }
+    return chips;
+  }, [isOffering, mineCards, theirsCards, communityCards]);
 
   // Opening the overlay from the panel's Add-Card affordances.
   const openOverlay = useCallback(() => {

@@ -15,6 +15,7 @@ import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
 import { useSenderHandle } from './hooks/useSenderHandle';
+import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
 import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
@@ -108,6 +109,10 @@ function App() {
   const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
   const senderHandle = useSenderHandle();
+  // Phase 4 community rollup — signed-in users see an extra
+  // "Community wants/has" chip in the picker, scoped to cards other
+  // members of their enrolled Discord guilds want or have.
+  const community = useCommunityCards(!!user);
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
@@ -424,6 +429,8 @@ function App() {
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
             autoOpenSharedLink={autoOpenOfferingFromShared}
             onConsumeAutoOpen={consumeAutoOpenOffering}
+            communityWantFamilyIds={community.wantFamilyIds}
+            communityAvailableProductIds={community.availableProductIds}
           />
           {/* Mobile-only drag handle between the two panels. Collapsed
               panels hide the divider — nothing to resize against. */}
@@ -452,6 +459,8 @@ function App() {
             collapsed={isMobile && receivingCollapsed}
             onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
+            communityWantFamilyIds={community.wantFamilyIds}
+            communityAvailableProductIds={community.availableProductIds}
           />
         </div>
       </div>

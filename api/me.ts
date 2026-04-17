@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, botInstalledGuilds } from '../lib/schema.js';
+import { users, userGuildMemberships, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
 import { requireSession } from '../lib/auth.js';
 
 /**
@@ -27,6 +27,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleGuildsList(req, res);
     case 'guild':
       return handleGuildPut(req, res);
+    case 'community':
+      return handleCommunity(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -195,4 +197,95 @@ export async function handleGuildPut(req: VercelRequest, res: VercelResponse) {
     ));
 
   return res.json({ ok: true, ...next });
+}
+
+// --- community rollup -------------------------------------------------------
+
+/**
+ * Aggregated wants + available across other users enrolled in the
+ * same Discord guilds as the viewer. Powers the "Community" source
+ * chip in the picker: cards members of your enrolled servers want
+ * or have available.
+ *
+ * Response: `{ wantFamilyIds: string[], availableProductIds: string[] }`.
+ * Both arrays are deduplicated; the client filters these against
+ * its own available / wants to produce actionable matches.
+ *
+ * Gating:
+ *   - Viewer must be enrolled + includeInRollups=true in ≥1 guild
+ *     with the bot installed.
+ *   - Contributing users must be enrolled + includeInRollups=true in
+ *     one of those mutual guilds.
+ *   - Wants sourced only from users with wants_public=true; available
+ *     only from users with available_public=true. profile_visibility
+ *     is not enforced here — it gates the profile page, not the
+ *     community rollup, which is a separate consent surface.
+ *   - Viewer's own rows are always excluded.
+ */
+export async function handleCommunity(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  const db = getDb();
+
+  // Viewer's enrolled + rollup-on guilds.
+  const viewerGuilds = await db
+    .select({ guildId: userGuildMemberships.guildId })
+    .from(userGuildMemberships)
+    .where(and(
+      eq(userGuildMemberships.userId, session.userId),
+      eq(userGuildMemberships.enrolled, true),
+      eq(userGuildMemberships.includeInRollups, true),
+    ));
+
+  if (viewerGuilds.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ wantFamilyIds: [], availableProductIds: [] });
+  }
+
+  const guildIds = viewerGuilds.map(g => g.guildId);
+
+  // Other users enrolled + rollup-on in any of those guilds.
+  const mutualUsers = await db
+    .selectDistinct({ userId: userGuildMemberships.userId })
+    .from(userGuildMemberships)
+    .where(and(
+      inArray(userGuildMemberships.guildId, guildIds),
+      eq(userGuildMemberships.enrolled, true),
+      eq(userGuildMemberships.includeInRollups, true),
+      ne(userGuildMemberships.userId, session.userId),
+    ));
+
+  if (mutualUsers.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ wantFamilyIds: [], availableProductIds: [] });
+  }
+
+  const mutualUserIds = mutualUsers.map(u => u.userId);
+
+  // Distinct familyIds from their public wants.
+  const wantFamilyRows = await db
+    .selectDistinct({ familyId: wantsItems.familyId })
+    .from(wantsItems)
+    .innerJoin(users, eq(users.id, wantsItems.userId))
+    .where(and(
+      inArray(wantsItems.userId, mutualUserIds),
+      eq(users.wantsPublic, true),
+    ));
+
+  // Distinct productIds from their public available lists.
+  const availableProductRows = await db
+    .selectDistinct({ productId: availableItems.productId })
+    .from(availableItems)
+    .innerJoin(users, eq(users.id, availableItems.userId))
+    .where(and(
+      inArray(availableItems.userId, mutualUserIds),
+      eq(users.availablePublic, true),
+    ));
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    wantFamilyIds: wantFamilyRows.map(r => r.familyId),
+    availableProductIds: availableProductRows.map(r => r.productId),
+  });
 }
