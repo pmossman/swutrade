@@ -28,8 +28,21 @@ export function verifyDiscordSignature(opts: {
   body: string;
   /** Hex-encoded Ed25519 public key from the Developer Portal. */
   publicKeyHex: string;
+  /** Max allowed skew between X-Signature-Timestamp and the current
+   *  time, in seconds. Defaults to 300 (5 min). Set to `Infinity` or
+   *  a very large number to opt out (e.g., tests pinning an arbitrary
+   *  timestamp). Prevents replay of captured button-click signatures. */
+  maxSkewSeconds?: number;
+  /** Clock injection for tests. Returns current Unix time in seconds. */
+  now?: () => number;
 }): boolean {
   try {
+    const maxSkew = opts.maxSkewSeconds ?? 300;
+    const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
+    const ts = Number(opts.timestamp);
+    if (!Number.isFinite(ts)) return false;
+    if (Math.abs(now - ts) > maxSkew) return false;
+
     const signature = Buffer.from(opts.signature, 'hex');
     const signedMessage = Buffer.concat([
       Buffer.from(opts.timestamp),

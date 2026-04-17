@@ -46,6 +46,22 @@ function canonicalRequestBody(req: VercelRequest): string {
   return JSON.stringify(req.body);
 }
 
+/**
+ * Resolve the optional test-only Discord public key, gated by
+ * environment. Preview/dev deploys may carry a test keypair so e2e
+ * specs can sign synthetic interactions. In production the fallback
+ * must be inert regardless of whether the env var is set — a leaked
+ * test private key should not become a path to forging real
+ * interactions. Exported for the unit test.
+ */
+export function resolveTestPublicKey(env: {
+  VERCEL_ENV?: string;
+  DISCORD_APP_PUBLIC_KEY_TEST?: string;
+}): string | undefined {
+  if (env.VERCEL_ENV === 'production') return undefined;
+  return env.DISCORD_APP_PUBLIC_KEY_TEST;
+}
+
 // --- Discord interaction constants ------------------------------------------
 
 const INTERACTION_TYPE_PING = 1;
@@ -90,10 +106,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Optional fallback: a test-only public key lets e2e specs on
   // Preview deploys sign interactions with a known test keypair
   // and exercise the full signature-verify + dispatch path without
-  // needing a real human click in Discord. Set only on Preview —
-  // never on Production. If a forged interaction is ever an issue,
-  // rotate / unset this env var to disable.
-  const testPublicKey = process.env.DISCORD_APP_PUBLIC_KEY_TEST;
+  // needing a real human click in Discord. `resolveTestPublicKey`
+  // hard-gates this to non-production environments, so even if the
+  // env var is present on Production it stays inert.
+  const testPublicKey = resolveTestPublicKey(process.env);
   const verifiedWithTestKey = !verified && testPublicKey
     ? verifyDiscordSignature({ signature, timestamp, body: rawBody, publicKeyHex: testPublicKey })
     : false;

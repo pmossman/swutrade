@@ -636,7 +636,15 @@ export async function handleCounter(
   if (updated.length === 0) {
     // Race lost — someone resolved the original between our read
     // and write. Clean up the counter we inserted and report back.
-    await db.delete(tradeProposals).where(eq(tradeProposals.id, counterId)).catch(() => {});
+    // Log cleanup failures so orphan counters don't pile up silently
+    // (the row has no user-reachable side effects, but the id stays
+    // allocated and will show up in any auditing query).
+    await db
+      .delete(tradeProposals)
+      .where(eq(tradeProposals.id, counterId))
+      .catch((err) => {
+        console.error('handleCounter: orphan cleanup failed', { counterId, err });
+      });
     return res.status(409).json({
       error: 'already-resolved',
       detail: 'The original proposal was resolved before your counter landed.',

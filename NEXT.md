@@ -37,27 +37,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. Security + correctness quickies *(Foundation bundle, part 1)*
-
-**Why:** Three small fixes flagged as critical by the code review. Each is under 30 min and closes a real foot-shot.
-
-**What ships:**
-- Ed25519 timestamp window check in `lib/discordSignature.ts` — reject signatures whose `X-Signature-Timestamp` is more than 5 minutes off from current time. Prevents replay of captured button-click signatures.
-- Runtime env-gate on `DISCORD_APP_PUBLIC_KEY_TEST` in `api/bot.ts` — if `process.env.VERCEL_ENV === 'production'`, ignore the test-key fallback entirely. Prevents a test private-key leak from becoming a prod compromise.
-- Counter-cleanup-failure logging in `api/trades.ts:handleCounter` — the `.catch(() => {})` swallow around the `db.delete` after a race loss becomes a `console.error` so orphan counts stay observable.
-
-**Done when:**
-- [ ] `lib/discordSignature.ts` accepts a `maxSkewSeconds` option (default 300) and rejects out-of-window timestamps.
-- [ ] `tests/api/discord-signature.test.ts` has a new test pinning both the rejection and the default window.
-- [ ] `api/bot.ts` guards the test-key fallback behind `VERCEL_ENV !== 'production'`; a unit test simulates prod env + asserts the fallback is inert.
-- [ ] Counter-cleanup log line present; manual review confirms it fires on a simulated race.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** CODE_REVIEW C1, C3 + P10.
-
----
-
-### 2. DB indexes on trade_proposals *(Foundation bundle, part 2)*
+### 1. DB indexes on trade_proposals *(Foundation bundle, part 2)*
 
 **Why:** `trade_proposals` has zero explicit indexes. Every proposal fetch, history query, counter-child lookup, and update-with-WHERE-status filter hits a table scan. Harmless today; visible latency at 10k rows. Postgres does not auto-index FK columns.
 
@@ -76,7 +56,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 3. Accessibility foundation *(Foundation bundle, part 3)*
+### 2. Accessibility foundation *(Foundation bundle, part 3)*
 
 **Why:** No global `:focus-visible` on a dark palette = invisible keyboard focus. 24×24 hit zones on qty/remove/priority buttons = WCAG fail + real mobile mis-taps. Both are cheap to fix and apply everywhere.
 
@@ -95,7 +75,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 4. Design-system primitives *(Foundation bundle, part 4 — biggest)*
+### 3. Design-system primitives *(Foundation bundle, part 4 — biggest)*
 
 **Why:** `<PageHeader>` chrome is duplicated across 7 files. Button heights (h-7 / h-8 / h-9) drift per view. `StatusBadge` exists as two near-duplicates between TradeDetailView + TradesHistoryView. Loading / empty / error states have ad-hoc visual language. Extracting these gives every future slice a smaller surface to edit and keeps views visually consistent.
 
@@ -118,7 +98,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 5. Copy + context fixes *(Foundation bundle, part 5)*
+### 4. Copy + context fixes *(Foundation bundle, part 5)*
 
 **Why:** Many small clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
 
@@ -141,7 +121,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 6. Test-file dedup *(Foundation bundle, part 6)*
+### 5. Test-file dedup *(Foundation bundle, part 6)*
 
 **Why:** `makeFakeBot()` is defined in 4 test files, each slightly different. Proposal-row seeding helpers are in 4 test files, each slightly different. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Consolidation is small, one-shot, pays off immediately on the next schema touch.
 
@@ -209,6 +189,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-17 — Foundation slice 1: security + correctness quickies
+Ed25519 timestamp window (`maxSkewSeconds`, default 300s) with `now`-injection for tests and 5 new cases in `discord-signature.test.ts` pinning default rejection + edge + override behavior. Test-key fallback gated behind `VERCEL_ENV !== 'production'` via a pure `resolveTestPublicKey(env)` helper exported from `api/bot.ts`, with a 3-case unit test. Counter-cleanup race-loss `db.delete` now logs on failure instead of silently swallowing. Full vitest run green (290/290).
 
 ### 2026-04-17 — Roadmap audit + foundation-polish slice planning
 Commits: `7dad958`. Not a slice per se; introduced this NEXT.md and the two review docs (`CODE_REVIEW_2026_04_17.md`, `UX_REVIEW_2026_04_17.md`).

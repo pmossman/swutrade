@@ -7,7 +7,7 @@ import {
   mockResponse,
   createTestUser,
 } from './helpers.js';
-import handler, { dispatchBotPayload } from '../../api/bot.js';
+import handler, { dispatchBotPayload, resolveTestPublicKey } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
 import { botInstalledGuilds, tradeProposals, type TradeCardSnapshot } from '../../lib/schema.js';
 import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
@@ -37,6 +37,24 @@ function makeFakeBot(): DiscordBotClient & {
 function cardSnapshot(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
+
+describe('resolveTestPublicKey', () => {
+  const TEST_KEY = 'deadbeef'.repeat(8);
+
+  it('returns the test key on non-production envs (preview, dev, undefined)', () => {
+    expect(resolveTestPublicKey({ VERCEL_ENV: 'preview', DISCORD_APP_PUBLIC_KEY_TEST: TEST_KEY })).toBe(TEST_KEY);
+    expect(resolveTestPublicKey({ VERCEL_ENV: 'development', DISCORD_APP_PUBLIC_KEY_TEST: TEST_KEY })).toBe(TEST_KEY);
+    expect(resolveTestPublicKey({ DISCORD_APP_PUBLIC_KEY_TEST: TEST_KEY })).toBe(TEST_KEY);
+  });
+
+  it('is inert when VERCEL_ENV=production, even if the env var is set (defence against a leaked test key)', () => {
+    expect(resolveTestPublicKey({ VERCEL_ENV: 'production', DISCORD_APP_PUBLIC_KEY_TEST: TEST_KEY })).toBeUndefined();
+  });
+
+  it('returns undefined when the env var is unset', () => {
+    expect(resolveTestPublicKey({ VERCEL_ENV: 'preview' })).toBeUndefined();
+  });
+});
 
 describeWithDb('/api/bot dispatcher', () => {
   const cleanupGuildIds: string[] = [];

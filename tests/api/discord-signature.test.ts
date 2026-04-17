@@ -28,59 +28,58 @@ function signDiscordStyle(timestamp: string, body: string, privateKey: KeyObject
 describe('verifyDiscordSignature', () => {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const publicKeyHex = extractRawEd25519PublicKey(publicKey);
+  const FIXED_TS = 1700000000;
+  const timestamp = String(FIXED_TS);
+  const now = () => FIXED_TS;
 
   it('accepts a correctly-signed payload', () => {
-    const timestamp = '1700000000';
     const body = JSON.stringify({ type: 1 });
     const signature = signDiscordStyle(timestamp, body, privateKey);
 
-    expect(verifyDiscordSignature({ signature, timestamp, body, publicKeyHex })).toBe(true);
+    expect(verifyDiscordSignature({ signature, timestamp, body, publicKeyHex, now })).toBe(true);
   });
 
   it('rejects a tampered body', () => {
-    const timestamp = '1700000000';
     const body = JSON.stringify({ type: 1 });
     const signature = signDiscordStyle(timestamp, body, privateKey);
     const tampered = JSON.stringify({ type: 2 });
 
-    expect(verifyDiscordSignature({ signature, timestamp, body: tampered, publicKeyHex })).toBe(false);
+    expect(verifyDiscordSignature({ signature, timestamp, body: tampered, publicKeyHex, now })).toBe(false);
   });
 
   it('rejects a tampered timestamp', () => {
-    const timestamp = '1700000000';
     const body = JSON.stringify({ type: 1 });
     const signature = signDiscordStyle(timestamp, body, privateKey);
 
     expect(verifyDiscordSignature({
       signature,
-      timestamp: '1700000001',
+      timestamp: String(FIXED_TS + 1),
       body,
       publicKeyHex,
+      now,
     })).toBe(false);
   });
 
   it('rejects when signed with a different key', () => {
     const other = generateKeyPairSync('ed25519');
-    const timestamp = '1700000000';
     const body = JSON.stringify({ type: 1 });
     const signature = signDiscordStyle(timestamp, body, other.privateKey);
 
-    expect(verifyDiscordSignature({ signature, timestamp, body, publicKeyHex })).toBe(false);
+    expect(verifyDiscordSignature({ signature, timestamp, body, publicKeyHex, now })).toBe(false);
   });
 
   it('returns false (not throw) on malformed hex', () => {
-    const timestamp = '1700000000';
     const body = 'x';
     expect(verifyDiscordSignature({
       signature: 'not-hex-at-all-z',
       timestamp,
       body,
       publicKeyHex,
+      now,
     })).toBe(false);
   });
 
   it('returns false (not throw) on a malformed public key', () => {
-    const timestamp = '1700000000';
     const body = 'x';
     const signature = signDiscordStyle(timestamp, body, privateKey);
     expect(verifyDiscordSignature({
@@ -88,6 +87,80 @@ describe('verifyDiscordSignature', () => {
       timestamp,
       body,
       publicKeyHex: 'zzz',
+      now,
     })).toBe(false);
+  });
+
+  describe('timestamp window', () => {
+    it('rejects a timestamp older than the default 5-minute window', () => {
+      const body = JSON.stringify({ type: 1 });
+      const signature = signDiscordStyle(timestamp, body, privateKey);
+      // 301s ahead of the signed timestamp — just past the default 300s window.
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp,
+        body,
+        publicKeyHex,
+        now: () => FIXED_TS + 301,
+      })).toBe(false);
+    });
+
+    it('rejects a timestamp far in the future beyond the default window', () => {
+      const body = JSON.stringify({ type: 1 });
+      const signature = signDiscordStyle(timestamp, body, privateKey);
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp,
+        body,
+        publicKeyHex,
+        now: () => FIXED_TS - 301,
+      })).toBe(false);
+    });
+
+    it('accepts a timestamp at the edge of the window', () => {
+      const body = JSON.stringify({ type: 1 });
+      const signature = signDiscordStyle(timestamp, body, privateKey);
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp,
+        body,
+        publicKeyHex,
+        now: () => FIXED_TS + 300,
+      })).toBe(true);
+    });
+
+    it('honors a caller-supplied maxSkewSeconds override', () => {
+      const body = JSON.stringify({ type: 1 });
+      const signature = signDiscordStyle(timestamp, body, privateKey);
+      // 60s is well inside the default 300s, so bumping the skew to 10 rejects it.
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp,
+        body,
+        publicKeyHex,
+        maxSkewSeconds: 10,
+        now: () => FIXED_TS + 60,
+      })).toBe(false);
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp,
+        body,
+        publicKeyHex,
+        maxSkewSeconds: 120,
+        now: () => FIXED_TS + 60,
+      })).toBe(true);
+    });
+
+    it('rejects a non-numeric timestamp', () => {
+      const body = JSON.stringify({ type: 1 });
+      const signature = signDiscordStyle('not-a-number', body, privateKey);
+      expect(verifyDiscordSignature({
+        signature,
+        timestamp: 'not-a-number',
+        body,
+        publicKeyHex,
+        now,
+      })).toBe(false);
+    });
   });
 });
