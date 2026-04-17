@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   cardImageUrl,
@@ -63,6 +63,25 @@ export function ProfileView({
   const [loading, setLoading] = useState(true);
   const auth = useAuthContext();
 
+  // ProfileView is typically reached via a row click in /?community=1
+  // or a link from elsewhere in the app. Without a Back affordance
+  // users lose the thread (browser Back works but isn't obvious).
+  // Prefer history.back() when the referrer is same-origin, otherwise
+  // fall through to the home route — covers direct-URL visits where
+  // there's no previous SWU page to return to.
+  const handleProfileBack = useCallback(() => {
+    try {
+      const ref = document.referrer;
+      if (ref && new URL(ref).origin === window.location.origin) {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // Malformed referrer — fall through.
+    }
+    window.location.href = '/';
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -125,6 +144,7 @@ export function ProfileView({
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
       <header className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
         <PageHeader
+          onBack={handleProfileBack}
           kicker={
             <div className="flex items-center gap-3">
               {profile.user.avatarUrl && (
@@ -141,33 +161,37 @@ export function ProfileView({
             </div>
           }
         >
-          {auth.user && auth.user.handle !== profile.user.handle && (
+          {auth.user && auth.user.handle !== profile.user.handle ? (
+            // Signed-in, viewing someone else: single primary CTA that
+            // lands in the propose composer. Specific label "Trade with
+            // @alice" is unambiguous — the prior "Propose a trade" +
+            // "Just balance" pair was confusing (both auto-filled the
+            // editor; the only real difference was whether the Send
+            // button rendered).
             <a
               href={`/?propose=${encodeURIComponent(profile.user.handle)}`}
               className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
             >
-              Propose a trade
+              Trade with @{profile.user.handle}
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
             </a>
-          )}
-          <button
-            type="button"
-            onClick={() => onStartTrade(profile.user.handle, true)}
-            className={`flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors ${
-              auth.user && auth.user.handle !== profile.user.handle
-                ? 'bg-space-800/60 border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-300 hover:text-gold'
-                : 'bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold'
-            }`}
-          >
-            {auth.user && auth.user.handle !== profile.user.handle ? 'Just balance' : 'Start a trade'}
-            {!(auth.user && auth.user.handle !== profile.user.handle) && (
+          ) : (
+            // Own profile or signed-out visitor: "Start a trade" still
+            // maps to the local balance flow — no Discord send, just
+            // the editor pre-seeded with this profile's context.
+            <button
+              type="button"
+              onClick={() => onStartTrade(profile.user.handle, true)}
+              className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+            >
+              Start a trade
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
-            )}
-          </button>
+            </button>
+          )}
         </PageHeader>
       </header>
 

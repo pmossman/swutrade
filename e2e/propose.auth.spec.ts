@@ -51,14 +51,14 @@ test.describe('Trade proposal flow', () => {
     await cleanupTestUser(viewer);
   });
 
-  test('ProfileView shows Propose button; clicking navigates to composer and sends creates a trade_proposals row', async ({ page }) => {
-    // Step 1: ProfileView has the Propose button (we're signed in + viewing someone else).
+  test('ProfileView shows Trade-with-@handle CTA; clicking navigates to composer and sends creates a trade_proposals row', async ({ page }) => {
+    // Step 1: ProfileView has the Trade-with-@<handle> CTA (we're signed in + viewing someone else).
     await page.goto(`/u/${recipient.handle}`);
-    await expect(page.getByRole('link', { name: /Propose a trade/i }))
+    await expect(page.getByRole('link', { name: new RegExp(`Trade with @${recipient.handle}`, 'i') }))
       .toBeVisible({ timeout: 10_000 });
 
     // Step 2: clicking takes us to /?propose=<handle> with the bar rendered.
-    await page.getByRole('link', { name: /Propose a trade/i }).click();
+    await page.getByRole('link', { name: new RegExp(`Trade with @${recipient.handle}`, 'i') }).click();
     await expect(page).toHaveURL(new RegExp(`[?&]propose=${recipient.handle}`));
     await waitForPricesLoaded(page);
 
@@ -114,12 +114,12 @@ test.describe('Trade proposal flow', () => {
     });
   });
 
-  test('Propose button is absent when viewing your own profile', async ({ page }) => {
+  test('Trade-with-@handle CTA is absent when viewing your own profile', async ({ page }) => {
     await page.goto(`/u/${viewer.handle}`);
     // Wait for profile to load at all.
     await expect(page.getByText(`@${viewer.handle}`).first())
       .toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('link', { name: /Propose a trade/i }))
+    await expect(page.getByRole('link', { name: /Trade with @/i }))
       .toHaveCount(0);
   });
 });

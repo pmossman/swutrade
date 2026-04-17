@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Profile nav + CTA cleanup (UX fix)
+ProfileView grows a Back button in the PageHeader (history.back() for same-origin referrer, else `/`) so clicking into a community member no longer strands the user. Header CTA pair collapsed: "Propose a trade" + "Just balance" → single "Trade with @handle" primary when viewing someone else, still "Start a trade" on own-profile or signed-out. The two old buttons auto-filled the same trade — the only real difference was whether Send-to-Discord rendered, not enough to justify user-facing choice. Also excludes `dev-seed-%` ids from `/api/trending` aggregation so seeded fakes don't skew community trends (+ fixes the trending test that started failing after the law-hyperspace seed landed).
+
 ### 2026-04-17 — Foundation slice 4: design-system primitives
 New `src/components/ui/` dir with `PageHeader`, `StatusBadge`, and a `states.tsx` module exporting `LoadingState` / `EmptyState` / `ErrorState`. `PageHeader` consolidates the duplicated Logo + SWUTrade wordmark + BetaBadge chrome; it accepts `onBack` (back button), `kicker` (string or ReactNode), and right-side action children. Migrated all 7 sites: App.tsx, ProfileView, CommunityView, SettingsView, TradesHistoryView, TradeDetailView, ListView — `grep` confirms the wordmark classes now appear only inside PageHeader itself. StatusBadge has `size: 'sm' | 'md'` preserving the opacity delta between the history-row and detail-header variants; two local definitions deleted. LoadingState / ErrorState / EmptyState replace the `animate-pulse` + red-card + empty-card patterns in CommunityView, SettingsView (`LoadingLine` removed), TradesHistoryView, TradeDetailView. Full-page loading takeovers (ProfileView) kept as-is — different layout context, out of scope.
 

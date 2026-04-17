@@ -16,6 +16,9 @@ import { users } from '../lib/schema.js';
 export default async function handler(_req: VercelRequest, res: VercelResponse) {
   const db = getDb();
 
+  // Exclude dev-seed fake accounts (from scripts/dev-seed-community.mjs)
+  // from community-wide aggregates. They exist for directory / profile
+  // smoke-testing and would otherwise skew trending with synthetic data.
   const rows = await db.execute(sql`
     SELECT
       w.family_id AS "familyId",
@@ -23,6 +26,7 @@ export default async function handler(_req: VercelRequest, res: VercelResponse) 
       SUM(w.qty)::int AS "totalQty"
     FROM ${wantsItems} w
     JOIN ${users} u ON u.id = w.user_id AND u.wants_public = true
+    WHERE u.id NOT LIKE 'dev-seed-%'
     GROUP BY w.family_id
     ORDER BY COUNT(DISTINCT w.user_id) DESC, SUM(w.qty) DESC
     LIMIT 20
