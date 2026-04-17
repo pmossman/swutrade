@@ -27,12 +27,19 @@ export async function syncGuildMemberships(
   userId: string,
   accessToken: string,
   discord: DiscordClient = createDiscordClient(),
+  opts: { propagateDiscordErrors?: boolean } = {},
 ): Promise<void> {
   let guilds;
   try {
     guilds = await discord.getUserGuilds(accessToken);
   } catch (err) {
+    // Default: swallow — this path runs at sign-in where we don't
+    // want Discord's availability to block OAuth completion.
+    // Callers that need to surface the error (e.g., the explicit
+    // "Refresh servers" button) pass `propagateDiscordErrors: true`
+    // so a 401/network failure reaches them.
     console.error('syncGuildMemberships: Discord fetch threw', err);
+    if (opts.propagateDiscordErrors) throw err;
     return;
   }
 

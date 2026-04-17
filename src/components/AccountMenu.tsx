@@ -61,8 +61,6 @@ export function AccountMenu({ auth }: AccountMenuProps) {
     );
   }
 
-  const profileHref = `/?profile=${encodeURIComponent(user.handle)}`;
-
   return (
     <Popover
       align="right"
@@ -104,15 +102,6 @@ export function AccountMenu({ auth }: AccountMenuProps) {
           </div>
 
           <a
-            href={profileHref}
-            onClick={close}
-            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
-          >
-            <ProfileIcon className="w-3.5 h-3.5 text-gray-400" />
-            My profile
-          </a>
-
-          <a
             href="/?settings=1"
             onClick={close}
             className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
@@ -151,15 +140,6 @@ function ChevronDown({ className }: { className?: string }) {
   );
 }
 
-function ProfileIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="8" cy="5.5" r="2.5" />
-      <path d="M3 13.5a5 5 0 0 1 10 0" />
-    </svg>
-  );
-}
-
 function SignOutIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -168,11 +148,13 @@ function SignOutIcon({ className }: { className?: string }) {
   );
 }
 
+// Filled 8-tooth cog (Heroicons "cog-8-tooth" mini). The previous
+// stroke-only radial-spokes rendering read as a sun — this solid
+// version is unambiguously a gear at 14px.
 function SettingsIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.2v2M8 12.8v2M14.8 8h-2M3.2 8h-2M12.8 3.2L11.4 4.6M4.6 11.4l-1.4 1.4M12.8 12.8L11.4 11.4M4.6 4.6L3.2 3.2" />
+    <svg viewBox="0 0 20 20" className={className} fill="currentColor" aria-hidden>
+      <path fillRule="evenodd" clipRule="evenodd" d="M7.84 1.804A1 1 0 0 1 8.82 1h2.36a1 1 0 0 1 .98.804l.331 1.652a6.99 6.99 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l1.18 2.044a1 1 0 0 1-.205 1.251l-1.267 1.113a7.05 7.05 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .206 1.25l-1.18 2.045a1 1 0 0 1-1.187.447l-1.598-.54a6.99 6.99 0 0 1-1.929 1.115L12.16 19a1 1 0 0 1-.98.804H8.82a1 1 0 0 1-.98-.804l-.331-1.652a6.99 6.99 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-1.18-2.044a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L1.82 8.577a1 1 0 0 1-.206-1.25l1.18-2.045a1 1 0 0 1 1.187-.447l1.598.54A6.99 6.99 0 0 1 7.51 4.26l.33-1.456ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
     </svg>
   );
 }

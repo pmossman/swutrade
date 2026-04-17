@@ -24,7 +24,7 @@ export const users = pgTable('users', {
   //     trade proposals, which are direct transactional mail)
   // Per-guild toggles live in user_guild_memberships.
   profileVisibility: text('profile_visibility', { enum: ['public', 'discord', 'private'] })
-    .default('public')
+    .default('discord')
     .notNull(),
   dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
   dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),

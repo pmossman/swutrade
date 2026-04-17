@@ -10,18 +10,24 @@ export interface User {
 export interface AuthApi {
   user: User | null;
   isLoading: boolean;
+  /** OAuth URL that installs SWUTrade's bot in a Discord guild. */
+  botInstallUrl: string | null;
   login: () => void;
   logout: () => Promise<void>;
 }
 
 export function useAuth(): AuthApi {
   const [user, setUser] = useState<User | null>(null);
+  const [botInstallUrl, setBotInstallUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then(r => r.json())
-      .then(data => setUser(data.user ?? null))
+      .then(data => {
+        setUser(data.user ?? null);
+        setBotInstallUrl(data.botInstallUrl ?? null);
+      })
       .catch(() => setUser(null))
       .finally(() => setIsLoading(false));
   }, []);
@@ -35,5 +41,5 @@ export function useAuth(): AuthApi {
     setUser(null);
   }, []);
 
-  return { user, isLoading, login, logout };
+  return { user, isLoading, botInstallUrl, login, logout };
 }

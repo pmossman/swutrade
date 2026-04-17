@@ -73,7 +73,7 @@ describeWithDb('Phase 4 account + guild settings', () => {
 
       expect(res._status).toBe(200);
       expect(res._json).toMatchObject({
-        profileVisibility: 'public',
+        profileVisibility: 'discord',
         dmTradeProposals: true,
         dmMatchAlerts: false,
         dmMeetupReminders: false,

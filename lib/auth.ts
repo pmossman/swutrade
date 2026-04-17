@@ -6,6 +6,14 @@ export interface SessionData {
   username: string;
   handle: string;
   avatarUrl: string | null;
+  // Phase 4: Discord OAuth access token, persisted so the user can
+  // re-sync their guild memberships without a full re-auth. Stored
+  // in the iron-session encrypted cookie — never hits the DB. Expires
+  // per Discord's token TTL (7 days by default); endpoints that need
+  // it should treat expiry as a non-fatal signal and ask the user to
+  // re-auth only if they explicitly requested a Discord-backed action.
+  discordAccessToken?: string;
+  discordAccessTokenExpiresAt?: number;
 }
 
 function getSessionOptions(): SessionOptions {
@@ -33,6 +41,8 @@ export async function getSession(
     username: session.username,
     handle: session.handle,
     avatarUrl: session.avatarUrl,
+    discordAccessToken: session.discordAccessToken,
+    discordAccessTokenExpiresAt: session.discordAccessTokenExpiresAt,
   };
 }
 
@@ -46,7 +56,27 @@ export async function createSession(
   session.username = data.username;
   session.handle = data.handle;
   session.avatarUrl = data.avatarUrl;
+  session.discordAccessToken = data.discordAccessToken;
+  session.discordAccessTokenExpiresAt = data.discordAccessTokenExpiresAt;
   await session.save();
+}
+
+/**
+ * Returns the stored Discord OAuth access token if the session has
+ * one and it hasn't expired yet. Callers use this to make Discord
+ * API calls on behalf of the user (e.g., re-syncing guild list).
+ * Returns null on missing/expired — caller decides whether to
+ * degrade (e.g., return stale data) or prompt re-auth.
+ */
+export async function getDiscordAccessToken(
+  req: VercelRequest,
+  res: VercelResponse,
+): Promise<string | null> {
+  const session = await getIronSession<SessionData>(req, res, getSessionOptions());
+  if (!session.userId || !session.discordAccessToken) return null;
+  const expiresAt = session.discordAccessTokenExpiresAt ?? 0;
+  if (expiresAt <= Date.now()) return null;
+  return session.discordAccessToken;
 }
 
 export async function destroySession(

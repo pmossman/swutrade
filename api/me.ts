@@ -3,7 +3,9 @@ import { and, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import { users, userGuildMemberships, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
-import { requireSession } from '../lib/auth.js';
+import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
+import { syncGuildMemberships } from '../lib/guildSync.js';
+import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
 
 /**
  * Single dispatcher for every `/api/me/*` endpoint.
@@ -25,6 +27,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleSettings(req, res);
     case 'guilds':
       return handleGuildsList(req, res);
+    case 'guilds-refresh':
+      return handleGuildsRefresh(req, res);
     case 'guild':
       return handleGuildPut(req, res);
     case 'community':
@@ -121,6 +125,69 @@ export async function handleGuildsList(req: VercelRequest, res: VercelResponse) 
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ enrollable, other });
+}
+
+// --- guilds re-sync ---------------------------------------------------------
+
+/**
+ * POST-only. Re-hits Discord's `/users/@me/guilds` using the access
+ * token stored in the session cookie, reconciles `user_guild_memberships`
+ * via the shared `syncGuildMemberships` helper, then returns the
+ * freshly-updated list in the same shape as GET /api/me/guilds so
+ * the client can replace its state in a single roundtrip.
+ *
+ * Auth failure modes:
+ *   - No session           → 401 Not authenticated (from requireSession)
+ *   - Session has no token → 409 token-unavailable; caller prompts re-auth
+ *   - Token expired        → same 409 (session still valid for normal use)
+ *   - Discord returns 401  → same 409 (token revoked server-side)
+ *
+ * 409 is chosen deliberately over 401 — the user IS authenticated
+ * with us, they just can't act on their Discord account right now.
+ * Client treats it as "prompt re-auth to refresh" without nuking the
+ * whole session.
+ *
+ * Injectable `discord` param exists only for the tests that ship
+ * alongside this endpoint. Production code path uses the default.
+ */
+export async function handleGuildsRefresh(
+  req: VercelRequest,
+  res: VercelResponse,
+  discord: DiscordClient = createDiscordClient(),
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const accessToken = await getDiscordAccessToken(req, res);
+  if (!accessToken) {
+    return res.status(409).json({
+      error: 'discord-token-unavailable',
+      detail: 'Sign in with Discord again to refresh your server list.',
+    });
+  }
+
+  try {
+    await syncGuildMemberships(session.userId, accessToken, discord, {
+      propagateDiscordErrors: true,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Discord 401 inside the client manifests as a thrown error in
+    // getUserGuilds — treat it like token-unavailable so the UI can
+    // surface the same re-auth prompt.
+    if (/401/.test(msg) || /unauthorized/i.test(msg)) {
+      return res.status(409).json({ error: 'discord-token-unavailable', detail: msg });
+    }
+    console.error('/api/me/guilds-refresh: sync failed', err);
+    return res.status(502).json({ error: 'Failed to refresh from Discord' });
+  }
+
+  return handleGuildsList(req, res);
 }
 
 // --- per-guild patch --------------------------------------------------------

@@ -16,7 +16,7 @@ export interface AccountSettingsApi {
 }
 
 const DEFAULTS: AccountSettings = {
-  profileVisibility: 'public',
+  profileVisibility: 'discord',
   dmTradeProposals: true,
   dmMatchAlerts: false,
   dmMeetupReminders: false,

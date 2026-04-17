@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 export async function handleMe(req: VercelRequest, res: VercelResponse) {
   const session = await getSession(req, res);
   if (!session) {
-    return res.json({ user: null });
+    return res.json({ user: null, botInstallUrl: null });
   }
   res.json({
     user: {
@@ -42,7 +42,26 @@ export async function handleMe(req: VercelRequest, res: VercelResponse) {
       handle: session.handle,
       avatarUrl: session.avatarUrl,
     },
+    botInstallUrl: buildBotInstallUrl(),
   });
+}
+
+/**
+ * Server-constructed OAuth URL for installing SWUTrade's bot in a
+ * Discord guild. Kept server-side so DISCORD_CLIENT_ID isn't shipped
+ * in the Vite bundle and so scope/permission changes stay in one
+ * place. `permissions=3072` = View Channels (1024) + Send Messages
+ * (2048), the minimum for Phase 4 v1.
+ */
+function buildBotInstallUrl(): string | null {
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  if (!clientId) return null;
+  const params = new URLSearchParams({
+    client_id: clientId,
+    scope: 'bot applications.commands',
+    permissions: '3072',
+  });
+  return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
 
 // --- /api/auth/logout -------------------------------------------------------
@@ -233,6 +252,8 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
     username: displayName,
     handle,
     avatarUrl,
+    discordAccessToken: tokens.accessToken(),
+    discordAccessTokenExpiresAt: tokens.accessTokenExpiresAt().getTime(),
   });
 
   // Clear OAuth cookies.

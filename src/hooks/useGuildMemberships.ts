@@ -15,35 +15,90 @@ export type GuildPatch = Partial<Pick<
   'enrolled' | 'includeInRollups' | 'appearInQueries'
 >>;
 
+export type RefreshStatus = 'idle' | 'refreshing' | 'needs-reauth' | 'error';
+
 export interface GuildMembershipsApi {
   /** Guilds where SWUTrade's bot is installed — user can enroll. */
   enrollable: GuildMembershipSummary[];
   /** Guilds where the bot isn't installed — informational only. */
   other: GuildMembershipSummary[];
   status: 'loading' | 'ready' | 'saving' | 'error';
+  /** State of the most recent Discord-side refresh. */
+  refreshStatus: RefreshStatus;
+  /** Re-pull the guild list from Discord (re-hits /users/@me/guilds). */
+  refreshFromDiscord: () => Promise<void>;
   /** PUT a patch for a specific guild, optimistically update locally. */
   updateGuild: (guildId: string, patch: GuildPatch) => Promise<void>;
 }
+
+// Session-scoped flag: once we've auto-refreshed from Discord in this
+// tab, don't do it again. Avoids spamming Discord if the user bounces
+// in/out of Settings. Manual button clicks always refresh.
+const AUTO_REFRESHED_KEY = 'swu-settings-auto-refreshed';
 
 export function useGuildMemberships(): GuildMembershipsApi {
   const [enrollable, setEnrollable] = useState<GuildMembershipSummary[]>([]);
   const [other, setOther] = useState<GuildMembershipSummary[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'error'>('loading');
+  const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>('idle');
 
-  const refresh = useCallback(async () => {
+  const applyPayload = useCallback((data: {
+    enrollable: GuildMembershipSummary[];
+    other: GuildMembershipSummary[];
+  }) => {
+    setEnrollable(data.enrollable);
+    setOther(data.other);
+  }, []);
+
+  const loadLocal = useCallback(async () => {
     try {
       const res = await fetch('/api/me/guilds');
       if (!res.ok) throw new Error(`status ${res.status}`);
-      const data: { enrollable: GuildMembershipSummary[]; other: GuildMembershipSummary[] } = await res.json();
-      setEnrollable(data.enrollable);
-      setOther(data.other);
+      applyPayload(await res.json());
       setStatus('ready');
     } catch {
       setStatus('error');
     }
-  }, []);
+  }, [applyPayload]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const refreshFromDiscord = useCallback(async () => {
+    setRefreshStatus('refreshing');
+    try {
+      const res = await fetch('/api/me/guilds/refresh', { method: 'POST' });
+      if (res.status === 409) {
+        // Token expired / revoked — client surfaces a re-auth prompt.
+        setRefreshStatus('needs-reauth');
+        return;
+      }
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      applyPayload(await res.json());
+      setStatus('ready');
+      setRefreshStatus('idle');
+    } catch {
+      setRefreshStatus('error');
+    }
+  }, [applyPayload]);
+
+  // Initial load: local DB, then a one-shot Discord refresh per tab
+  // session so the list picks up guilds the user has joined since
+  // they last signed in without them clicking anything.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await loadLocal();
+      if (cancelled) return;
+      if (typeof window === 'undefined') return;
+      try {
+        if (window.sessionStorage.getItem(AUTO_REFRESHED_KEY) === '1') return;
+        window.sessionStorage.setItem(AUTO_REFRESHED_KEY, '1');
+      } catch {
+        // sessionStorage can throw in private mode — fall through and refresh anyway.
+      }
+      if (cancelled) return;
+      await refreshFromDiscord();
+    })();
+    return () => { cancelled = true; };
+  }, [loadLocal, refreshFromDiscord]);
 
   const updateGuild = useCallback(async (guildId: string, patch: GuildPatch) => {
     // Optimistic update on the local state — if the server applies
@@ -65,9 +120,9 @@ export function useGuildMemberships(): GuildMembershipsApi {
     } catch {
       setStatus('error');
       // Re-fetch to bring the UI back to truth.
-      refresh();
+      loadLocal();
     }
-  }, [refresh]);
+  }, [loadLocal]);
 
-  return { enrollable, other, status, updateGuild };
+  return { enrollable, other, status, refreshStatus, refreshFromDiscord, updateGuild };
 }

@@ -8,7 +8,7 @@ describeWithDb('GET /api/auth/me', () => {
     const req = mockRequest();
     const res = mockResponse();
     await handler(req, res);
-    expect(res._json).toEqual({ user: null });
+    expect(res._json).toMatchObject({ user: null });
   });
 
   it('returns user data when a valid session cookie is present', async () => {

@@ -92,9 +92,19 @@ export function mockResponse(): VercelResponse & {
 
 // --- Auth helpers -----------------------------------------------------------
 
-export async function sealTestCookie(userId: string): Promise<string> {
+export async function sealTestCookie(userId: string, opts: {
+  discordAccessToken?: string;
+  discordAccessTokenExpiresAt?: number;
+} = {}): Promise<string> {
   return sealData(
-    { userId, username: 'Test', handle: 'test', avatarUrl: null },
+    {
+      userId,
+      username: 'Test',
+      handle: 'test',
+      avatarUrl: null,
+      discordAccessToken: opts.discordAccessToken,
+      discordAccessTokenExpiresAt: opts.discordAccessTokenExpiresAt,
+    },
     { password: process.env.SESSION_SECRET!, ttl: 86400 },
   );
 }
