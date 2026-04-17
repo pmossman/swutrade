@@ -12,12 +12,12 @@ import { waitForPricesLoaded } from './helpers/waitForApp';
 
 /**
  * Covers the propose flow end-to-end: ProfileView button →
- * `/?propose=<handle>` → ProposeBar → /api/trades/propose →
+ * `/?propose=<handle>` → ProposeBar Suggest → /api/trades/propose →
  * `trade_proposals` row.
  *
  * Server validation is pinned in trades-propose.test.ts; this
  * spec verifies the UI wires those pieces together correctly and
- * that ProposeBar's auto-match + send actually persists a row.
+ * that ProposeBar's Suggest-match + send actually persists a row.
  */
 test.describe('Trade proposal flow', () => {
   test.describe.configure({ mode: 'serial' });
@@ -64,19 +64,23 @@ test.describe('Trade proposal flow', () => {
 
     const bar = page.getByTestId('propose-bar');
     await expect(bar).toBeVisible({ timeout: 10_000 });
-    // Matchmaker + auto-apply should leave the bar in 'ready' state
-    // (profile loaded, cards applied). If it stays in 'loading-profile'
-    // the fetch never completed.
+    // Bar reaches 'ready' (profile loaded, not sending, not sent).
+    // If it stays in 'loading-profile' the fetch never completed.
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
 
-    // Step 3: open the note disclosure and type a message. The
+    // Step 3: click the Suggest button — user-triggered matchmaker
+    // replaces the old auto-apply-on-mount. Populates both sides
+    // from the overlap pool.
+    await page.getByTestId('propose-suggest').click();
+
+    // Step 4: open the note disclosure and type a message. The
     // server persists this on the trade_proposals row and it shows
     // in the recipient's DM embed description.
     const noteMessage = 'Ping me on Discord about meetup time — e2e note';
     await page.getByRole('button', { name: /Add a note/i }).click();
     await page.getByLabel(/Proposal note/i).fill(noteMessage);
 
-    // Step 4: click Send and confirm the success state lands.
+    // Step 5: click Send and confirm the success state lands.
     // The recipient is seeded via createSenderFixture with a
     // synthetic discordId that Discord rejects, so the DM delivery
     // fails and the bar lands in `sent-undelivered`. The trade row
@@ -85,7 +89,7 @@ test.describe('Trade proposal flow', () => {
     await page.getByRole('button', { name: /Send proposal/i }).click();
     await expect(bar).toHaveAttribute('data-state', /^sent/, { timeout: 10_000 });
 
-    // Step 5: a row actually exists in trade_proposals for this
+    // Step 6: a row actually exists in trade_proposals for this
     // viewer → recipient pair AND the note was persisted verbatim.
     const { getDb } = await import('../lib/db.js');
     const { tradeProposals } = await import('../lib/schema.js');

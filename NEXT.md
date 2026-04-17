@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Kill ProposeBar auto-fill (UX fix)
+ProposeBar no longer auto-applies the matchmaker on mount — early dogfooding feedback said it felt presumptuous, and the greedy algorithm can produce visibly unbalanced results on small overlap pools ($4 vs $15 observed). The bar now lands empty with a status line that hints at possibility instead of performing: *"You could offer 3 of their wants · They have 5 of yours"*. A new secondary **"✨ Suggest a match"** button (visible only when overlap exists) runs the matchmaker on demand. If there's no overlap the status switches to *"No matching overlap — pick cards manually to propose anyway"* and the Suggest button hides. Propose e2e updated to click Suggest explicitly before Send.
+
 ### 2026-04-17 — Profile lists → tabs (UX fix)
 ProfileView's stacked Wants-then-Available sections became tabs. Scanning someone's available cards no longer requires scrolling past their entire wants list, and both lists' existence is visible at a glance via the tab bar. Default tab is the first with items; private/empty states are rendered per-tab so each panel explains its own state. Kept the existing blue (wants) / emerald (available) accent colors as the active-tab underline — preserves the side-color invariants from the profile owner's perspective without any palette changes.
 

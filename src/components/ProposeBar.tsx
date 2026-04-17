@@ -71,7 +71,6 @@ export function ProposeBar({
   // accept more than the server will take.
   const [message, setMessage] = useState('');
   const [messageOpen, setMessageOpen] = useState(false);
-  const autoAppliedRef = useRef(false);
   const fetchStartedRef = useRef(false);
 
   // One-shot profile fetch. Uses a ref for dedupe rather than
@@ -122,13 +121,16 @@ export function ProposeBar({
     );
   }, [profile, allCards, percentage, priceMode, wants.items, available.items]);
 
-  // Auto-apply the match on mount exactly once so the composer
-  // lands with something actionable. Later edits are the user's.
-  useEffect(() => {
-    if (autoAppliedRef.current) return;
+  // Manual "Suggest a balanced match" — user-triggered instead of
+  // auto-applied on mount. Early dogfooding feedback: auto-filling
+  // a trade the user didn't build felt presumptuous, and the greedy
+  // matchmaker can produce visibly unbalanced results on small
+  // overlap pools ($4 vs $15 in one real case). Surfacing it as an
+  // explicit button keeps the matchmaker available without yanking
+  // agency from the proposer.
+  const handleSuggest = useCallback(() => {
     if (!preview) return;
     if (preview.offering.length === 0 && preview.receiving.length === 0) return;
-    autoAppliedRef.current = true;
     onApplyMatch(
       preview.offering.map(c => ({ card: c, qty: 1 })),
       preview.receiving.map(c => ({ card: c, qty: 1 })),
@@ -234,17 +236,52 @@ export function ProposeBar({
     const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
     const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
     const canSend = offerCount + receiveCount > 0 && sendState !== 'sending';
+    const overlapAvailable = !!preview
+      && (preview.overlapOffering > 0 || preview.overlapReceiving > 0);
+    const isEmpty = offerCount + receiveCount === 0;
+
+    // Status line has two modes: empty (hint at overlap possibilities)
+    // and in-progress (running card counts). Splitting keeps the first-
+    // open state informative without cluttering the working state.
+    const status = isEmpty && preview ? (
+      <span className="flex-1">
+        <span className="text-gray-400">Proposing to </span>
+        <strong className="text-gold">@{recipientHandle}</strong>
+        {overlapAvailable ? (
+          <span className="text-gray-500 text-[11px] ml-2">
+            · You could offer <strong className="text-emerald-300">{preview.overlapOffering}</strong> of their wants
+            · They have <strong className="text-blue-300">{preview.overlapReceiving}</strong> of yours
+          </span>
+        ) : (
+          <span className="text-gray-500 text-[11px] ml-2">
+            · No matching overlap — pick cards manually to propose anyway.
+          </span>
+        )}
+      </span>
+    ) : (
+      <span className="flex-1">
+        <span className="text-gray-400">Proposing to </span>
+        <strong className="text-gold">@{recipientHandle}</strong>
+        <span className="text-gray-500 text-[11px] ml-2">
+          · Offer <strong className="text-emerald-300">{offerCount}</strong>
+          · Receive <strong className="text-blue-300">{receiveCount}</strong>
+        </span>
+      </span>
+    );
 
     return (
       <>
-        <span className="flex-1">
-          <span className="text-gray-400">Proposing to </span>
-          <strong className="text-gold">@{recipientHandle}</strong>
-          <span className="text-gray-500 text-[11px] ml-2">
-            · Offer <strong className="text-emerald-300">{offerCount}</strong>
-            · Receive <strong className="text-blue-300">{receiveCount}</strong>
-          </span>
-        </span>
+        {status}
+        {overlapAvailable && (
+          <button
+            type="button"
+            onClick={handleSuggest}
+            data-testid="propose-suggest"
+            className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
+          >
+            ✨ Suggest a match
+          </button>
+        )}
         <button
           type="button"
           onClick={handleSend}
