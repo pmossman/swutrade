@@ -56,6 +56,9 @@ test.describe('Trade history + detail + cancel', () => {
     await waitForPricesLoaded(page);
     const proposeBar = page.getByTestId('propose-bar');
     await expect(proposeBar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+    // Auto-fill was removed — click Suggest so the trade has cards
+    // before Send. Otherwise Send stays disabled.
+    await page.getByTestId('propose-suggest').click();
     await page.getByRole('button', { name: /Send proposal/i }).click();
     await expect(proposeBar).toHaveAttribute('data-state', /^sent/, { timeout: 10_000 });
 

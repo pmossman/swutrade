@@ -94,6 +94,9 @@ test.describe('Signed button interaction (synthetic Discord webhook)', () => {
     await waitForPricesLoaded(page);
     const bar = page.getByTestId('propose-bar');
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+    // Auto-fill was removed — click Suggest so the trade has cards
+    // before Send. Otherwise Send stays disabled.
+    await page.getByTestId('propose-suggest').click();
     await page.getByRole('button', { name: /Send proposal/i }).click();
     // Either 'sent' (real DM landed — unlikely with a fake discord
     // id) or 'sent-undelivered'. Both are OK; the trade row exists.
@@ -166,6 +169,9 @@ test.describe('Signed button interaction (synthetic Discord webhook)', () => {
     await waitForPricesLoaded(page);
     const bar = page.getByTestId('propose-bar');
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
+    // Auto-fill was removed — click Suggest so the trade has cards
+    // before Send. Otherwise Send stays disabled.
+    await page.getByTestId('propose-suggest').click();
     await page.getByRole('button', { name: /Send proposal/i }).click();
     await expect(bar).toHaveAttribute('data-state', /sent/, { timeout: 10_000 });
 
