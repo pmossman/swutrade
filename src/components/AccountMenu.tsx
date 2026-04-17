@@ -111,6 +111,15 @@ export function AccountMenu({ auth }: AccountMenuProps) {
           </a>
 
           <a
+            href="/?trades=1"
+            onClick={close}
+            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
+          >
+            <TradesIcon className="w-3.5 h-3.5 text-gray-400" />
+            My trades
+          </a>
+
+          <a
             href="/?settings=1"
             onClick={close}
             className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
@@ -158,6 +167,19 @@ function CommunityIcon({ className }: { className?: string }) {
       <path d="M1.75 13.25a4.25 4.25 0 0 1 8.5 0" />
       <circle cx="11.25" cy="6.25" r="1.75" />
       <path d="M10 11a3.25 3.25 0 0 1 4.5 1.75" />
+    </svg>
+  );
+}
+
+// Stylized envelope/inbox — the menu already has a filled cog for
+// Settings and a two-silhouette icon for Community; a simple
+// horizontal-lines "list" glyph reads as "trade history" at 14px
+// without competing visually.
+function TradesIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+      <path d="M5 7h6M5 9.5h4" />
     </svg>
   );
 }

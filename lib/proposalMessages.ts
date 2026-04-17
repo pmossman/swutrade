@@ -25,6 +25,7 @@ const COLORS = {
   gold: 0xD4AF37,
   emerald: 0x34D399,
   red: 0xEF4444,
+  gray: 0x6B7280,
 } as const;
 
 // Discord component/button constants — see the docs:
@@ -178,12 +179,23 @@ export function buildCounteredProposalMessage(
  */
 export function buildResolvedProposalMessage(
   ctx: ProposalMessageContext,
-  outcome: 'accepted' | 'declined',
+  outcome: 'accepted' | 'declined' | 'cancelled',
   responderHandle: string,
 ): DiscordMessageBody {
-  const color = outcome === 'accepted' ? COLORS.emerald : COLORS.red;
-  const verb = outcome === 'accepted' ? 'Accepted' : 'Declined';
-  const emoji = outcome === 'accepted' ? '✅' : '❌';
+  const color = outcome === 'accepted'
+    ? COLORS.emerald
+    : outcome === 'declined'
+      ? COLORS.red
+      : COLORS.gray;
+  const verb = outcome === 'accepted'
+    ? 'Accepted'
+    : outcome === 'declined'
+      ? 'Declined'
+      : 'Cancelled';
+  const emoji = outcome === 'accepted' ? '✅' : outcome === 'declined' ? '❌' : '🚫';
+  const actor = outcome === 'cancelled'
+    ? `by the proposer (@${responderHandle})`
+    : `by @${responderHandle}`;
 
   return {
     embeds: [{
@@ -199,7 +211,7 @@ export function buildResolvedProposalMessage(
           name: `Asked for (${formatSubtotal(ctx.receivingCards)})`,
           value: formatCardList(ctx.receivingCards),
         },
-        { name: 'Status', value: `${emoji} **${verb}** by @${responderHandle}` },
+        { name: 'Status', value: `${emoji} **${verb}** ${actor}` },
       ],
       footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
     }],

@@ -40,10 +40,12 @@ import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
+import { TradeDetailView } from './components/TradeDetailView';
+import { TradesHistoryView } from './components/TradesHistoryView';
 import { useProposeHandle } from './hooks/useProposeHandle';
 import { useCounterId } from './hooks/useCounterId';
 
-function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' {
+function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history' {
   if (typeof window === 'undefined') return 'trade';
   // `/u/<handle>` is our canonical shareable profile URL. Vercel
   // rewrites it to `/?profile=<handle>` server-side, but the browser
@@ -54,6 +56,8 @@ function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'communit
   const params = new URLSearchParams(window.location.search);
   if (params.get('settings') === '1') return 'settings';
   if (params.get('community') === '1') return 'community';
+  if (params.get('trades') === '1') return 'trades-history';
+  if (params.has('trade')) return 'trade-detail';
   if (params.has('profile')) return 'profile';
   const explicit = params.get('view');
   if (explicit === 'list') return 'list';
@@ -145,7 +149,7 @@ function App() {
   // (lists in URL but no trade). Users opt into the trade UI via the
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
-  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile' | 'settings' | 'community'>(() => detectViewMode());
+  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history'>(() => detectViewMode());
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
@@ -320,6 +324,31 @@ function App() {
         onClose={goHome}
       />
     );
+  }
+
+  if (viewMode === 'trades-history') {
+    const goHome = () => {
+      const params = new URLSearchParams(window.location.search);
+      params.delete('trades');
+      const search = params.toString();
+      window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
+      setViewMode(detectViewMode());
+    };
+    return <TradesHistoryView onClose={goHome} />;
+  }
+
+  if (viewMode === 'trade-detail') {
+    const tradeId = new URLSearchParams(window.location.search).get('trade') ?? '';
+    const goBack = () => {
+      // Back = /?trades=1 (history) so the proposer can see a fresh
+      // list after cancelling, rather than vanishing to the trade
+      // balancer.
+      const params = new URLSearchParams();
+      params.set('trades', '1');
+      window.history.pushState(null, '', `?${params.toString()}`);
+      setViewMode(detectViewMode());
+    };
+    return <TradeDetailView tradeId={tradeId} onClose={goBack} />;
   }
 
   // Profile view — /u/<handle> shows a user's public lists.

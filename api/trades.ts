@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, and, or, desc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
@@ -9,6 +9,7 @@ import {
   buildProposalMessage,
   buildCounterProposalMessage,
   buildCounteredProposalMessage,
+  buildResolvedProposalMessage,
 } from '../lib/proposalMessages.js';
 
 /**
@@ -28,10 +29,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = (req.query.action as string | undefined) ?? '';
 
   switch (action) {
-    case '':         return handleSavedTrades(req, res);
-    case 'propose':  return handlePropose(req, res);
-    case 'counter':  return handleCounter(req, res);
-    case 'get':      return handleGetProposal(req, res);
+    case '':           return handleSavedTrades(req, res);
+    case 'propose':    return handlePropose(req, res);
+    case 'counter':    return handleCounter(req, res);
+    case 'get':        return handleGetProposal(req, res);
+    case 'proposals':  return handleProposalsList(req, res);
+    case 'cancel':     return handleCancel(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -285,21 +288,224 @@ export async function handleGetProposal(req: VercelRequest, res: VercelResponse)
     .where(eq(users.id, row.recipientUserId))
     .limit(1);
 
+  // Chain context — minimal stubs so the detail view can render
+  // "counter to …" / "countered by …" links without a second fetch.
+  // Full chain walking is a trade-history concern, not a detail-view
+  // concern.
+  let counterOfStub: { id: string; status: string } | null = null;
+  if (row.counterOfId) {
+    const [parent] = await db
+      .select({ id: tradeProposals.id, status: tradeProposals.status })
+      .from(tradeProposals)
+      .where(eq(tradeProposals.id, row.counterOfId))
+      .limit(1);
+    counterOfStub = parent ?? null;
+  }
+
+  let counteredByStub: { id: string; status: string } | null = null;
+  const [child] = await db
+    .select({ id: tradeProposals.id, status: tradeProposals.status })
+    .from(tradeProposals)
+    .where(eq(tradeProposals.counterOfId, row.id))
+    .limit(1);
+  if (child) counteredByStub = child;
+
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({
     id: row.id,
     status: row.status,
     counterOfId: row.counterOfId,
+    counterOfStub,
+    counteredByStub,
     offeringCards: row.offeringCards,
     receivingCards: row.receivingCards,
     message: row.message,
     createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
     respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
     proposer: proposer ?? null,
     recipient: recipient ?? null,
     viewerIsProposer: row.proposerUserId === session.userId,
     viewerIsRecipient: row.recipientUserId === session.userId,
   });
+}
+
+// --- proposals list (slice 5 — for /?trades=1 history view) -----------------
+
+/**
+ * Lists proposals involving the signed-in user (proposer OR
+ * recipient). Ordered by updated_at desc so active chains surface
+ * first. Each row carries just what the history UI needs — the
+ * detail view fetches the full row via `handleGetProposal` when
+ * the user clicks through.
+ *
+ * No pagination for MVP. Limited to 100 to keep payloads bounded;
+ * once a real user has that many proposals we'll add cursors.
+ */
+export async function handleProposalsList(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const db = getDb();
+
+  const rows = await db
+    .select()
+    .from(tradeProposals)
+    .where(or(
+      eq(tradeProposals.proposerUserId, session.userId),
+      eq(tradeProposals.recipientUserId, session.userId),
+    ))
+    .orderBy(desc(tradeProposals.updatedAt))
+    .limit(100);
+
+  // Fetch counterpart users in one query — for each row the
+  // counterpart is whichever party isn't the viewer.
+  const counterpartIds = Array.from(new Set(
+    rows.map(r => r.proposerUserId === session.userId ? r.recipientUserId : r.proposerUserId),
+  ));
+  const counterpartsById = new Map<string, { handle: string; username: string; avatarUrl: string | null }>();
+  if (counterpartIds.length > 0) {
+    const userRows = await db
+      .select({
+        id: users.id,
+        handle: users.handle,
+        username: users.username,
+        avatarUrl: users.avatarUrl,
+      })
+      .from(users)
+      .where(inArray(users.id, counterpartIds));
+    for (const u of userRows) {
+      counterpartsById.set(u.id, { handle: u.handle, username: u.username, avatarUrl: u.avatarUrl });
+    }
+  }
+
+  const proposals = rows.map(r => {
+    const direction: 'sent' | 'received' = r.proposerUserId === session.userId ? 'sent' : 'received';
+    const counterpartId = direction === 'sent' ? r.recipientUserId : r.proposerUserId;
+    return {
+      id: r.id,
+      direction,
+      status: r.status,
+      counterOfId: r.counterOfId,
+      offeringCount: r.offeringCards.reduce((n, c) => n + c.qty, 0),
+      receivingCount: r.receivingCards.reduce((n, c) => n + c.qty, 0),
+      hasMessage: !!r.message,
+      counterpart: counterpartsById.get(counterpartId) ?? null,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      respondedAt: r.respondedAt ? r.respondedAt.toISOString() : null,
+    };
+  });
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ proposals });
+}
+
+// --- cancel (slice 5 — proposer retracts a pending proposal) ---------------
+
+const CancelBodySchema = z.object({
+  id: z.string().min(1),
+});
+
+/**
+ * Proposer-only. Transitions a `pending` proposal to `cancelled`
+ * and edits the recipient's DM to strip buttons + show a cancelled
+ * banner. Idempotent w.r.t. already-cancelled (returns 200 no-op).
+ * Race-guarded: if the recipient accepted/declined/countered
+ * between the read and write, returns 409.
+ *
+ * DM edit is best-effort (same pattern as the counter handler).
+ */
+export async function handleCancel(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = CancelBodySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
+  const { id } = parsed.data;
+
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, id))
+    .limit(1);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.proposerUserId !== session.userId) {
+    return res.status(403).json({ error: 'Only the proposer can cancel' });
+  }
+  if (row.status === 'cancelled') {
+    // Idempotent — already cancelled.
+    return res.json({ id, status: 'cancelled' });
+  }
+  if (row.status !== 'pending') {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: `This proposal is ${row.status} and can no longer be cancelled.`,
+    });
+  }
+
+  // Optimistic concurrency: transition only if still pending.
+  const updated = await db
+    .update(tradeProposals)
+    .set({ status: 'cancelled', respondedAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(tradeProposals.id, id),
+      eq(tradeProposals.status, 'pending'),
+    ))
+    .returning({ id: tradeProposals.id });
+
+  if (updated.length === 0) {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: 'The proposal was resolved before your cancel landed.',
+    });
+  }
+
+  // Edit recipient's DM — best effort.
+  if (row.discordDmChannelId && row.discordDmMessageId) {
+    try {
+      const [proposer] = await db
+        .select({ handle: users.handle, username: users.username })
+        .from(users)
+        .where(eq(users.id, row.proposerUserId))
+        .limit(1);
+      if (proposer) {
+        const bot = deps.bot ?? createDiscordBotClient();
+        const patched = buildResolvedProposalMessage(
+          {
+            tradeId: row.id,
+            proposerHandle: proposer.handle,
+            proposerUsername: proposer.username,
+            offeringCards: row.offeringCards,
+            receivingCards: row.receivingCards,
+            message: row.message,
+          },
+          'cancelled',
+          proposer.handle,
+        );
+        await bot.editChannelMessage(row.discordDmChannelId, row.discordDmMessageId, patched);
+      }
+    } catch (err) {
+      console.error('handleCancel: DM edit failed', err);
+    }
+  }
+
+  return res.json({ id, status: 'cancelled' });
 }
 
 // --- counter (Phase 4c slice 4) ---------------------------------------------
