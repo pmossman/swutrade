@@ -9,6 +9,12 @@ import { signIn, createSenderFixture, TEST_USER } from './helpers/auth';
  * Cleanup removes the sender after every test.
  */
 test.describe('Auto-balance banner (context-aware matchmaker)', () => {
+  // Serial to keep the describe-scoped `sender` variable from
+  // racing between workers — fullyParallel is on, so without this
+  // multiple tests' beforeEach hooks overwrite `sender` concurrently
+  // and the test body navigates to a stale/cleaned-up handle.
+  test.describe.configure({ mode: 'serial' });
+
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
 
   test.beforeEach(async ({ context }) => {

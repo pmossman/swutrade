@@ -20,6 +20,11 @@ import { installBotInGuild, createGuildMembership } from './helpers/guilds';
  * without mocking anything below the browser.
  */
 test.describe('Community source chip', () => {
+  // Serial: describe-scoped `viewer`, `sender`, and `cleanups` would
+  // race under fullyParallel between the two tests below and
+  // cross-contaminate each other's DB fixtures.
+  test.describe.configure({ mode: 'serial' });
+
   let viewer: TestUser;
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
   const cleanups: Array<() => Promise<void>> = [];
