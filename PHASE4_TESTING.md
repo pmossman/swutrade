@@ -173,3 +173,54 @@ Every PR that touches a Discord-integrated feature must either:
   because you don't have a real capture**, stop and go get a real
   capture first, even if it's from the Discord API reference JSON
   examples.
+
+## Diagnostic playbook (if auth e2e gets flaky again)
+
+These are the traps we actually hit during the Phase 4a
+stabilization pass — captured here so the next investigator doesn't
+burn an afternoon re-deriving them.
+
+1. **Run locally before pushing.** `PLAYWRIGHT_BASE_URL=http://localhost:3000
+   npx playwright test -c playwright.auth.config.ts` + a running
+   `vercel dev` reproduces the exact same failures CI sees, in a
+   fraction of the iteration time. Pushing a theoretical fix to CI
+   and waiting for the run is ~10× slower than running locally.
+
+2. **Check CI's uploaded artifact, not just the log.** The CI
+   workflow uploads `test-results/` (includes `trace.zip` and DOM
+   snapshots in `error-context.md`) on failure. `gh run download
+   <run-id> --dir /tmp/ci-artifacts` pulls them. The trace contains
+   every network request/response + per-assertion DOM state — far
+   more useful than the log truncations.
+
+3. **Instrument the suspect component with a `data-state`
+   attribute** (the banner has one already as a template). Exposes
+   the state machine to the trace's DOM snapshots without
+   `console.log` spam.
+
+4. **Known React patterns that bite auth e2e specifically**:
+   - **State-in-deps trap**: a `useEffect` with state values (like
+     `fetchState`) in its dep array *and* a `setState(...)` that
+     writes those values. Cleanup fires on re-render, cancels the
+     in-flight work, silently discards the response. Fix: depend
+     only on identity keys (user ID, URL param, etc.), dedupe
+     concurrent runs with a ref.
+   - **Post-mount URL read vs. `useTradeUrl` strip**: `useTradeUrl`
+     rewrites the URL search-params shortly after mount, keeping
+     only trade-related params. If you need to read a query flag
+     (`?from=`, `?autoBalance=`, etc.), capture it in a `useState`
+     lazy initializer on the first render — not from a post-mount
+     `useEffect`, or it'll be gone.
+   - **StrictMode double-mount + parallel Playwright workers**:
+     every hook issues two fetches per mount in dev (StrictMode
+     remounts). With `fullyParallel: true` the shared `vercel dev`
+     queues requests, and the second of the two fetches misses its
+     timeout. Auth e2e is now `workers: 1, fullyParallel: false` —
+     resist the urge to flip this back "for speed." Auth tests
+     share the Neon DB anyway; parallelism was never buying real
+     throughput.
+
+5. **Don't guess at cold-start budgets.** Static JSON from Vercel's
+   CDN is sub-second, not tens of seconds. Serverless cold starts
+   on function endpoints (`/api/...`) are 1-3s each. Bumping
+   timeouts past ~15s almost always masks a different bug.
