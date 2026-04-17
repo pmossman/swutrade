@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Imbalance surfacing + zero-card notes (UX slice C of 3)
+Surfaces the implied cash settlement that's been implicit all along: the difference between the two sides' card subtotals. Added an `imbalanceNote()` helper in `lib/proposalMessages.ts` that appends a "Subtotal difference: $X in their favor" field to the initial proposal DM, the countered DM, and the resolved (accepted/declined/cancelled) DMs. Hidden when the diff is under $0.50 so balanced trades don't carry unnecessary noise. Matching `<ImbalanceStrip>` in TradeDetailView renders the same info in-app, with directional language adapted to viewer role ("from them to you" vs. "from you to them"). Validation audit: `/api/trades/propose` and `/api/trades/counter` already accept zero-card sides as long as the other side has content — the refine only rejects both-empty. Pure-cash trades ("$20 for their Luke") work end-to-end today; this slice just makes the implied cash legible.
+
 ### 2026-04-17 — Scoped pickers in propose mode (UX slice B of 3)
 Recipient profile fetch lifted from ProposeBar into a shared `useRecipientProfile(handle)` hook consumed by App. The result feeds both ProposeBar (as props, replacing its internal fetch) and TradeSide (via `effectiveSharedLists`, which overrides the URL-encoded `sharedLists` when in propose mode). TradeSide gains an `autoScopeToTheirs` prop — set when `proposeHandle` is truthy — that pre-activates the "they want" / "they have" source chip on overlay open. Users now land directly in the overlap view with their counterpart instead of the full catalog, with the chip one click away if they want to expand. Reuses the existing source-chip infrastructure (same mechanism that powered the `?from=` shared-list flow) rather than adding a parallel tab system.
 

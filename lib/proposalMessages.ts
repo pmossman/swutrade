@@ -57,6 +57,33 @@ function formatSubtotal(cards: TradeCardSnapshot[]): string {
   return total > 0 ? `$${total.toFixed(2)}` : '—';
 }
 
+/**
+ * When the two sides' card subtotals don't match, the difference is
+ * the implied cash settlement (no separate cash field is persisted —
+ * the trade pricing IS the cash). Returns null when the two sides
+ * balance closely enough that surfacing it would feel noisy.
+ *
+ * Threshold of $0.50 matches user expectations that "close enough"
+ * trades don't need a cash-settlement reminder. Anything above that
+ * reads as a meaningful residual.
+ */
+function imbalanceNote(
+  offering: TradeCardSnapshot[],
+  receiving: TradeCardSnapshot[],
+  proposerHandle: string,
+): { name: string; value: string } | null {
+  const diff = subtotal(offering) - subtotal(receiving);
+  if (Math.abs(diff) < 0.5) return null;
+  // `diff > 0` means the proposer's offering is higher → they'd
+  // typically RECEIVE the residual in cash ("in their favor"). Sign
+  // flipped means the recipient's side is higher.
+  const favors = diff > 0 ? `@${proposerHandle}` : 'you';
+  return {
+    name: 'Subtotal difference',
+    value: `$${Math.abs(diff).toFixed(2)} in ${favors === 'you' ? 'your' : `${favors}'s`} favor — typically settled in cash.`,
+  };
+}
+
 export interface ProposalMessageContext {
   tradeId: string;
   proposerHandle: string;
@@ -68,6 +95,7 @@ export interface ProposalMessageContext {
 
 /** The initial DM sent to the recipient when a proposal is created. */
 export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessageBody {
+  const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
   const embed: DiscordEmbed = {
     title: `Trade proposal from @${ctx.proposerHandle}`,
     color: COLORS.gold,
@@ -81,6 +109,7 @@ export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessag
         name: `They're asking for (${formatSubtotal(ctx.receivingCards)})`,
         value: formatCardList(ctx.receivingCards),
       },
+      ...(imbalance ? [imbalance] : []),
     ],
     footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
   };
@@ -149,6 +178,7 @@ export function buildCounteredProposalMessage(
   ctx: ProposalMessageContext,
   responderHandle: string,
 ): DiscordMessageBody {
+  const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
   return {
     embeds: [{
       title: `Trade proposal from @${ctx.proposerHandle}`,
@@ -163,6 +193,7 @@ export function buildCounteredProposalMessage(
           name: `Asked for (${formatSubtotal(ctx.receivingCards)})`,
           value: formatCardList(ctx.receivingCards),
         },
+        ...(imbalance ? [imbalance] : []),
         { name: 'Status', value: `🔁 **Countered** by @${responderHandle} — check your DMs for the new offer.` },
       ],
       footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
@@ -196,6 +227,7 @@ export function buildResolvedProposalMessage(
   const actor = outcome === 'cancelled'
     ? `by the proposer (@${responderHandle})`
     : `by @${responderHandle}`;
+  const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
 
   return {
     embeds: [{
@@ -211,6 +243,7 @@ export function buildResolvedProposalMessage(
           name: `Asked for (${formatSubtotal(ctx.receivingCards)})`,
           value: formatCardList(ctx.receivingCards),
         },
+        ...(imbalance ? [imbalance] : []),
         { name: 'Status', value: `${emoji} **${verb}** ${actor}` },
       ],
       footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },

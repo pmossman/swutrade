@@ -115,6 +115,15 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
               cards={trade.receivingCards}
             />
 
+            {/* Imbalance — derived from card prices, serves as the implied
+                cash settlement for the trade. Hidden when the two sides
+                are close enough ($0.50) to be considered balanced. */}
+            <ImbalanceStrip
+              offering={trade.offeringCards}
+              receiving={trade.receivingCards}
+              viewerIsProposer={trade.viewerIsProposer}
+            />
+
             {/* Cancel button (proposer + pending only) */}
             {trade.viewerIsProposer && trade.status === 'pending' && (
               <section className="flex flex-col gap-2 items-start">
@@ -149,6 +158,43 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
         )}
       </main>
     </div>
+  );
+}
+
+/**
+ * Shows the implied cash settlement between the two sides. The number
+ * is derived from card-price subtotals so it stays in sync whenever
+ * prices or snapshots change — no separate cash state is persisted.
+ * See ROADMAP / NEXT.md for the "cash = imbalance" decision rationale.
+ */
+function ImbalanceStrip({
+  offering,
+  receiving,
+  viewerIsProposer,
+}: {
+  offering: CardSnapshot[];
+  receiving: CardSnapshot[];
+  viewerIsProposer: boolean;
+}) {
+  const offTotal = offering.reduce((s, c) => s + (c.unitPrice ?? 0) * c.qty, 0);
+  const recTotal = receiving.reduce((s, c) => s + (c.unitPrice ?? 0) * c.qty, 0);
+  const diff = offTotal - recTotal;
+  // "Balanced" case: hide rather than show "$0 imbalance" noise.
+  if (Math.abs(diff) < 0.5) return null;
+
+  // `diff > 0` → the offering side is higher-value → the offerer
+  // (proposer) typically receives the residual in cash. Whose label
+  // reads as "you" depends on the viewer's role.
+  const offeringIsViewer = viewerIsProposer;
+  const offeringHasMore = diff > 0;
+  const receiverOfCash = offeringHasMore === offeringIsViewer ? 'you' : 'them';
+  return (
+    <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+      <span className="font-bold">${Math.abs(diff).toFixed(2)}</span>{' '}
+      imbalance — typically settled in cash from{' '}
+      <strong>{receiverOfCash === 'you' ? 'them' : 'you'}</strong> to{' '}
+      <strong>{receiverOfCash}</strong>.
+    </section>
   );
 }
 
