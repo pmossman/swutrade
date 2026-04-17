@@ -1,0 +1,105 @@
+/**
+ * Outbound helpers for the SWUTrade bot. Calls Discord's REST API
+ * using the application's bot token (`DISCORD_BOT_TOKEN`).
+ *
+ * Every Discord write flows through one of these helpers so:
+ *   - Tests can swap the fetch implementation via dependency
+ *     injection (see discordClient.ts for the same pattern with
+ *     the user OAuth surface).
+ *   - Error handling + logging is consistent.
+ *
+ * Scope is deliberately narrow — only the endpoints we actually
+ * call today. Every new method pairs with a captured fixture
+ * under tests/fixtures/discord/. See PHASE4_TESTING.md.
+ */
+
+const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+export interface DiscordEmbed {
+  title?: string;
+  description?: string;
+  color?: number;
+  url?: string;
+  fields?: Array<{ name: string; value: string; inline?: boolean }>;
+  footer?: { text: string };
+  timestamp?: string;
+}
+
+export interface DiscordComponent {
+  type: number;
+  components?: DiscordComponent[];
+  style?: number;
+  label?: string;
+  custom_id?: string;
+  url?: string;
+  disabled?: boolean;
+}
+
+export interface DiscordMessageBody {
+  content?: string;
+  embeds?: DiscordEmbed[];
+  components?: DiscordComponent[];
+  allowed_mentions?: { parse?: Array<'users' | 'roles' | 'everyone'> };
+}
+
+export interface DiscordBotClient {
+  postChannelMessage(channelId: string, body: DiscordMessageBody): Promise<{ id: string; channel_id: string }>;
+  createDmChannel(userId: string): Promise<{ id: string }>;
+  /** Shortcut: open a DM channel (if needed) and post to it. */
+  sendDirectMessage(userId: string, body: DiscordMessageBody): Promise<{ id: string; channel_id: string }>;
+  /** Look up basic guild metadata — used by the install webhook to
+   *  cache guild_name / guild_icon without a second round-trip. */
+  getGuild(guildId: string): Promise<{ id: string; name: string; icon: string | null }>;
+}
+
+export function createDiscordBotClient(opts: { token?: string; apiBase?: string } = {}): DiscordBotClient {
+  const token = opts.token ?? process.env.DISCORD_BOT_TOKEN;
+  if (!token) {
+    throw new Error('DISCORD_BOT_TOKEN is not set — bot cannot make API calls');
+  }
+  const apiBase = opts.apiBase ?? DISCORD_API_BASE;
+
+  async function request(path: string, init: RequestInit): Promise<Response> {
+    const res = await fetch(`${apiBase}${path}`, {
+      ...init,
+      headers: {
+        ...(init.headers ?? {}),
+        Authorization: `Bot ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '<no body>');
+      throw new Error(`Discord bot API ${init.method ?? 'GET'} ${path} failed: ${res.status} ${detail}`);
+    }
+    return res;
+  }
+
+  return {
+    async postChannelMessage(channelId, body) {
+      const res = await request(`/channels/${channelId}/messages`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      return res.json() as Promise<{ id: string; channel_id: string }>;
+    },
+
+    async createDmChannel(userId) {
+      const res = await request('/users/@me/channels', {
+        method: 'POST',
+        body: JSON.stringify({ recipient_id: userId }),
+      });
+      return res.json() as Promise<{ id: string }>;
+    },
+
+    async sendDirectMessage(userId, body) {
+      const channel = await this.createDmChannel(userId);
+      return this.postChannelMessage(channel.id, body);
+    },
+
+    async getGuild(guildId) {
+      const res = await request(`/guilds/${guildId}`, { method: 'GET' });
+      return res.json() as Promise<{ id: string; name: string; icon: string | null }>;
+    },
+  };
+}

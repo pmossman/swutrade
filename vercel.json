@@ -12,6 +12,8 @@
     { "source": "/api/auth/discord", "destination": "/api/auth?action=discord" },
     { "source": "/api/auth/callback", "destination": "/api/auth?action=callback" },
     { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
+    { "source": "/api/bot/interactions", "destination": "/api/bot?action=interactions" },
+    { "source": "/api/bot/events", "destination": "/api/bot?action=events" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

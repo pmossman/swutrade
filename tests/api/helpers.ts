@@ -68,6 +68,12 @@ export function mockResponse(): VercelResponse & {
       res._body = typeof body === 'string' ? body : body.toString('utf8');
       return res;
     },
+    end(body?: string | Buffer) {
+      if (body != null) {
+        res._body = typeof body === 'string' ? body : body.toString('utf8');
+      }
+      return res;
+    },
     setHeader(key: string, value: string | string[]) {
       res._headers[key.toLowerCase()] = value;
       return res;
