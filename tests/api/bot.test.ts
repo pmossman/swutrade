@@ -1,10 +1,16 @@
 import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { mockResponse } from './helpers.js';
-import { dispatchBotPayload } from '../../api/bot.js';
+import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { mockRequest, mockResponse } from './helpers.js';
+import handler, { dispatchBotPayload } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
 import { botInstalledGuilds } from '../../lib/schema.js';
+
+function extractRawEd25519PublicKey(key: KeyObject): string {
+  const der = key.export({ format: 'der', type: 'spki' }) as Buffer;
+  return der.subarray(12).toString('hex');
+}
 
 describeWithDb('/api/bot dispatcher', () => {
   const cleanupGuildIds: string[] = [];
@@ -105,5 +111,76 @@ describeWithDb('/api/bot dispatcher', () => {
     const res = mockResponse();
     await dispatchBotPayload('who-knows', {}, res);
     expect(res._status).toBe(404);
+  });
+
+  /**
+   * Full round-trip through the default handler, including signature
+   * verification + body canonicalization. Mirrors the exact path
+   * Discord's Developer Portal hits when it saves an Interactions
+   * Endpoint URL: compact-JSON PING, Ed25519 sig over timestamp+body.
+   *
+   * Regression guard: @vercel/node pre-parses JSON bodies, so the
+   * handler must re-serialize `req.body` to reconstruct the bytes
+   * that were signed. Previously this path tried to read the raw
+   * stream (already consumed) and failed with 401, which surfaces
+   * to Discord as "interactions endpoint url could not be verified".
+   */
+  describe('signature-verified handler', () => {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const publicKeyHex = extractRawEd25519PublicKey(publicKey);
+
+    it('accepts a signed PING after re-serializing a @vercel/node-parsed body', async () => {
+      process.env.DISCORD_APP_PUBLIC_KEY = publicKeyHex;
+
+      // Discord sends compact JSON — mirror that with JSON.stringify
+      // of a plain object. @vercel/node would then JSON.parse it and
+      // hand us back the parsed object on req.body.
+      const payload = { type: 1 };
+      const serialized = JSON.stringify(payload);
+      const parsedByVercel = JSON.parse(serialized);
+
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const message = Buffer.concat([Buffer.from(timestamp), Buffer.from(serialized)]);
+      const signature = sign(null, message, privateKey).toString('hex');
+
+      const req = mockRequest({
+        method: 'POST',
+        body: parsedByVercel,
+        query: { action: 'interactions' },
+        headers: {
+          'x-signature-ed25519': signature,
+          'x-signature-timestamp': timestamp,
+        },
+      });
+      const res = mockResponse();
+      await handler(req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._json).toEqual({ type: 1 });
+    });
+
+    it('rejects when the signature doesn\'t match the canonicalized body', async () => {
+      process.env.DISCORD_APP_PUBLIC_KEY = publicKeyHex;
+
+      // Sign one body, deliver a different one — verification fails.
+      const signedBody = JSON.stringify({ type: 1 });
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const message = Buffer.concat([Buffer.from(timestamp), Buffer.from(signedBody)]);
+      const signature = sign(null, message, privateKey).toString('hex');
+
+      const req = mockRequest({
+        method: 'POST',
+        body: { type: 2 }, // different payload
+        query: { action: 'interactions' },
+        headers: {
+          'x-signature-ed25519': signature,
+          'x-signature-timestamp': timestamp,
+        },
+      });
+      const res = mockResponse();
+      await handler(req, res);
+
+      expect(res._status).toBe(401);
+    });
   });
 });

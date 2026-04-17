@@ -22,25 +22,21 @@ import { createDiscordBotClient } from '../lib/discordBot.js';
  * sees two distinct URLs but we only burn one serverless function
  * slot (Hobby plan ceiling is 12 — see project memory).
  *
- * Body parsing is disabled because signature verification needs the
- * exact request bytes Discord signed; re-serializing a parsed JSON
- * can mutate whitespace and invalidate the signature.
+ * Body handling: @vercel/node pre-parses JSON bodies and does NOT
+ * honor the Next.js `config.api.bodyParser = false` convention, so
+ * we can't read the raw request stream. Instead we re-serialize
+ * `req.body` via JSON.stringify and feed that to the verifier.
+ * This works because Discord's signed payloads are compact JSON
+ * produced by their server — `JSON.parse` preserves key insertion
+ * order in V8, so round-tripping produces byte-identical output.
  */
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
-// --- raw-body reader --------------------------------------------------------
-
-async function readRawBody(req: VercelRequest): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks).toString('utf8');
+function canonicalRequestBody(req: VercelRequest): string {
+  if (typeof req.body === 'string') return req.body;
+  if (req.body == null) return '';
+  // Pre-parsed JSON object: round-trip via stringify. Compact
+  // (no spaces) matches the format Discord's servers emit.
+  return JSON.stringify(req.body);
 }
 
 // --- Discord interaction constants ------------------------------------------
@@ -68,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: 'Missing signature headers' });
   }
 
-  const rawBody = await readRawBody(req);
+  const rawBody = canonicalRequestBody(req);
   const verified = verifyDiscordSignature({
     signature,
     timestamp,
