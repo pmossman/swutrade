@@ -179,7 +179,7 @@ export function ProposeBar({
       setSendError(err instanceof Error ? err.message : 'Failed to send');
       setSendState('error');
     }
-  }, [sendState, yourCards, theirCards, recipientHandle, percentage, priceMode]);
+  }, [sendState, yourCards, theirCards, recipientHandle, percentage, priceMode, message]);
 
   const body = (() => {
     if (sendState === 'sent') {
