@@ -37,26 +37,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. DB indexes on trade_proposals *(Foundation bundle, part 2)*
-
-**Why:** `trade_proposals` has zero explicit indexes. Every proposal fetch, history query, counter-child lookup, and update-with-WHERE-status filter hits a table scan. Harmless today; visible latency at 10k rows. Postgres does not auto-index FK columns.
-
-**What ships:**
-- `.index()` calls in `lib/schema.ts` for `counter_of_id`, `recipient_user_id`, `proposer_user_id`, `status`.
-- Compound index `(proposer_user_id, updated_at DESC)` and `(recipient_user_id, updated_at DESC)` for the history query.
-- Generated migration + applied to DB.
-
-**Done when:**
-- [ ] Schema updated, migration generated via `npx drizzle-kit generate`.
-- [ ] `npx drizzle-kit push` applied cleanly against Neon.
-- [ ] Spot-check an EXPLAIN on `SELECT … FROM trade_proposals WHERE proposer_user_id = X ORDER BY updated_at DESC LIMIT 100` and confirm it uses the new index.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** CODE_REVIEW C2.
-
----
-
-### 2. Accessibility foundation *(Foundation bundle, part 3)*
+### 1. Accessibility foundation *(Foundation bundle, part 3)*
 
 **Why:** No global `:focus-visible` on a dark palette = invisible keyboard focus. 24×24 hit zones on qty/remove/priority buttons = WCAG fail + real mobile mis-taps. Both are cheap to fix and apply everywhere.
 
@@ -75,7 +56,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 3. Design-system primitives *(Foundation bundle, part 4 — biggest)*
+### 2. Design-system primitives *(Foundation bundle, part 4 — biggest)*
 
 **Why:** `<PageHeader>` chrome is duplicated across 7 files. Button heights (h-7 / h-8 / h-9) drift per view. `StatusBadge` exists as two near-duplicates between TradeDetailView + TradesHistoryView. Loading / empty / error states have ad-hoc visual language. Extracting these gives every future slice a smaller surface to edit and keeps views visually consistent.
 
@@ -98,7 +79,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 4. Copy + context fixes *(Foundation bundle, part 5)*
+### 3. Copy + context fixes *(Foundation bundle, part 5)*
 
 **Why:** Many small clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
 
@@ -121,7 +102,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 5. Test-file dedup *(Foundation bundle, part 6)*
+### 4. Test-file dedup *(Foundation bundle, part 6)*
 
 **Why:** `makeFakeBot()` is defined in 4 test files, each slightly different. Proposal-row seeding helpers are in 4 test files, each slightly different. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Consolidation is small, one-shot, pays off immediately on the next schema touch.
 
@@ -189,6 +170,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-17 — Foundation slice 2: trade_proposals indexes
+Added 4 indexes in `lib/schema.ts` covering the hot paths: `counter_of_id` (counter-chain children), `status` (optimistic-concurrency WHERE filters), and compound `(proposer_user_id, updated_at DESC)` + `(recipient_user_id, updated_at DESC)` for the history query. Migration `0008_blushing_thanos.sql` generated; DDL applied to Neon. EXPLAIN with `enable_seqscan=OFF` confirms each index is picked for its intended predicate; planner will switch automatically once row count grows beyond tiny.
 
 ### 2026-04-17 — Foundation slice 1: security + correctness quickies
 Ed25519 timestamp window (`maxSkewSeconds`, default 300s) with `now`-injection for tests and 5 new cases in `discord-signature.test.ts` pinning default rejection + edge + override behavior. Test-key fallback gated behind `VERCEL_ENV !== 'production'` via a pure `resolveTestPublicKey(env)` helper exported from `api/bot.ts`, with a 3-case unit test. Counter-cleanup race-loss `db.delete` now logs on failure instead of silently swallowing. Full vitest run green (290/290).

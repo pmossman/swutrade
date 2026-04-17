@@ -7,6 +7,7 @@ import {
   numeric,
   timestamp,
   unique,
+  index,
   jsonb,
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
@@ -183,47 +184,61 @@ export interface TradeCardSnapshot {
  *     time the other responds; the proposal should still show what
  *     was offered, not what's currently listed.
  */
-export const tradeProposals = pgTable('trade_proposals', {
-  id: text('id').primaryKey(),
-  proposerUserId: text('proposer_user_id')
-    .references(() => users.id, { onDelete: 'cascade' })
-    .notNull(),
-  recipientUserId: text('recipient_user_id')
-    .references(() => users.id, { onDelete: 'cascade' })
-    .notNull(),
-  status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] })
-    .default('pending')
-    .notNull(),
-  // Self-FK: when set, points to the proposal this one was made
-  // against. Counters form a chain walked backwards via this FK;
-  // the original has counter_of_id=null. See
-  // PHASE4C_COUNTER_DESIGN.md for the full semantic model.
-  // `on delete set null` means deleting an ancestor (shouldn't
-  // happen in practice) leaves the counter as a standalone row
-  // with a broken history pointer — acceptable degradation.
-  counterOfId: text('counter_of_id').references(
-    (): AnyPgColumn => tradeProposals.id,
-    { onDelete: 'set null' },
-  ),
-  offeringCards: jsonb('offering_cards').notNull().$type<TradeCardSnapshot[]>(),
-  receivingCards: jsonb('receiving_cards').notNull().$type<TradeCardSnapshot[]>(),
-  message: text('message'),
-  // DM tracking (Phase 4c slice 3). Recorded after we successfully
-  // create the recipient's DM channel + post the embed. Used by the
-  // button-interaction handler to edit the DM in place on accept/
-  // decline (swapping the button row for an outcome line).
-  //
-  // `deliveryStatus` is distinct from `status`: the proposal's
-  // logical state (pending → accepted/declined) is one axis; the
-  // Discord transport (pending → delivered / failed) is another.
-  // Keeping them separate lets us surface "we saved but couldn't
-  // DM them" in the UI without overloading a single enum.
-  deliveryStatus: text('delivery_status', { enum: ['pending', 'delivered', 'failed'] })
-    .default('pending')
-    .notNull(),
-  discordDmChannelId: text('discord_dm_channel_id'),
-  discordDmMessageId: text('discord_dm_message_id'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  respondedAt: timestamp('responded_at', { withTimezone: true }),
-});
+export const tradeProposals = pgTable(
+  'trade_proposals',
+  {
+    id: text('id').primaryKey(),
+    proposerUserId: text('proposer_user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    recipientUserId: text('recipient_user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] })
+      .default('pending')
+      .notNull(),
+    // Self-FK: when set, points to the proposal this one was made
+    // against. Counters form a chain walked backwards via this FK;
+    // the original has counter_of_id=null. See
+    // PHASE4C_COUNTER_DESIGN.md for the full semantic model.
+    // `on delete set null` means deleting an ancestor (shouldn't
+    // happen in practice) leaves the counter as a standalone row
+    // with a broken history pointer — acceptable degradation.
+    counterOfId: text('counter_of_id').references(
+      (): AnyPgColumn => tradeProposals.id,
+      { onDelete: 'set null' },
+    ),
+    offeringCards: jsonb('offering_cards').notNull().$type<TradeCardSnapshot[]>(),
+    receivingCards: jsonb('receiving_cards').notNull().$type<TradeCardSnapshot[]>(),
+    message: text('message'),
+    // DM tracking (Phase 4c slice 3). Recorded after we successfully
+    // create the recipient's DM channel + post the embed. Used by the
+    // button-interaction handler to edit the DM in place on accept/
+    // decline (swapping the button row for an outcome line).
+    //
+    // `deliveryStatus` is distinct from `status`: the proposal's
+    // logical state (pending → accepted/declined) is one axis; the
+    // Discord transport (pending → delivered / failed) is another.
+    // Keeping them separate lets us surface "we saved but couldn't
+    // DM them" in the UI without overloading a single enum.
+    deliveryStatus: text('delivery_status', { enum: ['pending', 'delivered', 'failed'] })
+      .default('pending')
+      .notNull(),
+    discordDmChannelId: text('discord_dm_channel_id'),
+    discordDmMessageId: text('discord_dm_message_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+  },
+  // Postgres does not auto-index FK columns. These cover the hot
+  // paths: counter-child lookups (counter_of_id), single-row fetch
+  // by recipient/proposer in detail views, status filters in the
+  // optimistic-concurrency WHERE clauses, and the history query
+  // (filter by user id, order by updated_at DESC).
+  (t) => [
+    index('trade_proposals_counter_of_id_idx').on(t.counterOfId),
+    index('trade_proposals_status_idx').on(t.status),
+    index('trade_proposals_proposer_updated_idx').on(t.proposerUserId, t.updatedAt.desc()),
+    index('trade_proposals_recipient_updated_idx').on(t.recipientUserId, t.updatedAt.desc()),
+  ],
+);
