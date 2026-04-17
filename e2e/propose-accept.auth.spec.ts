@@ -31,14 +31,22 @@ import { signInteraction, buildButtonClickPayload } from './helpers/discordSign'
  */
 
 function loadTestPrivateKey(): KeyObject | null {
-  const pem = process.env.DISCORD_TEST_PRIVATE_KEY_PEM;
+  // Base64-encoded PKCS8 PEM — keeps the value single-line for
+  // clean handling across .env.local, Vercel CLI, and GitHub Actions
+  // secrets. The raw PEM can still be loaded too if the env is set
+  // to the multiline form.
+  const b64 = process.env.DISCORD_TEST_PRIVATE_KEY_B64;
+  const rawPem = process.env.DISCORD_TEST_PRIVATE_KEY_PEM;
+  const pem = b64
+    ? Buffer.from(b64, 'base64').toString('utf8')
+    : rawPem;
   if (!pem) return null;
   try {
     return createPrivateKey({ key: pem, format: 'pem' });
   } catch (err) {
     // Bad PEM — better to fail loudly than silently skip, because
     // "CI green" is the promise we're trying to keep.
-    throw new Error(`DISCORD_TEST_PRIVATE_KEY_PEM is not valid PEM: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Test private key isn't valid PEM: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -50,7 +58,7 @@ test.describe('Signed button interaction (synthetic Discord webhook)', () => {
   if (!hasTestKey) {
     // Dormant skip: the spec ships but only activates once the
     // keypair is provisioned. Message makes the setup obvious.
-    test.skip(true, 'DISCORD_TEST_PRIVATE_KEY_PEM not set — provision a test keypair + set DISCORD_APP_PUBLIC_KEY_TEST on Preview to activate.');
+    test.skip(true, 'DISCORD_TEST_PRIVATE_KEY_B64 not set — provision a test keypair + set DISCORD_APP_PUBLIC_KEY_TEST on Preview to activate.');
   }
 
   let viewer: TestUser;

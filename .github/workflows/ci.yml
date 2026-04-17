@@ -159,6 +159,10 @@ jobs:
       POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
       PLAYWRIGHT_BASE_URL: ${{ needs.wait-for-deploy.outputs.url }}
       VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+      # Activates the signed-interaction e2e spec (see
+      # propose-accept.auth.spec.ts). The matching public key is
+      # set on the Vercel Preview env as DISCORD_APP_PUBLIC_KEY_TEST.
+      DISCORD_TEST_PRIVATE_KEY_B64: ${{ secrets.DISCORD_TEST_PRIVATE_KEY_B64 }}
       DOTENV_CONFIG_QUIET: 'true'
     steps:
       - uses: actions/checkout@v4
@@ -173,6 +177,9 @@ jobs:
           echo "POSTGRES_URL_NON_POOLING=$POSTGRES_URL_NON_POOLING" >> .env.local
           echo "PLAYWRIGHT_BASE_URL=$PLAYWRIGHT_BASE_URL" >> .env.local
           echo "VERCEL_AUTOMATION_BYPASS_SECRET=$VERCEL_AUTOMATION_BYPASS_SECRET" >> .env.local
+          if [ -n "$DISCORD_TEST_PRIVATE_KEY_B64" ]; then
+            echo "DISCORD_TEST_PRIVATE_KEY_B64=$DISCORD_TEST_PRIVATE_KEY_B64" >> .env.local
+          fi
 
       # Single step: skips browser download if cached, always installs
       # system deps (apt packages aren't in our cache).
