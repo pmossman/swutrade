@@ -1,0 +1,9 @@
+# Mirrors what CI's "Types + Tests + Build" job runs first, so the
+# same class of TypeScript errors that would fail CI gets caught
+# before the commit leaves the working tree. Intentionally omits
+# vitest + playwright — those are slower and CI catches them fine;
+# tsc is the fast, high-signal gate.
+#
+# To skip in a pinch: `git commit --no-verify`.
+
+npm run typecheck

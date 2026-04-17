@@ -13,6 +13,7 @@
     "build": "tsx scripts/fetch-prices.ts && tsx scripts/enrich-cards.ts && vite build",
     "build:fresh": "FETCH_PRICES=1 tsx scripts/fetch-prices.ts && ENRICH=1 tsx scripts/enrich-cards.ts && vite build",
     "lint": "eslint .",
+    "typecheck": "tsc -b --force",
     "test": "vitest",
     "test:run": "vitest run",
     "e2e": "playwright test",
@@ -21,7 +22,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prepare": "husky"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
@@ -56,6 +58,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "husky": "^9.1.7",
     "tsx": "^4.21.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
