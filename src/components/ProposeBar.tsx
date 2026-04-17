@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
-import type { VariantRestriction } from '../persistence';
 import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
 import {
   adjustPrice,
@@ -9,6 +8,7 @@ import {
 import { extractVariantLabel } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -19,13 +19,12 @@ interface ProposeBarProps {
   available: AvailableApi;
   yourCards: TradeCard[];
   theirCards: TradeCard[];
+  /** Recipient's public lists fetched at the App level so TradeSide's
+   *  source-chip pools stay in sync with the matchmaker's view of
+   *  them. Parent owns the fetch via useRecipientProfile. */
+  recipientProfile: RecipientProfile | null;
+  recipientFetchState: FetchState;
   onApplyMatch: (yours: TradeCard[], theirs: TradeCard[]) => void;
-}
-
-interface RemoteProfile {
-  user: { username: string; handle: string; avatarUrl: string | null };
-  wants: Array<{ familyId: string; qty: number; restriction: VariantRestriction; isPriority?: boolean }> | null;
-  available: Array<{ productId: string; qty: number }> | null;
 }
 
 type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'error';
@@ -58,10 +57,10 @@ export function ProposeBar({
   available,
   yourCards,
   theirCards,
+  recipientProfile: profile,
+  recipientFetchState: fetchState,
   onApplyMatch,
 }: ProposeBarProps) {
-  const [profile, setProfile] = useState<RemoteProfile | null>(null);
-  const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [sendState, setSendState] = useState<SendState>('idle');
   const [sentTradeId, setSentTradeId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -71,36 +70,6 @@ export function ProposeBar({
   // accept more than the server will take.
   const [message, setMessage] = useState('');
   const [messageOpen, setMessageOpen] = useState(false);
-  const fetchStartedRef = useRef(false);
-
-  // One-shot profile fetch. Uses a ref for dedupe rather than
-  // state-in-deps because an in-flight fetch mutating the state
-  // that feeds its own dependency array would cancel itself — see
-  // the auth-e2e diagnostic playbook entry in PHASE4_TESTING.md.
-  useEffect(() => {
-    if (!recipientHandle || fetchStartedRef.current) return;
-    fetchStartedRef.current = true;
-
-    let cancelled = false;
-    setFetchState('loading');
-    (async () => {
-      try {
-        const res = await fetch(`/api/user/${encodeURIComponent(recipientHandle)}`);
-        if (cancelled) return;
-        if (!res.ok) {
-          setFetchState('error');
-          return;
-        }
-        const data: RemoteProfile = await res.json();
-        if (cancelled) return;
-        setProfile(data);
-        setFetchState('idle');
-      } catch {
-        if (!cancelled) setFetchState('error');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [recipientHandle]);
 
   // Build a preview for the given mode. Both modes share the same
   // overlap pool computation inside computeMatch — only the subset-

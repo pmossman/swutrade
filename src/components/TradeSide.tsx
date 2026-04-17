@@ -63,6 +63,11 @@ interface TradeSideProps {
    *  guilds — the chip just doesn't render. */
   communityWantFamilyIds?: readonly string[];
   communityAvailableProductIds?: readonly string[];
+  /** When true, opening the search overlay auto-activates the "theirs"
+   *  source chip — used in propose mode so the first thing the user
+   *  sees is the overlap with their counterpart, not the whole catalog.
+   *  Manual chip toggling afterward stays the user's choice. */
+  autoScopeToTheirs?: boolean;
 }
 
 const headerColors: Record<string, string> = {
@@ -126,6 +131,7 @@ export function TradeSide({
   onConsumeAutoOpen,
   communityWantFamilyIds,
   communityAvailableProductIds,
+  autoScopeToTheirs,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';
@@ -270,10 +276,19 @@ export function TradeSide({
     return chips;
   }, [isOffering, mineCards, theirsCards, communityCards]);
 
-  // Opening the overlay from the panel's Add-Card affordances.
+  // Opening the overlay from the panel's Add-Card affordances. In
+  // propose mode (`autoScopeToTheirs`) we pre-activate the "theirs"
+  // chip so the first thing the user sees is the overlap with the
+  // recipient — full catalog stays one chip-click away. No-op when
+  // the chip would have no cards (e.g., recipient has zero matching
+  // wants) — the chip wouldn't render and the overlay would show an
+  // empty scoped view otherwise.
   const openOverlay = useCallback(() => {
+    if (autoScopeToTheirs && theirsCards.length > 0) {
+      setSeed({ activeChips: ['theirs'] });
+    }
     setOverlayOpen(true);
-  }, []);
+  }, [autoScopeToTheirs, theirsCards.length]);
 
   // Swap-variant handler for TradeRow kebab — seeds the overlay with
   // the card's basename so the picker shows every printing of that card.

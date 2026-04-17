@@ -13,6 +13,7 @@ import { PageHeader } from './components/ui/PageHeader';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
+import { useRecipientProfile } from './hooks/useRecipientProfile';
 import { useSenderHandle } from './hooks/useSenderHandle';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
@@ -136,6 +137,22 @@ function App() {
   const senderHandle = useSenderHandle();
   const proposeHandle = useProposeHandle();
   const counterId = useCounterId();
+  // When proposing to a specific user, fetch their public lists here
+  // so both ProposeBar (matchmaker + status hint) and TradeSide
+  // (scoped picker source chips) read the same snapshot without
+  // double-fetching. `sharedLists` (the ?w=/?a= URL-encoded form)
+  // remains the fallback for the share-a-list flow — propose mode
+  // takes precedence when active.
+  const { profile: recipientProfile, fetchState: recipientFetchState } = useRecipientProfile(proposeHandle);
+  const effectiveSharedLists = useMemo(() => {
+    if (proposeHandle && recipientProfile) {
+      return {
+        wants: recipientProfile.wants ?? [],
+        available: recipientProfile.available ?? [],
+      };
+    }
+    return sharedLists;
+  }, [proposeHandle, recipientProfile, sharedLists]);
   // Phase 4 community rollup — signed-in users see an extra
   // "Community wants/has" chip in the picker, scoped to cards other
   // members of their enrolled Discord guilds want or have.
@@ -466,6 +483,8 @@ function App() {
           available={available}
           yourCards={yourCards}
           theirCards={theirCards}
+          recipientProfile={recipientProfile}
+          recipientFetchState={recipientFetchState}
           onApplyMatch={(yours, theirs) => {
             setYourCards(yours);
             setTheirCards(theirs);
@@ -508,7 +527,7 @@ function App() {
             filters={filters}
             wants={wants}
             available={available}
-            sharedLists={sharedLists}
+            sharedLists={effectiveSharedLists}
             byFamilyAll={cardIndex.byFamilyAll}
             byProductId={cardIndex.byProductId}
             collapsed={isMobile && offeringCollapsed}
@@ -518,6 +537,7 @@ function App() {
             onConsumeAutoOpen={consumeAutoOpenOffering}
             communityWantFamilyIds={community.wantFamilyIds}
             communityAvailableProductIds={community.availableProductIds}
+            autoScopeToTheirs={!!proposeHandle}
           />
           {/* Mobile-only drag handle between the two panels. Collapsed
               panels hide the divider — nothing to resize against. */}
@@ -540,7 +560,7 @@ function App() {
             filters={filters}
             wants={wants}
             available={available}
-            sharedLists={sharedLists}
+            sharedLists={effectiveSharedLists}
             byFamilyAll={cardIndex.byFamilyAll}
             byProductId={cardIndex.byProductId}
             collapsed={isMobile && receivingCollapsed}
@@ -548,6 +568,7 @@ function App() {
             flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
             communityWantFamilyIds={community.wantFamilyIds}
             communityAvailableProductIds={community.availableProductIds}
+            autoScopeToTheirs={!!proposeHandle}
           />
         </div>
       </div>

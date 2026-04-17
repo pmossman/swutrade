@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Scoped pickers in propose mode (UX slice B of 3)
+Recipient profile fetch lifted from ProposeBar into a shared `useRecipientProfile(handle)` hook consumed by App. The result feeds both ProposeBar (as props, replacing its internal fetch) and TradeSide (via `effectiveSharedLists`, which overrides the URL-encoded `sharedLists` when in propose mode). TradeSide gains an `autoScopeToTheirs` prop — set when `proposeHandle` is truthy — that pre-activates the "they want" / "they have" source chip on overlay open. Users now land directly in the overlap view with their counterpart instead of the full catalog, with the chip one click away if they want to expand. Reuses the existing source-chip infrastructure (same mechanism that powered the `?from=` shared-list flow) rather than adding a parallel tab system.
+
 ### 2026-04-17 — Matchmaker rewrite: subset-sum + two modes (UX slice A of 3)
 Greedy `computeMatch` replaced with a subset-sum search. Pools capped at top-16 by price (priorities-first), then the cross-product of both sides' subsets is scored by imbalance (primary), card count (tiebreaker), and priority count (final tiebreaker). Fixes the real $4-vs-$15 report from dogfooding — previously locally-greedy would stop early; the new search finds the subset pair with the tightest achievable balance. Second mode `maximize-priorities` force-includes every priority-starred card then only adds non-priority cards if they improve or preserve balance. ProposeBar now renders two Suggest buttons: `✨ Suggest a match` (minimize) always on when overlap exists; `★ Priorities` (maximize) only when the alt mode produces a different result. New `imbalance` field on `MatchResult` exposes the residual cash implication — surfaced by the callers rather than stored.
 
