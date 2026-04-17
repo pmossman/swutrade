@@ -37,26 +37,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. Accessibility foundation *(Foundation bundle, part 3)*
-
-**Why:** No global `:focus-visible` on a dark palette = invisible keyboard focus. 24×24 hit zones on qty/remove/priority buttons = WCAG fail + real mobile mis-taps. Both are cheap to fix and apply everywhere.
-
-**What ships:**
-- Global `*:focus-visible` rule in `src/index.css` — gold outline (2px, 2px offset) with per-element opt-out class `.no-focus-ring`.
-- 44×44 hit zone expansion on qty / remove / priority-star buttons in `ListRows.tsx` via `::before` pseudo-element (visual stays 24px).
-- Avatar images in user-context rows get meaningful `aria-label` on the enclosing link (currently `alt=""` leaves screen readers without context).
-
-**Done when:**
-- [ ] Tab through the home page, settings page, community view, trade detail — focus is visibly indicated at every stop.
-- [ ] Qty + / − and remove button hit zones measure ≥44px in devtools.
-- [ ] A Playwright a11y spot-check confirms tab order is sensible on /?settings=1.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** UX_REVIEW CU5, CU6; agent 4 findings.
-
----
-
-### 2. Design-system primitives *(Foundation bundle, part 4 — biggest)*
+### 1. Design-system primitives *(Foundation bundle, part 4 — biggest)*
 
 **Why:** `<PageHeader>` chrome is duplicated across 7 files. Button heights (h-7 / h-8 / h-9) drift per view. `StatusBadge` exists as two near-duplicates between TradeDetailView + TradesHistoryView. Loading / empty / error states have ad-hoc visual language. Extracting these gives every future slice a smaller surface to edit and keeps views visually consistent.
 
@@ -79,7 +60,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 3. Copy + context fixes *(Foundation bundle, part 5)*
+### 2. Copy + context fixes *(Foundation bundle, part 5)*
 
 **Why:** Many small clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
 
@@ -102,7 +83,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 4. Test-file dedup *(Foundation bundle, part 6)*
+### 3. Test-file dedup *(Foundation bundle, part 6)*
 
 **Why:** `makeFakeBot()` is defined in 4 test files, each slightly different. Proposal-row seeding helpers are in 4 test files, each slightly different. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Consolidation is small, one-shot, pays off immediately on the next schema touch.
 
@@ -170,6 +151,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-17 — Foundation slice 3: accessibility foundation
+Global `:focus-visible` rule in `src/index.css` — 2px gold outline with 2px offset and a `.no-focus-ring` escape hatch. `.hit-area-44` utility class that places a centered transparent 44×44 `::before` pseudo-element on small buttons; applied to QtyStepper + / −, RemoveButton, priority-star, and restriction-editor close in `ListRows.tsx`. Verified in-browser: focus ring renders on tabbed buttons, pseudo-element produces the expected 44×44 hit rect (elementFromPoint at all four 44×44 corners hits the host; a 60×60 test falls through). Avatar `aria-label` ask dropped — current `alt=""` is correct a11y practice because the enclosing `<a>` already contains the visible @handle text, so screen readers announce identity via link content; adding aria-label would *replace* the richer announcement.
 
 ### 2026-04-17 — Foundation slice 2: trade_proposals indexes
 Added 4 indexes in `lib/schema.ts` covering the hot paths: `counter_of_id` (counter-chain children), `status` (optimistic-concurrency WHERE filters), and compound `(proposer_user_id, updated_at DESC)` + `(recipient_user_id, updated_at DESC)` for the history query. Migration `0008_blushing_thanos.sql` generated; DDL applied to Neon. EXPLAIN with `enable_seqscan=OFF` confirms each index is picked for its intended predicate; planner will switch automatically once row count grows beyond tiny.

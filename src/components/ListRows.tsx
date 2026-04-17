@@ -11,7 +11,7 @@ function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number
         type="button"
         aria-label="Decrease quantity"
         onClick={() => onChangeQty(Math.max(1, qty - 1))}
-        className="w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
+        className="hit-area-44 w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
       >
         −
       </button>
@@ -20,7 +20,7 @@ function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number
         type="button"
         aria-label="Increase quantity"
         onClick={() => onChangeQty(Math.min(99, qty + 1))}
-        className="w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
+        className="hit-area-44 w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
       >
         +
       </button>
@@ -34,7 +34,7 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
       type="button"
       aria-label="Remove"
       onClick={onRemove}
-      className="shrink-0 w-6 h-6 rounded text-gray-500 hover:text-crimson-light hover:bg-crimson/10 transition-colors flex items-center justify-center"
+      className="hit-area-44 shrink-0 w-6 h-6 rounded text-gray-500 hover:text-crimson-light hover:bg-crimson/10 transition-colors flex items-center justify-center"
     >
       <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
         <path d="M4 4L12 12M4 12L12 4" />
@@ -118,7 +118,7 @@ export function WantsRow({
           type="button"
           aria-label={item.isPriority ? 'Unmark as priority' : 'Mark as priority'}
           onClick={onTogglePriority}
-          className="shrink-0 w-6 h-6 rounded flex items-center justify-center transition-colors text-gray-600 hover:text-gold-bright"
+          className="hit-area-44 shrink-0 w-6 h-6 rounded flex items-center justify-center transition-colors text-gray-600 hover:text-gold-bright"
         >
           <StarIcon filled={!!item.isPriority} className="w-4 h-4" />
         </button>
@@ -193,7 +193,7 @@ function RestrictionEditor({
         type="button"
         aria-label="Close variant editor"
         onClick={onClose}
-        className="absolute top-1.5 right-1.5 w-6 h-6 rounded text-gray-500 hover:text-gray-200 hover:bg-space-700 transition-colors flex items-center justify-center"
+        className="hit-area-44 absolute top-1.5 right-1.5 w-6 h-6 rounded text-gray-500 hover:text-gray-200 hover:bg-space-700 transition-colors flex items-center justify-center"
       >
         <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
           <path d="M4 4L12 12M4 12L12 4" />

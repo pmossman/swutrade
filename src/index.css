@@ -66,6 +66,21 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Keyboard focus ring. On a dark palette the browser's default
+   blue outline is near-invisible; without it tab users can't see
+   where focus is. Gold matches the app's primary accent. Opt out
+   on a per-element basis with `.no-focus-ring` (use sparingly — only
+   for elements that already convey focus state through a clearer
+   signal, e.g. a ring-* class applied by active state). */
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.no-focus-ring:focus-visible {
+  outline: none;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -215,6 +230,28 @@ body::before {
 @media (min-width: 768px) {
   .drawer-content[data-state="open"]  { animation: drawer-zoom-in  180ms ease-out; }
   .drawer-content[data-state="closed"] { animation: drawer-zoom-out 140ms ease-in; }
+}
+
+/* Extend a small button's interactive hit zone out to WCAG's 44×44
+   minimum without visually growing it. Applied to qty/remove/
+   priority-star buttons in list rows (visual stays 24px, tap target
+   becomes a centered 44×44 box). `isolation: isolate` keeps the
+   pseudo-element stacked above siblings so adjacent rows don't steal
+   clicks. Safe to stack alongside other utilities — `position:
+   relative` on the host is what anchors the pseudo-element. */
+.hit-area-44 {
+  position: relative;
+  isolation: isolate;
+}
+.hit-area-44::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+  /* Transparent is fine — we only need a click target, not a visual. */
 }
 
 /* Custom scrollbar */
