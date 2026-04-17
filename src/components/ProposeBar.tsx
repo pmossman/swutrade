@@ -65,6 +65,12 @@ export function ProposeBar({
   const [sendState, setSendState] = useState<SendState>('idle');
   const [sentTradeId, setSentTradeId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Optional note the proposer can attach. Persisted in the DM embed's
+  // description (rendered as a blockquote). Server caps at 500 chars;
+  // we enforce client-side too so the textarea doesn't silently
+  // accept more than the server will take.
+  const [message, setMessage] = useState('');
+  const [messageOpen, setMessageOpen] = useState(false);
   const autoAppliedRef = useRef(false);
   const fetchStartedRef = useRef(false);
 
@@ -156,6 +162,7 @@ export function ProposeBar({
           recipientHandle,
           offeringCards: snapshot(yourCards),
           receivingCards: snapshot(theirCards),
+          ...(message.trim() ? { message: message.trim() } : {}),
         }),
       });
       if (!res.ok) {
@@ -273,6 +280,18 @@ export function ProposeBar({
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
+      {/* Optional message — hidden pre-send so the bar stays compact
+          in its idle state. Post-send we drop the affordance entirely
+          since the proposal is frozen. */}
+      {profile && sendState !== 'sent' && sendState !== 'sent-undelivered' && (
+        <ProposerMessageInput
+          open={messageOpen}
+          value={message}
+          onToggle={() => setMessageOpen(o => !o)}
+          onChange={setMessage}
+          disabled={sendState === 'sending'}
+        />
+      )}
       {sendState === 'error' && sendError && (
         <div className="mt-1 text-[11px] text-red-300 px-1">
           Couldn't send: {sendError}
@@ -284,5 +303,62 @@ export function ProposeBar({
         </div>
       )}
     </div>
+  );
+}
+
+const MESSAGE_MAX_LENGTH = 500;
+
+function ProposerMessageInput({
+  open,
+  value,
+  onToggle,
+  onChange,
+  disabled,
+}: {
+  open: boolean;
+  value: string;
+  onToggle: () => void;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  const trimmed = value.trim();
+  const hasContent = trimmed.length > 0;
+
+  return (
+    <div className="mt-1.5 px-1">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="inline-flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-gold transition-colors"
+        aria-expanded={open}
+      >
+        <NoteIcon className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`} />
+        {open
+          ? 'Hide note'
+          : hasContent
+            ? `Note added (${trimmed.length}/${MESSAGE_MAX_LENGTH})`
+            : 'Add a note'}
+      </button>
+      {open && (
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+          disabled={disabled}
+          placeholder="Optional context for the recipient — a deck they're building for, a meetup time, etc."
+          rows={2}
+          maxLength={MESSAGE_MAX_LENGTH}
+          className="mt-1.5 w-full bg-space-800/60 border border-space-700 rounded-md px-2.5 py-1.5 text-[11px] text-gray-100 placeholder-gray-500 resize-y min-h-[44px] focus:border-gold/50 focus:outline-none disabled:opacity-50"
+          aria-label="Proposal note (optional)"
+        />
+      )}
+    </div>
+  );
+}
+
+function NoteIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 4l4 4-4 4" />
+    </svg>
   );
 }

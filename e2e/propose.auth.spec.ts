@@ -69,7 +69,14 @@ test.describe('Trade proposal flow', () => {
     // the fetch never completed.
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
 
-    // Step 3: click Send and confirm the success state lands.
+    // Step 3: open the note disclosure and type a message. The
+    // server persists this on the trade_proposals row and it shows
+    // in the recipient's DM embed description.
+    const noteMessage = 'Ping me on Discord about meetup time — e2e note';
+    await page.getByRole('button', { name: /Add a note/i }).click();
+    await page.getByLabel(/Proposal note/i).fill(noteMessage);
+
+    // Step 4: click Send and confirm the success state lands.
     // The recipient is seeded via createSenderFixture with a
     // synthetic discordId that Discord rejects, so the DM delivery
     // fails and the bar lands in `sent-undelivered`. The trade row
@@ -78,8 +85,8 @@ test.describe('Trade proposal flow', () => {
     await page.getByRole('button', { name: /Send proposal/i }).click();
     await expect(bar).toHaveAttribute('data-state', /^sent/, { timeout: 10_000 });
 
-    // Step 4: a row actually exists in trade_proposals for this
-    // viewer → recipient pair.
+    // Step 5: a row actually exists in trade_proposals for this
+    // viewer → recipient pair AND the note was persisted verbatim.
     const { getDb } = await import('../lib/db.js');
     const { tradeProposals } = await import('../lib/schema.js');
     const { and, eq } = await import('drizzle-orm');
@@ -95,6 +102,7 @@ test.describe('Trade proposal flow', () => {
     expect(row).toBeTruthy();
     expect(row.status).toBe('pending');
     expect(row.offeringCards.length + row.receivingCards.length).toBeGreaterThan(0);
+    expect(row.message).toBe(noteMessage);
 
     // Cleanup: the trade_proposals row cascades with the recipient
     // user delete, but be defensive — test helpers don't know about
