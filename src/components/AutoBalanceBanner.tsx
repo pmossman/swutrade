@@ -57,6 +57,20 @@ export function AutoBalanceBanner({
   const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [appliedCounts, setAppliedCounts] = useState<{ off: number; rec: number } | null>(null);
   const autoAppliedRef = useRef(false);
+  // Capture ?autoBalance=1 in the initial render via useState lazy
+  // init — useTradeUrl's sync effect strips the param from the URL
+  // shortly after mount, so reading `window.location.href` from a
+  // post-mount useEffect would always see autoBalance as absent.
+  const [autoBalanceRequested] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('autoBalance') === '1';
+  });
+  // Guards against the "state-in-deps" useEffect trap: we set
+  // fetchState inside the effect that previously had fetchState
+  // in its dep array, so the cleanup fired (setting cancelled=true)
+  // before our own fetch could resolve. Dedupe via a ref that's
+  // reset along with the other state when senderHandle changes.
+  const fetchStartedRef = useRef(false);
 
   // Reset everything when the sender context changes.
   useEffect(() => {
@@ -65,15 +79,17 @@ export function AutoBalanceBanner({
     setFetchState('idle');
     setAppliedCounts(null);
     autoAppliedRef.current = false;
+    fetchStartedRef.current = false;
   }, [senderHandle]);
 
-  // One-shot profile fetch per senderHandle. Intentionally depends on
-  // senderHandle (+ gating booleans) only — list/settings changes
-  // must not cancel an in-flight request, or the banner gets stuck
-  // "Checking…" forever if the user's lists happen to sync mid-fetch.
+  // One-shot profile fetch per senderHandle. Dep array is
+  // deliberately only identity/gating values — nothing the effect
+  // itself mutates. fetchStartedRef prevents duplicate concurrent
+  // fetches within one senderHandle lifecycle.
   useEffect(() => {
     if (!isSignedIn || !senderHandle || dismissed) return;
-    if (profile || fetchState === 'loading' || fetchState === 'error') return;
+    if (fetchStartedRef.current) return;
+    fetchStartedRef.current = true;
 
     let cancelled = false;
     setFetchState('loading');
@@ -96,7 +112,7 @@ export function AutoBalanceBanner({
     })();
 
     return () => { cancelled = true; };
-  }, [isSignedIn, senderHandle, dismissed, profile, fetchState]);
+  }, [isSignedIn, senderHandle, dismissed]);
 
   // Derived preview — recomputes whenever lists or settings shift.
   // Pure function, cheap; no async dance to manage.
@@ -127,20 +143,25 @@ export function AutoBalanceBanner({
     setAppliedCounts({ off: result.offering.length, rec: result.receiving.length });
   }, [onApplyMatch]);
 
-  // Auto-apply once: profile resolved, preview non-empty, URL flag set.
+  // Auto-apply once: profile resolved, preview non-empty, and the
+  // URL flag was present at mount (captured above in useState).
   useEffect(() => {
+    if (!autoBalanceRequested) return;
     if (autoAppliedRef.current || !preview) return;
     if (preview.offering.length === 0 && preview.receiving.length === 0) return;
-    if (typeof window === 'undefined') return;
-
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('autoBalance') !== '1') return;
 
     autoAppliedRef.current = true;
-    url.searchParams.delete('autoBalance');
-    window.history.replaceState(null, '', url.toString());
+    // Scrub the flag from the live URL if anything left it behind,
+    // so a reload won't re-trigger and share copies stay clean.
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('autoBalance')) {
+        url.searchParams.delete('autoBalance');
+        window.history.replaceState(null, '', url.toString());
+      }
+    }
     applyResult(preview);
-  }, [preview, applyResult]);
+  }, [autoBalanceRequested, preview, applyResult]);
 
   if (!isSignedIn) return null;
   if (!senderHandle) return null;
@@ -201,8 +222,24 @@ export function AutoBalanceBanner({
     );
   })();
 
+  // Expose internal state as a data attribute so traces + future
+  // e2e tests have a deterministic signal independent of copy.
+  // Kept after the flaky-test debugging session — it's a cheap win
+  // the next time a state-machine bug shows up.
+  const debugState = appliedCounts
+    ? 'applied'
+    : fetchState === 'error'
+      ? 'error'
+      : !profile
+        ? 'loading-profile'
+        : !preview
+          ? 'loading-compute'
+          : preview.offering.length === 0 && preview.receiving.length === 0
+            ? 'no-match'
+            : 'preview';
+
   return (
-    <div className="px-3 pb-2 max-w-5xl mx-auto w-full">
+    <div className="px-3 pb-2 max-w-5xl mx-auto w-full" data-testid="auto-balance-banner" data-state={debugState}>
       <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
         <button
