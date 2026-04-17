@@ -69,10 +69,17 @@ export function useTradeUrl(
     if (!initializedRef.current) return;
 
     // Don't rewrite the URL when we're on a stand-alone view that
-    // owns params useTradeUrl doesn't understand (profile, settings).
+    // owns params useTradeUrl doesn't understand. Each of these is
+    // a view mode detected by App.detectViewMode; stripping their
+    // query params would misroute on reload (and in fact has,
+    // previously — the ?autoBalance=1 trap + the ?trade=<id> trap
+    // both trace to this effect).
     const currentParams = new URLSearchParams(window.location.search);
     if (currentParams.has('profile')) return;
     if (currentParams.get('settings') === '1') return;
+    if (currentParams.get('community') === '1') return;
+    if (currentParams.get('trades') === '1') return;
+    if (currentParams.has('trade')) return;
 
     const search = buildTradeSearch(state);
     const newUrl = search ? `?${search}` : window.location.pathname;
