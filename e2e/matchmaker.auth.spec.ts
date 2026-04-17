@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, createSenderFixture, TEST_USER } from './helpers/auth';
+import { waitForPricesLoaded } from './helpers/waitForApp';
 
 /**
  * These tests exercise the AutoBalanceBanner against a
@@ -45,6 +46,7 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
 
     await page.goto(`/?from=${sender.handle}`);
     await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await waitForPricesLoaded(page);
 
     // Viewer has empty lists; sender has 1 want + 1 available. The
     // compute finds no overlap because the viewer has nothing.
@@ -69,6 +71,7 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
 
     await page.goto(`/?from=${sender.handle}&autoBalance=1`);
     await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await waitForPricesLoaded(page);
 
     // Either the match auto-applied ("Loaded N cards...") or the
     // viewer's seeded lists don't overlap with the sender's ("No

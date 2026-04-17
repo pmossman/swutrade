@@ -8,6 +8,7 @@ import {
   type TestUser,
 } from './helpers/auth';
 import { installBotInGuild, createGuildMembership } from './helpers/guilds';
+import { waitForPricesLoaded } from './helpers/waitForApp';
 
 /**
  * Multi-user Phase 4 smoke: when viewer + sender are enrolled (with
@@ -75,6 +76,7 @@ test.describe('Community source chip', () => {
 
     await page.goto('/');
     await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await waitForPricesLoaded(page);
 
     // Open the Offering picker.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
