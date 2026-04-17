@@ -25,8 +25,13 @@ export interface GuildMembershipsApi {
   status: 'loading' | 'ready' | 'saving' | 'error';
   /** State of the most recent Discord-side refresh. */
   refreshStatus: RefreshStatus;
-  /** Re-pull the guild list from Discord (re-hits /users/@me/guilds). */
-  refreshFromDiscord: () => Promise<void>;
+  /**
+   * Re-pull the guild list from Discord (re-hits /users/@me/guilds).
+   * Pass `{ silent: true }` for the background auto-refresh path —
+   * errors won't surface a re-auth banner. The manual Refresh button
+   * leaves `silent` unset so the banner shows if the token is gone.
+   */
+  refreshFromDiscord: (opts?: { silent?: boolean }) => Promise<void>;
   /** PUT a patch for a specific guild, optimistically update locally. */
   updateGuild: (guildId: string, patch: GuildPatch) => Promise<void>;
 }
@@ -61,13 +66,16 @@ export function useGuildMemberships(): GuildMembershipsApi {
     }
   }, [applyPayload]);
 
-  const refreshFromDiscord = useCallback(async () => {
-    setRefreshStatus('refreshing');
+  const refreshFromDiscord = useCallback(async (opts: { silent?: boolean } = {}) => {
+    if (!opts.silent) setRefreshStatus('refreshing');
     try {
       const res = await fetch('/api/me/guilds/refresh', { method: 'POST' });
       if (res.status === 409) {
-        // Token expired / revoked — client surfaces a re-auth prompt.
-        setRefreshStatus('needs-reauth');
+        // Token expired / revoked / legacy session without token.
+        // Silent auto-refresh: swallow — local data is already shown,
+        // no need to scare the user. Manual click: show banner.
+        if (!opts.silent) setRefreshStatus('needs-reauth');
+        else setRefreshStatus('idle');
         return;
       }
       if (!res.ok) throw new Error(`status ${res.status}`);
@@ -75,7 +83,8 @@ export function useGuildMemberships(): GuildMembershipsApi {
       setStatus('ready');
       setRefreshStatus('idle');
     } catch {
-      setRefreshStatus('error');
+      if (!opts.silent) setRefreshStatus('error');
+      else setRefreshStatus('idle');
     }
   }, [applyPayload]);
 
@@ -95,7 +104,7 @@ export function useGuildMemberships(): GuildMembershipsApi {
         // sessionStorage can throw in private mode — fall through and refresh anyway.
       }
       if (cancelled) return;
-      await refreshFromDiscord();
+      await refreshFromDiscord({ silent: true });
     })();
     return () => { cancelled = true; };
   }, [loadLocal, refreshFromDiscord]);
