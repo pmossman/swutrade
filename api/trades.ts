@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
 import { trades, tradeProposals, users, type TradeCardSnapshot } from '../lib/schema.js';
+import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
+import { buildProposalMessage } from '../lib/proposalMessages.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -115,12 +117,23 @@ const ProposeBodySchema = z.object({
  * Card arrays are frozen snapshots — see `trade_proposals` schema
  * comment for why (prices drift; lists mutate between send + response).
  *
- * What this does NOT do yet (slice 3): DM the recipient via the bot,
- * render the proposal with Accept/Decline buttons, thread state
- * changes back. For now the proposer sees a confirmation; the
- * recipient has to be told out-of-band.
+ * Flow:
+ *   1. Validate payload + recipient existence/visibility
+ *   2. Insert the proposal row (delivery_status=pending)
+ *   3. Bot DMs the recipient with the embed + Accept/Decline buttons
+ *   4. On DM success, update the row with channel/message ids +
+ *      delivery_status=delivered. On DM failure, set delivery_status
+ *      =failed but KEEP the row — the proposer's composer UI can
+ *      fall back to "share this link manually" without us losing
+ *      the trade on a transient Discord outage.
+ *
+ * `bot` is injectable so integration tests don't call real Discord.
  */
-export async function handlePropose(req: VercelRequest, res: VercelResponse) {
+export async function handlePropose(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
   const session = await requireSession(req, res);
   if (!session) return;
 
@@ -138,7 +151,12 @@ export async function handlePropose(req: VercelRequest, res: VercelResponse) {
   const db = getDb();
 
   const [recipient] = await db
-    .select({ id: users.id, profileVisibility: users.profileVisibility })
+    .select({
+      id: users.id,
+      discordId: users.discordId,
+      handle: users.handle,
+      profileVisibility: users.profileVisibility,
+    })
     .from(users)
     .where(eq(users.handle, recipientHandle))
     .limit(1);
@@ -155,6 +173,17 @@ export async function handlePropose(req: VercelRequest, res: VercelResponse) {
     return res.status(404).json({ error: 'Recipient not found' });
   }
 
+  const [proposer] = await db
+    .select({ handle: users.handle, username: users.username })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+  if (!proposer) {
+    // Session is valid but user row vanished — data inconsistency,
+    // shouldn't happen in practice but fail loud if it does.
+    return res.status(500).json({ error: 'Proposer user record not found' });
+  }
+
   const id = crypto.randomUUID();
   await db.insert(tradeProposals).values({
     id,
@@ -164,7 +193,42 @@ export async function handlePropose(req: VercelRequest, res: VercelResponse) {
     offeringCards,
     receivingCards,
     message: message ?? null,
+    deliveryStatus: 'pending',
   });
 
-  return res.status(201).json({ id });
+  // Fire the DM. Errors never 5xx the propose call — the row is
+  // already persisted and the proposer should still get a 201.
+  // The client reads delivery_status to decide whether to show a
+  // "saved but couldn't DM" fallback.
+  let deliveryStatus: 'delivered' | 'failed' = 'failed';
+  let channelId: string | null = null;
+  let messageId: string | null = null;
+  try {
+    const bot = deps.bot ?? createDiscordBotClient();
+    const payload = buildProposalMessage({
+      tradeId: id,
+      proposerHandle: proposer.handle,
+      proposerUsername: proposer.username,
+      offeringCards,
+      receivingCards,
+      message,
+    });
+    const posted = await bot.sendDirectMessage(recipient.discordId, payload);
+    channelId = posted.channel_id;
+    messageId = posted.id;
+    deliveryStatus = 'delivered';
+  } catch (err) {
+    console.error('handlePropose: DM send failed', err);
+  }
+
+  await db.update(tradeProposals)
+    .set({
+      deliveryStatus,
+      discordDmChannelId: channelId,
+      discordDmMessageId: messageId,
+      updatedAt: new Date(),
+    })
+    .where(eq(tradeProposals.id, id));
+
+  return res.status(201).json({ id, deliveryStatus });
 }

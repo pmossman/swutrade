@@ -1,8 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { eq } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
-import { botInstalledGuilds } from '../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
-import { createDiscordBotClient } from '../lib/discordBot.js';
+import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
+import {
+  BUTTON_CUSTOM_ID_PREFIX,
+  buildResolvedProposalMessage,
+  buildProposerNotification,
+} from '../lib/proposalMessages.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -42,7 +48,16 @@ function canonicalRequestBody(req: VercelRequest): string {
 // --- Discord interaction constants ------------------------------------------
 
 const INTERACTION_TYPE_PING = 1;
+const INTERACTION_TYPE_MESSAGE_COMPONENT = 3;
 const INTERACTION_RESPONSE_TYPE_PONG = 1;
+// Type 4 = CHANNEL_MESSAGE_WITH_SOURCE (post a new reply, visible
+// to the user who clicked via `flags: 64` ephemeral bit).
+const INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE = 4;
+// Type 6 = DEFERRED_UPDATE_MESSAGE (ack w/o visible change).
+const INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE = 6;
+// Type 7 = UPDATE_MESSAGE (update the message that had the button).
+const INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE = 7;
+const MESSAGE_FLAG_EPHEMERAL = 64;
 
 // --- dispatcher -------------------------------------------------------------
 
@@ -86,19 +101,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   return dispatchBotPayload(action, parsed, res);
 }
 
+export interface BotDeps {
+  bot?: DiscordBotClient;
+}
+
 /**
  * Post-signature-verification dispatch. Exported for integration
  * tests so they can invoke the handler logic with pre-parsed
  * payloads and skip the raw-body-stream + signature-verify layers
  * (those are unit-tested separately in discord-signature.test.ts).
+ *
+ * `deps.bot` is injectable for the same reason: the button handler
+ * PATCHes Discord + sends follow-up DMs; tests swap in a fake.
  */
 export async function dispatchBotPayload(
   action: string,
   payload: Record<string, unknown>,
   res: VercelResponse,
+  deps: BotDeps = {},
 ): Promise<void> {
   switch (action) {
-    case 'interactions': return handleInteraction(payload, res);
+    case 'interactions': return handleInteraction(payload, res, deps);
     case 'events':       return handleEvent(payload, res);
     default:
       res.status(404).json({ error: 'Unknown bot action' });
@@ -111,6 +134,7 @@ export async function dispatchBotPayload(
 async function handleInteraction(
   payload: Record<string, unknown>,
   res: VercelResponse,
+  deps: BotDeps = {},
 ): Promise<void> {
   const type = payload.type;
 
@@ -122,11 +146,184 @@ async function handleInteraction(
     return;
   }
 
-  // Future: dispatch on component custom_id for trade-proposal
-  // Accept / Counter / Decline buttons. For now nothing else is
-  // wired up — ack with an empty "deferred update message" so
-  // Discord doesn't surface a generic failure in the client.
-  res.status(200).json({ type: 6 }); // DEFERRED_UPDATE_MESSAGE
+  if (type === INTERACTION_TYPE_MESSAGE_COMPONENT) {
+    const data = payload.data as { custom_id?: string } | undefined;
+    const customId = data?.custom_id ?? '';
+    if (customId.startsWith(`${BUTTON_CUSTOM_ID_PREFIX}:`)) {
+      return handleTradeProposalButton(payload, res, deps);
+    }
+  }
+
+  // Unknown: ack with a deferred update. Discord swallows the click
+  // gracefully instead of showing "interaction failed".
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+}
+
+/**
+ * Accept / Decline button on a trade proposal DM.
+ *
+ * Response protocol: we reply with type 7 (UPDATE_MESSAGE) so the
+ * button row in the recipient's DM is replaced in place by the
+ * "accepted/declined" body — cheaper than a separate edit PATCH
+ * and avoids a flicker where buttons stay clickable after the
+ * state change commits.
+ *
+ * Idempotency: if the trade is already out of `pending`, we still
+ * update the message (the recipient's DM might be stale in that
+ * rare case) but skip the DB write + the proposer-notification DM.
+ * No risk of double-firing notifications on a duplicate click.
+ */
+export async function handleTradeProposalButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+  deps: BotDeps = {},
+): Promise<void> {
+  const data = payload.data as { custom_id?: string } | undefined;
+  const parts = (data?.custom_id ?? '').split(':');
+  // [prefix, tradeId, action]
+  const tradeId = parts[1] ?? '';
+  const rawAction = parts[2] ?? '';
+  if (!tradeId || (rawAction !== 'accept' && rawAction !== 'decline')) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+  const action = rawAction as 'accept' | 'decline';
+
+  // In a DM the payload has `user`; in a guild `member.user`. The
+  // bot only sends to DMs for proposals but handle both for safety.
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+  const [trade] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, tradeId))
+    .limit(1);
+  if (!trade) {
+    // Trade vanished (shouldn't normally happen). Post an ephemeral
+    // explanation so the recipient knows why their click did nothing.
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: 'This trade proposal no longer exists.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  const [recipient] = await db
+    .select({ id: users.id, discordId: users.discordId, handle: users.handle })
+    .from(users)
+    .where(eq(users.id, trade.recipientUserId))
+    .limit(1);
+  const [proposer] = await db
+    .select({
+      id: users.id,
+      discordId: users.discordId,
+      handle: users.handle,
+      username: users.username,
+    })
+    .from(users)
+    .where(eq(users.id, trade.proposerUserId))
+    .limit(1);
+  if (!recipient || !proposer) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: 'Could not find the users on this trade — it may have been orphaned.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Authorization: only the recipient can accept/decline. Anyone
+  // else seeing this button (shouldn't happen from a DM, but belt-
+  // and-suspenders for the guild-channel case) gets an ephemeral.
+  if (recipient.discordId !== clickerDiscordId) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: 'This trade proposal was sent to someone else.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  const proposalCtx = {
+    tradeId: trade.id,
+    proposerHandle: proposer.handle,
+    proposerUsername: proposer.username,
+    offeringCards: trade.offeringCards,
+    receivingCards: trade.receivingCards,
+    message: trade.message,
+  };
+
+  // Idempotent path — already resolved. Refresh the message body
+  // and bail without firing side effects again.
+  if (trade.status === 'accepted' || trade.status === 'declined') {
+    const body = buildResolvedProposalMessage(proposalCtx, trade.status, recipient.handle);
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: body,
+    });
+    return;
+  }
+
+  // Status transitions other than pending → accepted/declined (e.g.
+  // cancelled by proposer via a future web action) should block the
+  // button — show an ephemeral instead of updating the message.
+  if (trade.status !== 'pending') {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: `This proposal is ${trade.status} and can't be responded to.`,
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  const newStatus: 'accepted' | 'declined' = action === 'accept' ? 'accepted' : 'declined';
+
+  await db
+    .update(tradeProposals)
+    .set({
+      status: newStatus,
+      respondedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(tradeProposals.id, trade.id));
+
+  // Follow-up DM to the proposer. Awaited so Vercel doesn't kill
+  // the function before the request completes — Discord allows 3s
+  // for interaction responses and this usually lands in <500ms.
+  // Failures are logged but don't block the interaction response.
+  try {
+    const bot = deps.bot ?? createDiscordBotClient();
+    const notifyBody = buildProposerNotification({
+      tradeId: trade.id,
+      recipientHandle: recipient.handle,
+      outcome: newStatus,
+    });
+    await bot.sendDirectMessage(proposer.discordId, notifyBody);
+  } catch (err) {
+    console.error('handleTradeProposalButton: proposer notify failed', err);
+  }
+
+  const resolvedBody = buildResolvedProposalMessage(proposalCtx, newStatus, recipient.handle);
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: resolvedBody,
+  });
 }
 
 // --- event webhook handler --------------------------------------------------

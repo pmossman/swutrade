@@ -43,6 +43,13 @@
       "when": 1776441778502,
       "tag": "0005_mature_sir_ram",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1776442441232,
+      "tag": "0006_tranquil_barracuda",
+      "breakpoints": true
     }
   ]
 }

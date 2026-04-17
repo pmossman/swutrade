@@ -44,6 +44,10 @@ export interface DiscordMessageBody {
 
 export interface DiscordBotClient {
   postChannelMessage(channelId: string, body: DiscordMessageBody): Promise<{ id: string; channel_id: string }>;
+  /** PATCH an existing bot-authored message in place. Used to swap
+   *  the Accept/Decline button row for an outcome banner after a
+   *  proposal is resolved, so the user can't re-click stale buttons. */
+  editChannelMessage(channelId: string, messageId: string, body: DiscordMessageBody): Promise<void>;
   createDmChannel(userId: string): Promise<{ id: string }>;
   /** Shortcut: open a DM channel (if needed) and post to it. */
   sendDirectMessage(userId: string, body: DiscordMessageBody): Promise<{ id: string; channel_id: string }>;
@@ -82,6 +86,13 @@ export function createDiscordBotClient(opts: { token?: string; apiBase?: string 
         body: JSON.stringify(body),
       });
       return res.json() as Promise<{ id: string; channel_id: string }>;
+    },
+
+    async editChannelMessage(channelId, messageId, body) {
+      await request(`/channels/${channelId}/messages/${messageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
     },
 
     async createDmChannel(userId) {

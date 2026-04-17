@@ -196,6 +196,21 @@ export const tradeProposals = pgTable('trade_proposals', {
   offeringCards: jsonb('offering_cards').notNull().$type<TradeCardSnapshot[]>(),
   receivingCards: jsonb('receiving_cards').notNull().$type<TradeCardSnapshot[]>(),
   message: text('message'),
+  // DM tracking (Phase 4c slice 3). Recorded after we successfully
+  // create the recipient's DM channel + post the embed. Used by the
+  // button-interaction handler to edit the DM in place on accept/
+  // decline (swapping the button row for an outcome line).
+  //
+  // `deliveryStatus` is distinct from `status`: the proposal's
+  // logical state (pending → accepted/declined) is one axis; the
+  // Discord transport (pending → delivered / failed) is another.
+  // Keeping them separate lets us surface "we saved but couldn't
+  // DM them" in the UI without overloading a single enum.
+  deliveryStatus: text('delivery_status', { enum: ['pending', 'delivered', 'failed'] })
+    .default('pending')
+    .notNull(),
+  discordDmChannelId: text('discord_dm_channel_id'),
+  discordDmMessageId: text('discord_dm_message_id'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   respondedAt: timestamp('responded_at', { withTimezone: true }),

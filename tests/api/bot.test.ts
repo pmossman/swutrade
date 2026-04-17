@@ -2,14 +2,40 @@ import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
-import { mockRequest, mockResponse } from './helpers.js';
+import {
+  mockRequest,
+  mockResponse,
+  createTestUser,
+} from './helpers.js';
 import handler, { dispatchBotPayload } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
-import { botInstalledGuilds } from '../../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, type TradeCardSnapshot } from '../../lib/schema.js';
+import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
 
 function extractRawEd25519PublicKey(key: KeyObject): string {
   const der = key.export({ format: 'der', type: 'spki' }) as Buffer;
   return der.subarray(12).toString('hex');
+}
+
+function makeFakeBot(): DiscordBotClient & {
+  sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
+} {
+  const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
+  return {
+    sendCalls,
+    async postChannelMessage() { throw new Error('unused'); },
+    async editChannelMessage() { /* unused in type-7 path */ },
+    async createDmChannel() { return { id: 'dm-fake' }; },
+    async sendDirectMessage(userId, body) {
+      sendCalls.push({ userId, body });
+      return { id: 'notify-msg-1', channel_id: 'dm-fake' };
+    },
+    async getGuild() { throw new Error('unused'); },
+  };
+}
+
+function cardSnapshot(productId: string, qty = 1): TradeCardSnapshot {
+  return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
 describeWithDb('/api/bot dispatcher', () => {
@@ -36,6 +62,207 @@ describeWithDb('/api/bot dispatcher', () => {
       await dispatchBotPayload('interactions', { type: 999 }, res);
       expect(res._status).toBe(200);
       expect(res._json).toEqual({ type: 6 });
+    });
+
+    describe('trade-proposal buttons', () => {
+      /**
+       * Seeds a pending proposal + the two user rows needed for
+       * the button handler to resolve recipient + proposer. Returns
+       * everything the test needs to simulate a Discord button click.
+       */
+      async function seedProposal(opts: { status?: 'pending' | 'accepted' | 'declined' | 'cancelled' } = {}) {
+        const proposer = await createTestUser();
+        const recipient = await createTestUser();
+        const tradeId = crypto.randomUUID();
+        const db = getDb();
+        await db.insert(tradeProposals).values({
+          id: tradeId,
+          proposerUserId: proposer.id,
+          recipientUserId: recipient.id,
+          status: opts.status ?? 'pending',
+          offeringCards: [cardSnapshot('p-1', 2)],
+          receivingCards: [cardSnapshot('p-2', 1)],
+          message: 'swap?',
+          deliveryStatus: 'delivered',
+          discordDmChannelId: 'dm-channel-x',
+          discordDmMessageId: 'msg-x',
+        });
+        return { proposer, recipient, tradeId };
+      }
+
+      async function cleanup(tradeId: string, userIds: string[]) {
+        const db = getDb();
+        await db.delete(tradeProposals).where(eq(tradeProposals.id, tradeId)).catch(() => {});
+        // User cleanup is handled by createTestUser().cleanup but we
+        // don't hold those refs here — seed returns the raw ids.
+        // Tests that need stricter cleanup track proposers/recipients
+        // via their own arrays.
+        void userIds;
+      }
+
+      function clickButton(tradeId: string, action: 'accept' | 'decline', clickerDiscordId: string): Record<string, unknown> {
+        return {
+          type: 3,
+          data: { custom_id: `trade-proposal:${tradeId}:${action}` },
+          user: { id: clickerDiscordId },
+        };
+      }
+
+      it('Accept: flips status → accepted, DMs the proposer, returns UPDATE_MESSAGE (type 7)', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'accept', recipient.id),
+          res,
+          { bot },
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { components?: unknown[] } };
+        expect(body.type).toBe(7);
+        // Component row is stripped — no re-clicking stale buttons.
+        expect(body.data?.components).toEqual([]);
+
+        // DB updated.
+        const db = getDb();
+        const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, tradeId)).limit(1);
+        expect(row.status).toBe('accepted');
+        expect(row.respondedAt).toBeTruthy();
+
+        // Proposer got a notification DM.
+        expect(bot.sendCalls).toHaveLength(1);
+        expect(bot.sendCalls[0].userId).toBe(proposer.id);
+        expect(bot.sendCalls[0].body.embeds?.[0].title).toMatch(/accepted/i);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('Decline: flips status → declined and proposer DM says "declined"', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'decline', recipient.id),
+          res,
+          { bot },
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(7);
+
+        const db = getDb();
+        const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, tradeId)).limit(1);
+        expect(row.status).toBe('declined');
+
+        expect(bot.sendCalls[0].body.embeds?.[0].title).toMatch(/declined/i);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('rejects clicks from someone who is not the recipient (ephemeral error, no state change)', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal();
+        const intruder = await createTestUser();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'accept', intruder.id),
+          res,
+          { bot },
+        );
+
+        const body = res._json as { type: number; data?: { flags?: number } };
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64); // ephemeral
+
+        // Trade unchanged.
+        const db = getDb();
+        const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, tradeId)).limit(1);
+        expect(row.status).toBe('pending');
+
+        // No proposer DM.
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await intruder.cleanup();
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('unknown trade id returns an ephemeral "no longer exists" message', async () => {
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          clickButton('00000000-0000-0000-0000-000000000000', 'accept', 'discord-user-1'),
+          res,
+          { bot },
+        );
+        const body = res._json as { type: number; data?: { content?: string; flags?: number } };
+        expect(body.type).toBe(4);
+        expect(body.data?.content).toMatch(/no longer exists/i);
+      });
+
+      it('already-resolved proposal is idempotent: refreshes message body, does NOT re-DM proposer', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal({ status: 'accepted' });
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'accept', recipient.id),
+          res,
+          { bot },
+        );
+
+        expect((res._json as { type: number }).type).toBe(7);
+        // No second DM fired — status was already accepted.
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('cancelled proposals block the click with an ephemeral (no state change, no DM)', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal({ status: 'cancelled' });
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'accept', recipient.id),
+          res,
+          { bot },
+        );
+
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(4);
+        expect(body.data?.content).toMatch(/cancelled/);
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('malformed custom_id (wrong action) silently acks so Discord doesn\'t retry', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `trade-proposal:${tradeId}:bogus` },
+            user: { id: recipient.id },
+          },
+          res,
+          { bot },
+        );
+        expect((res._json as { type: number }).type).toBe(6); // deferred update
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
     });
   });
 

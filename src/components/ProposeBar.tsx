@@ -28,7 +28,7 @@ interface RemoteProfile {
   available: Array<{ productId: string; qty: number }> | null;
 }
 
-type SendState = 'idle' | 'sending' | 'sent' | 'error';
+type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'error';
 
 /**
  * Sticky bottom bar shown while composing a proposal at
@@ -162,9 +162,12 @@ export function ProposeBar({
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || `HTTP ${res.status}`);
       }
-      const data: { id: string } = await res.json();
+      const data: { id: string; deliveryStatus?: 'delivered' | 'failed' } = await res.json();
       setSentTradeId(data.id);
-      setSendState('sent');
+      // Split the success path: row is saved either way, but if the
+      // DM didn't land we want to surface that so the proposer can
+      // share the trade URL manually or retry.
+      setSendState(data.deliveryStatus === 'failed' ? 'sent-undelivered' : 'sent');
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Failed to send');
       setSendState('error');
@@ -176,7 +179,24 @@ export function ProposeBar({
       return (
         <>
           <span className="flex-1 text-emerald-300">
-            Proposal sent to <strong>@{recipientHandle}</strong>.
+            Proposal sent to <strong>@{recipientHandle}</strong>. They'll see it in a Discord DM.
+          </span>
+          <a
+            href="/?community=1"
+            className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
+          >
+            Back to community
+          </a>
+        </>
+      );
+    }
+
+    if (sendState === 'sent-undelivered') {
+      return (
+        <>
+          <span className="flex-1 text-amber-200">
+            Proposal saved, but Discord wouldn't let us DM <strong>@{recipientHandle}</strong> —
+            they may have DMs from the bot disabled. Send them a message on Discord so they know to check.
           </span>
           <a
             href="/?community=1"
@@ -232,15 +252,17 @@ export function ProposeBar({
 
   const debugState = sendState === 'sent'
     ? 'sent'
-    : sendState === 'sending'
-      ? 'sending'
-      : fetchState === 'error'
-        ? 'fetch-error'
-        : !profile
-          ? 'loading-profile'
-          : sendState === 'error'
-            ? 'send-error'
-            : 'ready';
+    : sendState === 'sent-undelivered'
+      ? 'sent-undelivered'
+      : sendState === 'sending'
+        ? 'sending'
+        : fetchState === 'error'
+          ? 'fetch-error'
+          : !profile
+            ? 'loading-profile'
+            : sendState === 'error'
+              ? 'send-error'
+              : 'ready';
 
   return (
     <div

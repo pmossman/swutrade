@@ -142,17 +142,46 @@ touches a Discord-adjacent code path.
 
 ### After shipping the bot (Phase 4 v1 final slice)
 
-- [ ] Install bot in test server via production OAuth URL; verify
+- [x] Install bot in test server via production OAuth URL; verify
   `bot_installed_guilds` row appears.
-- [ ] Run the "Share to Discord" action; verify the channel message
-  appears with the right embed and the expected buttons.
 - [ ] Kick the bot from the test server; verify the
   `bot_installed_guilds` row disappears and the user's enrollment
   UI updates on next refresh.
-- [ ] Send a trade proposal; verify the recipient gets a DM with
-  Accept / Counter / Decline buttons.
-- [ ] Click Accept; verify the trade state updates in the web app.
-- [ ] Click Decline; verify the same.
+
+### After shipping Phase 4c Slice 3 (trade proposals + button interactions)
+
+Needs two SWUTrade accounts (signed in via two different Discord
+users) + the bot in a shared test server.
+
+- [ ] Open the Community view (`/?community=1`) from account A; verify
+  account B appears in the directory with the overlap chips populated.
+- [ ] Click through to B's profile, click **Propose a trade**; the
+  ProposeBar auto-seeds with the matchmaker output.
+- [ ] Click **Send proposal**. ProposeBar should transition to
+  `data-state="sent"` and say "They'll see it in a Discord DM."
+- [ ] Switch to account B. Bot should have DM'd a gold-bordered embed
+  with the offered + asked card lists, subtotals, and an **Accept** /
+  **Decline** button row.
+- [ ] Click **Accept** on the DM. The embed should turn green, the
+  button row should disappear, and a "Status: Accepted by @B" field
+  should appear. Switch back to account A — they should have received
+  a separate DM saying "Your proposal was accepted."
+- [ ] Check Neon: the `trade_proposals` row for this trade shows
+  `status='accepted'`, `responded_at` set, `discord_dm_channel_id`
+  + `discord_dm_message_id` populated.
+- [ ] Repeat with a second proposal, clicking **Decline** this time.
+  Verify the embed turns red, the notification says "declined",
+  and the row has `status='declined'`.
+- [ ] Click **Accept** on the now-resolved (green) embed again. The
+  message should refresh but nothing should re-fire (no duplicate
+  notification DM to A). Idempotency check.
+- [ ] Disable DMs from the bot on account B's Discord privacy
+  settings. Send a new proposal from A to B. ProposeBar should land
+  in `data-state="sent-undelivered"` with an amber "couldn't DM
+  them" message. The `trade_proposals` row should have
+  `delivery_status='failed'` and null channel/message ids.
+- [ ] Log into Neon and delete the proposal rows you seeded so the
+  directory + profile views stay clean.
 
 ### Per-feature Tier 3 entries
 
