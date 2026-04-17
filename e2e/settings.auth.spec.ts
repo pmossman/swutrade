@@ -28,7 +28,7 @@ test.describe('Settings view', () => {
     await page.goto('/?settings=1');
     await expect(page.getByText(/^Settings$/i).first()).toBeVisible({ timeout: 10_000 });
 
-    await expect(page.getByLabel('Profile visibility')).toHaveValue('public');
+    await expect(page.getByLabel('Profile visibility')).toHaveValue('discord');
     // "Trade proposals sent to me" starts checked; the others don't.
     await expect(page.getByRole('checkbox', { name: /Trade proposals sent to me/ }))
       .toBeChecked();
