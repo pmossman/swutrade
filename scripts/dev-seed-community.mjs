@@ -67,22 +67,29 @@ async function main() {
       viewer: { type: 'string' },
       guild: { type: 'string' },
       count: { type: 'string' },
+      strategy: { type: 'string' }, // 'mirror' (default) | 'law-hyperspace'
       yes: { type: 'boolean', default: false },
     },
     allowPositionals: true,
   });
 
   const cmd = positionals[0];
+  const strategy = values.strategy ?? 'mirror';
 
   // Validate command + required args before touching DB / prompting.
   if (cmd !== 'seed' && cmd !== 'cleanup') {
     console.error('Usage:');
-    console.error('  node scripts/dev-seed-community.mjs seed --viewer <handle> --guild <id> [--count N] [--yes]');
+    console.error('  node scripts/dev-seed-community.mjs seed --viewer <handle> --guild <id>');
+    console.error('                                          [--count N] [--strategy mirror|law-hyperspace] [--yes]');
     console.error('  node scripts/dev-seed-community.mjs cleanup [--yes]');
     process.exit(1);
   }
   if (cmd === 'seed' && (!values.viewer || !values.guild)) {
     console.error('seed requires --viewer <handle> and --guild <id>');
+    process.exit(1);
+  }
+  if (cmd === 'seed' && strategy !== 'mirror' && strategy !== 'law-hyperspace') {
+    console.error(`unknown --strategy "${strategy}" (expected: mirror, law-hyperspace)`);
     process.exit(1);
   }
 
@@ -111,10 +118,14 @@ async function main() {
     viewerHandle: values.viewer,
     guildId: values.guild,
     count: Math.max(1, Math.min(FAKE_USERS.length, parseInt(values.count ?? '3', 10))),
+    strategy,
   });
 }
 
-async function seed(sql, { viewerHandle, guildId, count }) {
+const LAW_SET_SLUG = 'a-lawless-time';
+const LAW_VARIANTS = new Set(['Hyperspace', 'Hyperspace Foil', 'Showcase']);
+
+async function seed(sql, { viewerHandle, guildId, count, strategy }) {
   const [viewer] = await sql`
     SELECT id, handle FROM users WHERE handle = ${viewerHandle} LIMIT 1
   `;
@@ -122,14 +133,6 @@ async function seed(sql, { viewerHandle, guildId, count }) {
     console.error(`No user found with handle @${viewerHandle}`);
     process.exit(1);
   }
-
-  // Pull viewer's inventory to mirror overlap.
-  const viewerWants = await sql`
-    SELECT family_id FROM wants_items WHERE user_id = ${viewer.id}
-  `;
-  const viewerAvailable = await sql`
-    SELECT product_id FROM available_items WHERE user_id = ${viewer.id}
-  `;
 
   // Build product → family lookup from the same static data the client uses.
   const familyIndex = JSON.parse(
@@ -142,30 +145,9 @@ async function seed(sql, { viewerHandle, guildId, count }) {
     for (const e of entries) familyByProduct.set(e.p, familyId);
   }
 
-  // Viewer's available products → the families the fake should WANT
-  // so "I can offer them" lights up.
-  const viewerAvailableFamilies = [...new Set(
-    viewerAvailable
-      .map(r => familyByProduct.get(r.product_id))
-      .filter(Boolean),
-  )];
-
-  // Viewer's want families → products the fake should have AVAILABLE
-  // so "they have for me" lights up. Pick first variant per family
-  // (the Standard printing is usually entry [0]).
-  const productsForViewerWants = [];
-  for (const w of viewerWants) {
-    const pids = productsByFamily.get(w.family_id);
-    if (pids?.length) productsForViewerWants.push(pids[0]);
-  }
-
-  console.log(
-    `Viewer @${viewer.handle}: ${viewerWants.length} wants, ${viewerAvailable.length} available. ` +
-    `Mirrorable — ${viewerAvailableFamilies.length} want-families, ${productsForViewerWants.length} offer-products.`,
-  );
-  if (viewerAvailableFamilies.length === 0 && productsForViewerWants.length === 0) {
-    console.log('  (viewer has empty lists — fakes will still seed but overlap chips will all be 0)');
-  }
+  const plans = strategy === 'law-hyperspace'
+    ? planLawHyperspace(familyIndex, count)
+    : await planMirror(sql, viewer, familyByProduct, productsByFamily, count);
 
   const fakes = FAKE_USERS.slice(0, count);
   for (const [i, u] of fakes.entries()) {
@@ -188,11 +170,7 @@ async function seed(sql, { viewerHandle, guildId, count }) {
     await sql`DELETE FROM wants_items WHERE user_id = ${userId}`;
     await sql`DELETE FROM available_items WHERE user_id = ${userId}`;
 
-    // Stride slices the mirror set differently per fake so sort tabs
-    // produce visibly different rankings.
-    const stride = i + 1;
-    const wantsSlice = viewerAvailableFamilies.filter((_, k) => k % stride === i % stride).slice(0, 6);
-    const availSlice = productsForViewerWants.filter((_, k) => k % stride === i % stride).slice(0, 6);
+    const { wants: wantsSlice, available: availSlice } = plans[i];
 
     for (const [j, familyId] of wantsSlice.entries()) {
       await sql`
@@ -212,6 +190,94 @@ async function seed(sql, { viewerHandle, guildId, count }) {
   }
 
   console.log('\nDone. Reload /?community=1 and the fakes should appear.');
+}
+
+/**
+ * Mirror strategy: fakes' inventory is a function of the viewer's,
+ * so overlap chips display non-trivial numbers out of the box.
+ * Each fake gets a disjoint slice so sort tabs rank them differently.
+ */
+async function planMirror(sql, viewer, familyByProduct, productsByFamily, count) {
+  const viewerWants = await sql`
+    SELECT family_id FROM wants_items WHERE user_id = ${viewer.id}
+  `;
+  const viewerAvailable = await sql`
+    SELECT product_id FROM available_items WHERE user_id = ${viewer.id}
+  `;
+
+  const viewerAvailableFamilies = [...new Set(
+    viewerAvailable.map(r => familyByProduct.get(r.product_id)).filter(Boolean),
+  )];
+
+  const productsForViewerWants = [];
+  for (const w of viewerWants) {
+    const pids = productsByFamily.get(w.family_id);
+    if (pids?.length) productsForViewerWants.push(pids[0]);
+  }
+
+  console.log(
+    `Viewer @${viewer.handle}: ${viewerWants.length} wants, ${viewerAvailable.length} available. ` +
+    `Mirrorable — ${viewerAvailableFamilies.length} want-families, ${productsForViewerWants.length} offer-products.`,
+  );
+  if (viewerAvailableFamilies.length === 0 && productsForViewerWants.length === 0) {
+    console.log('  (viewer has empty lists — fakes will still seed but overlap chips will all be 0)');
+    console.log('  tip: try --strategy law-hyperspace for a content-rich alternative.');
+  }
+
+  const plans = [];
+  for (let i = 0; i < count; i++) {
+    const stride = i + 1;
+    plans.push({
+      wants: viewerAvailableFamilies.filter((_, k) => k % stride === i % stride).slice(0, 6),
+      available: productsForViewerWants.filter((_, k) => k % stride === i % stride).slice(0, 6),
+    });
+  }
+  return plans;
+}
+
+/**
+ * LAW-hyperspace strategy: each fake gets a realistic chunk of the
+ * latest set's Hyperspace / Hyperspace Foil / Showcase printings —
+ * populous enough that the viewer can add any LAW card and see real
+ * overlap without having to seed a mirror base first.
+ *
+ * Wants: rotating slice of LAW family_ids (mode 'any' — they're open
+ *   to any printing).
+ * Available: specific LAW SKUs in the three targeted variants, again
+ *   sliced rotating so fakes don't all own the same products.
+ */
+function planLawHyperspace(familyIndex, count) {
+  const lawFamilies = Object.keys(familyIndex).filter(k => k.startsWith(`${LAW_SET_SLUG}::`));
+  const lawProducts = [];
+  for (const fid of lawFamilies) {
+    for (const entry of familyIndex[fid]) {
+      if (LAW_VARIANTS.has(entry.v)) lawProducts.push(entry.p);
+    }
+  }
+  console.log(
+    `LAW inventory pool: ${lawFamilies.length} families, ${lawProducts.length} Hyperspace/HS-Foil/Showcase SKUs.`,
+  );
+
+  const plans = [];
+  const wantsPerFake = 15;
+  const availPerFake = 12;
+  for (let i = 0; i < count; i++) {
+    // Rotating offset so each fake's wants + available come from a
+    // different region of the pool — makes sort tabs distinguishable.
+    const wOff = (i * wantsPerFake) % Math.max(1, lawFamilies.length);
+    const aOff = (i * availPerFake) % Math.max(1, lawProducts.length);
+    plans.push({
+      wants: rotate(lawFamilies, wOff).slice(0, wantsPerFake),
+      available: rotate(lawProducts, aOff).slice(0, availPerFake),
+    });
+  }
+  return plans;
+}
+
+function rotate(arr, n) {
+  if (arr.length === 0) return arr;
+  const off = n % arr.length;
+  return arr.slice(off).concat(arr.slice(0, off));
 }
 
 async function cleanup(sql) {
