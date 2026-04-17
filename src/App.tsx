@@ -39,7 +39,9 @@ import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
 import { ProposeBar } from './components/ProposeBar';
+import { CounterBar } from './components/CounterBar';
 import { useProposeHandle } from './hooks/useProposeHandle';
+import { useCounterId } from './hooks/useCounterId';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' {
   if (typeof window === 'undefined') return 'trade';
@@ -130,6 +132,7 @@ function App() {
   const sharedLists = useSharedLists();
   const senderHandle = useSenderHandle();
   const proposeHandle = useProposeHandle();
+  const counterId = useCounterId();
   // Phase 4 community rollup — signed-in users see an extra
   // "Community wants/has" chip in the picker, scoped to cards other
   // members of their enrolled Discord guilds want or have.
@@ -430,7 +433,20 @@ function App() {
           always-visible matchmaker input — "enter a random handle" is
           a thin use case that belongs to Phase 4 (guild-scoped
           discovery), not permanent chrome here. */}
-      {proposeHandle ? (
+      {counterId ? (
+        <CounterBar
+          originalTradeId={counterId}
+          byProductId={cardIndex.byProductId}
+          percentage={percentage}
+          priceMode={priceMode}
+          yourCards={yourCards}
+          theirCards={theirCards}
+          onApplyMatch={(yours, theirs) => {
+            setYourCards(yours);
+            setTheirCards(theirs);
+          }}
+        />
+      ) : proposeHandle ? (
         <ProposeBar
           recipientHandle={proposeHandle}
           allCards={allLoadedCards}

@@ -50,6 +50,13 @@
       "when": 1776442441232,
       "tag": "0006_tranquil_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1776446554995,
+      "tag": "0007_cynical_nocturne",
+      "breakpoints": true
     }
   ]
 }

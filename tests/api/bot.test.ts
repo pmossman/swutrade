@@ -70,7 +70,7 @@ describeWithDb('/api/bot dispatcher', () => {
        * the button handler to resolve recipient + proposer. Returns
        * everything the test needs to simulate a Discord button click.
        */
-      async function seedProposal(opts: { status?: 'pending' | 'accepted' | 'declined' | 'cancelled' } = {}) {
+      async function seedProposal(opts: { status?: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered' } = {}) {
         const proposer = await createTestUser();
         const recipient = await createTestUser();
         const tradeId = crypto.randomUUID();
@@ -221,6 +221,62 @@ describeWithDb('/api/bot dispatcher', () => {
 
         expect((res._json as { type: number }).type).toBe(7);
         // No second DM fired — status was already accepted.
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('Counter: returns an ephemeral deep-link to the web composer, no state change, no DM', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'counter' as 'accept' | 'decline', recipient.id),
+          res,
+          { bot, origin: 'https://beta.swutrade.com' },
+        );
+
+        const body = res._json as { type: number; data?: { content?: string; flags?: number } };
+        expect(body.type).toBe(4); // ephemeral channel message
+        expect(body.data?.flags).toBe(64);
+        expect(body.data?.content).toContain(`/?counter=${tradeId}`);
+        expect(body.data?.content).toContain('beta.swutrade.com');
+
+        // No state change — original stays pending so the recipient
+        // can still Accept/Decline from the DM if they change their
+        // mind mid-compose.
+        const db = getDb();
+        const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, tradeId)).limit(1);
+        expect(row.status).toBe('pending');
+        expect(row.respondedAt).toBeNull();
+
+        // No proposer notification — that only fires on submit.
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+
+      it('already-countered proposal is idempotent: refreshes to purple/countered body', async () => {
+        const { proposer, recipient, tradeId } = await seedProposal({ status: 'countered' });
+        const bot = makeFakeBot();
+        const res = mockResponse();
+
+        await dispatchBotPayload(
+          'interactions',
+          clickButton(tradeId, 'accept', recipient.id),
+          res,
+          { bot },
+        );
+
+        const body = res._json as { type: number; data?: { embeds?: Array<{ fields?: Array<{ value?: string }> }>; components?: unknown[] } };
+        expect(body.type).toBe(7);
+        expect(body.data?.components).toEqual([]);
+        const statusField = body.data?.embeds?.[0].fields?.find(f => f.value?.includes('Countered'));
+        expect(statusField).toBeTruthy();
+
+        // No proposer DM — nothing changed.
         expect(bot.sendCalls).toHaveLength(0);
 
         await cleanup(tradeId, [proposer.id, recipient.id]);

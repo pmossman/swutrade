@@ -8,6 +8,7 @@ import {
   timestamp,
   unique,
   jsonb,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 export const users = pgTable('users', {
@@ -190,9 +191,20 @@ export const tradeProposals = pgTable('trade_proposals', {
   recipientUserId: text('recipient_user_id')
     .references(() => users.id, { onDelete: 'cascade' })
     .notNull(),
-  status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired'] })
+  status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] })
     .default('pending')
     .notNull(),
+  // Self-FK: when set, points to the proposal this one was made
+  // against. Counters form a chain walked backwards via this FK;
+  // the original has counter_of_id=null. See
+  // PHASE4C_COUNTER_DESIGN.md for the full semantic model.
+  // `on delete set null` means deleting an ancestor (shouldn't
+  // happen in practice) leaves the counter as a standalone row
+  // with a broken history pointer — acceptable degradation.
+  counterOfId: text('counter_of_id').references(
+    (): AnyPgColumn => tradeProposals.id,
+    { onDelete: 'set null' },
+  ),
   offeringCards: jsonb('offering_cards').notNull().$type<TradeCardSnapshot[]>(),
   receivingCards: jsonb('receiving_cards').notNull().$type<TradeCardSnapshot[]>(),
   message: text('message'),

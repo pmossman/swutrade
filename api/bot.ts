@@ -7,6 +7,7 @@ import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot
 import {
   BUTTON_CUSTOM_ID_PREFIX,
   buildResolvedProposalMessage,
+  buildCounteredProposalMessage,
   buildProposerNotification,
 } from '../lib/proposalMessages.js';
 
@@ -108,11 +109,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const action = (req.query.action as string | undefined) ?? '';
-  return dispatchBotPayload(action, parsed, res);
+  // Derive the site's public origin from the request so deep-links
+  // (e.g., `/?counter=<id>` returned when a user clicks Counter in
+  // their DM) route back to whichever deployment served the DM.
+  // Falls back to an env var if the header is missing.
+  const originFromReq = req.headers.host
+    ? `https://${req.headers.host}`
+    : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+  return dispatchBotPayload(action, parsed, res, { origin: originFromReq });
 }
 
 export interface BotDeps {
   bot?: DiscordBotClient;
+  /** Absolute origin (scheme + host) used for deep-links embedded
+   *  in interaction responses. Supplied by the top-level handler. */
+  origin?: string;
 }
 
 /**
@@ -193,11 +204,11 @@ export async function handleTradeProposalButton(
   // [prefix, tradeId, action]
   const tradeId = parts[1] ?? '';
   const rawAction = parts[2] ?? '';
-  if (!tradeId || (rawAction !== 'accept' && rawAction !== 'decline')) {
+  if (!tradeId || (rawAction !== 'accept' && rawAction !== 'decline' && rawAction !== 'counter')) {
     res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
     return;
   }
-  const action = rawAction as 'accept' | 'decline';
+  const action = rawAction as 'accept' | 'decline' | 'counter';
 
   // In a DM the payload has `user`; in a guild `member.user`. The
   // bot only sends to DMs for proposals but handle both for safety.
@@ -254,14 +265,32 @@ export async function handleTradeProposalButton(
     return;
   }
 
-  // Authorization: only the recipient can accept/decline. Anyone
-  // else seeing this button (shouldn't happen from a DM, but belt-
-  // and-suspenders for the guild-channel case) gets an ephemeral.
+  // Authorization: only the recipient can accept/decline/counter.
+  // Anyone else seeing this button (shouldn't happen from a DM, but
+  // belt-and-suspenders for the guild-channel case) gets an ephemeral.
   if (recipient.discordId !== clickerDiscordId) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
       data: {
         content: 'This trade proposal was sent to someone else.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Counter takes a different shape: no state change, no message
+  // edit — just reply with an ephemeral deep-link to the web
+  // composer. The original DM stays live so the recipient can
+  // still Accept/Decline if they change their mind mid-compose
+  // (see PHASE4C_COUNTER_DESIGN.md for why we don't eager-lock).
+  if (action === 'counter') {
+    const origin = deps.origin ?? 'https://beta.swutrade.com';
+    const link = `${origin}/?counter=${encodeURIComponent(trade.id)}`;
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: `Open SWUTrade to compose your counter: ${link}`,
         flags: MESSAGE_FLAG_EPHEMERAL,
       },
     });
@@ -281,6 +310,16 @@ export async function handleTradeProposalButton(
   // and bail without firing side effects again.
   if (trade.status === 'accepted' || trade.status === 'declined') {
     const body = buildResolvedProposalMessage(proposalCtx, trade.status, recipient.handle);
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: body,
+    });
+    return;
+  }
+  if (trade.status === 'countered') {
+    // Original was already countered — refresh the DM body so the
+    // stale buttons (if somehow still clickable) are gone.
+    const body = buildCounteredProposalMessage(proposalCtx, recipient.handle);
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
       data: body,

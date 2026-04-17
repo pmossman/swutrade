@@ -1,11 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { eq, desc } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
 import { trades, tradeProposals, users, type TradeCardSnapshot } from '../lib/schema.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
-import { buildProposalMessage } from '../lib/proposalMessages.js';
+import {
+  buildProposalMessage,
+  buildCounterProposalMessage,
+  buildCounteredProposalMessage,
+} from '../lib/proposalMessages.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -26,6 +30,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   switch (action) {
     case '':         return handleSavedTrades(req, res);
     case 'propose':  return handlePropose(req, res);
+    case 'counter':  return handleCounter(req, res);
+    case 'get':      return handleGetProposal(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -231,4 +237,260 @@ export async function handlePropose(
     .where(eq(tradeProposals.id, id));
 
   return res.status(201).json({ id, deliveryStatus });
+}
+
+// --- get (Phase 4c slice 4 — for CounterBar to seed its composer) -----------
+
+/**
+ * Fetch a single proposal by id. Auth: viewer must be either the
+ * proposer or the recipient. Anyone else gets 404 (no existence
+ * leak).
+ *
+ * Returns shape mirrors the DB row but strips Discord-transport
+ * fields the client doesn't need.
+ */
+export async function handleGetProposal(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = (req.query.id as string | undefined) ?? '';
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, id))
+    .limit(1);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.proposerUserId !== session.userId && row.recipientUserId !== session.userId) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  // Look up proposer + recipient handles so the client doesn't need
+  // a second round-trip to render "proposing to @X" context.
+  const [proposer] = await db
+    .select({ handle: users.handle, username: users.username, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.id, row.proposerUserId))
+    .limit(1);
+  const [recipient] = await db
+    .select({ handle: users.handle, username: users.username, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.id, row.recipientUserId))
+    .limit(1);
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({
+    id: row.id,
+    status: row.status,
+    counterOfId: row.counterOfId,
+    offeringCards: row.offeringCards,
+    receivingCards: row.receivingCards,
+    message: row.message,
+    createdAt: row.createdAt.toISOString(),
+    respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
+    proposer: proposer ?? null,
+    recipient: recipient ?? null,
+    viewerIsProposer: row.proposerUserId === session.userId,
+    viewerIsRecipient: row.recipientUserId === session.userId,
+  });
+}
+
+// --- counter (Phase 4c slice 4) ---------------------------------------------
+
+const CounterBodySchema = z.object({
+  counterOfId: z.string().min(1),
+  offeringCards: z.array(TradeCardSnapshotSchema),
+  receivingCards: z.array(TradeCardSnapshotSchema),
+  message: z.string().max(500).optional(),
+}).refine(
+  data => data.offeringCards.length > 0 || data.receivingCards.length > 0,
+  { message: 'Counter must include at least one card' },
+);
+
+/**
+ * Submit a counter to an existing pending proposal. Creates a new
+ * trade_proposals row linked via `counter_of_id` to the original,
+ * transitions the original to `'countered'`, edits the original's
+ * DM in place, and DMs the original proposer with the new counter.
+ *
+ * Authorization: signed-in user must be the recipient of the
+ * original proposal. Non-recipients get 403 (distinct from 404
+ * — the trade exists, they just can't act on it).
+ *
+ * Race guard: the original status must be `'pending'` at commit
+ * time. If it's already resolved (proposer accepted/declined/
+ * cancelled, or another counter slipped through), we return 409
+ * with `error='already-resolved'` and do NOT leave a counter row
+ * dangling.
+ *
+ * DM side-effects are best-effort — the counter row is created
+ * and the original is transitioned even if the Discord calls fail.
+ * The proposer will still see the counter in the web app once the
+ * detail/history views ship.
+ */
+export async function handleCounter(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = CounterBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { counterOfId, offeringCards, receivingCards, message } = parsed.data;
+
+  const db = getDb();
+
+  // Load original — must exist, viewer must be the recipient,
+  // status must be pending.
+  const [original] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, counterOfId))
+    .limit(1);
+  if (!original) return res.status(404).json({ error: 'Original not found' });
+  if (original.recipientUserId !== session.userId) {
+    return res.status(403).json({ error: 'Only the recipient can counter this proposal' });
+  }
+  if (original.status !== 'pending') {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: `This proposal is ${original.status} and can no longer be countered.`,
+    });
+  }
+
+  const [originalProposer] = await db
+    .select({
+      id: users.id,
+      discordId: users.discordId,
+      handle: users.handle,
+      username: users.username,
+    })
+    .from(users)
+    .where(eq(users.id, original.proposerUserId))
+    .limit(1);
+  const [originalRecipient] = await db
+    .select({
+      id: users.id,
+      discordId: users.discordId,
+      handle: users.handle,
+      username: users.username,
+    })
+    .from(users)
+    .where(eq(users.id, original.recipientUserId))
+    .limit(1);
+  if (!originalProposer || !originalRecipient) {
+    return res.status(500).json({ error: 'User records not found' });
+  }
+
+  const counterId = crypto.randomUUID();
+
+  // Insert the counter row first. If the next step (transitioning
+  // the original) fails under the optimistic concurrency check,
+  // we delete this row so nothing orphans.
+  await db.insert(tradeProposals).values({
+    id: counterId,
+    proposerUserId: session.userId,   // original's recipient becomes the new proposer
+    recipientUserId: original.proposerUserId,
+    counterOfId: original.id,
+    status: 'pending',
+    offeringCards,
+    receivingCards,
+    message: message ?? null,
+    deliveryStatus: 'pending',
+  });
+
+  // Optimistic concurrency: transition only if original is STILL
+  // pending. If another concurrent action beat us (accept, decline,
+  // or another counter), we roll back.
+  const updated = await db
+    .update(tradeProposals)
+    .set({ status: 'countered', respondedAt: new Date(), updatedAt: new Date() })
+    .where(and(
+      eq(tradeProposals.id, original.id),
+      eq(tradeProposals.status, 'pending'),
+    ))
+    .returning({ id: tradeProposals.id });
+
+  if (updated.length === 0) {
+    // Race lost — someone resolved the original between our read
+    // and write. Clean up the counter we inserted and report back.
+    await db.delete(tradeProposals).where(eq(tradeProposals.id, counterId)).catch(() => {});
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: 'The original proposal was resolved before your counter landed.',
+    });
+  }
+
+  // DM side-effects (best effort, never 5xx this call)
+  const bot = deps.bot ?? createDiscordBotClient();
+
+  // 1) Edit the original's DM to strip buttons + show countered
+  //    status. Only if we actually have a message id to edit.
+  if (original.discordDmChannelId && original.discordDmMessageId) {
+    try {
+      const patched = buildCounteredProposalMessage(
+        {
+          tradeId: original.id,
+          proposerHandle: originalProposer.handle,
+          proposerUsername: originalProposer.username,
+          offeringCards: original.offeringCards,
+          receivingCards: original.receivingCards,
+          message: original.message,
+        },
+        originalRecipient.handle,
+      );
+      await bot.editChannelMessage(original.discordDmChannelId, original.discordDmMessageId, patched);
+    } catch (err) {
+      console.error('handleCounter: edit original DM failed', err);
+    }
+  }
+
+  // 2) Send the new counter DM to the original proposer.
+  let counterDeliveryStatus: 'delivered' | 'failed' = 'failed';
+  let counterChannelId: string | null = null;
+  let counterMessageId: string | null = null;
+  try {
+    const counterDm = buildCounterProposalMessage({
+      tradeId: counterId,
+      proposerHandle: originalRecipient.handle, // counter's proposer = original's recipient
+      proposerUsername: originalRecipient.username,
+      offeringCards,
+      receivingCards,
+      message,
+      counteredTradeId: original.id,
+    });
+    const posted = await bot.sendDirectMessage(originalProposer.discordId, counterDm);
+    counterChannelId = posted.channel_id;
+    counterMessageId = posted.id;
+    counterDeliveryStatus = 'delivered';
+  } catch (err) {
+    console.error('handleCounter: counter DM send failed', err);
+  }
+
+  await db.update(tradeProposals)
+    .set({
+      deliveryStatus: counterDeliveryStatus,
+      discordDmChannelId: counterChannelId,
+      discordDmMessageId: counterMessageId,
+      updatedAt: new Date(),
+    })
+    .where(eq(tradeProposals.id, counterId));
+
+  return res.status(201).json({ id: counterId, deliveryStatus: counterDeliveryStatus });
 }

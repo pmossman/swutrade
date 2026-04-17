@@ -1,0 +1,2 @@
+ALTER TABLE "trade_proposals" ADD COLUMN "counter_of_id" text;--> statement-breakpoint
+ALTER TABLE "trade_proposals" ADD CONSTRAINT "trade_proposals_counter_of_id_trade_proposals_id_fk" FOREIGN KEY ("counter_of_id") REFERENCES "public"."trade_proposals"("id") ON DELETE set null ON UPDATE no action;

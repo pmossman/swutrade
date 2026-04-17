@@ -31,8 +31,9 @@ const COLORS = {
 // https://discord.com/developers/docs/interactions/message-components
 const COMPONENT_TYPE_ACTION_ROW = 1;
 const COMPONENT_TYPE_BUTTON = 2;
-const BUTTON_STYLE_SUCCESS = 3; // green
-const BUTTON_STYLE_DANGER = 4;  // red
+const BUTTON_STYLE_SECONDARY = 2; // grey
+const BUTTON_STYLE_SUCCESS = 3;   // green
+const BUTTON_STYLE_DANGER = 4;    // red
 
 function formatCardList(cards: TradeCardSnapshot[]): string {
   if (cards.length === 0) return '_none_';
@@ -97,6 +98,12 @@ export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessag
           },
           {
             type: COMPONENT_TYPE_BUTTON,
+            style: BUTTON_STYLE_SECONDARY,
+            label: 'Counter',
+            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:counter`,
+          },
+          {
+            type: COMPONENT_TYPE_BUTTON,
             style: BUTTON_STYLE_DANGER,
             label: 'Decline',
             custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:decline`,
@@ -104,6 +111,62 @@ export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessag
         ],
       },
     ],
+  };
+}
+
+/**
+ * Variant of the proposal embed used when a proposal comes back as
+ * a counter to one the viewer previously sent. Almost identical to
+ * a fresh proposal DM — we explicitly keep this focused on "here's
+ * what's on the table now" rather than dragging the full chain in.
+ * The web detail view owns chain history (see design doc).
+ */
+export function buildCounterProposalMessage(
+  ctx: ProposalMessageContext & { counteredTradeId: string },
+): DiscordMessageBody {
+  const base = buildProposalMessage(ctx);
+  const embed = { ...base.embeds![0] };
+  embed.title = `Counter from @${ctx.proposerHandle}`;
+  embed.fields = [
+    {
+      name: 'Context',
+      value: `Counter to your earlier proposal. Open the web app for the full history.`,
+    },
+    ...(embed.fields ?? []),
+  ];
+  return { ...base, embeds: [embed] };
+}
+
+/**
+ * Replacement body for the ORIGINAL proposal's DM when a counter is
+ * submitted. Strips the action row (the buttons are stale now) and
+ * appends a status line pointing at the new counter. The recipient
+ * sees their decision sealed; the web app remains the place to see
+ * the counter's content.
+ */
+export function buildCounteredProposalMessage(
+  ctx: ProposalMessageContext,
+  responderHandle: string,
+): DiscordMessageBody {
+  return {
+    embeds: [{
+      title: `Trade proposal from @${ctx.proposerHandle}`,
+      color: 0x8B5CF6, // purple — distinct from accepted (emerald) / declined (red)
+      description: ctx.message ? `> ${ctx.message}` : undefined,
+      fields: [
+        {
+          name: `Offered (${formatSubtotal(ctx.offeringCards)})`,
+          value: formatCardList(ctx.offeringCards),
+        },
+        {
+          name: `Asked for (${formatSubtotal(ctx.receivingCards)})`,
+          value: formatCardList(ctx.receivingCards),
+        },
+        { name: 'Status', value: `🔁 **Countered** by @${responderHandle} — check your DMs for the new offer.` },
+      ],
+      footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
+    }],
+    components: [],
   };
 }
 

@@ -264,9 +264,10 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(call.userId).toBe(recipient.id); // discordId === id in test fixture
       expect(call.body.embeds?.[0].title).toContain('Trade proposal from');
       const actionRow = call.body.components?.[0];
-      expect(actionRow?.components).toHaveLength(2);
+      expect(actionRow?.components).toHaveLength(3);
       expect(actionRow?.components?.[0].custom_id).toContain(`trade-proposal:${id}:accept`);
-      expect(actionRow?.components?.[1].custom_id).toContain(`trade-proposal:${id}:decline`);
+      expect(actionRow?.components?.[1].custom_id).toContain(`trade-proposal:${id}:counter`);
+      expect(actionRow?.components?.[2].custom_id).toContain(`trade-proposal:${id}:decline`);
 
       // Row reflects the delivery.
       const db = getDb();

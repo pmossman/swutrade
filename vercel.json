@@ -15,6 +15,8 @@
     { "source": "/api/auth/callback", "destination": "/api/auth?action=callback" },
     { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
     { "source": "/api/trades/propose", "destination": "/api/trades?action=propose" },
+    { "source": "/api/trades/counter", "destination": "/api/trades?action=counter" },
+    { "source": "/api/trades/:id", "destination": "/api/trades?action=get&id=:id" },
     { "source": "/api/bot/interactions", "destination": "/api/bot?action=interactions" },
     { "source": "/api/bot/events", "destination": "/api/bot?action=events" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
