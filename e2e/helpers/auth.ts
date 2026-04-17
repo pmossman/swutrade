@@ -186,3 +186,55 @@ export async function createSenderFixture(opts: {
     },
   };
 }
+
+/**
+ * Seeds the existing viewer user's wants/available rows on the
+ * server. Prefer this over localStorage-seeding via
+ * `page.addInitScript` when the test needs the server state to
+ * match local state — otherwise `useServerSync` detects the
+ * mismatch on sign-in and pops the migration modal, which blocks
+ * every interactive element behind it and makes the test flaky.
+ *
+ * Requires the user row to already exist (call `ensureTestUser`
+ * first). Returns a cleanup function.
+ */
+export async function seedUserLists(userId: string, opts: {
+  wants?: Array<{ familyId: string; qty?: number }>;
+  available?: Array<{ productId: string; qty?: number }>;
+}): Promise<() => Promise<void>> {
+  const { getDb } = await import('../../lib/db.js');
+  const { wantsItems, availableItems } = await import('../../lib/schema.js');
+  const { eq } = await import('drizzle-orm');
+  const { restrictionKey } = await import('../../lib/shared.js');
+
+  const db = getDb();
+
+  for (const w of opts.wants ?? []) {
+    await db.insert(wantsItems).values({
+      id: `viewer-want-${userId}-${w.familyId}`,
+      userId,
+      familyId: w.familyId,
+      qty: w.qty ?? 1,
+      restrictionMode: 'any',
+      restrictionVariants: null,
+      restrictionKey: restrictionKey({ mode: 'any' }),
+      isPriority: false,
+      addedAt: Date.now(),
+    });
+  }
+
+  for (const a of opts.available ?? []) {
+    await db.insert(availableItems).values({
+      id: `viewer-avail-${userId}-${a.productId}`,
+      userId,
+      productId: a.productId,
+      qty: a.qty ?? 1,
+      addedAt: Date.now(),
+    });
+  }
+
+  return async () => {
+    await db.delete(wantsItems).where(eq(wantsItems.userId, userId)).catch(() => {});
+    await db.delete(availableItems).where(eq(availableItems.userId, userId)).catch(() => {});
+  };
+}

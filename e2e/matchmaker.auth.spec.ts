@@ -1,30 +1,37 @@
 import { test, expect } from '@playwright/test';
-import { signIn, createSenderFixture, TEST_USER } from './helpers/auth';
+import {
+  signIn,
+  createIsolatedUser,
+  ensureTestUser,
+  cleanupTestUser,
+  createSenderFixture,
+  seedUserLists,
+  type TestUser,
+} from './helpers/auth';
 import { waitForPricesLoaded } from './helpers/waitForApp';
 
 /**
- * These tests exercise the AutoBalanceBanner against a
- * deliberately-seeded `sender` user rather than a hardcoded real
- * handle. The sender has known wants + available, so the banner's
- * terminal states (preview / no-match / loaded) are predictable.
- * Cleanup removes the sender after every test.
+ * Exercises the AutoBalanceBanner against a deliberately-seeded
+ * `sender` user. `viewer` is an isolated-per-test fresh user;
+ * server-side wants/available are seeded via seedUserLists when a
+ * test needs them. Both sides (viewer + sender) write their state
+ * to the server, so `useServerSync` sees local === server on sign-in
+ * and doesn't pop the migration modal that blocks every
+ * interactable element behind it.
  */
 test.describe('Auto-balance banner (context-aware matchmaker)', () => {
-  // Serial to keep the describe-scoped `sender` variable from
-  // racing between workers — fullyParallel is on, so without this
-  // multiple tests' beforeEach hooks overwrite `sender` concurrently
-  // and the test body navigates to a stale/cleaned-up handle.
+  // Serial: describe-scoped `sender` + `viewer` would race between
+  // workers under fullyParallel and cross-contaminate fixtures.
   test.describe.configure({ mode: 'serial' });
 
-  // These tests wait for allCards to load (up to 45s on cold-started
-  // Vercel previews) before asserting on banner state, so the
-  // default 30s per-test timeout isn't enough budget.
-  test.setTimeout(90_000);
-
+  let viewer: TestUser;
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
+  const extraCleanups: Array<() => Promise<void>> = [];
 
   test.beforeEach(async ({ context }) => {
-    await signIn(context);
+    viewer = createIsolatedUser();
+    await ensureTestUser(viewer);
+    await signIn(context, viewer);
     sender = await createSenderFixture({
       wants: [{ familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin', qty: 1 }],
       available: [{ productId: '617180', qty: 2 }],
@@ -32,59 +39,45 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
   });
 
   test.afterEach(async () => {
+    for (const fn of extraCleanups.reverse()) await fn();
+    extraCleanups.length = 0;
     await sender.cleanup();
+    await cleanupTestUser(viewer);
   });
 
   test('banner does not appear without ?from= context', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
-
-    // No ?from= → no banner, even though the sender fixture exists.
+    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Trade preview|Checking what you could trade/)).toHaveCount(0);
   });
 
   test('banner surfaces a preview with ?from=<handle> on an empty trade', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.removeItem('swu.wants.v2');
-      window.localStorage.removeItem('swu.available.v1');
-    });
-
     await page.goto(`/?from=${sender.handle}`);
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
     // Viewer has empty lists; sender has 1 want + 1 available. The
     // compute finds no overlap because the viewer has nothing.
-    // Expected terminal state: "No card overlap".
-    await expect(
-      page.getByText(/No card overlap with @/),
-    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/No card overlap with @/)).toBeVisible({ timeout: 15_000 });
   });
 
   test('?autoBalance=1 applies the match without requiring a click', async ({ page }) => {
-    // Viewer has the sender's available in their wants (the productId
-    // 617180 corresponds to Luke JTL Standard which is in the family
-    // the sender wants). This gives the matchmaker an overlap to pick.
-    await page.addInitScript(() => {
-      window.localStorage.setItem('swu.wants.v2', JSON.stringify([
-        { id: 'mw1', familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin', qty: 1, restriction: { mode: 'any' }, addedAt: 1 },
-      ]));
-      window.localStorage.setItem('swu.available.v1', JSON.stringify([
-        { id: 'ma1', productId: '681378', qty: 1, addedAt: 2 },
-      ]));
-    });
+    // Seed the viewer's own side so the compute has an overlap to
+    // find. familyId matches the sender's want; productId 681378 is
+    // a JTL Luke printing.
+    extraCleanups.push(await seedUserLists(viewer.userId, {
+      wants: [{ familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin', qty: 1 }],
+      available: [{ productId: '681378', qty: 1 }],
+    }));
 
     await page.goto(`/?from=${sender.handle}&autoBalance=1`);
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
     // Either the match auto-applied ("Loaded N cards...") or the
-    // viewer's seeded lists don't overlap with the sender's ("No
-    // card overlap..."). Both prove the auto path ran without a
-    // user click.
-    await expect(
-      page.getByText(/Loaded \d+ card|No card overlap/),
-    ).toBeVisible({ timeout: 10_000 });
+    // viewer's lists don't overlap with the sender's ("No card
+    // overlap..."). Both prove the auto path ran without a click.
+    await expect(page.getByText(/Loaded \d+ card|No card overlap/)).toBeVisible({ timeout: 15_000 });
 
     // The autoBalance flag should be stripped from the URL after
     // consumption so reloads / shares don't re-trigger.
@@ -94,12 +87,13 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
 
   test('dismissing the banner hides it for the session', async ({ page }) => {
     await page.goto(`/?from=${sender.handle}`);
-    await expect(page.getByText(TEST_USER.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
 
-    // Wait for the banner (in any post-fetch state) before dismissing.
+    // Banner in any post-fetch state is fine for this test — we
+    // just want to verify the dismiss interaction.
     await expect(
       page.getByText(/Trade preview|You could offer|has \d+ card|No card overlap|Checking what/),
-    ).toBeVisible({ timeout: 10_000 });
+    ).toBeVisible({ timeout: 15_000 });
 
     await page.getByRole('button', { name: 'Dismiss' }).click();
 

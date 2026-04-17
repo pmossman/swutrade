@@ -5,30 +5,22 @@ import {
   ensureTestUser,
   cleanupTestUser,
   createSenderFixture,
+  seedUserLists,
   type TestUser,
 } from './helpers/auth';
 import { installBotInGuild, createGuildMembership } from './helpers/guilds';
 import { waitForPricesLoaded } from './helpers/waitForApp';
 
 /**
- * Multi-user Phase 4 smoke: when viewer + sender are enrolled (with
- * rollups on) in the same bot-installed guild, and their wants/
- * available overlap, the "Community wants" chip surfaces in the
- * Offering picker. Exercises the full path:
- *   /api/me/community rollup query
- *   → useCommunityCards client fetch
- *   → TradeSide source-chip materialization
- * without mocking anything below the browser.
+ * Multi-user Phase 4 smoke: when viewer + sender are enrolled
+ * (with rollups on) in the same bot-installed guild, and their
+ * wants/available overlap, the "Community wants" chip surfaces in
+ * the Offering picker. Both sides seed their state server-side to
+ * avoid the migration modal blocker.
  */
 test.describe('Community source chip', () => {
-  // Serial: describe-scoped `viewer`, `sender`, and `cleanups` would
-  // race under fullyParallel between the two tests below and
-  // cross-contaminate each other's DB fixtures.
+  // Serial: describe-scoped state races between workers otherwise.
   test.describe.configure({ mode: 'serial' });
-
-  // Waits for allCards (up to 45s cold-start) before asserting on
-  // the chip, so default 30s per-test timeout isn't enough budget.
-  test.setTimeout(90_000);
 
   let viewer: TestUser;
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
@@ -41,8 +33,8 @@ test.describe('Community source chip', () => {
 
     sender = await createSenderFixture({
       // Sender wants a Luke family; viewer will seed an available
-      // card in that same family below so the chip has something to
-      // surface.
+      // card in that same family below so the chip has something
+      // to surface.
       wants: [{ familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin', qty: 1 }],
     });
 
@@ -68,15 +60,12 @@ test.describe('Community source chip', () => {
   });
 
   test('"Community wants" chip appears in the Offering picker when a mutual guild member wants a card the viewer has available', async ({ page }) => {
-    // Seed the viewer's available list via localStorage — the app
-    // reads from there on mount for anonymous + first-sign-in paths.
-    // productId 617180 = Luke JTL Standard, which is in the family
-    // the sender wants.
-    await page.addInitScript(() => {
-      window.localStorage.setItem('swu.available.v1', JSON.stringify([
-        { id: 'va1', productId: '617180', qty: 1, addedAt: Date.now() },
-      ]));
-    });
+    // Seed the viewer's available list server-side. productId 617180
+    // is Luke JTL Standard, family: jump-to-lightspeed::luke-...
+    // — matches what the sender wants.
+    cleanups.push(await seedUserLists(viewer.userId, {
+      available: [{ productId: '617180', qty: 1 }],
+    }));
 
     await page.goto('/');
     await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
@@ -85,8 +74,7 @@ test.describe('Community source chip', () => {
     // Open the Offering picker.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
 
-    // Chip is visible + qty-annotated. Label is "Community wants N"
-    // where N reflects the count of matching available cards.
+    // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(
       page.getByRole('button', { name: /Community wants \d+/ }),
     ).toBeVisible({ timeout: 10_000 });
@@ -100,14 +88,13 @@ test.describe('Community source chip', () => {
     const db = getDb();
     await db.delete(userGuildMemberships).where(eq(userGuildMemberships.userId, viewer.userId));
 
-    await page.addInitScript(() => {
-      window.localStorage.setItem('swu.available.v1', JSON.stringify([
-        { id: 'va1', productId: '617180', qty: 1, addedAt: Date.now() },
-      ]));
-    });
+    cleanups.push(await seedUserLists(viewer.userId, {
+      available: [{ productId: '617180', qty: 1 }],
+    }));
 
     await page.goto('/');
     await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await waitForPricesLoaded(page);
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
 
     await expect(
