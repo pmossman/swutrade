@@ -162,3 +162,41 @@ export interface TradeCardSnapshot {
   qty: number;
   unitPrice: number | null;
 }
+
+/**
+ * A proposal one user sends another. Distinct from `trades` (which
+ * is a personal save-your-trade snapshot keyed to a single user) —
+ * proposals live between two users and carry state through the
+ * accept/decline lifecycle.
+ *
+ * Status transitions (Phase 4c):
+ *   pending → accepted | declined | cancelled (by proposer) | expired (TTL)
+ * `responded_at` marks when status first left `pending`. No
+ * resumable state — a declined/cancelled proposal can't be
+ * reopened; the proposer submits a new one.
+ *
+ * Cards are frozen as snapshots at proposal time because:
+ *   - Prices fluctuate and the proposer is implicitly agreeing to
+ *     current pricing when they compose.
+ *   - Either party may have removed a card from their list by the
+ *     time the other responds; the proposal should still show what
+ *     was offered, not what's currently listed.
+ */
+export const tradeProposals = pgTable('trade_proposals', {
+  id: text('id').primaryKey(),
+  proposerUserId: text('proposer_user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  recipientUserId: text('recipient_user_id')
+    .references(() => users.id, { onDelete: 'cascade' })
+    .notNull(),
+  status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired'] })
+    .default('pending')
+    .notNull(),
+  offeringCards: jsonb('offering_cards').notNull().$type<TradeCardSnapshot[]>(),
+  receivingCards: jsonb('receiving_cards').notNull().$type<TradeCardSnapshot[]>(),
+  message: text('message'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  respondedAt: timestamp('responded_at', { withTimezone: true }),
+});
