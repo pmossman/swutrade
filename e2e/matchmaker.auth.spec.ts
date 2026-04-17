@@ -16,6 +16,11 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
   // and the test body navigates to a stale/cleaned-up handle.
   test.describe.configure({ mode: 'serial' });
 
+  // These tests wait for allCards to load (up to 45s on cold-started
+  // Vercel previews) before asserting on banner state, so the
+  // default 30s per-test timeout isn't enough budget.
+  test.setTimeout(90_000);
+
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
 
   test.beforeEach(async ({ context }) => {

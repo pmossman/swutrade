@@ -26,6 +26,10 @@ test.describe('Community source chip', () => {
   // cross-contaminate each other's DB fixtures.
   test.describe.configure({ mode: 'serial' });
 
+  // Waits for allCards (up to 45s cold-start) before asserting on
+  // the chip, so default 30s per-test timeout isn't enough budget.
+  test.setTimeout(90_000);
+
   let viewer: TestUser;
   let sender: Awaited<ReturnType<typeof createSenderFixture>>;
   const cleanups: Array<() => Promise<void>> = [];

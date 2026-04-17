@@ -2,18 +2,22 @@ import type { Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 /**
- * Waits until the "Loading prices…" footer indicator is gone, i.e.
- * `priceData.isAnyLoading` has flipped to false and `allCards` is
- * populated. Several features depend on this — matchmaker preview
- * compute, community source chip materialization, the trade balancer
- * math — and on a cold-started Vercel preview the 26 sequential set
- * fetches can take 15-20s, well over the default 5s expect timeout.
+ * Waits until `allCards` is populated. Uses the *positive* footer
+ * signal "Prices updated Xm ago" — which only renders when
+ * `priceData.priceTimestamp` is set AND `isAnyLoading` is false — so
+ * a falsy check on "Loading prices…" can't race past the initial
+ * state where loadAllSets hasn't even fired yet.
  *
- * Call this right after `page.goto(...)` + signed-in-visible check
- * in any auth e2e that reads from `allCards`-derived state. Uses a
- * 30s timeout because CI cold starts are the worst case; on a warm
- * preview it resolves in <100ms (the element was never visible).
+ * Several features require `allCards` to be loaded before they
+ * produce visible DOM: matchmaker banner preview compute, community
+ * source chip materialization, card picker grid. Call this right
+ * after `page.goto(...)` + the signed-in-visible check in any auth
+ * e2e that reads `allCards`-derived state.
+ *
+ * 45s timeout budgets for Vercel cold starts (26 sequential
+ * `/api/prices/[set]` fetches at ~1-2s each on first invocation).
+ * On a warm preview it resolves in <100ms.
  */
-export async function waitForPricesLoaded(page: Page, timeout = 30_000) {
-  await expect(page.getByText('Loading prices…')).not.toBeVisible({ timeout });
+export async function waitForPricesLoaded(page: Page, timeout = 45_000) {
+  await expect(page.getByText(/Prices updated/)).toBeVisible({ timeout });
 }
