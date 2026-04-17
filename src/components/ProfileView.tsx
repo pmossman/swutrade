@@ -14,6 +14,7 @@ import { bestMatchForWant } from '../listMatching';
 import type { VariantRestriction } from '../persistence';
 import { Logo } from './Logo';
 import { BetaBadge } from './BetaBadge';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface ProfileUser {
   username: string;
@@ -61,6 +62,7 @@ export function ProfileView({
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const auth = useAuthContext();
 
   useEffect(() => {
     setLoading(true);
@@ -131,16 +133,33 @@ export function ProfileView({
             </span>
             <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
           </h1>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {auth.user && auth.user.handle !== profile.user.handle && (
+              <a
+                href={`/?propose=${encodeURIComponent(profile.user.handle)}`}
+                className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+              >
+                Propose a trade
+                <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </a>
+            )}
             <button
               type="button"
               onClick={() => onStartTrade(profile.user.handle, true)}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+              className={`flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors ${
+                auth.user && auth.user.handle !== profile.user.handle
+                  ? 'bg-space-800/60 border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-300 hover:text-gold'
+                  : 'bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold'
+              }`}
             >
-              Start a trade
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M3 8h10M9 4l4 4-4 4" />
-              </svg>
+              {auth.user && auth.user.handle !== profile.user.handle ? 'Just balance' : 'Start a trade'}
+              {!(auth.user && auth.user.handle !== profile.user.handle) && (
+                <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              )}
             </button>
           </div>
         </div>

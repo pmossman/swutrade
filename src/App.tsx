@@ -38,6 +38,8 @@ import { AccountMenu } from './components/AccountMenu';
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
+import { ProposeBar } from './components/ProposeBar';
+import { useProposeHandle } from './hooks/useProposeHandle';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' {
   if (typeof window === 'undefined') return 'trade';
@@ -111,6 +113,7 @@ function App() {
   const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
   const senderHandle = useSenderHandle();
+  const proposeHandle = useProposeHandle();
   // Phase 4 community rollup — signed-in users see an extra
   // "Community wants/has" chip in the picker, scoped to cards other
   // members of their enrolled Discord guilds want or have.
@@ -406,20 +409,37 @@ function App() {
           always-visible matchmaker input — "enter a random handle" is
           a thin use case that belongs to Phase 4 (guild-scoped
           discovery), not permanent chrome here. */}
-      <AutoBalanceBanner
-        senderHandle={senderHandle}
-        isSignedIn={!!user}
-        hasCards={hasCards}
-        allCards={allLoadedCards}
-        percentage={percentage}
-        priceMode={priceMode}
-        wants={wants}
-        available={available}
-        onApplyMatch={(yours, theirs) => {
-          setYourCards(yours);
-          setTheirCards(theirs);
-        }}
-      />
+      {proposeHandle ? (
+        <ProposeBar
+          recipientHandle={proposeHandle}
+          allCards={allLoadedCards}
+          percentage={percentage}
+          priceMode={priceMode}
+          wants={wants}
+          available={available}
+          yourCards={yourCards}
+          theirCards={theirCards}
+          onApplyMatch={(yours, theirs) => {
+            setYourCards(yours);
+            setTheirCards(theirs);
+          }}
+        />
+      ) : (
+        <AutoBalanceBanner
+          senderHandle={senderHandle}
+          isSignedIn={!!user}
+          hasCards={hasCards}
+          allCards={allLoadedCards}
+          percentage={percentage}
+          priceMode={priceMode}
+          wants={wants}
+          available={available}
+          onApplyMatch={(yours, theirs) => {
+            setYourCards(yours);
+            setTheirCards(theirs);
+          }}
+        />
+      )}
 
       {/* Trade panels — flex on mobile so a collapsed panel gives its
           space to the expanded one. Grid on md+ keeps side-by-side. */}
