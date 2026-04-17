@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Matchmaker rewrite: subset-sum + two modes (UX slice A of 3)
+Greedy `computeMatch` replaced with a subset-sum search. Pools capped at top-16 by price (priorities-first), then the cross-product of both sides' subsets is scored by imbalance (primary), card count (tiebreaker), and priority count (final tiebreaker). Fixes the real $4-vs-$15 report from dogfooding — previously locally-greedy would stop early; the new search finds the subset pair with the tightest achievable balance. Second mode `maximize-priorities` force-includes every priority-starred card then only adds non-priority cards if they improve or preserve balance. ProposeBar now renders two Suggest buttons: `✨ Suggest a match` (minimize) always on when overlap exists; `★ Priorities` (maximize) only when the alt mode produces a different result. New `imbalance` field on `MatchResult` exposes the residual cash implication — surfaced by the callers rather than stored.
+
 ### 2026-04-17 — Kill ProposeBar auto-fill (UX fix)
 ProposeBar no longer auto-applies the matchmaker on mount — early dogfooding feedback said it felt presumptuous, and the greedy algorithm can produce visibly unbalanced results on small overlap pools ($4 vs $15 observed). The bar now lands empty with a status line that hints at possibility instead of performing: *"You could offer 3 of their wants · They have 5 of yours"*. A new secondary **"✨ Suggest a match"** button (visible only when overlap exists) runs the matchmaker on demand. If there's no overlap the status switches to *"No matching overlap — pick cards manually to propose anyway"* and the Suggest button hides. Propose e2e updated to click Suggest explicitly before Send.
 

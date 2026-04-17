@@ -16,6 +16,18 @@ interface AvailableEntry {
   qty: number;
 }
 
+/**
+ * `minimize-imbalance` — the clean-card-trade mode. Search for a
+ *   subset pair that balances total value as tightly as possible;
+ *   leftover is the implied cash settlement. Tiebreakers: more cards
+ *   first, then more priority-starred cards.
+ * `maximize-priorities` — the wishlist-clearing mode. Force-include
+ *   every priority-starred overlap card, then add non-priority cards
+ *   only if they improve or preserve balance. Leaves larger cash
+ *   residuals but ensures starred cards always ship.
+ */
+export type MatchMode = 'minimize-imbalance' | 'maximize-priorities';
+
 export interface MatchResult {
   /** Cards to go from me to them (my available ∩ their wants). */
   offering: CardVariant[];
@@ -23,29 +35,43 @@ export interface MatchResult {
   receiving: CardVariant[];
   offeringTotal: number;
   receivingTotal: number;
-  /** How many unique card families overlap in each direction. */
+  /** |offeringTotal - receivingTotal| — the implied cash settlement.
+   *  Positive cash flows toward whichever side's total is lower. */
+  imbalance: number;
+  /** How many unique card families overlap in each direction. Reported
+   *  regardless of which subset was actually picked. */
   overlapOffering: number;
   overlapReceiving: number;
+  /** Which mode the picked subset was produced under (echoed back so
+   *  the UI can show a mode label without re-deriving). */
+  mode: MatchMode;
+}
+
+// Hard ceiling on the pool size passed into subset-sum. 2^16 = 65_536
+// subsets per side; pair-wise comparison via sorted-by-sum + binary
+// search keeps the loop at ~1M cheap ops per mode. A real pool larger
+// than 16 gets truncated to the top-16 by price — the cheap long-tail
+// cards matter less for balance anyway.
+const SUBSET_SEARCH_CAP = 16;
+
+interface PoolEntry {
+  card: CardVariant;
+  price: number;
+  /** True if either party starred this family as a priority — we
+   *  treat priority as symmetric so either side's star can pin the
+   *  card into the maximize-priorities result. */
+  priority: boolean;
 }
 
 /**
- * Given two users' wants + available lists, compute the fairest
- * balanced trade. Returns cards to populate both sides of the trade
- * view.
+ * Given two users' wants + available lists, compute a balanced trade.
+ * Cards are selected via subset-sum search so small, skewed-price
+ * pools (common in real trades) can still find the tightest possible
+ * balance instead of an early-greedy local minimum.
  *
- * Algorithm:
- *   1. Build overlap pools:
- *      - offering = cards I have that they want
- *      - receiving = cards they have that I want
- *   2. Sort each pool by unit price descending (big-ticket cards
- *      first so the balancing has more granularity).
- *   3. Greedily pull from the LESS-valued side until adding another
- *      card would overshoot the target balance, then switch sides.
- *   4. Stop when both sides are within the tolerance or pools are
- *      exhausted.
- *
- * This is intentionally simple — for 10-50 card overlaps, greedy
- * produces near-optimal results and runs in microseconds.
+ * The residual `imbalance` IS the implied cash — callers surface it
+ * as "$X toward whichever side" rather than storing it separately.
+ * See ROADMAP / NEXT.md for why cash stays derived, not persisted.
  */
 export function computeMatch(
   myWants: WantEntry[],
@@ -55,15 +81,11 @@ export function computeMatch(
   allCards: CardVariant[],
   priceMode: PriceMode,
   percentage: number,
+  mode: MatchMode = 'minimize-imbalance',
 ): MatchResult {
-  const byFamilyAll = new Map<string, CardVariant[]>();
   const byProductId = new Map<string, CardVariant>();
   for (const card of allCards) {
     if (card.productId) byProductId.set(card.productId, card);
-    const fid = cardFamilyId(card);
-    const bucket = byFamilyAll.get(fid);
-    if (bucket) bucket.push(card);
-    else byFamilyAll.set(fid, [card]);
   }
 
   const pctMultiplier = percentage / 100;
@@ -72,94 +94,232 @@ export function computeMatch(
     return (getCardPrice(card, priceMode) ?? 0) * pctMultiplier;
   }
 
-  // Build offering pool: my available cards that satisfy their wants.
-  const offeringPool: CardVariant[] = [];
-  for (const want of theirWants) {
+  // Priority lookup by family — either side's priority star pins the
+  // card into maximize-priorities mode. Priority propagates from
+  // WantEntry.isPriority through to the paired card on the opposite
+  // side of the trade.
+  const theirPriorityFamilies = new Set(
+    theirWants.filter(w => w.isPriority).map(w => w.familyId),
+  );
+  const myPriorityFamilies = new Set(
+    myWants.filter(w => w.isPriority).map(w => w.familyId),
+  );
 
-    // Find the specific variant I have available that matches their restriction.
+  // Build overlap pools: cards that match the OPPOSITE side's wants,
+  // respecting variant restrictions. Dedupe by productId (a card can
+  // technically match multiple want entries).
+  const offeringPool = buildPool(
+    theirWants,
+    myAvailable,
+    byProductId,
+    theirPriorityFamilies,
+    price,
+  );
+  const receivingPool = buildPool(
+    myWants,
+    theirAvailable,
+    byProductId,
+    myPriorityFamilies,
+    price,
+  );
+
+  // Nothing on either side → empty result. ProposeBar handles this
+  // by showing the "no overlap" hint instead of a Suggest button.
+  if (offeringPool.length === 0 && receivingPool.length === 0) {
+    return {
+      offering: [], receiving: [],
+      offeringTotal: 0, receivingTotal: 0,
+      imbalance: 0,
+      overlapOffering: 0, overlapReceiving: 0,
+      mode,
+    };
+  }
+
+  const picked = mode === 'maximize-priorities'
+    ? selectMaximizePriorities(offeringPool, receivingPool)
+    : selectMinimizeImbalance(offeringPool, receivingPool);
+
+  const offeringTotal = round2(picked.offering.reduce((s, c) => s + price(c), 0));
+  const receivingTotal = round2(picked.receiving.reduce((s, c) => s + price(c), 0));
+
+  return {
+    offering: picked.offering,
+    receiving: picked.receiving,
+    offeringTotal,
+    receivingTotal,
+    imbalance: round2(Math.abs(offeringTotal - receivingTotal)),
+    overlapOffering: offeringPool.length,
+    overlapReceiving: receivingPool.length,
+    mode,
+  };
+}
+
+function buildPool(
+  theirWants: WantEntry[],
+  myAvailable: AvailableEntry[],
+  byProductId: Map<string, CardVariant>,
+  priorityFamilies: Set<string>,
+  price: (c: CardVariant) => number,
+): PoolEntry[] {
+  const seen = new Set<string>();
+  const pool: PoolEntry[] = [];
+  for (const want of theirWants) {
     for (const avail of myAvailable) {
       const card = byProductId.get(avail.productId);
       if (!card) continue;
       if (cardFamilyId(card) !== want.familyId) continue;
       if (!matchesRestriction(card, want.restriction)) continue;
-      offeringPool.push(card);
+      if (!card.productId || seen.has(card.productId)) continue;
+      seen.add(card.productId);
+      pool.push({
+        card,
+        price: price(card),
+        priority: priorityFamilies.has(want.familyId),
+      });
     }
   }
+  // Sort priority-first, then by price descending — subset-sum
+  // truncation (SUBSET_SEARCH_CAP) drops lowest-priority lowest-priced
+  // cards when pools exceed the cap.
+  pool.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority ? -1 : 1;
+    return b.price - a.price;
+  });
+  return pool.slice(0, SUBSET_SEARCH_CAP);
+}
 
-  // Build receiving pool: their available cards that satisfy my wants.
-  const receivingPool: CardVariant[] = [];
-  for (const want of myWants) {
+interface SubsetSummary {
+  /** Bitmask over pool indices. */
+  mask: number;
+  sum: number;
+  cardCount: number;
+  priorityCount: number;
+}
 
-    for (const avail of theirAvailable) {
-      const card = byProductId.get(avail.productId);
-      if (!card) continue;
-      if (cardFamilyId(card) !== want.familyId) continue;
-      if (!matchesRestriction(card, want.restriction)) continue;
-      receivingPool.push(card);
+function enumerateSubsets(pool: PoolEntry[]): SubsetSummary[] {
+  const n = pool.length;
+  const total = 1 << n;
+  const out: SubsetSummary[] = new Array(total);
+  for (let mask = 0; mask < total; mask++) {
+    let sum = 0;
+    let cardCount = 0;
+    let priorityCount = 0;
+    for (let i = 0; i < n; i++) {
+      if ((mask >> i) & 1) {
+        sum += pool[i].price;
+        cardCount++;
+        if (pool[i].priority) priorityCount++;
+      }
     }
+    out[mask] = { mask, sum, cardCount, priorityCount };
   }
+  return out;
+}
 
-  // Dedupe by productId (a card might match multiple wants).
-  const dedup = (pool: CardVariant[]) => {
-    const seen = new Set<string>();
-    return pool.filter(c => {
-      if (!c.productId || seen.has(c.productId)) return false;
-      seen.add(c.productId);
-      return true;
-    });
-  };
-  const offering = dedup(offeringPool).sort((a, b) => price(b) - price(a));
-  const receiving = dedup(receivingPool).sort((a, b) => price(b) - price(a));
+function subsetToCards(pool: PoolEntry[], mask: number): CardVariant[] {
+  const out: CardVariant[] = [];
+  for (let i = 0; i < pool.length; i++) {
+    if ((mask >> i) & 1) out.push(pool[i].card);
+  }
+  return out;
+}
 
-  // Greedy balancing: alternate pulling from the less-valued side.
-  const picked: { offering: CardVariant[]; receiving: CardVariant[] } = {
-    offering: [],
-    receiving: [],
-  };
-  let totalOffer = 0;
-  let totalReceive = 0;
-  let oi = 0;
-  let ri = 0;
+/**
+ * Minimize-imbalance mode: full cross-product search across both
+ * pools' subsets, scoring each pairing by imbalance (primary),
+ * then total card count (prefers fuller trades), then priority
+ * count (prefers inclusion of starred cards).
+ *
+ * Skips the trivially-empty pairing (both subsets empty) unless both
+ * pools are empty — that case is handled above and never reaches here.
+ */
+function selectMinimizeImbalance(
+  offering: PoolEntry[],
+  receiving: PoolEntry[],
+): { offering: CardVariant[]; receiving: CardVariant[] } {
+  const offSubsets = enumerateSubsets(offering);
+  const recSubsets = enumerateSubsets(receiving);
 
-  while (oi < offering.length || ri < receiving.length) {
-    // Pull from whichever side is behind (or from whichever has cards left).
-    if (totalOffer <= totalReceive && oi < offering.length) {
-      const card = offering[oi++];
-      picked.offering.push(card);
-      totalOffer += price(card);
-    } else if (ri < receiving.length) {
-      const card = receiving[ri++];
-      picked.receiving.push(card);
-      totalReceive += price(card);
-    } else if (oi < offering.length) {
-      const card = offering[oi++];
-      picked.offering.push(card);
-      totalOffer += price(card);
-    } else {
-      break;
-    }
+  let best: { offMask: number; recMask: number; imbalance: number; cards: number; priorities: number } | null = null;
 
-    // If both sides have at least one card and we're roughly balanced,
-    // stop before we overshoot. "Roughly balanced" = within 20% of the
-    // larger side, or within $1 absolute.
-    if (picked.offering.length > 0 && picked.receiving.length > 0) {
-      const diff = Math.abs(totalOffer - totalReceive);
-      const max = Math.max(totalOffer, totalReceive);
-      if (diff < 1 || (max > 0 && diff / max < 0.2)) {
-        // Check if adding the next card from either side would make it worse.
-        const nextOffer = oi < offering.length ? price(offering[oi]) : Infinity;
-        const nextReceive = ri < receiving.length ? price(receiving[ri]) : Infinity;
-        if (nextOffer > diff && nextReceive > diff) break;
+  for (const off of offSubsets) {
+    for (const rec of recSubsets) {
+      // Require at least one card somewhere; the empty pairing is
+      // the degenerate "no trade" result and doesn't help the user.
+      if (off.cardCount + rec.cardCount === 0) continue;
+      const imbalance = Math.abs(off.sum - rec.sum);
+      const cards = off.cardCount + rec.cardCount;
+      const priorities = off.priorityCount + rec.priorityCount;
+      if (!best
+        || imbalance < best.imbalance
+        || (imbalance === best.imbalance && cards > best.cards)
+        || (imbalance === best.imbalance && cards === best.cards && priorities > best.priorities)
+      ) {
+        best = { offMask: off.mask, recMask: rec.mask, imbalance, cards, priorities };
       }
     }
   }
 
+  if (!best) return { offering: [], receiving: [] };
   return {
-    offering: picked.offering,
-    receiving: picked.receiving,
-    offeringTotal: Math.round(totalOffer * 100) / 100,
-    receivingTotal: Math.round(totalReceive * 100) / 100,
-    overlapOffering: offering.length,
-    overlapReceiving: receiving.length,
+    offering: subsetToCards(offering, best.offMask),
+    receiving: subsetToCards(receiving, best.recMask),
   };
+}
+
+/**
+ * Maximize-priorities mode: force-include every priority-starred card
+ * on both sides, then search non-priority subsets for the pair that
+ * keeps the imbalance smallest. Starred cards always ship even if the
+ * result is lopsided — that's the whole point of the mode.
+ *
+ * If there are zero priority cards, fall through to minimize-imbalance
+ * so the button still produces a useful result.
+ */
+function selectMaximizePriorities(
+  offering: PoolEntry[],
+  receiving: PoolEntry[],
+): { offering: CardVariant[]; receiving: CardVariant[] } {
+  const priorityOff = offering.filter(p => p.priority);
+  const priorityRec = receiving.filter(p => p.priority);
+  if (priorityOff.length === 0 && priorityRec.length === 0) {
+    return selectMinimizeImbalance(offering, receiving);
+  }
+
+  const nonPriorityOff = offering.filter(p => !p.priority);
+  const nonPriorityRec = receiving.filter(p => !p.priority);
+
+  const baseOffSum = priorityOff.reduce((s, p) => s + p.price, 0);
+  const baseRecSum = priorityRec.reduce((s, p) => s + p.price, 0);
+
+  const offExtras = enumerateSubsets(nonPriorityOff);
+  const recExtras = enumerateSubsets(nonPriorityRec);
+
+  let best: { offMask: number; recMask: number; imbalance: number; cards: number } | null = null;
+  for (const off of offExtras) {
+    for (const rec of recExtras) {
+      const offSum = baseOffSum + off.sum;
+      const recSum = baseRecSum + rec.sum;
+      const imbalance = Math.abs(offSum - recSum);
+      const cards = priorityOff.length + priorityRec.length + off.cardCount + rec.cardCount;
+      if (!best
+        || imbalance < best.imbalance
+        || (imbalance === best.imbalance && cards > best.cards)
+      ) {
+        best = { offMask: off.mask, recMask: rec.mask, imbalance, cards };
+      }
+    }
+  }
+
+  const offExtraCards = best ? subsetToCards(nonPriorityOff, best.offMask) : [];
+  const recExtraCards = best ? subsetToCards(nonPriorityRec, best.recMask) : [];
+
+  return {
+    offering: [...priorityOff.map(p => p.card), ...offExtraCards],
+    receiving: [...priorityRec.map(p => p.card), ...recExtraCards],
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

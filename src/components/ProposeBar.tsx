@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { VariantRestriction } from '../persistence';
-import { computeMatch, type MatchResult } from '../utils/matchmaker';
+import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
 import {
   adjustPrice,
   getCardPrice,
@@ -102,7 +102,12 @@ export function ProposeBar({
     return () => { cancelled = true; };
   }, [recipientHandle]);
 
-  const preview = useMemo<MatchResult | null>(() => {
+  // Build a preview for the given mode. Both modes share the same
+  // overlap pool computation inside computeMatch — only the subset-
+  // selection step differs — so the memo deps are identical. We
+  // compute both eagerly so the two Suggest buttons can light up or
+  // hide instantly without re-running on click.
+  const buildPreview = useCallback((mode: MatchMode): MatchResult | null => {
     if (!profile) return null;
     if (allCards.length === 0) return null;
     return computeMatch(
@@ -118,24 +123,47 @@ export function ProposeBar({
       allCards,
       priceMode,
       percentage,
+      mode,
     );
   }, [profile, allCards, percentage, priceMode, wants.items, available.items]);
 
-  // Manual "Suggest a balanced match" — user-triggered instead of
-  // auto-applied on mount. Early dogfooding feedback: auto-filling
-  // a trade the user didn't build felt presumptuous, and the greedy
-  // matchmaker can produce visibly unbalanced results on small
-  // overlap pools ($4 vs $15 in one real case). Surfacing it as an
-  // explicit button keeps the matchmaker available without yanking
-  // agency from the proposer.
-  const handleSuggest = useCallback(() => {
-    if (!preview) return;
-    if (preview.offering.length === 0 && preview.receiving.length === 0) return;
+  // `preview` (minimize-imbalance) drives the Suggest button + the
+  // overlap-count hint in the status line. `priorityPreview` is the
+  // alt-mode result; we compare it with `preview` to decide whether
+  // the priorities button would produce something different enough
+  // to warrant surfacing.
+  const preview = useMemo<MatchResult | null>(
+    () => buildPreview('minimize-imbalance'),
+    [buildPreview],
+  );
+  const priorityPreview = useMemo<MatchResult | null>(
+    () => buildPreview('maximize-priorities'),
+    [buildPreview],
+  );
+
+  // Manual Suggest — user-triggered instead of auto-applied on mount.
+  // Auto-fill felt presumptuous and the old greedy algorithm produced
+  // visibly unbalanced trades; the new subset-sum + modes approach
+  // pairs with this explicit opt-in so users always see the choice
+  // between "minimize imbalance" and "maximize priorities".
+  const handleSuggest = useCallback((mode: MatchMode) => {
+    const result = mode === 'minimize-imbalance' ? preview : priorityPreview;
+    if (!result) return;
+    if (result.offering.length === 0 && result.receiving.length === 0) return;
     onApplyMatch(
-      preview.offering.map(c => ({ card: c, qty: 1 })),
-      preview.receiving.map(c => ({ card: c, qty: 1 })),
+      result.offering.map(c => ({ card: c, qty: 1 })),
+      result.receiving.map(c => ({ card: c, qty: 1 })),
     );
-  }, [preview, onApplyMatch]);
+  }, [preview, priorityPreview, onApplyMatch]);
+
+  // Only surface the priorities button when it would actually produce
+  // a different trade than minimize-imbalance. Same-result case =
+  // no priority stars in the overlap, which makes the second button
+  // noise rather than a meaningful choice.
+  const showPrioritiesSuggest = !!preview && !!priorityPreview && (
+    !productIdsEqual(preview.offering, priorityPreview.offering)
+    || !productIdsEqual(preview.receiving, priorityPreview.receiving)
+  );
 
   const handleSend = useCallback(async () => {
     if (sendState === 'sending' || sendState === 'sent') return;
@@ -275,11 +303,23 @@ export function ProposeBar({
         {overlapAvailable && (
           <button
             type="button"
-            onClick={handleSuggest}
+            onClick={() => handleSuggest('minimize-imbalance')}
             data-testid="propose-suggest"
+            title="Tightest card-for-card match; any remainder is implied cash."
             className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
           >
             ✨ Suggest a match
+          </button>
+        )}
+        {showPrioritiesSuggest && (
+          <button
+            type="button"
+            onClick={() => handleSuggest('maximize-priorities')}
+            data-testid="propose-suggest-priorities"
+            title="Include every priority-starred card, even if it widens the imbalance."
+            className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold-bright/40 text-gray-300 hover:text-gold-bright text-[11px] font-semibold transition-colors"
+          >
+            ★ Priorities
           </button>
         )}
         <button
@@ -341,6 +381,15 @@ export function ProposeBar({
       )}
     </div>
   );
+}
+
+/** Order-independent productId comparison — two match results are
+ *  the same picked set when their cards match regardless of order. */
+function productIdsEqual(a: { productId?: string }[], b: { productId?: string }[]): boolean {
+  if (a.length !== b.length) return false;
+  const ids = (xs: { productId?: string }[]) =>
+    xs.map(c => c.productId ?? '').filter(Boolean).sort().join(',');
+  return ids(a) === ids(b);
 }
 
 const MESSAGE_MAX_LENGTH = 500;
