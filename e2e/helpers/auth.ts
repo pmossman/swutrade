@@ -113,3 +113,76 @@ export async function cleanupTestUser(user: TestUser): Promise<void> {
   const db = getDb();
   await db.delete(users).where(eq(users.id, user.userId)).catch(() => {});
 }
+
+/**
+ * Create a "sender" fixture — a separate user (distinct from the
+ * signed-in test user) with a known handle and optional public
+ * wants/available. Used by tests that assert behaviour around
+ * `?from=<handle>` banners; avoids hardcoding real-user handles
+ * (which made tests depend on the shared prod-DB row staying
+ * stable).
+ *
+ * Returns a cleanup function that removes the sender + all their
+ * wants/available rows.
+ */
+export async function createSenderFixture(opts: {
+  handle?: string;
+  wants?: Array<{ familyId: string; qty?: number }>;
+  available?: Array<{ productId: string; qty?: number }>;
+  profileVisibility?: 'public' | 'discord' | 'private';
+} = {}): Promise<{ handle: string; userId: string; cleanup: () => Promise<void> }> {
+  const { getDb } = await import('../../lib/db.js');
+  const { users, wantsItems, availableItems } = await import('../../lib/schema.js');
+  const { eq } = await import('drizzle-orm');
+  const { restrictionKey } = await import('../../lib/shared.js');
+
+  const db = getDb();
+  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const handle = opts.handle ?? `e2e-sender-${suffix}`;
+  const userId = `e2e-sender-${suffix}`;
+
+  await db.insert(users).values({
+    id: userId,
+    discordId: userId,
+    username: `Sender ${suffix}`,
+    handle,
+    avatarUrl: null,
+    wantsPublic: true,
+    availablePublic: true,
+    profileVisibility: opts.profileVisibility ?? 'public',
+  });
+
+  for (const w of opts.wants ?? []) {
+    await db.insert(wantsItems).values({
+      id: `sender-want-${userId}-${w.familyId}`,
+      userId,
+      familyId: w.familyId,
+      qty: w.qty ?? 1,
+      restrictionMode: 'any',
+      restrictionVariants: null,
+      restrictionKey: restrictionKey({ mode: 'any' }),
+      isPriority: false,
+      addedAt: Date.now(),
+    });
+  }
+
+  for (const a of opts.available ?? []) {
+    await db.insert(availableItems).values({
+      id: `sender-avail-${userId}-${a.productId}`,
+      userId,
+      productId: a.productId,
+      qty: a.qty ?? 1,
+      addedAt: Date.now(),
+    });
+  }
+
+  return {
+    handle,
+    userId,
+    async cleanup() {
+      await db.delete(wantsItems).where(eq(wantsItems.userId, userId)).catch(() => {});
+      await db.delete(availableItems).where(eq(availableItems.userId, userId)).catch(() => {});
+      await db.delete(users).where(eq(users.id, userId)).catch(() => {});
+    },
+  };
+}
