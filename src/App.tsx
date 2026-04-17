@@ -43,6 +43,12 @@ import { useProposeHandle } from './hooks/useProposeHandle';
 
 function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' {
   if (typeof window === 'undefined') return 'trade';
+  // `/u/<handle>` is our canonical shareable profile URL. Vercel
+  // rewrites it to `/?profile=<handle>` server-side, but the browser
+  // URL stays `/u/<handle>`, which means `window.location.search` is
+  // empty in the SPA. Detect on pathname too so the profile view
+  // renders whether the user got here via `/u/...` or `/?profile=...`.
+  if (/^\/u\//.test(window.location.pathname)) return 'profile';
   const params = new URLSearchParams(window.location.search);
   if (params.get('settings') === '1') return 'settings';
   if (params.get('community') === '1') return 'community';
@@ -54,6 +60,16 @@ function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'communit
   const hasListParams = params.has('w') || params.has('a');
   const hasTradeParams = params.has('y') || params.has('t');
   return hasListParams && !hasTradeParams ? 'list' : 'trade';
+}
+
+/** Extract the handle from either `?profile=<handle>` or the
+ *  `/u/<handle>` pathname — whichever the user navigated via. */
+function readProfileHandle(): string {
+  if (typeof window === 'undefined') return '';
+  const fromQuery = new URLSearchParams(window.location.search).get('profile');
+  if (fromQuery) return fromQuery;
+  const m = window.location.pathname.match(/^\/u\/([^/]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
 }
 
 function timeAgo(iso: string): string {
@@ -156,7 +172,12 @@ function App() {
     // reloads and shared URLs don't keep re-triggering.
     if (autoBalance) params.set('autoBalance', '1');
     else params.delete('autoBalance');
-    window.history.pushState(null, '', '?' + params.toString());
+    // If we're currently on /u/<handle>, the new URL has to drop
+    // the /u/ prefix explicitly — pushState without a pathname
+    // keeps the current one, and detectViewMode prioritizes /u/ so
+    // the trade view wouldn't actually flip on reload.
+    const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
+    window.history.pushState(null, '', `${nextPath}?${params.toString()}`);
     // Clear any persisted filter state so the sender's wants don't
     // land in an accidental "no matches" view if the user had a
     // narrow filter saved from an earlier session.
@@ -300,7 +321,7 @@ function App() {
 
   // Profile view — /u/<handle> shows a user's public lists.
   if (viewMode === 'profile') {
-    const profileHandle = new URLSearchParams(window.location.search).get('profile') ?? '';
+    const profileHandle = readProfileHandle();
     return (
       <ProfileView
         handle={profileHandle}
