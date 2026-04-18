@@ -24,7 +24,7 @@ const DEFAULTS: AccountSettings = {
 
 /**
  * Loads the signed-in user's account-level settings from
- * `/api/me/settings` and provides an optimistic `update(patch)` that
+ * `/api/me/prefs` and provides an optimistic `update(patch)` that
  * PUTs the patch and rolls back on failure. Used by SettingsView.
  */
 export function useAccountSettings(): AccountSettingsApi {
@@ -35,7 +35,7 @@ export function useAccountSettings(): AccountSettingsApi {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/me/settings');
+        const res = await fetch('/api/me/prefs');
         if (!res.ok) throw new Error(`status ${res.status}`);
         const data: AccountSettings = await res.json();
         if (cancelled) return;
@@ -52,7 +52,7 @@ export function useAccountSettings(): AccountSettingsApi {
     setSettings(prev => (prev ? { ...prev, ...patch } : prev));
     setStatus('saving');
     try {
-      const res = await fetch('/api/me/settings', {
+      const res = await fetch('/api/me/prefs', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(patch),
@@ -62,7 +62,7 @@ export function useAccountSettings(): AccountSettingsApi {
     } catch {
       // Roll back on failure — re-fetch to resync with the server.
       try {
-        const res = await fetch('/api/me/settings');
+        const res = await fetch('/api/me/prefs');
         if (res.ok) {
           const data: AccountSettings = await res.json();
           setSettings({ ...DEFAULTS, ...data });

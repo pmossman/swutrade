@@ -8,7 +8,7 @@ Serverless HTTP handlers. Each `.ts` file becomes one Vercel function at deploy 
 
 The Hobby plan caps deployments at **12 serverless functions**. When we exceed it, Vercel fails the build at "Deploying outputs…" with no useful error in the UI — just a generic deploy failure. That's why several surfaces are **consolidated** behind one file:
 
-- `api/me.ts` handles `/api/me/settings`, `/api/me/guilds`, `/api/me/guilds-refresh`, `/api/me/guild`, `/api/me/community`, `/api/me/community-members` via a `?action=` query dispatched in the default export. `vercel.json` rewrites preserve the pretty URLs externally.
+- `api/me.ts` handles `/api/me/prefs`, `/api/me/guilds`, `/api/me/guilds-refresh`, `/api/me/guild`, `/api/me/community`, `/api/me/community-members` via a `?action=` query dispatched in the default export. `vercel.json` rewrites preserve the pretty URLs externally. `/api/me/settings` is a transitional alias for `/api/me/prefs` during the registry migration — both route to `handlePrefs`.
 - `api/bot.ts` handles both Discord interaction webhooks and Discord event webhooks (`?action=interactions` vs `?action=events`).
 - `api/auth.ts` bundles OAuth start/callback + sign-in/out + session refresh.
 - `api/trades.ts` handles propose/respond/cancel/counter.
@@ -38,7 +38,7 @@ Two recurring shapes:
 
 ```ts
 switch (req.query.action) {
-  case 'settings': return handleSettings(req, res);
+  case 'prefs':    return handlePrefs(req, res);
   case 'guilds':   return handleGuildsList(req, res);
   ...
   default:         return res.status(404)...;

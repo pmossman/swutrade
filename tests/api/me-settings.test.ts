@@ -1,6 +1,7 @@
 import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import {
+  handlePrefs as prefsHandler,
   handleSettings as settingsHandler,
   handleGuildsList as guildsListHandler,
   handleGuildPut as guildSettingsHandler,
@@ -61,6 +62,130 @@ describeWithDb('Phase 4 account + guild settings', () => {
     installedGuildIds.length = 0;
   });
 
+  describe('GET /api/me/prefs', () => {
+    it('returns every self-scoped registered pref keyed by its `key`', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({ method: 'GET', cookies: { swu_session: cookie } });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(200);
+      // Every registered self-scoped pref should surface. Adding a
+      // new pref to the registry and forgetting to include it here
+      // means this test fails — that's the intent.
+      expect(res._json).toMatchObject({
+        profileVisibility: 'discord',
+        communicationPref: 'allow',
+        dmTradeProposals: true,
+        dmMatchAlerts: false,
+        dmMeetupReminders: false,
+      });
+    });
+  });
+
+  describe('PUT /api/me/prefs', () => {
+    it('applies partial patches across multiple self-scoped prefs', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: { communicationPref: 'prefer', dmMatchAlerts: true },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(200);
+      const db = getDb();
+      const [row] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
+      expect(row.communicationPref).toBe('prefer');
+      expect(row.dmMatchAlerts).toBe(true);
+      // Untouched fields stay at their defaults.
+      expect(row.profileVisibility).toBe('discord');
+      expect(row.dmTradeProposals).toBe(true);
+    });
+
+    it('400s on an unknown pref key with `key` in the response (no silent drop)', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: { notAPref: true },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(400);
+      expect(res._json).toMatchObject({ error: 'Unknown pref', key: 'notAPref' });
+    });
+
+    it('400s on an invalid enum value with `reason` explaining the allowed set', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: { communicationPref: 'threadify' },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(400);
+      expect(res._json).toMatchObject({
+        error: 'Invalid value',
+        key: 'communicationPref',
+      });
+      expect((res._json as { reason?: string }).reason).toMatch(/expected one of/);
+    });
+
+    it('400s on a type mismatch (boolean pref receiving a string)', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: { dmTradeProposals: 'yes' },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(400);
+      expect(res._json).toMatchObject({ error: 'Invalid value', key: 'dmTradeProposals' });
+    });
+
+    it('400s on an empty body (no-op patches are client bugs)', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+      const cookie = await sealTestCookie(user.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: {},
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(400);
+    });
+  });
+
+  // Retained: /api/me/settings is a transitional alias that routes
+  // to the same registry-driven handler. These tests prove stale
+  // clients pointing at the old URL continue to work until we cut
+  // the alias in a follow-up slice.
   describe('GET /api/me/settings', () => {
     it('returns default settings for a fresh user', async () => {
       const user = await createTestUser();

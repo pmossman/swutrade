@@ -5,6 +5,7 @@
     { "source": "/api/me/guilds/refresh", "destination": "/api/me?action=guilds-refresh" },
     { "source": "/api/me/guilds/:guildId", "destination": "/api/me?action=guild&guildId=:guildId" },
     { "source": "/api/me/guilds", "destination": "/api/me?action=guilds" },
+    { "source": "/api/me/prefs", "destination": "/api/me?action=prefs" },
     { "source": "/api/me/settings", "destination": "/api/me?action=settings" },
     { "source": "/api/me/community", "destination": "/api/me?action=community" },
     { "source": "/api/me/community-members", "destination": "/api/me?action=community-members" },

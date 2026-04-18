@@ -6,6 +6,11 @@ import { users, userGuildMemberships, botInstalledGuilds, wantsItems, availableI
 import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
+import {
+  PREF_DEFINITIONS,
+  getPrefDefinition,
+  validatePrefValue,
+} from '../lib/prefsRegistry.js';
 
 /**
  * Single dispatcher for every `/api/me/*` endpoint.
@@ -23,8 +28,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = (req.query.action as string | undefined) ?? '';
 
   switch (action) {
+    case 'prefs':
+      return handlePrefs(req, res);
     case 'settings':
-      return handleSettings(req, res);
+      // Deprecated alias: /api/me/settings routes here during the
+      // transition so stale browser builds keep working. Remove once
+      // deployed clients have had a release to migrate to /prefs.
+      return handlePrefs(req, res);
     case 'guilds':
       return handleGuildsList(req, res);
     case 'guilds-refresh':
@@ -40,29 +50,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
-// --- settings ---------------------------------------------------------------
+// --- prefs ------------------------------------------------------------------
 
-const SettingsPatchSchema = z.object({
-  profileVisibility: z.enum(['public', 'discord', 'private']).optional(),
-  dmTradeProposals: z.boolean().optional(),
-  dmMatchAlerts: z.boolean().optional(),
-  dmMeetupReminders: z.boolean().optional(),
-});
-
-export async function handleSettings(req: VercelRequest, res: VercelResponse) {
+/**
+ * Registry-driven GET + PUT for every self-scoped pref the app knows
+ * about. Both the `prefs` and deprecated `settings` actions route
+ * here; the only difference is the URL the caller hit.
+ *
+ * GET: project the registered columns off the users row, return as
+ *   `{ [key]: value }`.
+ * PUT: accept a partial `{ [key]: value }` patch; every key must match
+ *   a self-scoped registered def and its value must pass the type
+ *   check. Unknown keys fail the whole request — the registry is the
+ *   contract, and silently dropping unrecognized keys hides typos.
+ *
+ * Peer-scoped prefs are handled separately in a later migration step.
+ */
+export async function handlePrefs(req: VercelRequest, res: VercelResponse) {
   const session = await requireSession(req, res);
   if (!session) return;
 
   const db = getDb();
 
+  const selfDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'self');
+
   if (req.method === 'GET') {
+    // Cast once so we can dynamically project the Drizzle column
+    // objects by name — the registry's `column` values are validated
+    // against the users table schema at test time so the runtime
+    // property access is safe.
+    const usersCols = users as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
+    const projection: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
+    for (const def of selfDefs) {
+      projection[def.key] = usersCols[def.column];
+    }
+
     const [row] = await db
-      .select({
-        profileVisibility: users.profileVisibility,
-        dmTradeProposals: users.dmTradeProposals,
-        dmMatchAlerts: users.dmMatchAlerts,
-        dmMeetupReminders: users.dmMeetupReminders,
-      })
+      .select(projection)
       .from(users)
       .where(eq(users.id, session.userId))
       .limit(1);
@@ -72,17 +96,35 @@ export async function handleSettings(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method === 'PUT') {
-    const parsed = SettingsPatchSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+    if (typeof req.body !== 'object' || req.body == null || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'Invalid body' });
     }
-    const patch = parsed.data;
-    if (Object.keys(patch).length === 0) {
+    const patch = req.body as Record<string, unknown>;
+    const keys = Object.keys(patch);
+    if (keys.length === 0) {
       return res.status(400).json({ error: 'Empty patch' });
     }
+
+    // Validate every key against the registry before writing anything.
+    // A single bad key rejects the whole request — partial writes on
+    // validation failure would leave the client guessing which fields
+    // landed.
+    const updates: Record<string, boolean | string> = {};
+    for (const key of keys) {
+      const def = getPrefDefinition(key, 'self');
+      if (!def) {
+        return res.status(400).json({ error: 'Unknown pref', key });
+      }
+      const v = validatePrefValue(def, patch[key]);
+      if (!v.ok) {
+        return res.status(400).json({ error: 'Invalid value', key, reason: v.reason });
+      }
+      updates[def.column] = v.value;
+    }
+
     await db
       .update(users)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...updates, updatedAt: new Date() })
       .where(eq(users.id, session.userId));
     return res.json({ ok: true });
   }
@@ -90,6 +132,14 @@ export async function handleSettings(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Allow', 'GET, PUT');
   return res.status(405).json({ error: 'Method not allowed' });
 }
+
+/**
+ * Deprecated alias — retained so existing tests, stale clients, and
+ * the `/api/me/settings` URL continue to work during the transition.
+ * New callers should import `handlePrefs`. Remove once deployed
+ * clients have rolled over to `/api/me/prefs`.
+ */
+export const handleSettings = handlePrefs;
 
 // --- guilds list ------------------------------------------------------------
 
