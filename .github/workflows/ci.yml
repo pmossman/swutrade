@@ -245,14 +245,56 @@ jobs:
             test-results/
           retention-days: 7
 
+  # ── Step 4.5: Flip the message to "live" the moment the preview
+  # deploy comes up, so the user knows they can poke new features
+  # before full CI verification finishes. notify-finish will overwrite
+  # this again at the very end with the aggregated outcome.
+  notify-live:
+    name: Notify Discord (live)
+    runs-on: ubuntu-latest
+    needs: [notify-start, wait-for-deploy]
+    if: |
+      github.event_name == 'push'
+      && needs.notify-start.outputs.message_id != ''
+      && needs.wait-for-deploy.result == 'success'
+    steps:
+      - name: PATCH message — deploy live, CI still verifying
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          MSG_ID: ${{ needs.notify-start.outputs.message_id }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREVIEW_URL: ${{ needs.wait-for-deploy.outputs.url }}
+        run: |
+          SHORT=${SHA:0:7}
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          BODY=$(jq -cn \
+            --arg b "$BRANCH" --arg s "$SHORT" --arg cu "$COMMIT_URL" \
+            --arg m "$FIRST_LINE" --arg ru "$RUN_URL" --arg pu "$PREVIEW_URL" \
+            '{ content: ":large_green_circle: **\($b)** live [`\($s)`](<\($cu)>) · \($m)\n[preview](<\($pu)>) · [CI run](<\($ru)>) _(still verifying)_" }')
+          HTTP=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X PATCH \
+            -H 'Content-Type: application/json' -d "$BODY" \
+            "${WEBHOOK_URL}/messages/${MSG_ID}")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::PATCH failed: HTTP $HTTP"
+            cat /tmp/resp.json
+            exit 1
+          fi
+
   # ── Step 5: PATCH the #releases message with the final outcome
   # Fires on push events regardless of upstream success; `if: always()`
   # + explicit message_id gate guarantee we only touch the message
-  # that notify-start actually posted.
+  # that notify-start actually posted. `needs: [notify-live, ...]`
+  # ensures the live-patch lands before the final-patch — otherwise
+  # on a fast run they could race and the "live" state would briefly
+  # overwrite the already-final "verified" state.
   notify-finish:
     name: Notify Discord (finish)
     runs-on: ubuntu-latest
-    needs: [notify-start, check, e2e-anonymous, wait-for-deploy, e2e-authenticated]
+    needs: [notify-start, notify-live, check, e2e-anonymous, wait-for-deploy, e2e-authenticated]
     if: always() && github.event_name == 'push' && needs.notify-start.outputs.message_id != ''
     steps:
       - name: PATCH message with outcome
