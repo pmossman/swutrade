@@ -132,6 +132,25 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     section: 'communication',
     discord: { order: 0 },
   }),
+  // Peer-scoped override. Null default = "no override, inherit from
+  // the viewer's self-scoped value." Both enum options and column
+  // name MUST match the self-scoped def — the registry unit test
+  // asserts this so the cascade resolver never returns a value the
+  // schema can't store.
+  definePref({
+    key: 'communicationPref',
+    scope: { kind: 'peer' },
+    column: 'communicationPref',
+    type: { kind: 'enum', options: COMMUNICATION_PREF_OPTIONS },
+    label: 'Thread conversations (override)',
+    description:
+      'Override your default specifically when trading with this person. ' +
+      'Pick Inherit to fall back to your global setting.',
+    default: null,
+    surfaces: ['web', 'discord'],
+    section: 'communication',
+    discord: { order: 0 },
+  }),
   definePref({
     key: 'profileVisibility',
     scope: { kind: 'self' },

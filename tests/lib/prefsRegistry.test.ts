@@ -24,6 +24,34 @@ describe('prefsRegistry', () => {
       }
     });
 
+    it('every peer-scoped def has a matching self-scoped def with the same key, column, and enum options', () => {
+      const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
+      for (const peerDef of peerDefs) {
+        const selfDef = PREF_DEFINITIONS.find(
+          d => d.scope.kind === 'self' && d.key === peerDef.key,
+        );
+        expect(selfDef, `peer def ${peerDef.key} has no self-scoped counterpart`).toBeTruthy();
+        if (!selfDef) continue;
+        // Column must match — the resolver falls back from peer table
+        // to users.<column>, so divergence would write to the wrong
+        // place.
+        expect(peerDef.column).toBe(selfDef.column);
+        // Type kind must agree.
+        expect(peerDef.type.kind).toBe(selfDef.type.kind);
+        // Enum options, if present, must match by value set — the
+        // cascade resolver assumes any value storable in peer is
+        // storable in self.
+        if (peerDef.type.kind === 'enum' && selfDef.type.kind === 'enum') {
+          const peerValues = new Set(peerDef.type.options.map(o => o.value));
+          const selfValues = new Set(selfDef.type.options.map(o => o.value));
+          expect(peerValues).toEqual(selfValues);
+        }
+        // Peer-scoped defs MUST default to null (sparse storage
+        // invariant — a missing override inherits from self).
+        expect(peerDef.default).toBeNull();
+      }
+    });
+
     it('every def declares web in surfaces — docs/prefs-registry.md requires web canonical', () => {
       for (const def of PREF_DEFINITIONS) {
         expect(def.surfaces).toContain('web');
@@ -92,8 +120,10 @@ describe('prefsRegistry', () => {
       expect(getPrefDefinition('no-such-pref', 'self')).toBeUndefined();
     });
 
-    it('returns undefined for a known key at the wrong scope (no peer def registered yet)', () => {
-      expect(getPrefDefinition('communicationPref', 'peer')).toBeUndefined();
+    it('returns undefined for a known key at a scope where no def is registered', () => {
+      // guild-scoped defs have a reserved slot in the scope union
+      // but nothing is registered there yet — the lookup should miss.
+      expect(getPrefDefinition('communicationPref', 'guild')).toBeUndefined();
     });
   });
 

@@ -11,7 +11,8 @@ import {
   buildCounteredProposalMessage,
   buildResolvedProposalMessage,
 } from '../lib/proposalMessages.js';
-import { deliveryForPair } from '../lib/threadConsent.js';
+import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js';
+import { resolvePref } from '../lib/prefsResolver.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -166,7 +167,6 @@ export async function handlePropose(
       discordId: users.discordId,
       handle: users.handle,
       profileVisibility: users.profileVisibility,
-      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.handle, recipientHandle))
@@ -188,7 +188,6 @@ export async function handlePropose(
     .select({
       handle: users.handle,
       username: users.username,
-      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.id, session.userId))
@@ -221,15 +220,26 @@ export async function handlePropose(
 
   const bot = deps.bot ?? createDiscordBotClient();
 
-  // Resolve the delivery path based on both parties' communication
-  // prefs. The matrix (see `deliveryForPair`) collapses 16 pref pairs
-  // to three outcomes:
-  //   'thread-immediately' — both pre-consented; skip the negotiation
-  //   'dm-with-request'   — DM first; either side can request a thread
-  //   'dm-only'           — at least one side refused threads
+  // Resolve each party's EFFECTIVE communicationPref for this specific
+  // pair through the cascade (peer override on the other party → self
+  // default → registry default). The decision matrix only sees
+  // pre-resolved values so `threadConsent.ts` stays pure. A peer
+  // override on either side can flip the delivery outcome.
+  const [proposerEffective, recipientEffective] = await Promise.all([
+    resolvePref({
+      key: 'communicationPref',
+      viewerUserId: session.userId,
+      peerUserId: recipient.id,
+    }),
+    resolvePref({
+      key: 'communicationPref',
+      viewerUserId: recipient.id,
+      peerUserId: session.userId,
+    }),
+  ]);
   const delivery = deliveryForPair(
-    proposer.communicationPref,
-    recipient.communicationPref,
+    proposerEffective as CommunicationPref,
+    recipientEffective as CommunicationPref,
   );
 
   // Deliver the proposal. Errors never 5xx — the row is already

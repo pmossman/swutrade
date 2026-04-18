@@ -19,8 +19,9 @@ import {
   buildPrefOptionsMessage,
   buildPrefConfirmationMessage,
 } from '../lib/proposalMessages.js';
-import { handleThreadRequest } from '../lib/threadConsent.js';
+import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
 import { getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
+import { resolvePref } from '../lib/prefsResolver.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -287,7 +288,6 @@ export async function handleTradeProposalButton(
       discordId: users.discordId,
       handle: users.handle,
       username: users.username,
-      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.id, trade.recipientUserId))
@@ -298,7 +298,6 @@ export async function handleTradeProposalButton(
       discordId: users.discordId,
       handle: users.handle,
       username: users.username,
-      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.id, trade.proposerUserId))
@@ -469,7 +468,6 @@ interface PartyRow {
   discordId: string;
   handle: string;
   username: string;
-  communicationPref: 'prefer' | 'auto-accept' | 'allow' | 'dm-only';
 }
 
 /**
@@ -543,7 +541,15 @@ async function handleThreadFlowButton(args: {
 
     const requester = clickerIsProposer ? proposer : recipient;
     const counterpart = clickerIsProposer ? recipient : proposer;
-    const outcome = handleThreadRequest(counterpart.communicationPref);
+    // Counterpart's pref vis-à-vis THIS specific requester — a peer
+    // override on (counterpart, requester) can flip auto-approve /
+    // manual-decide / auto-decline per trading partner.
+    const counterpartPref = (await resolvePref({
+      key: 'communicationPref',
+      viewerUserId: counterpart.id,
+      peerUserId: requester.id,
+    })) as CommunicationPref;
+    const outcome = handleThreadRequest(counterpartPref);
 
     if (outcome === 'auto-decline') {
       res.status(200).json({
