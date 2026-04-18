@@ -679,6 +679,113 @@ describeWithDb('POST /api/trades/propose', () => {
     );
   });
 
+  // --- Peer-scope override ---------------------------------------------------
+
+  /**
+   * Step 7 integration proof: a peer-scoped override on both sides
+   * flips the delivery outcome vs what the self-scoped prefs alone
+   * would produce. If this test fails but the matrix sweep passes,
+   * `handlePropose` has stopped going through `resolvePref` and is
+   * reading `users.communicationPref` directly again.
+   */
+  describe('communication-pref peer overrides', () => {
+    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
+    afterEach(() => {
+      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
+      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
+    });
+
+    it('self=allow × self=allow + mutual peer overrides to prefer → thread-immediately', async () => {
+      process.env.TRADES_CHANNEL_ID = 'parent-channel-peer-override';
+
+      const proposer = await createTestUser({ communicationPref: 'allow' });
+      const recipient = await createTestUser({ communicationPref: 'allow' });
+      fixtures.push(proposer, recipient);
+
+      const { userPeerPrefs: peerPrefsTable } = await import('../../lib/schema.js');
+      const db = getDb();
+      await db.insert(peerPrefsTable).values([
+        { userId: proposer.id, peerUserId: recipient.id, communicationPref: 'prefer' },
+        { userId: recipient.id, peerUserId: proposer.id, communicationPref: 'prefer' },
+      ]);
+
+      const bot = makeFakeBot({
+        thread: { id: 'thread-peer-override', parentId: 'parent-channel-peer-override' },
+      });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [snapshot('p-2')],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      // Base matrix (self × self = allow × allow) would have produced
+      // dm-with-request. The override flipped it.
+      expect(bot.threadCalls).toHaveLength(1);
+      expect(bot.threadPosts).toHaveLength(1);
+      expect(bot.sendCalls).toHaveLength(0);
+
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+      // Clean up peer pref rows — fixtures.cleanup only handles the
+      // viewer side via users cascade, but we inserted two rows with
+      // different viewers so cover both.
+      await db.delete(peerPrefsTable).where(eq(peerPrefsTable.userId, proposer.id));
+      await db.delete(peerPrefsTable).where(eq(peerPrefsTable.userId, recipient.id));
+    });
+
+    it('self=prefer × self=prefer + recipient peer-overrides to dm-only → dm-only', async () => {
+      process.env.TRADES_CHANNEL_ID = 'parent-channel-peer-override-2';
+
+      const proposer = await createTestUser({ communicationPref: 'prefer' });
+      const recipient = await createTestUser({ communicationPref: 'prefer' });
+      fixtures.push(proposer, recipient);
+
+      const { userPeerPrefs: peerPrefsTable } = await import('../../lib/schema.js');
+      const db = getDb();
+      // Recipient doesn't want threads specifically with this proposer,
+      // even though their global default is 'prefer'. Matrix resolves
+      // to dm-only because either side of 'dm-only' forces dm-only.
+      await db.insert(peerPrefsTable).values({
+        userId: recipient.id,
+        peerUserId: proposer.id,
+        communicationPref: 'dm-only',
+      });
+
+      const bot = makeFakeBot({ channelId: 'dm-peer', messageId: 'msg-peer' });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [snapshot('p-2')],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      expect(bot.threadCalls).toHaveLength(0);
+      expect(bot.sendCalls).toHaveLength(1);
+      // dm-only → no request-thread button (3 buttons, not 4).
+      const row = bot.sendCalls[0].body.components?.[0];
+      expect(row?.components).toHaveLength(3);
+
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+      await db.delete(peerPrefsTable).where(eq(peerPrefsTable.userId, recipient.id));
+    });
+  });
+
   // --- Request-thread button handler ----------------------------------------
 
   /**

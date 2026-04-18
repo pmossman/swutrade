@@ -83,6 +83,7 @@ export async function getUserSettings(userId: string) {
       dmTradeProposals: users.dmTradeProposals,
       dmMatchAlerts: users.dmMatchAlerts,
       dmMeetupReminders: users.dmMeetupReminders,
+      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.id, userId))

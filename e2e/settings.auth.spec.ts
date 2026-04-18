@@ -51,6 +51,21 @@ test.describe('Settings view', () => {
     }, { timeout: 5_000 }).toBe(true);
   });
 
+  test('changing Thread conversations (communicationPref) persists', async ({ page }) => {
+    await page.goto('/?settings=1');
+
+    // New in the registry-driven Settings: Communication section
+    // carries a `Thread conversations` select with 4 enum options.
+    const commPref = page.getByLabel('Thread conversations');
+    await expect(commPref).toHaveValue('allow');
+    await commPref.selectOption('prefer');
+
+    await expect.poll(async () => {
+      const s = await getUserSettings(user.userId);
+      return s?.communicationPref;
+    }, { timeout: 5_000 }).toBe('prefer');
+  });
+
   test('changing profile visibility persists', async ({ page }) => {
     await page.goto('/?settings=1');
 
