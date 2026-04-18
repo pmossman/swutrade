@@ -1,5 +1,6 @@
 import {
   pgTable,
+  primaryKey,
   text,
   integer,
   boolean,
@@ -49,6 +50,44 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+/**
+ * Per-peer preference overrides — sparse storage for "I want a
+ * different default specifically when trading with this person."
+ * A missing row (or a null column) means "no override; resolve
+ * through the cascade to the viewer's self-scoped default" (see
+ * docs/prefs-registry.md for the resolution rule).
+ *
+ * Composite primary key `(user_id, peer_user_id)` enforces at most
+ * one row per viewer/peer pair. Both FKs cascade on delete: if
+ * either party deactivates, their peer pref rows vanish. Rows are
+ * NOT cleaned up when the viewer leaves a mutual guild — overrides
+ * are tied to user identity, not the guild relationship.
+ */
+export const userPeerPrefs = pgTable(
+  'user_peer_prefs',
+  {
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    peerUserId: text('peer_user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    // Override for the viewer's self-scoped communicationPref when
+    // the counterpart is `peerUserId`. Null = inherit from self.
+    // Enum values must stay in sync with users.communicationPref;
+    // the registry unit test asserts the peer-scoped def and the
+    // self-scoped def agree on options.
+    communicationPref: text('communication_pref', {
+      enum: ['prefer', 'auto-accept', 'allow', 'dm-only'],
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.peerUserId] }),
+  ],
+);
 
 /**
  * Registry of every Discord guild that SWUTrade's bot has been
