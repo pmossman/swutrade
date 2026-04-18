@@ -260,6 +260,7 @@ export async function handlePropose(
     try {
       const payload = buildProposalMessage({
         tradeId: id,
+        proposerUserId: session.userId,
         proposerHandle: proposer.handle,
         proposerUsername: proposer.username,
         offeringCards,
@@ -608,6 +609,7 @@ export async function handleCancel(
         const patched = buildResolvedProposalMessage(
           {
             tradeId: row.id,
+            proposerUserId: row.proposerUserId,
             proposerHandle: proposer.handle,
             proposerUsername: proposer.username,
             offeringCards: row.offeringCards,
@@ -780,6 +782,7 @@ export async function handleCounter(
       const patched = buildCounteredProposalMessage(
         {
           tradeId: original.id,
+          proposerUserId: original.proposerUserId,
           proposerHandle: originalProposer.handle,
           proposerUsername: originalProposer.username,
           offeringCards: original.offeringCards,
@@ -801,7 +804,8 @@ export async function handleCounter(
   try {
     const counterDm = buildCounterProposalMessage({
       tradeId: counterId,
-      proposerHandle: originalRecipient.handle, // counter's proposer = original's recipient
+      proposerUserId: original.recipientUserId, // counter's proposer = original's recipient
+      proposerHandle: originalRecipient.handle,
       proposerUsername: originalRecipient.username,
       offeringCards,
       receivingCards,

@@ -22,6 +22,7 @@ import {
   buildPeerPrefConfirmationMessage,
   buildSelfPrefsIndexMessage,
   buildPeerPrefsIndexMessage,
+  buildCombinedPrefsMessage,
 } from '../lib/proposalMessages.js';
 import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
 import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
@@ -502,6 +503,7 @@ export async function handleTradeProposalButton(
 
   const proposalCtx = {
     tradeId: trade.id,
+    proposerUserId: proposer.id,
     proposerHandle: proposer.handle,
     proposerUsername: proposer.username,
     offeringCards: trade.offeringCards,
@@ -656,6 +658,7 @@ async function handleThreadFlowButton(args: {
 
   const proposalCtx = {
     tradeId: trade.id,
+    proposerUserId: proposer.id,
     proposerHandle: proposer.handle,
     proposerUsername: proposer.username,
     offeringCards: trade.offeringCards,
@@ -958,6 +961,7 @@ async function _autoApproveMoveThread(args: {
   trade: TradeRow;
   proposalCtx: {
     tradeId: string;
+    proposerUserId: string;
     proposerHandle: string;
     proposerUsername: string;
     offeringCards: import('../lib/schema.js').TradeCardSnapshot[];
@@ -1049,6 +1053,20 @@ export async function handlePrefsButton(
   const data = payload.data as { custom_id?: string } | undefined;
   const customId = data?.custom_id ?? '';
   const parts = customId.split(':');
+
+  // Combined-view fork: `pref:combo:<peerUserId>:open`. Opens an
+  // ephemeral showing BOTH the viewer's global default AND their
+  // override vs this peer, in one message. The option buttons inside
+  // carry standard per-scope custom_ids (pref:<key>:set:X for self,
+  // pref:peer:<peerUserId>:<key>:set:X for peer) so clicks route back
+  // through the existing per-scope handlers — this is a layout over
+  // primitives, not a new write path.
+  if (parts[0] === PREF_CUSTOM_ID_PREFIX && parts[1] === 'combo') {
+    return handleCombinedPrefsButton(payload, res, {
+      peerUserId: parts[2] ?? '',
+      action: parts[3] ?? '',
+    });
+  }
 
   // Peer-scope fork: `pref:peer:<peerUserId>:<key>:<action>[:<value>]`.
   // Routes to a separate handler that reads/writes user_peer_prefs
@@ -1167,6 +1185,126 @@ export async function handlePrefsButton(
  * writing. Unknown peer keys, web-only defs, or custom_ids missing
  * the peer id all silently defer — no leak surface.
  */
+/**
+ * `pref:combo:<peerUserId>:open` — render the two-row "self + peer"
+ * ephemeral. `communicationPref` is the only pref that renders here
+ * today (it's the only one registered at both scopes); if we register
+ * a second dual-scope pref in the future, we'll either loop over all
+ * of them or add disambiguation to the custom_id.
+ */
+async function handleCombinedPrefsButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+  parsed: { peerUserId: string; action: string },
+): Promise<void> {
+  const { peerUserId, action } = parsed;
+  if (!peerUserId || action !== 'open') {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  // The combined view today always surfaces communicationPref. Pull
+  // both defs and bail if either isn't registered at the expected scope.
+  const selfDef = getPrefDefinition('communicationPref', 'self');
+  const peerDef = getPrefDefinition('communicationPref', 'peer');
+  if (!selfDef || !peerDef) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+  const [viewer] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!viewer) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+  // If someone's DM somehow carried their own id as the peer
+  // (shouldn't happen — proposer != recipient is a handlePropose
+  // invariant), fall back to the self-only selector.
+  if (viewer.id === peerUserId) {
+    const usersColumns = users as unknown as Record<
+      string,
+      import('drizzle-orm/pg-core').AnyPgColumn
+    >;
+    const [row] = await db
+      .select({ value: usersColumns[selfDef.column] })
+      .from(users)
+      .where(eq(users.id, viewer.id))
+      .limit(1);
+    const current = (row?.value ?? selfDef.default) as boolean | string;
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { ...buildPrefOptionsMessage(selfDef, current), flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  // Pull the three values the combined view displays in parallel.
+  const usersColumns = users as unknown as Record<
+    string,
+    import('drizzle-orm/pg-core').AnyPgColumn
+  >;
+  const peerColumns = userPeerPrefs as unknown as Record<
+    string,
+    import('drizzle-orm/pg-core').AnyPgColumn
+  >;
+
+  const [selfRow] = await db
+    .select({ value: usersColumns[selfDef.column] })
+    .from(users)
+    .where(eq(users.id, viewer.id))
+    .limit(1);
+  const [overrideRow] = await db
+    .select({ value: peerColumns[peerDef.column] })
+    .from(userPeerPrefs)
+    .where(and(
+      eq(userPeerPrefs.userId, viewer.id),
+      eq(userPeerPrefs.peerUserId, peerUserId),
+    ))
+    .limit(1);
+  const [peerRow] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, peerUserId))
+    .limit(1);
+
+  const currentSelf = (selfRow?.value ?? selfDef.default) as boolean | string;
+  const currentOverride = (overrideRow?.value ?? null) as boolean | string | null;
+  const effective = (await resolvePref({
+    key: selfDef.key,
+    viewerUserId: viewer.id,
+    peerUserId,
+  })) as boolean | string | null;
+  const peerHandle = peerRow?.handle ?? peerUserId.slice(0, 8);
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+    data: {
+      ...buildCombinedPrefsMessage(
+        selfDef,
+        peerUserId,
+        peerHandle,
+        currentSelf,
+        currentOverride,
+        effective,
+      ),
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    },
+  });
+}
+
 async function handlePeerPrefButton(
   payload: Record<string, unknown>,
   res: VercelResponse,

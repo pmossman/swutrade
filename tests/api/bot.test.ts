@@ -569,6 +569,97 @@ describeWithDb('/api/bot dispatcher', () => {
       });
     });
 
+    describe('combined prefs view (pref:combo:<peerId>:open)', () => {
+      it('returns a two-row ephemeral: self buttons up top, peer buttons below with Use-my-default', async () => {
+        const viewer = await createTestUser({ communicationPref: 'allow' });
+        const peer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:combo:${peer.id}:open` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: {
+            flags?: number;
+            content?: string;
+            components?: Array<{ components?: Array<{ style?: number; label?: string; custom_id?: string }> }>;
+          };
+        };
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64);
+        expect(body.data?.content).toMatch(/Thread conversations/);
+        expect(body.data?.content).toMatch(/Your default/i);
+        expect(body.data?.content).toMatch(new RegExp(`<@${peer.id}>`));
+
+        const rows = body.data?.components ?? [];
+        expect(rows).toHaveLength(2);
+
+        // Self row: 4 buttons, all emitting pref:communicationPref:set:<value>.
+        const selfButtons = rows[0].components ?? [];
+        expect(selfButtons).toHaveLength(4);
+        for (const b of selfButtons) {
+          expect(b.custom_id).toMatch(/^pref:communicationPref:set:/);
+        }
+        // Current self ('allow') highlighted success (3).
+        expect(selfButtons.find(b => b.custom_id === 'pref:communicationPref:set:allow')?.style).toBe(3);
+
+        // Peer row: 5 buttons (Use my default + 4 options), all peer-scoped to this peer id.
+        const peerButtons = rows[1].components ?? [];
+        expect(peerButtons).toHaveLength(5);
+        expect(peerButtons[0].label).toBe('Use my default');
+        expect(peerButtons[0].custom_id).toBe(`pref:peer:${peer.id}:communicationPref:set:inherit`);
+        // No override set → Use-my-default highlighted.
+        expect(peerButtons[0].style).toBe(3);
+        for (const b of peerButtons.slice(1)) {
+          expect(b.custom_id).toMatch(new RegExp(`^pref:peer:${peer.id}:communicationPref:set:`));
+        }
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('falls back to self-only selector when the peer id equals the viewer', async () => {
+        // Shouldn't happen in practice (the proposal DM is always
+        // from a different user), but belt-and-suspenders — we
+        // render a usable UI rather than an invalid self-override.
+        const viewer = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:combo:${viewer.id}:open` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { components?: Array<{ components?: Array<{ custom_id?: string }> }> };
+        };
+        expect(body.type).toBe(4);
+        const rows = body.data?.components ?? [];
+        expect(rows).toHaveLength(1);
+        // Single row, self-only custom_ids.
+        for (const b of rows[0].components ?? []) {
+          expect(b.custom_id).toMatch(/^pref:communicationPref:set:/);
+        }
+
+        await viewer.cleanup();
+      });
+    });
+
     describe('peer prefs buttons (pref:peer:...)', () => {
       it('pref:peer:<peerId>:communicationPref:open returns Use-my-default + 4 option buttons, highlights override when set', async () => {
         const viewer = await createTestUser();

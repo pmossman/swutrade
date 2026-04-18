@@ -99,6 +99,11 @@ function imbalanceNote(
 
 export interface ProposalMessageContext {
   tradeId: string;
+  /** SWUTrade user id of the proposer — baked into the ⚙ Prefs
+   *  button's custom_id so clicking it opens a combined view with
+   *  both the viewer's default AND their override-for-this-proposer.
+   *  Without this id the button could only ever open self-scope. */
+  proposerUserId: string;
   proposerHandle: string;
   proposerUsername: string;
   offeringCards: TradeCardSnapshot[];
@@ -185,11 +190,12 @@ export function buildProposalMessage(
           type: COMPONENT_TYPE_BUTTON,
           style: BUTTON_STYLE_SECONDARY,
           label: '⚙ Prefs',
-          // Opens the communicationPref selector specifically — the
-          // most relevant pref when the user is staring at a proposal
-          // DM. Broader pref browsing is a future slash-command entry
-          // point, not an inline-button one.
-          custom_id: `${PREF_CUSTOM_ID_PREFIX}:communicationPref:open`,
+          // Opens a COMBINED view: the viewer's global default +
+          // their override-for-this-proposer in one ephemeral. The
+          // `combo` variant is the right default here — the user is
+          // staring at a proposal from this specific person, which
+          // is the highest-value moment to scope a peer pref.
+          custom_id: `${PREF_CUSTOM_ID_PREFIX}:combo:${ctx.proposerUserId}:open`,
         },
       ],
     });
@@ -407,6 +413,87 @@ export function buildPrefConfirmationMessage(
   return {
     content: `Saved. **${def.label}** is now **${humanValue}**.`,
     components: [],
+  };
+}
+
+/**
+ * Two-row ephemeral shown when the viewer clicks ⚙ Prefs on a
+ * proposal DM. The top row sets their GLOBAL default; the bottom
+ * row sets an OVERRIDE specifically for the proposer on this DM.
+ * Both rows carry the existing per-scope `pref:*:set:*` custom_ids
+ * so clicks land on the already-tested self + peer write paths —
+ * this is purely a layout over primitives that already ship.
+ *
+ * After either button fires the ephemeral gets PATCHed to the
+ * single-click confirmation message; the user closes the ephemeral
+ * and re-clicks ⚙ Prefs if they want to tweak more. That's a minor
+ * friction, but keeping confirmation behaviour consistent with the
+ * standalone flows wins more than a stateful dashboard would.
+ */
+export function buildCombinedPrefsMessage(
+  def: PrefDefinition,
+  peerUserId: string,
+  peerHandle: string,
+  currentSelf: PrefValue,
+  currentOverride: PrefValue,
+  currentEffective: PrefValue,
+): DiscordMessageBody {
+  const humanize = (value: PrefValue): string => {
+    if (def.type.kind === 'boolean') {
+      return value === true ? 'On' : value === false ? 'Off' : 'unset';
+    }
+    const opt = def.type.kind === 'enum'
+      ? def.type.options.find(o => o.value === value)
+      : undefined;
+    return opt?.label ?? String(value ?? 'unset');
+  };
+
+  // Self row: one button per option, current highlighted. Writes go
+  // to users.<column> via the existing self handler.
+  const selfButtons = def.type.kind === 'enum'
+    ? def.type.options.map(opt => ({
+        type: COMPONENT_TYPE_BUTTON,
+        style: opt.value === currentSelf ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+        label: opt.label,
+        custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:set:${opt.value}`,
+      }))
+    : [];
+
+  // Peer row: Use-my-default + per-option. "Use my default" is always
+  // styled success when there's no override; otherwise the current
+  // override option is highlighted. Writes go to user_peer_prefs.
+  const peerButtons = [
+    {
+      type: COMPONENT_TYPE_BUTTON,
+      style: currentOverride == null ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+      label: 'Use my default',
+      custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:inherit`,
+    },
+    ...(def.type.kind === 'enum'
+      ? def.type.options.map(opt => ({
+          type: COMPONENT_TYPE_BUTTON,
+          style: opt.value === currentOverride ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+          label: opt.label,
+          custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:${opt.value}`,
+        }))
+      : []),
+  ];
+
+  const overrideDescription = currentOverride == null
+    ? `using your default (${humanize(currentEffective)})`
+    : `**${humanize(currentOverride)}**`;
+
+  return {
+    content: [
+      `**${def.label}** — ${def.description}`,
+      ``,
+      `**Your default** (top row, applies to everyone): **${humanize(currentSelf)}**`,
+      `**For <@${peerUserId}> (@${peerHandle})** (bottom row): ${overrideDescription}`,
+    ].join('\n'),
+    components: [
+      { type: COMPONENT_TYPE_ACTION_ROW, components: selfButtons },
+      { type: COMPONENT_TYPE_ACTION_ROW, components: peerButtons },
+    ],
   };
 }
 
