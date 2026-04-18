@@ -20,6 +20,11 @@ import type { TradeCardSnapshot } from './schema.js';
  */
 
 export const BUTTON_CUSTOM_ID_PREFIX = 'trade-proposal';
+/** Separate namespace for the ⚙ Prefs button surfaced on proposal
+ *  DMs. Lives under its own prefix because the action is user-scoped
+ *  (update communication_pref) rather than trade-scoped — no tradeId
+ *  is carried in the custom_id. See api/bot.ts handleCommPrefButton. */
+export const COMM_PREF_CUSTOM_ID_PREFIX = 'comm-pref';
 
 const COLORS = {
   gold: 0xD4AF37,
@@ -93,11 +98,194 @@ export interface ProposalMessageContext {
   message?: string | null;
 }
 
-/** The initial DM sent to the recipient when a proposal is created. */
-export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessageBody {
+/** The initial DM sent to the recipient when a proposal is created.
+ *  When `includeRequestThreadButton` is true (the DM-with-request
+ *  delivery path — neither side has pre-consented to threads, but
+ *  neither has refused either), a fourth secondary-style button is
+ *  appended so either party can kick off the mutual-approval flow.
+ *  When `includePrefsButton` is true, a second action row carrying a
+ *  single `⚙ Prefs` button is appended so users who prefer to tweak
+ *  their thread preferences from inside Discord never have to leave.
+ */
+export function buildProposalMessage(
+  ctx: ProposalMessageContext,
+  opts: { includeRequestThreadButton?: boolean; includePrefsButton?: boolean } = {},
+): DiscordMessageBody {
   const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
   const embed: DiscordEmbed = {
     title: `Trade proposal from @${ctx.proposerHandle}`,
+    color: COLORS.gold,
+    description: ctx.message ? `> ${ctx.message}` : undefined,
+    fields: [
+      {
+        name: `They're offering (${formatSubtotal(ctx.offeringCards)})`,
+        value: formatCardList(ctx.offeringCards),
+      },
+      {
+        name: `They're asking for (${formatSubtotal(ctx.receivingCards)})`,
+        value: formatCardList(ctx.receivingCards),
+      },
+      ...(imbalance ? [imbalance] : []),
+    ],
+    footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
+  };
+
+  const baseButtons = [
+    {
+      type: COMPONENT_TYPE_BUTTON,
+      style: BUTTON_STYLE_SUCCESS,
+      label: 'Accept',
+      custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:accept`,
+    },
+    {
+      type: COMPONENT_TYPE_BUTTON,
+      style: BUTTON_STYLE_SECONDARY,
+      label: 'Counter',
+      custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:counter`,
+    },
+    {
+      type: COMPONENT_TYPE_BUTTON,
+      style: BUTTON_STYLE_DANGER,
+      label: 'Decline',
+      custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:decline`,
+    },
+  ];
+
+  const buttons = opts.includeRequestThreadButton
+    ? [
+        ...baseButtons,
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: BUTTON_STYLE_SECONDARY,
+          label: 'Request thread',
+          custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:request-thread`,
+        },
+      ]
+    : baseButtons;
+
+  const rows: DiscordMessageBody['components'] = [
+    {
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: buttons,
+    },
+  ];
+  if (opts.includePrefsButton) {
+    rows!.push({
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: [
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: BUTTON_STYLE_SECONDARY,
+          label: '⚙ Prefs',
+          custom_id: `${COMM_PREF_CUSTOM_ID_PREFIX}:open`,
+        },
+      ],
+    });
+  }
+
+  return {
+    embeds: [embed],
+    components: rows,
+  };
+}
+
+/**
+ * Ephemeral-button body shown when a user clicks ⚙ Prefs. Four
+ * secondary-style buttons, one per `CommunicationPref`, with the
+ * currently-active pref rendered as success (green) so the user sees
+ * where they stand at a glance. The custom_id carries the new pref
+ * value; click is handled by `handleCommPrefButton` in api/bot.ts.
+ */
+export function buildCommPrefOptionsMessage(
+  current: 'prefer' | 'auto-accept' | 'allow' | 'dm-only',
+): DiscordMessageBody {
+  const options: Array<{ pref: typeof current; label: string }> = [
+    { pref: 'prefer',      label: 'Prefer threads' },
+    { pref: 'auto-accept', label: 'Auto-accept requests' },
+    { pref: 'allow',       label: 'Allow (ask each time)' },
+    { pref: 'dm-only',     label: 'DM only' },
+  ];
+  return {
+    content: [
+      'Choose how SWUTrade should handle thread conversations for new proposals.',
+      'Your current setting is highlighted in green.',
+    ].join('\n'),
+    components: [
+      {
+        type: COMPONENT_TYPE_ACTION_ROW,
+        components: options.map(o => ({
+          type: COMPONENT_TYPE_BUTTON,
+          style: o.pref === current ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+          label: o.label,
+          custom_id: `${COMM_PREF_CUSTOM_ID_PREFIX}:set:${o.pref}`,
+        })),
+      },
+    ],
+  };
+}
+
+/**
+ * Ephemeral update body shown after the user picks a new pref. Drops
+ * the button row (the decision is locked in for this interaction) and
+ * echoes the human-readable label so the confirmation is specific.
+ */
+export function buildCommPrefConfirmationMessage(
+  pref: 'prefer' | 'auto-accept' | 'allow' | 'dm-only',
+): DiscordMessageBody {
+  const label = pref === 'prefer'
+    ? 'Prefer threads'
+    : pref === 'auto-accept'
+      ? 'Auto-accept requests'
+      : pref === 'allow'
+        ? 'Allow (ask each time)'
+        : 'DM only';
+  return {
+    content: `Saved. Your thread preference is now **${label}**.`,
+    components: [],
+  };
+}
+
+/**
+ * Variant shown in B's DM after a thread has been requested but not
+ * yet approved. Accept/Counter/Decline stay live — the thread
+ * decision is orthogonal to the accept decision; B can resolve the
+ * trade from DM even while the thread request is pending. The
+ * Request-thread button is removed so B doesn't try to re-request.
+ */
+export function buildThreadRequestedProposalMessage(
+  ctx: ProposalMessageContext,
+  requesterHandle: string,
+): DiscordMessageBody {
+  const base = buildProposalMessage(ctx, { includePrefsButton: true });
+  const embed: DiscordEmbed = { ...base.embeds![0] };
+  embed.color = COLORS.gold;
+  embed.fields = [
+    ...(embed.fields ?? []),
+    {
+      name: 'Thread',
+      value: `Thread requested by @${requesterHandle} — waiting for response`,
+    },
+  ];
+  return {
+    embeds: [embed],
+    components: base.components,
+  };
+}
+
+/**
+ * NEW DM sent to the counterpart when a thread is requested. Shows
+ * the same two-sided summary as the original proposal so they know
+ * what they're agreeing to chat about, plus Approve / Keep-as-DM
+ * buttons. `custom_id` uses the `:{tradeId}:approve-thread` suffix
+ * so the interaction dispatch can resolve back to the trade row.
+ */
+export function buildThreadApprovalRequestMessage(
+  ctx: ProposalMessageContext,
+  requesterHandle: string,
+): DiscordMessageBody {
+  const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
+  const embed: DiscordEmbed = {
+    title: `@${requesterHandle} wants to move this trade to a private thread`,
     color: COLORS.gold,
     description: ctx.message ? `> ${ctx.message}` : undefined,
     fields: [
@@ -123,24 +311,77 @@ export function buildProposalMessage(ctx: ProposalMessageContext): DiscordMessag
           {
             type: COMPONENT_TYPE_BUTTON,
             style: BUTTON_STYLE_SUCCESS,
-            label: 'Accept',
-            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:accept`,
+            label: 'Approve',
+            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:approve-thread`,
           },
           {
             type: COMPONENT_TYPE_BUTTON,
             style: BUTTON_STYLE_SECONDARY,
-            label: 'Counter',
-            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:counter`,
-          },
-          {
-            type: COMPONENT_TYPE_BUTTON,
-            style: BUTTON_STYLE_DANGER,
-            label: 'Decline',
-            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:decline`,
+            label: 'Keep as DM',
+            custom_id: `${BUTTON_CUSTOM_ID_PREFIX}:${ctx.tradeId}:decline-thread`,
           },
         ],
       },
     ],
+  };
+}
+
+/**
+ * Variant used to edit BOTH DMs after a thread has been created. The
+ * conversation has moved — there's nothing left to do in DM, so the
+ * action row is dropped and a single "Moved to thread" pointer is
+ * shown. Uses a purple color to mark the hand-off.
+ */
+export function buildThreadMovedProposalMessage(
+  ctx: ProposalMessageContext,
+  threadId: string,
+): DiscordMessageBody {
+  const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
+  return {
+    embeds: [{
+      title: `Trade proposal from @${ctx.proposerHandle}`,
+      color: 0x8B5CF6, // purple — same hand-off color as countered
+      description: ctx.message ? `> ${ctx.message}` : undefined,
+      fields: [
+        {
+          name: `Offered (${formatSubtotal(ctx.offeringCards)})`,
+          value: formatCardList(ctx.offeringCards),
+        },
+        {
+          name: `Asked for (${formatSubtotal(ctx.receivingCards)})`,
+          value: formatCardList(ctx.receivingCards),
+        },
+        ...(imbalance ? [imbalance] : []),
+        { name: 'Status', value: `Moved to thread · <#${threadId}>` },
+      ],
+      footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
+    }],
+    components: [],
+  };
+}
+
+/**
+ * Variant used to edit B's DM after the counterpart declined the
+ * thread request. The proposal itself is still live (thread decision
+ * is orthogonal), so Accept/Counter/Decline are RESTORED — just the
+ * Request-thread button stays off (the request was denied).
+ */
+export function buildThreadRequestDeclinedMessage(
+  ctx: ProposalMessageContext,
+): DiscordMessageBody {
+  const base = buildProposalMessage(ctx, { includePrefsButton: true });
+  const embed: DiscordEmbed = { ...base.embeds![0] };
+  embed.color = COLORS.gold;
+  embed.fields = [
+    ...(embed.fields ?? []),
+    {
+      name: 'Thread',
+      value: 'Thread request declined — continuing in DM',
+    },
+  ];
+  return {
+    embeds: [embed],
+    components: base.components,
   };
 }
 

@@ -31,6 +31,21 @@ export const users = pgTable('users', {
   dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
   dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),
   dmMeetupReminders: boolean('dm_meetup_reminders').default(false).notNull(),
+  // Trade-thread consent model. Four states driving the decision of
+  // whether a proposal's chat happens in a private thread (with both
+  // traders inside) or stays in per-user DMs:
+  //   - prefer       — wants threads by default when the other side
+  //                    is also opted in
+  //   - auto-accept  — DM first, but auto-approves any thread request
+  //                    from the counterpart
+  //   - allow        — DM first, approves/declines thread requests
+  //                    manually via button (default)
+  //   - dm-only      — refuses threads entirely; no "Request thread"
+  //                    button is surfaced to the counterpart
+  // See handlePropose's decision matrix for the full 4×4 routing.
+  communicationPref: text('communication_pref', {
+    enum: ['prefer', 'auto-accept', 'allow', 'dm-only'],
+  }).default('allow').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -235,6 +250,19 @@ export const tradeProposals = pgTable(
     // in the guild, perms missing, etc.).
     discordThreadId: text('discord_thread_id'),
     discordThreadParentChannelId: text('discord_thread_parent_channel_id'),
+    // Request-thread flow (Phase-1 consent model). When one party
+    // clicks "Request thread" and the counterpart's pref is `allow`
+    // (manual-decide), the bot sends the counterpart a NEW approval
+    // DM with Approve / Keep as DM buttons. These columns store that
+    // DM's channel + message id so approve/decline can PATCH it back
+    // in place. Cleared after the request resolves (approve → thread
+    // created; decline → continuing in DM).
+    //
+    // Naming note: the column names reference "approval" not
+    // "proposer" — either party can request, so the approval DM goes
+    // to whichever party DIDN'T click Request.
+    threadApprovalDmChannelId: text('thread_approval_dm_channel_id'),
+    threadApprovalDmMessageId: text('thread_approval_dm_message_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     respondedAt: timestamp('responded_at', { withTimezone: true }),

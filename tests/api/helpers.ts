@@ -117,6 +117,7 @@ export async function createTestUser(overrides: Partial<{
   username: string;
   wantsPublic: boolean;
   availablePublic: boolean;
+  communicationPref: 'prefer' | 'auto-accept' | 'allow' | 'dm-only';
 }> = {}) {
   const db = getDb();
   const suffix = crypto.randomUUID().slice(0, 12);
@@ -131,6 +132,7 @@ export async function createTestUser(overrides: Partial<{
     avatarUrl: null,
     wantsPublic: overrides.wantsPublic ?? true,
     availablePublic: overrides.availablePublic ?? false,
+    communicationPref: overrides.communicationPref ?? 'allow',
   });
 
   return {

@@ -6,10 +6,19 @@ import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
   BUTTON_CUSTOM_ID_PREFIX,
+  COMM_PREF_CUSTOM_ID_PREFIX,
+  buildProposalMessage,
   buildResolvedProposalMessage,
   buildCounteredProposalMessage,
   buildProposerNotification,
+  buildThreadRequestedProposalMessage,
+  buildThreadApprovalRequestMessage,
+  buildThreadMovedProposalMessage,
+  buildThreadRequestDeclinedMessage,
+  buildCommPrefOptionsMessage,
+  buildCommPrefConfirmationMessage,
 } from '../lib/proposalMessages.js';
+import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -189,6 +198,9 @@ async function handleInteraction(
     if (customId.startsWith(`${BUTTON_CUSTOM_ID_PREFIX}:`)) {
       return handleTradeProposalButton(payload, res, deps);
     }
+    if (customId.startsWith(`${COMM_PREF_CUSTOM_ID_PREFIX}:`)) {
+      return handleCommPrefButton(payload, res);
+    }
   }
 
   // Unknown: ack with a deferred update. Discord swallows the click
@@ -220,11 +232,20 @@ export async function handleTradeProposalButton(
   // [prefix, tradeId, action]
   const tradeId = parts[1] ?? '';
   const rawAction = parts[2] ?? '';
-  if (!tradeId || (rawAction !== 'accept' && rawAction !== 'decline' && rawAction !== 'counter')) {
+  const KNOWN_ACTIONS = [
+    'accept',
+    'decline',
+    'counter',
+    'request-thread',
+    'approve-thread',
+    'decline-thread',
+  ] as const;
+  type KnownAction = (typeof KNOWN_ACTIONS)[number];
+  if (!tradeId || !KNOWN_ACTIONS.includes(rawAction as KnownAction)) {
     res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
     return;
   }
-  const action = rawAction as 'accept' | 'decline' | 'counter';
+  const action = rawAction as KnownAction;
 
   // In a DM the payload has `user`; in a guild `member.user`. The
   // bot only sends to DMs for proposals but handle both for safety.
@@ -256,7 +277,13 @@ export async function handleTradeProposalButton(
   }
 
   const [recipient] = await db
-    .select({ id: users.id, discordId: users.discordId, handle: users.handle })
+    .select({
+      id: users.id,
+      discordId: users.discordId,
+      handle: users.handle,
+      username: users.username,
+      communicationPref: users.communicationPref,
+    })
     .from(users)
     .where(eq(users.id, trade.recipientUserId))
     .limit(1);
@@ -266,6 +293,7 @@ export async function handleTradeProposalButton(
       discordId: users.discordId,
       handle: users.handle,
       username: users.username,
+      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.id, trade.proposerUserId))
@@ -279,6 +307,22 @@ export async function handleTradeProposalButton(
       },
     });
     return;
+  }
+
+  // Thread-flow actions have different auth than accept/decline/
+  // counter (either party can request; the *other* party decides),
+  // so branch off before the recipient-only check below. Handlers
+  // return void; fall-through reaches the accept/decline/counter path.
+  if (action === 'request-thread' || action === 'approve-thread' || action === 'decline-thread') {
+    return handleThreadFlowButton({
+      action,
+      trade,
+      proposer,
+      recipient,
+      clickerDiscordId,
+      res,
+      deps,
+    });
   }
 
   // Authorization: only the recipient can accept/decline/counter.
@@ -357,6 +401,13 @@ export async function handleTradeProposalButton(
     return;
   }
 
+  // At this point, `action` is guaranteed to be 'accept' or 'decline'
+  // (the other cases all returned above). TS can't narrow the union
+  // through the early-return chain, so pin the discriminant here.
+  if (action !== 'accept' && action !== 'decline') {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
   const newStatus: 'accepted' | 'declined' = action === 'accept' ? 'accepted' : 'declined';
 
   await db
@@ -389,6 +440,520 @@ export async function handleTradeProposalButton(
     type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
     data: resolvedBody,
   });
+}
+
+// --- thread-flow buttons ---------------------------------------------------
+
+interface TradeRow {
+  id: string;
+  proposerUserId: string;
+  recipientUserId: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered';
+  offeringCards: import('../lib/schema.js').TradeCardSnapshot[];
+  receivingCards: import('../lib/schema.js').TradeCardSnapshot[];
+  message: string | null;
+  discordDmChannelId: string | null;
+  discordDmMessageId: string | null;
+  discordThreadId: string | null;
+  threadApprovalDmChannelId: string | null;
+  threadApprovalDmMessageId: string | null;
+}
+
+interface PartyRow {
+  id: string;
+  discordId: string;
+  handle: string;
+  username: string;
+  communicationPref: 'prefer' | 'auto-accept' | 'allow' | 'dm-only';
+}
+
+/**
+ * Thread flow dispatcher. Handles request-thread (click by either
+ * party) + approve-thread / decline-thread (click by the counterpart
+ * who received the approval DM).
+ *
+ * Auth differs from accept/decline:
+ *   - request-thread: clicker is either proposer or recipient
+ *   - approve/decline-thread: clicker is whichever party DIDN'T click
+ *     request-thread (i.e., the approval DM recipient)
+ */
+async function handleThreadFlowButton(args: {
+  action: 'request-thread' | 'approve-thread' | 'decline-thread';
+  trade: TradeRow;
+  proposer: PartyRow;
+  recipient: PartyRow;
+  clickerDiscordId: string;
+  res: VercelResponse;
+  deps: BotDeps;
+}): Promise<void> {
+  const { action, trade, proposer, recipient, clickerDiscordId, res, deps } = args;
+
+  // Proposal must still be live to act on the thread decision.
+  if (trade.status !== 'pending') {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: `This proposal is ${trade.status} — thread changes no longer apply.`,
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  if (trade.discordThreadId) {
+    // Already threaded — nothing further to do.
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: 'This trade is already in a thread.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  const proposalCtx = {
+    tradeId: trade.id,
+    proposerHandle: proposer.handle,
+    proposerUsername: proposer.username,
+    offeringCards: trade.offeringCards,
+    receivingCards: trade.receivingCards,
+    message: trade.message,
+  };
+
+  if (action === 'request-thread') {
+    // Clicker must be proposer OR recipient.
+    const clickerIsProposer = proposer.discordId === clickerDiscordId;
+    const clickerIsRecipient = recipient.discordId === clickerDiscordId;
+    if (!clickerIsProposer && !clickerIsRecipient) {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: 'You are not on this trade.',
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+
+    const requester = clickerIsProposer ? proposer : recipient;
+    const counterpart = clickerIsProposer ? recipient : proposer;
+    const outcome = handleThreadRequest(counterpart.communicationPref);
+
+    if (outcome === 'auto-decline') {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: "They don't accept thread requests — continuing in DM.",
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+
+    const bot = deps.bot ?? createDiscordBotClient();
+
+    if (outcome === 'auto-approve') {
+      // Counterpart has `prefer` or `auto-accept` — skip the approval
+      // DM and create the thread now. Edit BOTH DMs to the "moved"
+      // variant.
+      const tradesChannelId = process.env.TRADES_CHANNEL_ID;
+      if (!tradesChannelId) {
+        res.status(200).json({
+          type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+          data: {
+            content: "Couldn't create thread, continuing in DM.",
+            flags: MESSAGE_FLAG_EPHEMERAL,
+          },
+        });
+        return;
+      }
+
+      let createdThreadId: string | null = null;
+      try {
+        const thread = await bot.createPrivateThread(tradesChannelId, {
+          name: `trade-${proposer.handle}-${recipient.handle}-${trade.id.slice(0, 4)}`.slice(0, 100),
+        });
+        createdThreadId = thread.id;
+        await Promise.all([
+          bot.addThreadMember(thread.id, proposer.discordId),
+          bot.addThreadMember(thread.id, recipient.discordId),
+        ]);
+        // Post the full proposal embed inside the thread (buttons
+        // included) so both traders can act from there. Mirrors the
+        // initial thread-immediately path.
+        await bot.postChannelMessage(thread.id, buildProposalMessage(proposalCtx));
+      } catch (err) {
+        console.error('handleThreadFlowButton: auto-approve thread create failed', err);
+        if (createdThreadId) {
+          bot.deleteChannel(createdThreadId).catch(cleanupErr => {
+            console.error('handleThreadFlowButton: orphan thread cleanup failed', cleanupErr);
+          });
+        }
+        res.status(200).json({
+          type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+          data: {
+            content: "Couldn't create thread, continuing in DM.",
+            flags: MESSAGE_FLAG_EPHEMERAL,
+          },
+        });
+        return;
+      }
+
+      await _autoApproveMoveThread({
+        bot,
+        trade,
+        proposalCtx,
+        threadId: createdThreadId,
+        clickerIsProposer,
+        res,
+      });
+      return;
+    }
+
+    // outcome === 'manual-decide' — DM the counterpart an approval
+    // prompt, edit the clicker's DM to "thread requested" state via
+    // UPDATE_MESSAGE.
+    let approvalChannelId: string | null = null;
+    let approvalMessageId: string | null = null;
+    try {
+      const approvalBody = buildThreadApprovalRequestMessage(proposalCtx, requester.handle);
+      const sent = await bot.sendDirectMessage(counterpart.discordId, approvalBody);
+      approvalChannelId = sent.channel_id;
+      approvalMessageId = sent.id;
+    } catch (err) {
+      console.error('handleThreadFlowButton: approval DM send failed', err);
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: "Couldn't reach the other party — continuing in DM.",
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+
+    const db = getDb();
+    await db.update(tradeProposals)
+      .set({
+        threadApprovalDmChannelId: approvalChannelId,
+        threadApprovalDmMessageId: approvalMessageId,
+        updatedAt: new Date(),
+      })
+      .where(eq(tradeProposals.id, trade.id));
+
+    // Edit the clicker's DM via UPDATE_MESSAGE (type 7).
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: buildThreadRequestedProposalMessage(proposalCtx, requester.handle),
+    });
+    return;
+  }
+
+  if (action === 'approve-thread' || action === 'decline-thread') {
+    // Clicker must be the counterpart (i.e., NOT whoever requested).
+    // The requester stored their approval-DM ids on the row — those
+    // ids point at the *counterpart's* DM channel, so the clicker is
+    // the recipient of that DM.
+    if (!trade.threadApprovalDmChannelId || !trade.threadApprovalDmMessageId) {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: 'No thread request is pending on this trade.',
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+
+    // The "requester" is whoever clicked Request-thread. We didn't
+    // persist that explicitly; infer from discord_dm_channel_id being
+    // the recipient's DM (the initial proposal DM path) — the
+    // approval DM is sent to the OTHER party. Simpler approach:
+    // allow either party to click, but dispatch the "requester DM"
+    // edit to whichever is NOT the clicker.
+    const clickerIsProposer = proposer.discordId === clickerDiscordId;
+    const clickerIsRecipient = recipient.discordId === clickerDiscordId;
+    if (!clickerIsProposer && !clickerIsRecipient) {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: 'You are not on this trade.',
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+
+    const bot = deps.bot ?? createDiscordBotClient();
+
+    if (action === 'approve-thread') {
+      const tradesChannelId = process.env.TRADES_CHANNEL_ID;
+      if (!tradesChannelId) {
+        res.status(200).json({
+          type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+          data: {
+            content: "Couldn't create thread, continuing in DM.",
+            flags: MESSAGE_FLAG_EPHEMERAL,
+          },
+        });
+        return;
+      }
+
+      let createdThreadId: string | null = null;
+      let threadParentId: string | null = null;
+      try {
+        const thread = await bot.createPrivateThread(tradesChannelId, {
+          name: `trade-${proposer.handle}-${recipient.handle}-${trade.id.slice(0, 4)}`.slice(0, 100),
+        });
+        createdThreadId = thread.id;
+        threadParentId = thread.parent_id ?? tradesChannelId;
+        await Promise.all([
+          bot.addThreadMember(thread.id, proposer.discordId),
+          bot.addThreadMember(thread.id, recipient.discordId),
+        ]);
+        // Post the full proposal embed inside the thread so both
+        // traders can act from there (buttons + summary).
+        await bot.postChannelMessage(thread.id, buildProposalMessage(proposalCtx));
+      } catch (err) {
+        console.error('handleThreadFlowButton: approve-thread create failed', err);
+        if (createdThreadId) {
+          bot.deleteChannel(createdThreadId).catch(cleanupErr => {
+            console.error('handleThreadFlowButton: orphan thread cleanup failed', cleanupErr);
+          });
+        }
+        res.status(200).json({
+          type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+          data: {
+            content: "Couldn't create thread, continuing in DM.",
+            flags: MESSAGE_FLAG_EPHEMERAL,
+          },
+        });
+        return;
+      }
+
+      // Persist thread ids on the row.
+      const db = getDb();
+      await db.update(tradeProposals)
+        .set({
+          discordThreadId: createdThreadId,
+          discordThreadParentChannelId: threadParentId,
+          updatedAt: new Date(),
+        })
+        .where(eq(tradeProposals.id, trade.id));
+
+      // Edit the requester's DM (the original-proposal DM lives at
+      // discord_dm_channel_id / discord_dm_message_id).
+      if (trade.discordDmChannelId && trade.discordDmMessageId) {
+        try {
+          await bot.editChannelMessage(
+            trade.discordDmChannelId,
+            trade.discordDmMessageId,
+            buildThreadMovedProposalMessage(proposalCtx, createdThreadId!),
+          );
+        } catch (err) {
+          console.error('handleThreadFlowButton: requester DM edit failed', err);
+        }
+      }
+
+      // Edit the approver's DM via UPDATE_MESSAGE response.
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+        data: buildThreadMovedProposalMessage(proposalCtx, createdThreadId!),
+      });
+      return;
+    }
+
+    // action === 'decline-thread'
+    // Edit the requester's DM via PATCH to restore Accept/Counter/
+    // Decline with a "declined, continuing in DM" note.
+    if (trade.discordDmChannelId && trade.discordDmMessageId) {
+      try {
+        await bot.editChannelMessage(
+          trade.discordDmChannelId,
+          trade.discordDmMessageId,
+          buildThreadRequestDeclinedMessage(proposalCtx),
+        );
+      } catch (err) {
+        console.error('handleThreadFlowButton: requester DM edit (decline) failed', err);
+      }
+    }
+
+    // Clear the approval DM ids so a future re-click can't misfire.
+    const db = getDb();
+    await db.update(tradeProposals)
+      .set({
+        threadApprovalDmChannelId: null,
+        threadApprovalDmMessageId: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(tradeProposals.id, trade.id));
+
+    // Edit the approver's DM via UPDATE_MESSAGE response.
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: buildThreadRequestDeclinedMessage(proposalCtx),
+    });
+    return;
+  }
+}
+
+/**
+ * Shared edit-both-DMs-to-moved tail used by the auto-approve path.
+ * The clicker's DM is updated via type-7 UPDATE_MESSAGE response;
+ * the counterpart's DM is PATCHed in place via editChannelMessage.
+ */
+async function _autoApproveMoveThread(args: {
+  bot: DiscordBotClient;
+  trade: TradeRow;
+  proposalCtx: {
+    tradeId: string;
+    proposerHandle: string;
+    proposerUsername: string;
+    offeringCards: import('../lib/schema.js').TradeCardSnapshot[];
+    receivingCards: import('../lib/schema.js').TradeCardSnapshot[];
+    message: string | null;
+  };
+  threadId: string | null;
+  clickerIsProposer: boolean;
+  res: VercelResponse;
+}): Promise<void> {
+  const { bot, trade, proposalCtx, threadId, res } = args;
+  if (!threadId) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "Couldn't create thread, continuing in DM.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Persist thread ids.
+  const db = getDb();
+  await db.update(tradeProposals)
+    .set({
+      discordThreadId: threadId,
+      discordThreadParentChannelId: process.env.TRADES_CHANNEL_ID ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(tradeProposals.id, trade.id));
+
+  // Since auto-approve was triggered from the initial DM (one party's
+  // DM), the OTHER party's DM is the one we need to PATCH. But we
+  // don't track both parties' DM ids separately — only discord_dm_*
+  // exists. In the auto-approve path, the initial proposal went as
+  // a per-user DM to the recipient; that's what discord_dm_* tracks.
+  // The proposer never got a DM (they sent the trade). So PATCH the
+  // recipient's DM and type-7 the clicker's DM.
+  //
+  // If the clicker is the recipient, their DM is being responded to
+  // via type-7 — nothing else to PATCH. If the clicker is the
+  // proposer, we need to PATCH the recipient's DM via the
+  // discord_dm_* ids.
+  if (args.clickerIsProposer) {
+    if (trade.discordDmChannelId && trade.discordDmMessageId) {
+      try {
+        await bot.editChannelMessage(
+          trade.discordDmChannelId,
+          trade.discordDmMessageId,
+          buildThreadMovedProposalMessage(proposalCtx, threadId),
+        );
+      } catch (err) {
+        console.error('_autoApproveMoveThread: recipient DM edit failed', err);
+      }
+    }
+  }
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: buildThreadMovedProposalMessage(proposalCtx, threadId),
+  });
+}
+
+// --- communication pref buttons --------------------------------------------
+
+/**
+ * `⚙ Prefs` button flow surfaced on every proposal DM. Two shapes:
+ *   - `comm-pref:open` — clicker wants to see their options; reply
+ *     with an ephemeral 4-button selector (highlighting current pref).
+ *   - `comm-pref:set:{pref}` — clicker picked an option; UPDATE their
+ *     `users.communication_pref` and reply with an ephemeral confirm
+ *     that replaces the selector.
+ *
+ * The ephemeral reply is scoped to the clicker alone (flag 64), so
+ * other thread members — if the DM is somehow in a shared context —
+ * never see each other's pref choices.
+ *
+ * Unlike the trade-proposal buttons, NO trade context is needed: the
+ * pref is user-level. The clicker's Discord id is resolved from the
+ * interaction payload and mapped to the `users` row by `discord_id`.
+ */
+export async function handleCommPrefButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+): Promise<void> {
+  const data = payload.data as { custom_id?: string } | undefined;
+  const parts = (data?.custom_id ?? '').split(':');
+  // [prefix, action] or [prefix, 'set', pref]
+  const action = parts[1] ?? '';
+
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+
+  if (action === 'open') {
+    // Look up the current pref so the selector can highlight it. If
+    // the clicker isn't linked yet (a rare edge — we only send these
+    // buttons to users who received a proposal DM, which requires a
+    // linked Discord id), default to 'allow'.
+    const [row] = await db
+      .select({ communicationPref: users.communicationPref })
+      .from(users)
+      .where(eq(users.discordId, clickerDiscordId))
+      .limit(1);
+    const current = (row?.communicationPref ?? 'allow') as CommunicationPref;
+    const body = buildCommPrefOptionsMessage(current);
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { ...body, flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  if (action === 'set') {
+    const rawPref = parts[2] ?? '';
+    const ALLOWED: CommunicationPref[] = ['prefer', 'auto-accept', 'allow', 'dm-only'];
+    if (!ALLOWED.includes(rawPref as CommunicationPref)) {
+      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+      return;
+    }
+    const newPref = rawPref as CommunicationPref;
+
+    // Update the row. If no row matches (user unlinked — shouldn't
+    // happen given how we surface the button, but belt-and-suspenders)
+    // `rowsAffected` is 0; the confirmation message still fires so
+    // the click isn't a dead-end.
+    await db
+      .update(users)
+      .set({ communicationPref: newPref, updatedAt: new Date() })
+      .where(eq(users.discordId, clickerDiscordId));
+
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: buildCommPrefConfirmationMessage(newPref),
+    });
+    return;
+  }
+
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
 }
 
 // --- event webhook handler --------------------------------------------------

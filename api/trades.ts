@@ -11,6 +11,7 @@ import {
   buildCounteredProposalMessage,
   buildResolvedProposalMessage,
 } from '../lib/proposalMessages.js';
+import { deliveryForPair } from '../lib/threadConsent.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -165,6 +166,7 @@ export async function handlePropose(
       discordId: users.discordId,
       handle: users.handle,
       profileVisibility: users.profileVisibility,
+      communicationPref: users.communicationPref,
     })
     .from(users)
     .where(eq(users.handle, recipientHandle))
@@ -183,7 +185,11 @@ export async function handlePropose(
   }
 
   const [proposer] = await db
-    .select({ handle: users.handle, username: users.username })
+    .select({
+      handle: users.handle,
+      username: users.username,
+      communicationPref: users.communicationPref,
+    })
     .from(users)
     .where(eq(users.id, session.userId))
     .limit(1);
@@ -214,26 +220,22 @@ export async function handlePropose(
     .limit(1);
 
   const bot = deps.bot ?? createDiscordBotClient();
-  const payload = buildProposalMessage({
-    tradeId: id,
-    proposerHandle: proposer.handle,
-    proposerUsername: proposer.username,
-    offeringCards,
-    receivingCards,
-    message,
-  });
+
+  // Resolve the delivery path based on both parties' communication
+  // prefs. The matrix (see `deliveryForPair`) collapses 16 pref pairs
+  // to three outcomes:
+  //   'thread-immediately' — both pre-consented; skip the negotiation
+  //   'dm-with-request'   — DM first; either side can request a thread
+  //   'dm-only'           — at least one side refused threads
+  const delivery = deliveryForPair(
+    proposer.communicationPref,
+    recipient.communicationPref,
+  );
 
   // Deliver the proposal. Errors never 5xx — the row is already
   // persisted and the proposer should still get a 201. The client
   // reads delivery_status to decide whether to show a "saved but
   // couldn't deliver" fallback.
-  //
-  // Delivery path resolves in priority order:
-  //   1. Thread flow (preferred) — private thread in the configured
-  //      TRADES_CHANNEL_ID, both users added. They can chat directly.
-  //   2. DM fallback — per-user DM (legacy behavior). Used when
-  //      thread creation fails (user not in guild, bot perms missing,
-  //      or env unset).
   let deliveryStatus: 'delivered' | 'failed' = 'failed';
   let channelId: string | null = null;
   let messageId: string | null = null;
@@ -241,10 +243,20 @@ export async function handlePropose(
   let threadParentChannelId: string | null = null;
 
   const tradesChannelId = process.env.TRADES_CHANNEL_ID;
-  if (tradesChannelId && proposerFull?.discordId) {
+  const canCreateThread = !!tradesChannelId && !!proposerFull?.discordId;
+
+  if (delivery === 'thread-immediately' && canCreateThread) {
     let createdThreadId: string | null = null;
     try {
-      const thread = await bot.createPrivateThread(tradesChannelId, {
+      const payload = buildProposalMessage({
+        tradeId: id,
+        proposerHandle: proposer.handle,
+        proposerUsername: proposer.username,
+        offeringCards,
+        receivingCards,
+        message,
+      });
+      const thread = await bot.createPrivateThread(tradesChannelId!, {
         name: threadName(proposer.handle, recipient.handle, id),
       });
       createdThreadId = thread.id;
@@ -255,12 +267,12 @@ export async function handlePropose(
       // Discord user, like the dev-seed fakes), we bail and fall
       // through to DM. The catch below cleans up the partial thread.
       await Promise.all([
-        bot.addThreadMember(thread.id, proposerFull.discordId),
+        bot.addThreadMember(thread.id, proposerFull!.discordId),
         bot.addThreadMember(thread.id, recipient.discordId),
       ]);
       const posted = await bot.postChannelMessage(thread.id, payload);
       threadId = thread.id;
-      threadParentChannelId = thread.parent_id ?? tradesChannelId;
+      threadParentChannelId = thread.parent_id ?? tradesChannelId!;
       channelId = thread.id;
       messageId = posted.id;
       deliveryStatus = 'delivered';
@@ -279,9 +291,28 @@ export async function handlePropose(
     }
   }
 
+  // DM fallback: either the delivery matrix chose a DM path, or the
+  // thread path failed above. In both cases we DM the recipient; the
+  // request-thread button is included only when the matrix said
+  // dm-with-request (neither side refused threads AND neither
+  // pre-consented enough to go thread-immediately).
   if (deliveryStatus === 'failed') {
     try {
-      const posted = await bot.sendDirectMessage(recipient.discordId, payload);
+      const dmPayload = buildProposalMessage(
+        {
+          tradeId: id,
+          proposerHandle: proposer.handle,
+          proposerUsername: proposer.username,
+          offeringCards,
+          receivingCards,
+          message,
+        },
+        {
+          includeRequestThreadButton: delivery === 'dm-with-request',
+          includePrefsButton: true,
+        },
+      );
+      const posted = await bot.sendDirectMessage(recipient.discordId, dmPayload);
       channelId = posted.channel_id;
       messageId = posted.id;
       deliveryStatus = 'delivered';

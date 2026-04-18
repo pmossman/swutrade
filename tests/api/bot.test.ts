@@ -9,7 +9,7 @@ import {
 } from './helpers.js';
 import handler, { dispatchBotPayload, resolveTestPublicKey } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
-import { botInstalledGuilds, tradeProposals, type TradeCardSnapshot } from '../../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, users, type TradeCardSnapshot } from '../../lib/schema.js';
 import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
 
 function extractRawEd25519PublicKey(key: KeyObject): string {
@@ -339,6 +339,104 @@ describeWithDb('/api/bot dispatcher', () => {
         );
         expect((res._json as { type: number }).type).toBe(6); // deferred update
         await cleanup(tradeId, [proposer.id, recipient.id]);
+      });
+    });
+
+    describe('comm-pref buttons', () => {
+      it('comm-pref:open replies ephemerally with a 4-button selector, highlighting the current pref', async () => {
+        const user = await createTestUser({ communicationPref: 'auto-accept' });
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'comm-pref:open' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { flags?: number; components?: Array<{ components?: Array<{ style?: number; custom_id?: string; label?: string }> }> };
+        };
+        expect(body.type).toBe(4); // CHANNEL_MESSAGE_WITH_SOURCE
+        expect(body.data?.flags).toBe(64); // ephemeral
+        const buttons = body.data?.components?.[0]?.components ?? [];
+        expect(buttons).toHaveLength(4);
+        const customIds = buttons.map(b => b.custom_id);
+        expect(customIds).toEqual([
+          'comm-pref:set:prefer',
+          'comm-pref:set:auto-accept',
+          'comm-pref:set:allow',
+          'comm-pref:set:dm-only',
+        ]);
+        // Current pref rendered as success (style 3); others secondary (2).
+        const styleOfAutoAccept = buttons.find(b => b.custom_id === 'comm-pref:set:auto-accept')?.style;
+        const styleOfPrefer = buttons.find(b => b.custom_id === 'comm-pref:set:prefer')?.style;
+        expect(styleOfAutoAccept).toBe(3);
+        expect(styleOfPrefer).toBe(2);
+
+        await user.cleanup();
+      });
+
+      it('comm-pref:set:{pref} updates users.communication_pref + replies with UPDATE_MESSAGE (type 7) confirmation', async () => {
+        const user = await createTestUser({ communicationPref: 'allow' });
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'comm-pref:set:prefer' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string; components?: unknown[] } };
+        expect(body.type).toBe(7);
+        expect(body.data?.content).toMatch(/Prefer threads/);
+        // Buttons dropped from the ephemeral — the decision is locked.
+        expect(body.data?.components).toEqual([]);
+
+        const db = getDb();
+        const [row] = await db
+          .select({ communicationPref: users.communicationPref })
+          .from(users)
+          .where(eq(users.discordId, user.id))
+          .limit(1);
+        expect(row.communicationPref).toBe('prefer');
+
+        await user.cleanup();
+      });
+
+      it('comm-pref:set:{invalid-pref} falls through to a deferred-update ack (no DB write)', async () => {
+        const user = await createTestUser({ communicationPref: 'allow' });
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'comm-pref:set:bogus' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(6);
+
+        const db = getDb();
+        const [row] = await db
+          .select({ communicationPref: users.communicationPref })
+          .from(users)
+          .where(eq(users.discordId, user.id))
+          .limit(1);
+        expect(row.communicationPref).toBe('allow');
+
+        await user.cleanup();
       });
     });
   });

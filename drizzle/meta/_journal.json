@@ -71,6 +71,20 @@
       "when": 1776492130299,
       "tag": "0009_steady_ultimates",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1776503075398,
+      "tag": "0010_clear_randall_flagg",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776503300681,
+      "tag": "0011_wise_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }
