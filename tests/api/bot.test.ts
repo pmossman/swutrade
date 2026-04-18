@@ -29,17 +29,23 @@ interface FakeBotOptions {
   ) => Promise<{ id: string; name: string }>;
   getGuildBotMember?: (
     guildId: string,
+    botUserId: string,
   ) => Promise<{ roles: string[]; user: { id: string } }>;
+}
+
+interface GetGuildBotMemberCall {
+  guildId: string;
+  botUserId: string;
 }
 
 function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
   sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
   createChannelCalls: CreateChannelCall[];
-  getGuildBotMemberCalls: string[];
+  getGuildBotMemberCalls: GetGuildBotMemberCall[];
 } {
   const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
   const createChannelCalls: CreateChannelCall[] = [];
-  const getGuildBotMemberCalls: string[] = [];
+  const getGuildBotMemberCalls: GetGuildBotMemberCall[] = [];
   return {
     sendCalls,
     createChannelCalls,
@@ -60,10 +66,10 @@ function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
       if (options.createGuildChannel) return options.createGuildChannel(guildId, opts);
       return { id: `channel-${guildId}`, name: opts.name };
     },
-    async getGuildBotMember(guildId) {
-      getGuildBotMemberCalls.push(guildId);
-      if (options.getGuildBotMember) return options.getGuildBotMember(guildId);
-      return { roles: ['bot-role-1'], user: { id: 'bot-user-1' } };
+    async getGuildBotMember(guildId, botUserId) {
+      getGuildBotMemberCalls.push({ guildId, botUserId });
+      if (options.getGuildBotMember) return options.getGuildBotMember(guildId, botUserId);
+      return { roles: ['bot-role-1'], user: { id: botUserId } };
     },
   };
 }
@@ -689,7 +695,11 @@ describeWithDb('/api/bot dispatcher', () => {
 
       // Bot was asked for its member info first (to resolve the role
       // id we grant channel perms to), then asked to create the channel.
-      expect(bot.getGuildBotMemberCalls).toEqual([guildId]);
+      // The caller must supply DISCORD_CLIENT_ID because Discord
+      // rejects `/guilds/:id/members/@me` for bots.
+      expect(bot.getGuildBotMemberCalls).toHaveLength(1);
+      expect(bot.getGuildBotMemberCalls[0].guildId).toBe(guildId);
+      expect(bot.getGuildBotMemberCalls[0].botUserId).toBe(process.env.DISCORD_CLIENT_ID);
       expect(bot.createChannelCalls).toHaveLength(1);
       const call = bot.createChannelCalls[0];
       expect(call.guildId).toBe(guildId);

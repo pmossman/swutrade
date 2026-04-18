@@ -1109,7 +1109,14 @@ async function handleApplicationAuthorized(
 
   try {
     const bot = deps.bot ?? createDiscordBotClient();
-    const botMember = await bot.getGuildBotMember(guildId);
+    // Discord rejects `/guilds/:id/members/@me` for bots — we have to
+    // supply the bot's user id, which for applications is identical
+    // to the OAuth client id.
+    const botUserId = process.env.DISCORD_CLIENT_ID;
+    if (!botUserId) {
+      throw new Error('DISCORD_CLIENT_ID not set — cannot resolve bot member');
+    }
+    const botMember = await bot.getGuildBotMember(guildId, botUserId);
     const botRoleId = botMember.roles[0];
     if (!botRoleId) {
       throw new Error('bot has no roles in guild — cannot grant channel perms');

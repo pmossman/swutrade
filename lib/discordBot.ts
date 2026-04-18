@@ -85,10 +85,19 @@ export interface DiscordBotClient {
       }>;
     },
   ): Promise<{ id: string; name: string }>;
-  /** Fetch the current app's bot member info in a guild — we use this
-   *  to resolve the bot's role id so we can grant it permissions on the
-   *  channel we just created. */
-  getGuildBotMember(guildId: string): Promise<{
+  /** Fetch the bot's member row in a guild — we use this to resolve
+   *  the bot's managed-integration role so we can grant it the right
+   *  permission overwrites on a channel we just created.
+   *
+   *  `botUserId` must be the bot's Discord user id, which for bot
+   *  applications is identical to the OAuth `DISCORD_CLIENT_ID`.
+   *  Discord's `/members/@me` alias is explicitly rejected for bots
+   *  (403 "Bots cannot use this endpoint"), which is why the caller
+   *  supplies the id explicitly. */
+  getGuildBotMember(
+    guildId: string,
+    botUserId: string,
+  ): Promise<{
     roles: string[];
     user: { id: string };
   }>;
@@ -185,8 +194,8 @@ export function createDiscordBotClient(opts: { token?: string; apiBase?: string 
       return res.json() as Promise<{ id: string; name: string }>;
     },
 
-    async getGuildBotMember(guildId) {
-      const res = await request(`/guilds/${guildId}/members/@me`, { method: 'GET' });
+    async getGuildBotMember(guildId, botUserId) {
+      const res = await request(`/guilds/${guildId}/members/${botUserId}`, { method: 'GET' });
       return res.json() as Promise<{ roles: string[]; user: { id: string } }>;
     },
   };
