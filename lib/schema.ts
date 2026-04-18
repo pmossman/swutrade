@@ -73,6 +73,15 @@ export const botInstalledGuilds = pgTable('bot_installed_guilds', {
   // Discord user id of whoever ran the install flow. Informational —
   // not used for authorization decisions.
   installedByUserId: text('installed_by_user_id'),
+  /**
+   * Per-guild `#swutrade-threads` channel created by the bot on
+   * install to host private trade-proposal threads. Nullable because
+   * (a) the install may have predated the auto-create feature, and
+   * (b) the bot may have lacked `MANAGE_CHANNELS` at install time —
+   * in both cases the install still succeeded and this column stays
+   * null until remedied.
+   */
+  tradesChannelId: text('trades_channel_id'),
 });
 
 /**

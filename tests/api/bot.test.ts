@@ -1,5 +1,5 @@
 import { describeWithDb } from './helpers.js';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import {
@@ -17,12 +17,33 @@ function extractRawEd25519PublicKey(key: KeyObject): string {
   return der.subarray(12).toString('hex');
 }
 
-function makeFakeBot(): DiscordBotClient & {
+interface CreateChannelCall {
+  guildId: string;
+  opts: Parameters<DiscordBotClient['createGuildChannel']>[1];
+}
+
+interface FakeBotOptions {
+  createGuildChannel?: (
+    guildId: string,
+    opts: Parameters<DiscordBotClient['createGuildChannel']>[1],
+  ) => Promise<{ id: string; name: string }>;
+  getGuildBotMember?: (
+    guildId: string,
+  ) => Promise<{ roles: string[]; user: { id: string } }>;
+}
+
+function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
   sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
+  createChannelCalls: CreateChannelCall[];
+  getGuildBotMemberCalls: string[];
 } {
   const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
+  const createChannelCalls: CreateChannelCall[] = [];
+  const getGuildBotMemberCalls: string[] = [];
   return {
     sendCalls,
+    createChannelCalls,
+    getGuildBotMemberCalls,
     async postChannelMessage() { throw new Error('unused'); },
     async editChannelMessage() { /* unused in type-7 path */ },
     async createDmChannel() { return { id: 'dm-fake' }; },
@@ -34,6 +55,16 @@ function makeFakeBot(): DiscordBotClient & {
     async createPrivateThread() { throw new Error('unused'); },
     async addThreadMember() { throw new Error('unused'); },
     async deleteChannel() { throw new Error('unused'); },
+    async createGuildChannel(guildId, opts) {
+      createChannelCalls.push({ guildId, opts });
+      if (options.createGuildChannel) return options.createGuildChannel(guildId, opts);
+      return { id: `channel-${guildId}`, name: opts.name };
+    },
+    async getGuildBotMember(guildId) {
+      getGuildBotMemberCalls.push(guildId);
+      if (options.getGuildBotMember) return options.getGuildBotMember(guildId);
+      return { roles: ['bot-role-1'], user: { id: 'bot-user-1' } };
+    },
   };
 }
 
@@ -452,6 +483,10 @@ describeWithDb('/api/bot dispatcher', () => {
       const guildId = `e2e-authd-${Date.now()}`;
       cleanupGuildIds.push(guildId);
 
+      // Pass a fake bot so the post-write auto-create path doesn't
+      // hit real Discord. This test only asserts on the row metadata
+      // — the auto-create behaviour itself has dedicated tests below.
+      const bot = makeFakeBot();
       const res = mockResponse();
       await dispatchBotPayload('events', {
         type: 1,
@@ -464,7 +499,7 @@ describeWithDb('/api/bot dispatcher', () => {
             guild: { id: guildId, name: 'Star Wars SD Test', icon: 'abc123' },
           },
         },
-      }, res);
+      }, res, { bot });
 
       expect(res._status).toBe(204);
 
@@ -478,6 +513,152 @@ describeWithDb('/api/bot dispatcher', () => {
       expect(row.guildName).toBe('Star Wars SD Test');
       expect(row.guildIcon).toBe('abc123');
       expect(row.installedByUserId).toBe('installer-user');
+    });
+
+    it('APPLICATION_AUTHORIZED auto-creates #swutrade-threads + persists the channel id when the bot client succeeds', async () => {
+      const guildId = `e2e-autocreate-${Date.now()}`;
+      cleanupGuildIds.push(guildId);
+      const bot = makeFakeBot();
+      const res = mockResponse();
+
+      await dispatchBotPayload('events', {
+        type: 1,
+        event: {
+          type: 'APPLICATION_AUTHORIZED',
+          data: {
+            integration_type: 0,
+            scopes: ['bot', 'applications.commands'],
+            user: { id: 'installer-user', username: 'Installer' },
+            guild: { id: guildId, name: 'Auto Create Test', icon: null },
+          },
+        },
+      }, res, { bot });
+
+      expect(res._status).toBe(204);
+
+      // Bot was asked for its member info first (to resolve the role
+      // id we grant channel perms to), then asked to create the channel.
+      expect(bot.getGuildBotMemberCalls).toEqual([guildId]);
+      expect(bot.createChannelCalls).toHaveLength(1);
+      const call = bot.createChannelCalls[0];
+      expect(call.guildId).toBe(guildId);
+      expect(call.opts.name).toBe('swutrade-threads');
+      expect(call.opts.type).toBe(0);
+      // Two overwrites: @everyone (role id == guild id) gets VIEW_CHANNEL
+      // only; the bot's own role gets the full BOT_INSTALL_PERMISSIONS
+      // bitfield so it can operate regardless of server-wide defaults.
+      const overwrites = call.opts.permission_overwrites ?? [];
+      expect(overwrites).toHaveLength(2);
+      const everyone = overwrites.find(o => o.id === guildId);
+      const botRole = overwrites.find(o => o.id === 'bot-role-1');
+      expect(everyone?.allow).toBe('1024');
+      expect(botRole?.allow).toBe('360777255952');
+
+      // The created channel id was persisted on the row.
+      const db = getDb();
+      const [row] = await db
+        .select()
+        .from(botInstalledGuilds)
+        .where(eq(botInstalledGuilds.guildId, guildId))
+        .limit(1);
+      expect(row.tradesChannelId).toBe(`channel-${guildId}`);
+    });
+
+    it('APPLICATION_AUTHORIZED skips channel creation when the row already has a tradesChannelId (re-install idempotency)', async () => {
+      const guildId = `e2e-reinstall-${Date.now()}`;
+      cleanupGuildIds.push(guildId);
+
+      // Pre-seed the guild row with an existing channel id to simulate
+      // a second APPLICATION_AUTHORIZED firing on a guild we already
+      // installed into. Re-create would orphan the original channel.
+      const db = getDb();
+      await db.insert(botInstalledGuilds).values({
+        guildId,
+        guildName: 'Re-install Test',
+        guildIcon: null,
+        tradesChannelId: 'pre-existing-channel-id',
+      });
+
+      const bot = makeFakeBot();
+      const res = mockResponse();
+
+      await dispatchBotPayload('events', {
+        type: 1,
+        event: {
+          type: 'APPLICATION_AUTHORIZED',
+          data: {
+            integration_type: 0,
+            scopes: ['bot', 'applications.commands'],
+            user: { id: 'installer-user', username: 'Installer' },
+            guild: { id: guildId, name: 'Re-install Test', icon: null },
+          },
+        },
+      }, res, { bot });
+
+      expect(res._status).toBe(204);
+      // No bot calls at all — short-circuited before getGuildBotMember.
+      expect(bot.getGuildBotMemberCalls).toEqual([]);
+      expect(bot.createChannelCalls).toEqual([]);
+
+      // Existing channel id is preserved.
+      const [row] = await db
+        .select()
+        .from(botInstalledGuilds)
+        .where(eq(botInstalledGuilds.guildId, guildId))
+        .limit(1);
+      expect(row.tradesChannelId).toBe('pre-existing-channel-id');
+    });
+
+    it('APPLICATION_AUTHORIZED still succeeds when createGuildChannel throws (e.g. missing MANAGE_CHANNELS) — row written, tradesChannelId null, error logged', async () => {
+      const guildId = `e2e-perms-${Date.now()}`;
+      cleanupGuildIds.push(guildId);
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const bot = makeFakeBot({
+        createGuildChannel: async () => {
+          // Simulate Discord's 403 when the bot lacks MANAGE_CHANNELS.
+          throw new Error('Discord bot API POST /guilds/.../channels failed: 403 Missing Permissions');
+        },
+      });
+      const res = mockResponse();
+
+      try {
+        await dispatchBotPayload('events', {
+          type: 1,
+          event: {
+            type: 'APPLICATION_AUTHORIZED',
+            data: {
+              integration_type: 0,
+              scopes: ['bot', 'applications.commands'],
+              user: { id: 'installer-user', username: 'Installer' },
+              guild: { id: guildId, name: 'Perms Missing Test', icon: null },
+            },
+          },
+        }, res, { bot });
+
+        // Install never fails on auto-create errors.
+        expect(res._status).toBe(204);
+
+        // Row was still written — the install is the source of truth.
+        const db = getDb();
+        const [row] = await db
+          .select()
+          .from(botInstalledGuilds)
+          .where(eq(botInstalledGuilds.guildId, guildId))
+          .limit(1);
+        expect(row).toBeTruthy();
+        expect(row.guildName).toBe('Perms Missing Test');
+        // No channel id persisted because the create threw.
+        expect(row.tradesChannelId).toBeNull();
+
+        // The error was logged so we can grep for it in production.
+        expect(consoleSpy).toHaveBeenCalledWith(
+          'discord-bot: auto-create channel failed',
+          expect.any(Error),
+        );
+      } finally {
+        consoleSpy.mockRestore();
+      }
     });
 
     it('APPLICATION_AUTHORIZED without a guild (user-install) is a no-op', async () => {

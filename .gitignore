@@ -32,3 +32,6 @@ playwright/.cache/
 *.sw?
 .vercel
 .env*.local
+
+# Claude Code local state (settings, subagent worktrees)
+.claude/

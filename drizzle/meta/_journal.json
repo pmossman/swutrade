@@ -85,6 +85,13 @@
       "when": 1776503300681,
       "tag": "0011_wise_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1776532567050,
+      "tag": "0012_cuddly_norman_osborn",
+      "breakpoints": true
     }
   ]
 }

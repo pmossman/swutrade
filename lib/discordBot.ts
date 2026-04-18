@@ -70,6 +70,28 @@ export interface DiscordBotClient {
    *  Discord user) — otherwise the parent channel accumulates empty
    *  threads with just the bot/proposer inside. */
   deleteChannel(channelId: string): Promise<void>;
+  /** Create a new guild text channel. Returns the channel id. */
+  createGuildChannel(
+    guildId: string,
+    opts: {
+      name: string;
+      type: 0; // GUILD_TEXT
+      topic?: string;
+      permission_overwrites?: Array<{
+        id: string; // role or user id
+        type: 0 | 1; // 0 = role, 1 = user
+        allow?: string; // bitfield as string
+        deny?: string;
+      }>;
+    },
+  ): Promise<{ id: string; name: string }>;
+  /** Fetch the current app's bot member info in a guild — we use this
+   *  to resolve the bot's role id so we can grant it permissions on the
+   *  channel we just created. */
+  getGuildBotMember(guildId: string): Promise<{
+    roles: string[];
+    user: { id: string };
+  }>;
 }
 
 export function createDiscordBotClient(opts: { token?: string; apiBase?: string } = {}): DiscordBotClient {
@@ -153,6 +175,19 @@ export function createDiscordBotClient(opts: { token?: string; apiBase?: string 
 
     async deleteChannel(channelId) {
       await request(`/channels/${channelId}`, { method: 'DELETE' });
+    },
+
+    async createGuildChannel(guildId, opts) {
+      const res = await request(`/guilds/${guildId}/channels`, {
+        method: 'POST',
+        body: JSON.stringify(opts),
+      });
+      return res.json() as Promise<{ id: string; name: string }>;
+    },
+
+    async getGuildBotMember(guildId) {
+      const res = await request(`/guilds/${guildId}/members/@me`, { method: 'GET' });
+      return res.json() as Promise<{ roles: string[]; user: { id: string } }>;
     },
   };
 }

@@ -168,7 +168,7 @@ export async function dispatchBotPayload(
 ): Promise<void> {
   switch (action) {
     case 'interactions': return handleInteraction(payload, res, deps);
-    case 'events':       return handleEvent(payload, res);
+    case 'events':       return handleEvent(payload, res, deps);
     default:
       res.status(404).json({ error: 'Unknown bot action' });
       return;
@@ -968,6 +968,7 @@ interface ApplicationAuthorizedEventData {
 async function handleEvent(
   payload: Record<string, unknown>,
   res: VercelResponse,
+  deps: BotDeps = {},
 ): Promise<void> {
   // Event Webhooks use a distinct `type` enum from Interactions:
   //   0 = PING (endpoint verification on URL save)
@@ -984,7 +985,7 @@ async function handleEvent(
   const eventType = event?.type;
 
   if (eventType === 'APPLICATION_AUTHORIZED') {
-    await handleApplicationAuthorized(event?.data);
+    await handleApplicationAuthorized(event?.data, deps);
     res.status(204).end();
     return;
   }
@@ -999,9 +1000,16 @@ async function handleEvent(
  * Bot was installed (or re-authorized) into a guild. Insert or
  * refresh the `bot_installed_guilds` row. Gracefully tolerates
  * missing metadata by falling back to a Discord API lookup.
+ *
+ * After the row is upserted, attempts to auto-create a
+ * `#swutrade-threads` channel scoped to the bot so future private
+ * trade-proposal threads have a home. Any failure here (missing
+ * MANAGE_CHANNELS, network hiccup, etc.) is logged and swallowed —
+ * the install itself must not fail on channel-creation problems.
  */
 async function handleApplicationAuthorized(
   data: ApplicationAuthorizedEventData | undefined,
+  deps: BotDeps = {},
 ): Promise<void> {
   if (!data?.guild?.id) {
     // APPLICATION_AUTHORIZED fires for user-install (no guild) too.
@@ -1017,7 +1025,7 @@ async function handleApplicationAuthorized(
   // Fall back to a direct fetch if the event didn't carry name/icon.
   if (!guildName) {
     try {
-      const bot = createDiscordBotClient();
+      const bot = deps.bot ?? createDiscordBotClient();
       const meta = await bot.getGuild(guildId);
       guildName = meta.name;
       guildIcon = meta.icon;
@@ -1040,5 +1048,56 @@ async function handleApplicationAuthorized(
       target: botInstalledGuilds.guildId,
       set: { guildName, guildIcon },
     });
+
+  // Skip auto-create if this guild already has a trades channel —
+  // re-auth / re-install shouldn't spawn duplicates.
+  const [existing] = await db
+    .select({ tradesChannelId: botInstalledGuilds.tradesChannelId })
+    .from(botInstalledGuilds)
+    .where(eq(botInstalledGuilds.guildId, guildId))
+    .limit(1);
+  if (existing?.tradesChannelId) {
+    return;
+  }
+
+  try {
+    const bot = deps.bot ?? createDiscordBotClient();
+    const botMember = await bot.getGuildBotMember(guildId);
+    const botRoleId = botMember.roles[0];
+    if (!botRoleId) {
+      throw new Error('bot has no roles in guild — cannot grant channel perms');
+    }
+    // The `@everyone` role id in Discord always equals the guild id.
+    const everyoneRoleId = guildId;
+    const channel = await bot.createGuildChannel(guildId, {
+      name: 'swutrade-threads',
+      type: 0,
+      topic:
+        'SWUTrade trade proposal threads. The bot creates a private thread per proposal; only the traders see the contents.',
+      permission_overwrites: [
+        {
+          id: everyoneRoleId,
+          type: 0,
+          // VIEW_CHANNEL so members can see the channel + the system
+          // "bot started a thread" pings. No deny — private threads
+          // are invisible regardless of server-wide defaults.
+          allow: '1024',
+        },
+        {
+          id: botRoleId,
+          type: 0,
+          // Full set from BOT_INSTALL_PERMISSIONS so the bot works
+          // regardless of server defaults on the channel.
+          allow: '360777255952',
+        },
+      ],
+    });
+    await db
+      .update(botInstalledGuilds)
+      .set({ tradesChannelId: channel.id })
+      .where(eq(botInstalledGuilds.guildId, guildId));
+  } catch (err) {
+    console.error('discord-bot: auto-create channel failed', err);
+  }
 }
 

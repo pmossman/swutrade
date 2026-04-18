@@ -47,11 +47,26 @@ export async function handleMe(req: VercelRequest, res: VercelResponse) {
 }
 
 /**
+ * Permissions the bot requests on install. Sum of the following bits:
+ *   - VIEW_CHANNEL              (1 << 10) = 1024
+ *   - SEND_MESSAGES             (1 << 11) = 2048
+ *   - MANAGE_CHANNELS           (1 << 4)  = 16
+ *   - MANAGE_THREADS            (1 << 34) = 17179869184
+ *   - CREATE_PRIVATE_THREADS    (1 << 36) = 68719476736
+ *   - SEND_MESSAGES_IN_THREADS  (1 << 38) = 274877906944
+ *
+ * MANAGE_CHANNELS is how the bot auto-creates a `#swutrade-threads`
+ * parent channel on install; the thread-related bits let it spawn +
+ * speak in private threads for each trade proposal.
+ */
+const BOT_INSTALL_PERMISSIONS = '360777255952';
+
+/**
  * Server-constructed OAuth URL for installing SWUTrade's bot in a
  * Discord guild. Kept server-side so DISCORD_CLIENT_ID isn't shipped
  * in the Vite bundle and so scope/permission changes stay in one
- * place. `permissions=3072` = View Channels (1024) + Send Messages
- * (2048), the minimum for Phase 4 v1.
+ * place. Permissions integer — see `BOT_INSTALL_PERMISSIONS` above for
+ * the bit-by-bit breakdown.
  */
 function buildBotInstallUrl(): string | null {
   const clientId = process.env.DISCORD_CLIENT_ID;
@@ -59,7 +74,7 @@ function buildBotInstallUrl(): string | null {
   const params = new URLSearchParams({
     client_id: clientId,
     scope: 'bot applications.commands',
-    permissions: '3072',
+    permissions: BOT_INSTALL_PERMISSIONS,
   });
   return `https://discord.com/oauth2/authorize?${params.toString()}`;
 }
