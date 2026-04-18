@@ -180,6 +180,28 @@ export function ProposeBar({
     }
   }, [sendState, yourCards, theirCards, recipientHandle, percentage, priceMode, message]);
 
+  // Cancelling a draft proposal returns the user to the place they
+  // arrived from (community directory or the counterpart's profile).
+  // Same-origin referrer → history.back(); otherwise default to the
+  // community directory, which is the canonical landing when there's
+  // no specific prior page to return to. Carries an `are you sure?`
+  // guard when the user already has cards picked — a Suggest click
+  // plus some manual edits represents non-trivial work to discard.
+  const handleCancel = useCallback(() => {
+    const hasWork = yourCards.length > 0 || theirCards.length > 0 || message.trim().length > 0;
+    if (hasWork && !window.confirm('Discard this draft proposal?')) return;
+    try {
+      const ref = document.referrer;
+      if (ref && new URL(ref).origin === window.location.origin) {
+        window.history.back();
+        return;
+      }
+    } catch {
+      // fall through
+    }
+    window.location.href = '/?community=1';
+  }, [yourCards.length, theirCards.length, message]);
+
   const body = (() => {
     if (sendState === 'sent') {
       return (
@@ -272,6 +294,20 @@ export function ProposeBar({
 
     return (
       <>
+        {/* Cancel / back affordance. First-beta users reported
+            feeling stuck in the propose flow with no obvious exit
+            — browser back worked but wasn't visible. */}
+        <button
+          type="button"
+          onClick={handleCancel}
+          title="Cancel and return to community"
+          className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-gray-500 hover:text-gray-200 hover:bg-space-700/60 transition-colors"
+          aria-label="Cancel proposal"
+        >
+          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M10 4L6 8l4 4" />
+          </svg>
+        </button>
         {status}
         {overlapAvailable && (
           <button

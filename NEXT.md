@@ -129,6 +129,14 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Header consolidation + propose cancel (beta feedback)
+Top bar dropped from five controls (Logo · AccountMenu · Lists · ViewToggle · Share/Clear) to two primary slots (AccountMenu · ViewToggle) in steady state. Changes:
+
+- **ListsDrawer lifted to controlled state** — App.tsx owns `listsDrawerOpen` and hands it down. Drawer no longer renders its own trigger button.
+- **AccountMenu grows a "My Lists" entry** — signed-in + signed-out both include it (lists are stored in localStorage until the user opts into cloud sync, so the menu item works without auth).
+- **Signed-out state unified** — anonymous-silhouette avatar (parallel shape to the signed-in avatar) opens the same popover surface with a "Not signed in" identity header, "My Lists", and a Discord sign-in CTA. No more visual distinction between "you have an account menu here" and "sign in."
+- **ProposeBar gains a cancel affordance** — back-arrow button at the left of the bar. Returns via `history.back()` when same-origin, else navigates to `/?community=1`. Guarded with a `confirm()` if the draft has cards or a note (non-trivial work to discard).
+
 ### 2026-04-17 — Public defaults + auto-enroll + clickable logo (beta feedback)
 Beta users were bouncing off the private-by-default wall: new accounts had to hunt through Settings just to appear in community queries, and the per-guild enrollment toggle was a second opt-in wall on top. Three related fixes:
 

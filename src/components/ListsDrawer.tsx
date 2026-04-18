@@ -21,6 +21,11 @@ interface ListsDrawerProps {
   allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
+  /** Controlled `open` state. The drawer no longer renders its own
+   *  trigger button — it's opened from the AccountMenu menu item so
+   *  the top bar stays uncluttered. Parent (App.tsx) owns the boolean. */
+  open: boolean;
+  onOpenChange: (next: boolean) => void;
 }
 
 type ListTab = 'wants' | 'available';
@@ -36,8 +41,9 @@ export function ListsDrawer({
   allCards,
   percentage,
   priceMode,
+  open,
+  onOpenChange,
 }: ListsDrawerProps) {
-  const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<ListTab>('wants');
   const [mode, setMode] = useState<Mode>('list');
   const [editingWantId, setEditingWantId] = useState<string | null>(null);
@@ -104,32 +110,11 @@ export function ListsDrawer({
   };
   const handleOpenChange = (next: boolean) => {
     if (!next) setMode('list');
-    setOpen(next);
+    onOpenChange(next);
   };
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
-      <Dialog.Trigger asChild>
-        <button
-          type="button"
-          aria-label="Open my lists"
-          className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 h-8 rounded-lg border transition-colors text-xs font-medium ${
-            totalCount > 0
-              // Populated: tint the whole pill so it reads as "you're
-              // using this feature" rather than as a Discord-style
-              // unread-notification dot.
-              ? 'bg-gold/10 border-gold/30 text-gold hover:bg-gold/15 hover:border-gold/50'
-              : 'bg-space-800/60 border-space-700 text-gray-400 hover:bg-space-800 hover:border-gold/40 hover:text-gold'
-          }`}
-        >
-          <ListsIcon className="w-3.5 h-3.5" />
-          {/* Label collapses on mobile to save row real estate; the
-              aria-label keeps the control discoverable for assistive
-              tech. */}
-          <span className="hidden sm:inline">My Lists</span>
-        </button>
-      </Dialog.Trigger>
-
       <Dialog.Portal>
         <Dialog.Overlay className="drawer-overlay fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
@@ -621,7 +606,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-function ListsIcon({ className }: { className?: string }) {
+export function ListsIcon({ className }: { className?: string }) {
   return (
     <svg
       className={className}

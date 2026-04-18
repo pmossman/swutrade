@@ -114,6 +114,10 @@ function App() {
   // not editing so the other gets more scroll room.
   const [offeringCollapsed, setOfferingCollapsed] = useState(false);
   const [receivingCollapsed, setReceivingCollapsed] = useState(false);
+  // ListsDrawer is controlled from here — the AccountMenu opens it
+  // instead of the drawer owning its own trigger button. Keeps the
+  // top bar uncluttered (account menu + view toggle only).
+  const [listsDrawerOpen, setListsDrawerOpen] = useState(false);
   // Per-device trade layout: split (default, both panels visible) or
   // tabbed (single-panel focus with OFFERING/RECEIVING tab bar).
   // Active tab is ephemeral session state — no reason to persist
@@ -416,13 +420,15 @@ function App() {
           single kebab so everything fits in a single 390px viewport. */}
       <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
         <PageHeader>
-          <AccountMenu auth={auth} />
+          <AccountMenu auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
           <ListsDrawer
             wants={wants}
             available={available}
             allCards={allLoadedCards}
             percentage={percentage}
             priceMode={priceMode}
+            open={listsDrawerOpen}
+            onOpenChange={setListsDrawerOpen}
           />
           <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
           {/* Pricing controls (% + Market/Low) used to sit here. They
