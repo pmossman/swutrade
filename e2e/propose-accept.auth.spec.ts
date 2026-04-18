@@ -95,9 +95,12 @@ test.describe('Signed button interaction (synthetic Discord webhook)', () => {
     const bar = page.getByTestId('propose-bar');
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
     // Auto-fill was removed — click Suggest so the trade has cards
-    // before Send. Otherwise Send stays disabled.
+    // before Send. Otherwise Send stays disabled. Send now opens a
+    // confirm modal; click through it to actually POST.
     await page.getByTestId('propose-suggest').click();
-    await page.getByRole('button', { name: /Send proposal/i }).click();
+    await page.getByTestId('propose-open-confirm').click();
+    await expect(page.getByTestId('propose-confirm')).toBeVisible({ timeout: 5_000 });
+    await page.getByTestId('confirm-send').click();
     // Either 'sent' (real DM landed — unlikely with a fake discord
     // id) or 'sent-undelivered'. Both are OK; the trade row exists.
     await expect(bar).toHaveAttribute('data-state', /sent/, { timeout: 10_000 });
@@ -170,9 +173,12 @@ test.describe('Signed button interaction (synthetic Discord webhook)', () => {
     const bar = page.getByTestId('propose-bar');
     await expect(bar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
     // Auto-fill was removed — click Suggest so the trade has cards
-    // before Send. Otherwise Send stays disabled.
+    // before Send. Otherwise Send stays disabled. Send now opens a
+    // confirm modal; click through it to actually POST.
     await page.getByTestId('propose-suggest').click();
-    await page.getByRole('button', { name: /Send proposal/i }).click();
+    await page.getByTestId('propose-open-confirm').click();
+    await expect(page.getByTestId('propose-confirm')).toBeVisible({ timeout: 5_000 });
+    await page.getByTestId('confirm-send').click();
     await expect(bar).toHaveAttribute('data-state', /sent/, { timeout: 10_000 });
 
     const { getDb } = await import('../lib/db.js');

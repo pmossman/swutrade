@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { signIn, createIsolatedUser, ensureTestUser, cleanupTestUser, type TestUser } from './helpers/auth';
+import { openMyLists } from './helpers/openMyLists';
 
 test.describe('Server sync', () => {
   test.describe.configure({ mode: 'serial' });
@@ -20,7 +21,7 @@ test.describe('Server sync', () => {
     await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Open the drawer and add a want via the picker.
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('tab', { name: /^wants/i }).click();
@@ -61,7 +62,7 @@ test.describe('Server sync', () => {
     await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Reopen drawer — the want should still be there.
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     await expect(page.getByRole('dialog', { name: 'MY LISTS' })).toBeVisible();
     await expect(
       page.getByRole('dialog', { name: 'MY LISTS' })
@@ -74,7 +75,7 @@ test.describe('Server sync', () => {
     await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
 
     // Add an available item via the drawer.
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await dialog.getByRole('tab', { name: /^available/i }).click();
     await dialog.getByRole('button', { name: /add card/i }).click();

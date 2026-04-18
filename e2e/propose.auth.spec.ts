@@ -73,20 +73,23 @@ test.describe('Trade proposal flow', () => {
     // from the overlap pool.
     await page.getByTestId('propose-suggest').click();
 
-    // Step 4: open the note disclosure and type a message. The
-    // server persists this on the trade_proposals row and it shows
-    // in the recipient's DM embed description.
-    const noteMessage = 'Ping me on Discord about meetup time — e2e note';
-    await page.getByRole('button', { name: /Add a note/i }).click();
-    await page.getByLabel(/Proposal note/i).fill(noteMessage);
+    // Step 4: click the outer Send button to open the confirm modal.
+    // The note textarea now lives inside that modal — the old inline
+    // disclosure was too small per beta feedback.
+    await page.getByTestId('propose-open-confirm').click();
+    const confirm = page.getByTestId('propose-confirm');
+    await expect(confirm).toBeVisible({ timeout: 5_000 });
 
-    // Step 5: click Send and confirm the success state lands.
-    // The recipient is seeded via createSenderFixture with a
-    // synthetic discordId that Discord rejects, so the DM delivery
-    // fails and the bar lands in `sent-undelivered`. The trade row
-    // still exists — we care about the row, not the transport.
-    // Regex matches both `sent` and `sent-undelivered`.
-    await page.getByRole('button', { name: /Send proposal/i }).click();
+    const noteMessage = 'Ping me on Discord about meetup time — e2e note';
+    await confirm.getByLabel(/Proposal note/i).fill(noteMessage);
+
+    // Step 5: click the modal's Send button and confirm the success
+    // state lands. The recipient is seeded via createSenderFixture
+    // with a synthetic discordId that Discord rejects, so the DM
+    // delivery fails and the bar lands in `sent-undelivered`. The
+    // trade row still exists — we care about the row, not the
+    // transport. Regex matches both `sent` and `sent-undelivered`.
+    await page.getByTestId('confirm-send').click();
     await expect(bar).toHaveAttribute('data-state', /^sent/, { timeout: 10_000 });
 
     // Step 6: a row actually exists in trade_proposals for this

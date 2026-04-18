@@ -129,6 +129,13 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Send-proposal confirm flow + Discord multi-user research
+Two slices delivered in parallel via subagents:
+
+**1. Send-proposal confirm modal** (`src/components/ProposeBar.tsx`, four e2e specs). Clicking the top-bar Send button now opens a Radix Dialog review/confirm surface instead of firing immediately. Modal renders: title "Send to @handle", two-column Offering/Receiving summary (variant pill + qty + $line-total), totals strip (Offering · Receiving · Imbalance-or-Balanced), a full-width 5-row note textarea (replaces the cramped "Add a note" disclosure that beta flagged as too small), and Cancel / Send actions. Dialog blocks dismissal while `sending`; renders inline error above actions on failure so retry is one click. Snapshot helper extracted so the preview totals and POST payload can't drift. Four e2e specs updated to the two-click flow (`propose-open-confirm` → `confirm-send`) with new testids on both buttons and the dialog itself.
+
+**2. Discord multi-user conversation research** (`docs/discord-multi-user-conversation-research.md`). Compared bot-initiated group DMs (🔴 red — bots can't create them, invisible-channel bug), private channels in a shared guild (🟡 yellow — works but channel-list clutter, needs shared guild), and private threads in a `#trades` channel (🟢 green — free since Nov 2022, DM-like push on invite, auto-archive). Recommendation: build option 3 (private threads) first. Next steps documented in the file for when we take this up.
+
 ### 2026-04-17 — Picker rework: fullscreen + Done + consolidated filters (beta feedback)
 Picker overlay is back to fullscreen (`inset-0`). The top-peek gap was ambiguous in practice — beta feedback was "just make it full screen." Header Done button replaces the X icon + also replaces the touch-only bottom Done CTA, so the overlay has a single unambiguous dismiss affordance rendered in the side's accent color (emerald for Offering, blue for Receiving).
 

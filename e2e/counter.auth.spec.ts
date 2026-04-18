@@ -56,9 +56,12 @@ test.describe('Counter flow', () => {
       const proposeBar = page1.getByTestId('propose-bar');
       await expect(proposeBar).toHaveAttribute('data-state', 'ready', { timeout: 15_000 });
       // Auto-fill was removed — click Suggest so the trade has cards
-      // before Send. Otherwise the Send button stays disabled.
+      // before Send. Otherwise the Send button stays disabled. Send
+      // now opens a confirm modal; click through it to actually POST.
       await page1.getByTestId('propose-suggest').click();
-      await page1.getByRole('button', { name: /Send proposal/i }).click();
+      await page1.getByTestId('propose-open-confirm').click();
+      await expect(page1.getByTestId('propose-confirm')).toBeVisible({ timeout: 5_000 });
+      await page1.getByTestId('confirm-send').click();
       await expect(proposeBar).toHaveAttribute('data-state', /^sent/, { timeout: 10_000 });
     } finally {
       await ctx1.close();

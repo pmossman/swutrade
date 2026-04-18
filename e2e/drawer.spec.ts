@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { openMyLists } from './helpers/openMyLists';
 
 // Family id for Luke Skywalker - Hero of Yavin (JTL). Matches what
 // `cardFamilyId` produces at runtime.
@@ -24,7 +25,7 @@ test.describe('Lists drawer interactions', () => {
 
     // Open the drawer. Scope all interactions to the dialog since the
     // trade overlays are also in the DOM with similar aria-labels.
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
 

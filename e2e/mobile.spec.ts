@@ -14,11 +14,10 @@ test.describe('Mobile viewport sanity', () => {
   test('app fits, top bar collapses to kebab, search overlay covers the viewport', async ({ page }) => {
     await page.goto('/');
 
-    // Top bar chrome at idle: logo + account + My Lists. Pricing
-    // controls moved into the balance bar body and Share/Clear only
-    // appear once cards are present, so only the icon-only lists
-    // button is guaranteed visible up here on an empty mobile view.
-    await expect(page.getByRole('button', { name: 'Open my lists' })).toBeVisible();
+    // Top bar chrome at idle: logo + account menu + view toggle.
+    // My Lists was lifted into the account menu popover, so the
+    // guaranteed-visible control at idle is the account menu button.
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible();
 
     // Both trade panels render — on mobile they stack vertically.
     await expect(page.getByRole('button', { name: 'Add cards to Offering' })).toBeVisible();

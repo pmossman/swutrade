@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { openMyLists } from './helpers/openMyLists';
 
 // Pinned productId against the current cached dataset. Stable enough —
 // TCGPlayer reassigning productIds is rare, and e2e runs weekly-cached
@@ -26,7 +27,7 @@ test.describe('Curator: build lists and share', () => {
     // inside the dialog, since the two trade-side overlays are also
     // rendered (hidden) in the DOM and carry the same accessible
     // names (Search input, Variant button, etc.).
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
     // Wait for Radix Dialog mount animation to settle — on slow CI runners
@@ -89,7 +90,7 @@ test.describe('Curator: build lists and share', () => {
 
   test('dedup by (familyId + restriction): Hyperspace-only and Any-variant for the same card create TWO rows', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Open my lists' }).click();
+    await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('tab', { name: /^wants/i }).waitFor({ state: 'attached' });
