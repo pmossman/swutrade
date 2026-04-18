@@ -276,7 +276,12 @@ export function TradeSearchOverlay({
               )}
             </div>
             <div className={`swu-display text-base ${hdr.split(' ').pop()}`}>{label}</div>
-            {pickedCount > 0 && (
+            {open && pickedCount > 0 && (
+              // Gated on `open` — the overlay's DOM stays mounted while
+              // closed (for the fade/translate transition), but text
+              // queries would still match the hidden "3" here AND a
+              // visible qty "3" in the trade panel. Strict-mode page
+              // locators would then throw.
               <div className="text-[10px] text-gray-500 mt-0.5">
                 Picked so far: <strong className="text-gray-300">{pickedCount}</strong>
                 {pickedTotal > 0 && <> · <strong className="text-gray-300">${pickedTotal.toFixed(2)}</strong></>}

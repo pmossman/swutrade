@@ -81,7 +81,23 @@ export function useTradeUrl(
     if (currentParams.get('trades') === '1') return;
     if (currentParams.has('trade')) return;
 
-    const search = buildTradeSearch(state);
+    // Build the trade-codec params and MERGE them into the existing
+    // search string rather than replacing it wholesale. Without this
+    // merge, context params like `propose`, `from`, `counter` get
+    // stripped on every card add — within a session the React-state
+    // hooks (useProposeHandle etc.) cushion it via lazy init, but
+    // refresh loses the context (ProposeBar unmounts, Send button
+    // disappears) while the cards themselves restore. Real bug.
+    const tradeOnlySearch = buildTradeSearch(state);
+    const tradeParams = new URLSearchParams(tradeOnlySearch);
+    const merged = new URLSearchParams(window.location.search);
+    const TRADE_KEYS = ['y', 't', 'pct', 'pm'] as const;
+    for (const key of TRADE_KEYS) {
+      const value = tradeParams.get(key);
+      if (value) merged.set(key, value);
+      else merged.delete(key);
+    }
+    const search = merged.toString();
     const newUrl = search ? `?${search}` : window.location.pathname;
     const currentSearch = window.location.search.replace(/^\?/, '');
 
@@ -91,9 +107,8 @@ export function useTradeUrl(
     // resolver gets a chance, and a refresh mid-window loses the trade.
     if (pendingRef.current) {
       const currentParams = new URLSearchParams(currentSearch);
-      const newParams = new URLSearchParams(search);
-      const wouldDropY = currentParams.get('y') && !newParams.get('y');
-      const wouldDropT = currentParams.get('t') && !newParams.get('t');
+      const wouldDropY = currentParams.get('y') && !merged.get('y');
+      const wouldDropT = currentParams.get('t') && !merged.get('t');
       if (wouldDropY || wouldDropT) return;
     }
 

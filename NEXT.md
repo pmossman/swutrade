@@ -129,6 +129,9 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Fix URL passthrough for propose/from/counter context
+`useTradeUrl`'s sync effect was replacing the entire search string with `buildTradeSearch` output, which ONLY emits `y`/`t`/`pct`/`pm`. Every card add stripped `propose`, `from`, `counter`, and anything else. Within a session the lazy-init hooks (`useProposeHandle`, `useSenderHandle`, `useCounterId`) cushioned it by capturing on mount — but refresh dropped the context (ProposeBar unmounted, Send button disappeared) while cards themselves restored, creating a confusing half-restore. Fix: merge trade-codec params into the existing URL params instead of overwriting, so unknown keys pass through automatically. Also gated the new "Picked so far" overlay summary on `open` — the overlay's DOM stays mounted through the transition, and the hidden "3" was triggering strict-mode locator ambiguity in the anonymous e2e suite.
+
 ### 2026-04-17 — Picker overlap chip + context-preserving header (UX)
 Picker gets a new first-class **Overlap** source chip (`mine ∩ theirs`) that surfaces the match pool the Suggest button already operates on — clickable, always visible when a counterpart exists (even at count=0 so the "no overlap, go look at 'They want'" signal is legible). Auto-scope cascade updates: Overlap when >0, else Theirs when >0, else no chip active. Community chip drops out entirely when there's a counterpart — off-topic noise in a zoomed-in 1:1 trade. Picker header now reads *"Adding to Offering · for @alice"* with a running "Picked so far: 3 · $12" line so the full-screen overlay no longer feels disconnected from its parent proposal; overlay leaves a 40px top inset so the wordmark peeks through and dismissal reads as a return, not an exit. The Esc/X button title adapts to "Back to proposal" when counterpart context is present.
 
