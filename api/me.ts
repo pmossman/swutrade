@@ -558,6 +558,16 @@ export interface CommunityMember {
   availableTotal: number;
   wantFamilyIds: string[];
   availableProductIds: string[];
+  /** Registry-driven peer-scoped prefs the viewer has toward this
+   *  specific member, plus the value the cascade would resolve to
+   *  (override → viewer self → registry default). Keys are pref
+   *  registry keys that have a scope=peer registration. Today only
+   *  `communicationPref` is peer-scoped; adding a second peer pref
+   *  flows through without a shape change on the client. */
+  peerPrefs: {
+    override: Record<string, boolean | string | null>;
+    effective: Record<string, boolean | string | null>;
+  };
 }
 
 export async function handleCommunityMembers(req: VercelRequest, res: VercelResponse) {
@@ -691,19 +701,78 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
     availTotalByUser.set(a.userId, s);
   }
 
-  const members: CommunityMember[] = visibleUsers.map(u => ({
-    userId: u.id,
-    handle: u.handle,
-    username: u.username,
-    avatarUrl: u.avatarUrl,
-    mutualGuildNames: guildsByUser.get(u.id) ?? [],
-    wantsPublic: u.wantsPublic,
-    availablePublic: u.availablePublic,
-    wantsTotal: wantsTotalByUser.get(u.id)?.size ?? 0,
-    availableTotal: availTotalByUser.get(u.id)?.size ?? 0,
-    wantFamilyIds: u.wantsPublic ? Array.from(wantsByUser.get(u.id) ?? []) : [],
-    availableProductIds: u.availablePublic ? Array.from(availByUser.get(u.id) ?? []) : [],
-  }));
+  // Peer-scoped registry defs drive the `peerPrefs` field on each
+  // member. Two queries total — one for viewer's self values
+  // (cascade fallback), one for the viewer's override rows keyed by
+  // peer user id. No N+1.
+  const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
+  const usersCols = users as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
+  const peerCols = userPeerPrefs as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
+
+  let viewerSelf: Record<string, boolean | string | null> = {};
+  if (peerDefs.length > 0) {
+    const selfProj: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
+    for (const def of peerDefs) selfProj[def.key] = usersCols[def.column];
+    const [viewerRow] = await db
+      .select(selfProj)
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    viewerSelf = (viewerRow ?? {}) as Record<string, boolean | string | null>;
+  }
+
+  const overrideByPeer = new Map<string, Record<string, boolean | string | null>>();
+  if (peerDefs.length > 0 && visibleIds.length > 0) {
+    const overrideProj: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {
+      peerUserId: userPeerPrefs.peerUserId,
+    };
+    for (const def of peerDefs) overrideProj[def.key] = peerCols[def.column];
+    const overrideRows = await db
+      .select(overrideProj)
+      .from(userPeerPrefs)
+      .where(and(
+        eq(userPeerPrefs.userId, session.userId),
+        inArray(userPeerPrefs.peerUserId, visibleIds),
+      ));
+    for (const row of overrideRows) {
+      const peerId = row.peerUserId as string;
+      const entry: Record<string, boolean | string | null> = {};
+      for (const def of peerDefs) {
+        entry[def.key] = (row[def.key] ?? null) as boolean | string | null;
+      }
+      overrideByPeer.set(peerId, entry);
+    }
+  }
+
+  const members: CommunityMember[] = visibleUsers.map(u => {
+    const override: Record<string, boolean | string | null> = {};
+    const effective: Record<string, boolean | string | null> = {};
+    const overrideRow = overrideByPeer.get(u.id) ?? {};
+    for (const def of peerDefs) {
+      const stored = overrideRow[def.key] ?? null;
+      override[def.key] = stored;
+      // Cascade resolved inline: override → viewer self value → self
+      // def's registry default. Mirrors `resolvePref` without the
+      // N+1 DB reads we'd incur if we called it per member.
+      const selfValue = viewerSelf[def.key];
+      const selfDef = getPrefDefinition(def.key, 'self');
+      effective[def.key] = stored ?? selfValue ?? selfDef?.default ?? null;
+    }
+    return {
+      userId: u.id,
+      handle: u.handle,
+      username: u.username,
+      avatarUrl: u.avatarUrl,
+      mutualGuildNames: guildsByUser.get(u.id) ?? [],
+      wantsPublic: u.wantsPublic,
+      availablePublic: u.availablePublic,
+      wantsTotal: wantsTotalByUser.get(u.id)?.size ?? 0,
+      availableTotal: availTotalByUser.get(u.id)?.size ?? 0,
+      wantFamilyIds: u.wantsPublic ? Array.from(wantsByUser.get(u.id) ?? []) : [],
+      availableProductIds: u.availablePublic ? Array.from(availByUser.get(u.id) ?? []) : [],
+      peerPrefs: { override, effective },
+    };
+  });
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ members });

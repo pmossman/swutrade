@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react';
 import { PageHeader } from './ui/PageHeader';
 import { LoadingState, ErrorState, EmptyState } from './ui/states';
-import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
+import {
+  useCommunityMembers,
+  type CommunityMember,
+  type CommunityMembersApi,
+  type PrefValue,
+} from '../hooks/useCommunityMembers';
 import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import { PREF_DEFINITIONS, type PrefDefinition } from '../../lib/prefsRegistry';
 
 interface CommunityViewProps {
   byProductId: Map<string, CardVariant>;
@@ -40,7 +46,8 @@ interface MemberWithOverlap extends CommunityMember {
  *   - alpha: handle A-Z — for when you're scanning a specific user
  */
 export function CommunityView({ byProductId, wants, available, onClose }: CommunityViewProps) {
-  const { members, status } = useCommunityMembers();
+  const community = useCommunityMembers();
+  const { members, status, setPeerPref } = community;
   const [sort, setSort] = useState<SortMode>('overlap');
 
   // Viewer's available converted to familyIds (one card can exist
@@ -129,7 +136,7 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
               <SortTabs sort={sort} onChange={setSort} />
               <ul className="flex flex-col gap-3">
                 {sorted.map(m => (
-                  <MemberRow key={m.userId} member={m} />
+                  <MemberRow key={m.userId} member={m} setPeerPref={setPeerPref} />
                 ))}
               </ul>
             </>
@@ -169,21 +176,29 @@ function SortTabs({ sort, onChange }: { sort: SortMode; onChange: (s: SortMode) 
   );
 }
 
-function MemberRow({ member }: { member: MemberWithOverlap }) {
-  const { handle, username, avatarUrl, mutualGuildNames, iCanOfferThem, theyCanOfferMe, wantsTotal, availableTotal } = member;
+function MemberRow({
+  member,
+  setPeerPref,
+}: {
+  member: MemberWithOverlap;
+  setPeerPref: CommunityMembersApi['setPeerPref'];
+}) {
+  const { handle, username, avatarUrl, mutualGuildNames, iCanOfferThem, theyCanOfferMe, wantsTotal, availableTotal, peerPrefs } = member;
   const href = `/u/${encodeURIComponent(handle)}`;
   const hasOverlap = iCanOfferThem + theyCanOfferMe > 0;
 
   return (
-    <li>
-      <a
-        href={href}
-        className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
-          hasOverlap
-            ? 'bg-emerald-500/5 border-emerald-500/30 hover:border-emerald-400/60'
-            : 'bg-space-800/40 border-space-700 hover:border-gold/30'
-        }`}
-      >
+    <li
+      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+        hasOverlap
+          ? 'bg-emerald-500/5 border-emerald-500/30 hover:border-emerald-400/60'
+          : 'bg-space-800/40 border-space-700 hover:border-gold/30'
+      }`}
+    >
+      {/* The clickable/navigational region is a nested <a>; the peer
+          pref controls live outside it so they don't trigger a
+          navigation on change. */}
+      <a href={href} className="flex items-start gap-3 flex-1 min-w-0">
         <Avatar avatarUrl={avatarUrl} username={username} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
@@ -213,7 +228,93 @@ function MemberRow({ member }: { member: MemberWithOverlap }) {
           </div>
         </div>
       </a>
+      <PeerPrefsPanel
+        peerUserId={member.userId}
+        peerPrefs={peerPrefs}
+        setPeerPref={setPeerPref}
+      />
     </li>
+  );
+}
+
+/**
+ * Inline peer-pref editor. Renders one control per registered
+ * peer-scoped def (today just `communicationPref`, one <select>
+ * with 5 options — Inherit + the 4 enum values). "Inherit" maps
+ * to `value: null` on the PUT, clearing any override so the
+ * resolver falls back to the viewer's self default.
+ */
+function PeerPrefsPanel({
+  peerUserId,
+  peerPrefs,
+  setPeerPref,
+}: {
+  peerUserId: string;
+  peerPrefs: CommunityMember['peerPrefs'];
+  setPeerPref: CommunityMembersApi['setPeerPref'];
+}) {
+  const defs = PREF_DEFINITIONS.filter(
+    d => d.scope.kind === 'peer' && d.surfaces.includes('web'),
+  );
+  if (defs.length === 0) return null;
+
+  return (
+    <div className="shrink-0 w-44 flex flex-col gap-1.5">
+      {defs.map(def => (
+        <PeerPrefSelect
+          key={def.key}
+          def={def}
+          override={peerPrefs.override[def.key] ?? null}
+          effective={peerPrefs.effective[def.key] ?? null}
+          onChange={value => { void setPeerPref(peerUserId, def.key, value); }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PeerPrefSelect({
+  def,
+  override,
+  effective,
+  onChange,
+}: {
+  def: PrefDefinition;
+  override: PrefValue;
+  effective: PrefValue;
+  onChange: (value: PrefValue) => void;
+}) {
+  if (def.type.kind !== 'enum') return null;
+  const id = `peer-pref-${def.key}`;
+  // `override === null` means "no override set" → the select reads
+  // as "inherit". The sentinel we use in the <select> value is the
+  // empty string (can't use the literal null on an <option>).
+  const currentValue = override == null ? '' : String(override);
+  const effectiveLabel = def.type.options.find(o => o.value === effective)?.label ?? String(effective ?? '');
+  return (
+    <div>
+      <label htmlFor={id} className="sr-only">
+        {def.label} for this user
+      </label>
+      <select
+        id={id}
+        value={currentValue}
+        onChange={e => {
+          const v = e.target.value;
+          onChange(v === '' ? null : v);
+        }}
+        className="w-full bg-space-800 border border-space-700 text-gray-200 text-[11px] rounded-md px-2 py-1.5 focus:border-gold/50 focus:outline-none"
+        aria-label={`${def.label} for this user`}
+        title={def.description}
+      >
+        <option value="">{`Inherit (${effectiveLabel})`}</option>
+        {def.type.options.map(opt => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }
 
