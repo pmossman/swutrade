@@ -2,33 +2,35 @@ import { useCallback, useEffect, useState } from 'react';
 
 export type ProfileVisibility = 'public' | 'discord' | 'private';
 
-export interface AccountSettings {
-  profileVisibility: ProfileVisibility;
-  dmTradeProposals: boolean;
-  dmMatchAlerts: boolean;
-  dmMeetupReminders: boolean;
-}
+/** Any value a pref can carry. Mirrors `PrefValue` on the server. */
+export type PrefValue = boolean | string;
+
+/** Free-form map keyed by registry `key`. Keeping this shape loose
+ *  means adding a pref to `lib/prefsRegistry.ts` doesn't require an
+ *  additional hand-maintained TS type here — the registry is the
+ *  only source of truth for which keys exist. Callers that need
+ *  type-narrowed access pull the key out of the registry def. */
+export type PrefsMap = Record<string, PrefValue>;
 
 export interface AccountSettingsApi {
-  settings: AccountSettings | null;
+  settings: PrefsMap | null;
   status: 'loading' | 'ready' | 'saving' | 'error';
-  update: (patch: Partial<AccountSettings>) => Promise<void>;
+  update: (patch: PrefsMap) => Promise<void>;
 }
 
-const DEFAULTS: AccountSettings = {
-  profileVisibility: 'discord',
-  dmTradeProposals: true,
-  dmMatchAlerts: false,
-  dmMeetupReminders: false,
-};
-
 /**
- * Loads the signed-in user's account-level settings from
+ * Loads the signed-in user's account-level prefs from
  * `/api/me/prefs` and provides an optimistic `update(patch)` that
  * PUTs the patch and rolls back on failure. Used by SettingsView.
+ *
+ * Endpoint is registry-driven (see lib/prefsRegistry.ts). Known
+ * self-scoped pref keys are returned from GET; unknown keys in a
+ * PUT body 400. `/api/me/settings` still routes to the same handler
+ * as a transitional alias — will be removed once deployed clients
+ * have rolled over.
  */
 export function useAccountSettings(): AccountSettingsApi {
-  const [settings, setSettings] = useState<AccountSettings | null>(null);
+  const [settings, setSettings] = useState<PrefsMap | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'error'>('loading');
 
   useEffect(() => {
@@ -37,9 +39,9 @@ export function useAccountSettings(): AccountSettingsApi {
       try {
         const res = await fetch('/api/me/prefs');
         if (!res.ok) throw new Error(`status ${res.status}`);
-        const data: AccountSettings = await res.json();
+        const data: PrefsMap = await res.json();
         if (cancelled) return;
-        setSettings({ ...DEFAULTS, ...data });
+        setSettings(data);
         setStatus('ready');
       } catch {
         if (!cancelled) setStatus('error');
@@ -48,7 +50,7 @@ export function useAccountSettings(): AccountSettingsApi {
     return () => { cancelled = true; };
   }, []);
 
-  const update = useCallback(async (patch: Partial<AccountSettings>) => {
+  const update = useCallback(async (patch: PrefsMap) => {
     setSettings(prev => (prev ? { ...prev, ...patch } : prev));
     setStatus('saving');
     try {
@@ -64,8 +66,8 @@ export function useAccountSettings(): AccountSettingsApi {
       try {
         const res = await fetch('/api/me/prefs');
         if (res.ok) {
-          const data: AccountSettings = await res.json();
-          setSettings({ ...DEFAULTS, ...data });
+          const data: PrefsMap = await res.json();
+          setSettings(data);
         }
       } catch {
         // swallow — status stays 'error', user sees the banner

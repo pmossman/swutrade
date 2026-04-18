@@ -138,28 +138,28 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     column: 'profileVisibility',
     type: { kind: 'enum', options: [
       {
-        value: 'public',
-        label: 'Public',
-        description: 'Anyone with the URL can see your profile.',
-      },
-      {
         value: 'discord',
         label: 'Discord only',
-        description: 'Only users in your enrolled servers can see your profile.',
+        description: 'Users in your enrolled servers.',
+      },
+      {
+        value: 'public',
+        label: 'Public',
+        description: 'Anyone with the URL.',
       },
       {
         value: 'private',
         label: 'Private',
-        description: 'Only you can see your profile.',
+        description: 'Only you.',
       },
     ]},
     label: 'Profile visibility',
     description: 'Who can see your profile page and community rollups.',
     default: 'discord',
-    // Web only for now — the enum descriptions are richer than the
-    // generic Discord button renderer supports (3 sentences vs a
-    // 1-line button label). Fold into Discord once a string-select
-    // renderer lands (step 5+ of the migration plan).
+    // Web only for now — Discord's button renderer works cleanly for
+    // short enum labels; once we surface this via Discord we'll need
+    // a string-select (3 options with long descriptions don't fit in
+    // a 5-button action row). Deferred to a later migration step.
     surfaces: ['web'],
     section: 'privacy',
   }),

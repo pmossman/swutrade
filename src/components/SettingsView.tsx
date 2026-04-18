@@ -3,13 +3,15 @@ import { PageHeader } from './ui/PageHeader';
 import { LoadingState } from './ui/states';
 import {
   useAccountSettings,
-  type ProfileVisibility,
+  type AccountSettingsApi,
+  type PrefValue,
 } from '../hooks/useAccountSettings';
 import {
   useGuildMemberships,
   type GuildMembershipSummary,
 } from '../hooks/useGuildMemberships';
 import { useAuthContext } from '../contexts/AuthContext';
+import { PREF_DEFINITIONS, type PrefDefinition } from '../../lib/prefsRegistry';
 
 interface SettingsViewProps {
   onClose: () => void;
@@ -49,8 +51,50 @@ export function SettingsView({ onClose }: SettingsViewProps) {
 
 // --- Account section --------------------------------------------------------
 
-function AccountSection({ account }: { account: ReturnType<typeof useAccountSettings> }) {
+/**
+ * Ordered metadata for each registry section. Order here drives the
+ * visual order of fieldsets; sections with no registered prefs drop
+ * out of the rendered list automatically. Hand-maintained so we can
+ * keep section copy purposeful rather than letting it be derived
+ * from scattered pref-level metadata.
+ */
+const SECTIONS: ReadonlyArray<{
+  id: NonNullable<PrefDefinition['section']>;
+  label: string;
+  description?: string;
+}> = [
+  {
+    id: 'privacy',
+    label: 'Privacy',
+    description: 'Who can see your profile and which lists are public.',
+  },
+  {
+    id: 'communication',
+    label: 'Communication',
+    description: 'How SWUTrade routes Discord conversation for trade proposals.',
+  },
+  {
+    id: 'notifications',
+    label: 'Bot notifications',
+    description: "Discord DMs SWUTrade's bot will send you. Trade proposals sent directly to you are separate from broadcast alerts.",
+  },
+];
+
+function AccountSection({ account }: { account: AccountSettingsApi }) {
   const { settings, status, update } = account;
+
+  // Only self-scoped, web-surfaced defs render here. Peer-scoped
+  // overrides live on the per-user directory view (future slice).
+  const selfWebDefs = PREF_DEFINITIONS.filter(
+    d => d.scope.kind === 'self' && d.surfaces.includes('web'),
+  );
+  const bySection = new Map<string, PrefDefinition[]>();
+  for (const def of selfWebDefs) {
+    const key = def.section ?? 'privacy';
+    const list = bySection.get(key) ?? [];
+    list.push(def);
+    bySection.set(key, list);
+  }
 
   return (
     <section className="mt-6" aria-labelledby="account-heading">
@@ -64,66 +108,100 @@ function AccountSection({ account }: { account: ReturnType<typeof useAccountSett
       )}
 
       {settings && (
-        <div className="flex flex-col gap-5">
-          <VisibilityField
-            value={settings.profileVisibility}
-            onChange={v => update({ profileVisibility: v })}
-          />
-
-          <fieldset className="flex flex-col gap-2">
-            <legend className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold pb-1">
-              Bot notifications
-            </legend>
-            <p className="text-[11px] text-gray-500 leading-relaxed -mt-1 mb-1">
-              Discord DMs SWUTrade's bot will send you. Trade proposals sent directly
-              to you are separate from broadcast alerts.
-            </p>
-            <ToggleField
-              label="Trade proposals sent to me"
-              hint="When another user proposes a trade with you specifically."
-              value={settings.dmTradeProposals}
-              onChange={v => update({ dmTradeProposals: v })}
-            />
-            <ToggleField
-              label="Match alerts"
-              hint="Unsolicited pings when someone's wants overlap with your available list."
-              value={settings.dmMatchAlerts}
-              onChange={v => update({ dmMatchAlerts: v })}
-            />
-            <ToggleField
-              label="Meetup reminders"
-              hint="Reminders for LGS visits you've announced."
-              value={settings.dmMeetupReminders}
-              onChange={v => update({ dmMeetupReminders: v })}
-            />
-          </fieldset>
+        <div className="flex flex-col gap-6">
+          {SECTIONS.map(section => {
+            const defs = bySection.get(section.id);
+            if (!defs?.length) return null;
+            return (
+              <fieldset key={section.id} className="flex flex-col gap-2">
+                <legend className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold pb-1">
+                  {section.label}
+                </legend>
+                {section.description && (
+                  <p className="text-[11px] text-gray-500 leading-relaxed -mt-1 mb-1">
+                    {section.description}
+                  </p>
+                )}
+                {defs.map(def => (
+                  <PrefField
+                    key={def.key}
+                    def={def}
+                    value={settings[def.key] ?? (def.default as PrefValue)}
+                    onChange={next => update({ [def.key]: next })}
+                  />
+                ))}
+              </fieldset>
+            );
+          })}
         </div>
       )}
     </section>
   );
 }
 
-function VisibilityField({ value, onChange }: {
-  value: ProfileVisibility;
-  onChange: (next: ProfileVisibility) => void;
+/**
+ * Dispatches a registered pref to the right renderer based on its
+ * declared `type`. Boolean prefs get a checkbox row; enum prefs get
+ * a <select> where each option concatenates its label and optional
+ * description for the reader. A single renderer handles both —
+ * bespoke per-pref components are avoided until a pref's needs
+ * outgrow what the registry metadata can express.
+ */
+function PrefField({
+  def,
+  value,
+  onChange,
+}: {
+  def: PrefDefinition;
+  value: PrefValue;
+  onChange: (next: PrefValue) => void;
 }) {
+  if (def.type.kind === 'boolean') {
+    return (
+      <ToggleField
+        label={def.label}
+        hint={def.description}
+        value={value as boolean}
+        onChange={onChange}
+      />
+    );
+  }
+  return (
+    <EnumSelectField
+      def={def}
+      value={value as string}
+      onChange={onChange}
+    />
+  );
+}
+
+function EnumSelectField({
+  def,
+  value,
+  onChange,
+}: {
+  def: PrefDefinition;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  if (def.type.kind !== 'enum') return null;
+  const id = `pref-${def.key}`;
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold" htmlFor="profile-visibility">
-        Profile visibility
+      <label className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold" htmlFor={id}>
+        {def.label}
       </label>
-      <p className="text-[11px] text-gray-500 leading-relaxed">
-        Who can see your profile page and community rollups.
-      </p>
       <select
-        id="profile-visibility"
+        id={id}
         value={value}
-        onChange={e => onChange(e.target.value as ProfileVisibility)}
+        onChange={e => onChange(e.target.value)}
         className="w-full sm:w-auto bg-space-800 border border-space-700 text-gray-100 text-sm rounded-lg px-3 py-2 focus:border-gold/50 focus:outline-none"
       >
-        <option value="discord">Discord only — users in my enrolled servers</option>
-        <option value="public">Public — anyone with the URL</option>
-        <option value="private">Private — only me</option>
+        {def.type.options.map(opt => (
+          <option key={opt.value} value={opt.value}>
+            {opt.description ? `${opt.label} — ${opt.description}` : opt.label}
+          </option>
+        ))}
       </select>
     </div>
   );
