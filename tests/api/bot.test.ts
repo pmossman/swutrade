@@ -673,23 +673,34 @@ describeWithDb('/api/bot dispatcher', () => {
     });
 
     it('APPLICATION_AUTHORIZED auto-creates #swutrade-threads + persists the channel id when the bot client succeeds', async () => {
+      // Test-scoped env pin so the handler's DISCORD_CLIENT_ID lookup
+      // has a value. CI doesn't write .env.local's DISCORD_CLIENT_ID
+      // to the test process env; locally it's present via dotenv.
+      const TEST_CLIENT_ID = 'test-client-id-autocreate';
+      const prior = process.env.DISCORD_CLIENT_ID;
+      process.env.DISCORD_CLIENT_ID = TEST_CLIENT_ID;
       const guildId = `e2e-autocreate-${Date.now()}`;
       cleanupGuildIds.push(guildId);
       const bot = makeFakeBot();
       const res = mockResponse();
 
-      await dispatchBotPayload('events', {
-        type: 1,
-        event: {
-          type: 'APPLICATION_AUTHORIZED',
-          data: {
-            integration_type: 0,
-            scopes: ['bot', 'applications.commands'],
-            user: { id: 'installer-user', username: 'Installer' },
-            guild: { id: guildId, name: 'Auto Create Test', icon: null },
+      try {
+        await dispatchBotPayload('events', {
+          type: 1,
+          event: {
+            type: 'APPLICATION_AUTHORIZED',
+            data: {
+              integration_type: 0,
+              scopes: ['bot', 'applications.commands'],
+              user: { id: 'installer-user', username: 'Installer' },
+              guild: { id: guildId, name: 'Auto Create Test', icon: null },
+            },
           },
-        },
-      }, res, { bot });
+        }, res, { bot });
+      } finally {
+        if (prior === undefined) delete process.env.DISCORD_CLIENT_ID;
+        else process.env.DISCORD_CLIENT_ID = prior;
+      }
 
       expect(res._status).toBe(204);
 
@@ -699,7 +710,7 @@ describeWithDb('/api/bot dispatcher', () => {
       // rejects `/guilds/:id/members/@me` for bots.
       expect(bot.getGuildBotMemberCalls).toHaveLength(1);
       expect(bot.getGuildBotMemberCalls[0].guildId).toBe(guildId);
-      expect(bot.getGuildBotMemberCalls[0].botUserId).toBe(process.env.DISCORD_CLIENT_ID);
+      expect(bot.getGuildBotMemberCalls[0].botUserId).toBe(TEST_CLIENT_ID);
       expect(bot.createChannelCalls).toHaveLength(1);
       const call = bot.createChannelCalls[0];
       expect(call.guildId).toBe(guildId);

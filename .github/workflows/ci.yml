@@ -10,6 +10,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── Step 0: Post "deploying" message to #releases ────────────
+  # Runs in parallel with check + e2e-anonymous. Captures the
+  # Discord message id so notify-finish can PATCH the same message
+  # with the outcome instead of posting a second one.
+  notify-start:
+    name: Notify Discord (start)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      message_id: ${{ steps.post.outputs.id }}
+    steps:
+      - name: Post start message
+        id: post
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "DISCORD_RELEASE_WEBHOOK_URL secret missing — skipping"
+            exit 0
+          fi
+          SHORT=${SHA:0:7}
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          BODY=$(jq -cn \
+            --arg b "$BRANCH" --arg s "$SHORT" --arg cu "$COMMIT_URL" \
+            --arg m "$FIRST_LINE" --arg ru "$RUN_URL" \
+            '{ content: ":rocket: **\($b)** deploying [`\($s)`](<\($cu)>) · \($m)\n[CI run](<\($ru)>)" }')
+          RESP=$(curl -sS -H 'Content-Type: application/json' -d "$BODY" "${WEBHOOK_URL}?wait=true")
+          MSG_ID=$(echo "$RESP" | jq -r '.id // empty')
+          if [ -z "$MSG_ID" ]; then
+            echo "::warning::Failed to capture message id. Response: $RESP"
+            exit 0
+          fi
+          echo "id=$MSG_ID" >> "$GITHUB_OUTPUT"
+          echo "Posted message $MSG_ID"
+
   # ── Step 1: Type check + unit/API tests + build ──────────────
   check:
     name: Types + Tests + Build
@@ -204,3 +244,76 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 7
+
+  # ── Step 5: PATCH the #releases message with the final outcome
+  # Fires on push events regardless of upstream success; `if: always()`
+  # + explicit message_id gate guarantee we only touch the message
+  # that notify-start actually posted.
+  notify-finish:
+    name: Notify Discord (finish)
+    runs-on: ubuntu-latest
+    needs: [notify-start, check, e2e-anonymous, wait-for-deploy, e2e-authenticated]
+    if: always() && github.event_name == 'push' && needs.notify-start.outputs.message_id != ''
+    steps:
+      - name: PATCH message with outcome
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          MSG_ID: ${{ needs.notify-start.outputs.message_id }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREVIEW_URL: ${{ needs.wait-for-deploy.outputs.url }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          ANON_RESULT: ${{ needs.e2e-anonymous.result }}
+          DEPLOY_RESULT: ${{ needs.wait-for-deploy.result }}
+          AUTH_RESULT: ${{ needs.e2e-authenticated.result }}
+        run: |
+          SHORT=${SHA:0:7}
+          FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
+          # Overall outcome: anything that FAILED or was CANCELLED is a
+          # red state. Skipped (e.g. auth-e2e on a PR) is acceptable.
+          OVERALL="success"
+          for r in "$CHECK_RESULT" "$ANON_RESULT" "$DEPLOY_RESULT" "$AUTH_RESULT"; do
+            case "$r" in
+              failure|cancelled) OVERALL="failure";;
+            esac
+          done
+          if [ "$OVERALL" = "success" ]; then
+            PREFIX=":white_check_mark:"
+            VERB="verified"
+          else
+            PREFIX=":x:"
+            VERB="CI failed"
+          fi
+          # Emoji per job for at-a-glance breakdown.
+          emoji_for() {
+            case "$1" in
+              success) echo ":white_check_mark:";;
+              failure) echo ":x:";;
+              cancelled) echo ":no_entry_sign:";;
+              skipped) echo ":fast_forward:";;
+              *) echo ":question:";;
+            esac
+          }
+          JOB_LINE="$(emoji_for "$CHECK_RESULT") check · $(emoji_for "$ANON_RESULT") anon e2e · $(emoji_for "$DEPLOY_RESULT") deploy · $(emoji_for "$AUTH_RESULT") auth e2e"
+          # Preview link only when deploy succeeded + URL is set.
+          if [ -n "$PREVIEW_URL" ] && [ "$DEPLOY_RESULT" = "success" ]; then
+            LINKS="[CI run](<${RUN_URL}>) · [preview](<${PREVIEW_URL}>)"
+          else
+            LINKS="[CI run](<${RUN_URL}>)"
+          fi
+          BODY=$(jq -cn \
+            --arg p "$PREFIX" --arg b "$BRANCH" --arg v "$VERB" --arg s "$SHORT" \
+            --arg cu "$COMMIT_URL" --arg m "$FIRST_LINE" --arg j "$JOB_LINE" --arg l "$LINKS" \
+            '{ content: "\($p) **\($b)** \($v) [`\($s)`](<\($cu)>) · \($m)\n\($j)\n\($l)" }')
+          HTTP=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X PATCH \
+            -H 'Content-Type: application/json' -d "$BODY" \
+            "${WEBHOOK_URL}/messages/${MSG_ID}")
+          if [ "$HTTP" != "200" ]; then
+            echo "::error::PATCH failed: HTTP $HTTP"
+            cat /tmp/resp.json
+            exit 1
+          fi
+          echo "Updated message $MSG_ID → $OVERALL"
