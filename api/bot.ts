@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
-import { botInstalledGuilds, tradeProposals, users } from '../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, userPeerPrefs, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
@@ -18,9 +18,13 @@ import {
   buildThreadRequestDeclinedMessage,
   buildPrefOptionsMessage,
   buildPrefConfirmationMessage,
+  buildPeerPrefOptionsMessage,
+  buildPeerPrefConfirmationMessage,
+  buildSelfPrefsIndexMessage,
+  buildPeerPrefsIndexMessage,
 } from '../lib/proposalMessages.js';
 import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
-import { getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
+import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 
 /**
@@ -77,7 +81,15 @@ export function resolveTestPublicKey(env: {
 // --- Discord interaction constants ------------------------------------------
 
 const INTERACTION_TYPE_PING = 1;
+const INTERACTION_TYPE_APPLICATION_COMMAND = 2;
 const INTERACTION_TYPE_MESSAGE_COMPONENT = 3;
+// Application command types — slash commands are type 1, user-context
+// menu commands are type 2, message-context menu commands are type 3.
+const APPLICATION_COMMAND_TYPE_SLASH = 1;
+const APPLICATION_COMMAND_TYPE_USER = 2;
+// Option types inside slash command payloads: SUB_COMMAND = 1, USER = 6.
+const OPTION_TYPE_SUB_COMMAND = 1;
+const OPTION_TYPE_USER = 6;
 const INTERACTION_RESPONSE_TYPE_PONG = 1;
 // Type 4 = CHANNEL_MESSAGE_WITH_SOURCE (post a new reply, visible
 // to the user who clicked via `flags: 64` ephemeral bit).
@@ -195,6 +207,10 @@ async function handleInteraction(
     return;
   }
 
+  if (type === INTERACTION_TYPE_APPLICATION_COMMAND) {
+    return handleApplicationCommand(payload, res);
+  }
+
   if (type === INTERACTION_TYPE_MESSAGE_COMPONENT) {
     const data = payload.data as { custom_id?: string } | undefined;
     const customId = data?.custom_id ?? '';
@@ -212,6 +228,129 @@ async function handleInteraction(
   // Unknown: ack with a deferred update. Discord swallows the click
   // gracefully instead of showing "interaction failed".
   res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+}
+
+// --- application-command handler -------------------------------------------
+
+/**
+ * Dispatch for slash commands + user-context menus. Two surfaces
+ * both land here:
+ *   - `/swutrade settings [user:@peer]` (slash, type 1): no user →
+ *     self-prefs index; with user → peer-prefs index for that target.
+ *   - "SWUTrade prefs" user context menu (type 2): always the
+ *     peer-prefs index for the target user.
+ *
+ * Response protocol: ephemeral CHANNEL_MESSAGE_WITH_SOURCE with the
+ * index body, so the clicker sees a private set of pref buttons they
+ * can drill into via the existing `pref:*` custom_id handler.
+ */
+async function handleApplicationCommand(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+): Promise<void> {
+  const data = payload.data as {
+    name?: string;
+    type?: number;
+    options?: Array<{ name: string; type: number; value?: unknown; options?: Array<{ name: string; type: number; value?: unknown }> }>;
+    target_id?: string;
+    resolved?: { users?: Record<string, { id: string; username?: string; global_name?: string }> };
+  } | undefined;
+
+  const commandType = data?.type ?? APPLICATION_COMMAND_TYPE_SLASH;
+
+  // Identify the peer target:
+  //   - User context menu → payload.data.target_id
+  //   - `/swutrade settings user:@alice` → options[0].options[?name=user].value
+  let peerDiscordId: string | undefined;
+  let peerUsername: string | undefined;
+
+  if (commandType === APPLICATION_COMMAND_TYPE_USER) {
+    peerDiscordId = data?.target_id;
+    const resolved = data?.resolved?.users?.[peerDiscordId ?? ''];
+    peerUsername = resolved?.global_name ?? resolved?.username;
+  } else if (commandType === APPLICATION_COMMAND_TYPE_SLASH) {
+    // For `/swutrade settings`, data.name = "swutrade" and
+    // options[0] is the "settings" subcommand. Drill through.
+    const subcommand = data?.options?.find(o => o.type === OPTION_TYPE_SUB_COMMAND);
+    if (subcommand?.name === 'settings') {
+      const userOpt = subcommand.options?.find(o => o.type === OPTION_TYPE_USER && o.name === 'user');
+      if (userOpt) {
+        peerDiscordId = String(userOpt.value);
+        const resolved = data?.resolved?.users?.[peerDiscordId];
+        peerUsername = resolved?.global_name ?? resolved?.username;
+      }
+    } else {
+      // Unknown subcommand — respond with a note rather than silently
+      // dropping so the caller sees what happened.
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+        data: {
+          content: 'Unknown command. Try `/swutrade settings`.',
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        },
+      });
+      return;
+    }
+  } else {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  // No peer → self-prefs index.
+  if (!peerDiscordId) {
+    const selfDefs = PREF_DEFINITIONS.filter(
+      d => d.scope.kind === 'self' && d.surfaces.includes('discord'),
+    );
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { ...buildSelfPrefsIndexMessage(selfDefs), flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  // Peer flow: map the target Discord id to a SWUTrade user id.
+  const db = getDb();
+  const [peerRow] = await db
+    .select({ id: users.id, handle: users.handle })
+    .from(users)
+    .where(eq(users.discordId, peerDiscordId))
+    .limit(1);
+  if (!peerRow) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: `<@${peerDiscordId}>${peerUsername ? ` (@${peerUsername})` : ''} isn't on SWUTrade yet — no per-trader settings to set.`,
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Reject self-override — peer prefs are for OTHER users.
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (clickerDiscordId && clickerDiscordId === peerDiscordId) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "You can't set per-trader prefs for yourself. Use `/swutrade settings` (no target user) for your global defaults.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  const peerDefs = PREF_DEFINITIONS.filter(
+    d => d.scope.kind === 'peer' && d.surfaces.includes('discord'),
+  );
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+    data: {
+      ...buildPeerPrefsIndexMessage(peerDefs, peerRow.id, peerRow.handle),
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    },
+  });
 }
 
 /**
@@ -911,9 +1050,23 @@ export async function handlePrefsButton(
   const customId = data?.custom_id ?? '';
   const parts = customId.split(':');
 
-  // Parse into (defKey, action, rawValue). The two prefixes differ in
-  // arity — legacy `comm-pref:{action}[:{value}]` vs new
-  // `pref:{key}:{action}[:{value}]` — so keep the dispatch explicit.
+  // Peer-scope fork: `pref:peer:<peerUserId>:<key>:<action>[:<value>]`.
+  // Routes to a separate handler that reads/writes user_peer_prefs
+  // instead of users. `peerUserId` in the custom_id is a SWUTrade
+  // user id (set at selector-render time by the slash/context menu
+  // handler after mapping the Discord id to users.id).
+  if (parts[0] === PREF_CUSTOM_ID_PREFIX && parts[1] === 'peer') {
+    return handlePeerPrefButton(payload, res, {
+      peerUserId: parts[2] ?? '',
+      defKey: parts[3] ?? '',
+      action: parts[4] ?? '',
+      rawValue: parts[5],
+    });
+  }
+
+  // Self scope — existing logic. Parse into (defKey, action, rawValue).
+  // The two prefixes differ in arity — legacy `comm-pref:{action}[:{value}]`
+  // vs new `pref:{key}:{action}[:{value}]` — so keep the dispatch explicit.
   let defKey: string;
   let action: string;
   let rawValue: string | undefined;
@@ -996,6 +1149,167 @@ export async function handlePrefsButton(
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
       data: buildPrefConfirmationMessage(def, validated.value),
+    });
+    return;
+  }
+
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+}
+
+/**
+ * Peer-scope variant of the prefs button handler. Reads/writes
+ * `user_peer_prefs` keyed on (viewerId, peerUserId). Called from
+ * buttons emitted by the `/swutrade settings user:@peer` ephemeral.
+ *
+ * The `set:inherit` action clears the override (UPSERT null) so the
+ * resolver cascade falls back to the viewer's self value. Any other
+ * set value is validated against the peer-scoped registry def before
+ * writing. Unknown peer keys, web-only defs, or custom_ids missing
+ * the peer id all silently defer — no leak surface.
+ */
+async function handlePeerPrefButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+  parsed: { peerUserId: string; defKey: string; action: string; rawValue: string | undefined },
+): Promise<void> {
+  const { peerUserId, defKey, action, rawValue } = parsed;
+  if (!peerUserId || !defKey || !action) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const def = getPrefDefinition(defKey, 'peer');
+  if (!def || !def.surfaces.includes('discord')) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+
+  // Map the clicker's Discord id to their SWUTrade user id — that's
+  // the `userId` side of the user_peer_prefs composite key.
+  const [viewer] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!viewer) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "You need to sign into SWUTrade on the web before setting per-trader prefs.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+  if (viewer.id === peerUserId) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "You can't override prefs against yourself.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Resolve peer handle for the message copy — purely cosmetic, so a
+  // missing row just falls back to the raw id.
+  const [peerRow] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, peerUserId))
+    .limit(1);
+  const peerHandle = peerRow?.handle ?? peerUserId.slice(0, 8);
+
+  const peerColumns = userPeerPrefs as unknown as Record<
+    string,
+    import('drizzle-orm/pg-core').AnyPgColumn
+  >;
+  const column = peerColumns[def.column];
+
+  if (action === 'open') {
+    const [row] = await db
+      .select({ value: column })
+      .from(userPeerPrefs)
+      .where(and(
+        eq(userPeerPrefs.userId, viewer.id),
+        eq(userPeerPrefs.peerUserId, peerUserId),
+      ))
+      .limit(1);
+    const override = (row?.value ?? null) as boolean | string | null;
+    const effective = (await resolvePref({
+      key: def.key,
+      viewerUserId: viewer.id,
+      peerUserId,
+    })) as boolean | string | null;
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        ...buildPeerPrefOptionsMessage(def, peerUserId, peerHandle, override, effective),
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  if (action === 'set') {
+    // `set:inherit` clears the override; any other value goes through
+    // the registry validator (with the boolean literal coercion from
+    // the self-scope path).
+    let persisted: boolean | string | null;
+    if (rawValue === 'inherit') {
+      persisted = null;
+    } else {
+      let candidate: unknown = rawValue;
+      if (def.type.kind === 'boolean') {
+        if (rawValue === 'true') candidate = true;
+        else if (rawValue === 'false') candidate = false;
+      }
+      const validated = validatePrefValue(def, candidate);
+      if (!validated.ok) {
+        res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+        return;
+      }
+      persisted = validated.value;
+    }
+
+    const now = new Date();
+    await db
+      .insert(userPeerPrefs)
+      .values({
+        userId: viewer.id,
+        peerUserId,
+        [def.column]: persisted,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [userPeerPrefs.userId, userPeerPrefs.peerUserId],
+        set: { [def.column]: persisted, updatedAt: now },
+      });
+
+    // Compute the post-write effective value for the confirmation
+    // message — matters when we cleared (inherited) so the user sees
+    // what their self default now resolves to.
+    const effectiveAfter = (await resolvePref({
+      key: def.key,
+      viewerUserId: viewer.id,
+      peerUserId,
+    })) as boolean | string | null;
+
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+      data: buildPeerPrefConfirmationMessage(def, peerUserId, peerHandle, persisted, effectiveAfter),
     });
     return;
   }

@@ -1,6 +1,6 @@
 import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import {
   mockRequest,
@@ -566,6 +566,369 @@ describeWithDb('/api/bot dispatcher', () => {
         expect(row.communicationPref).toBe('allow');
 
         await user.cleanup();
+      });
+    });
+
+    describe('peer prefs buttons (pref:peer:...)', () => {
+      it('pref:peer:<peerId>:communicationPref:open returns Inherit + 4 option buttons, highlights override when set', async () => {
+        const viewer = await createTestUser();
+        const peer = await createTestUser();
+
+        // Pre-seed an override so the handler's "highlight current override" path runs.
+        const { userPeerPrefs } = await import('../../lib/schema.js');
+        const db = getDb();
+        await db.insert(userPeerPrefs).values({
+          userId: viewer.id,
+          peerUserId: peer.id,
+          communicationPref: 'dm-only',
+        });
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:peer:${peer.id}:communicationPref:open` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { flags?: number; components?: Array<{ components?: Array<{ style?: number; label?: string; custom_id?: string }> }> };
+        };
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64);
+        const buttons = body.data?.components?.[0]?.components ?? [];
+        expect(buttons.map(b => b.label)).toEqual([
+          'Inherit', 'Prefer threads', 'Auto-accept requests', 'Allow (ask each time)', 'DM only',
+        ]);
+        // Override is 'dm-only' → DM only button is success (3).
+        const dmOnly = buttons.find(b => b.custom_id === `pref:peer:${peer.id}:communicationPref:set:dm-only`);
+        const inherit = buttons.find(b => b.custom_id === `pref:peer:${peer.id}:communicationPref:set:inherit`);
+        expect(dmOnly?.style).toBe(3);
+        expect(inherit?.style).toBe(2);
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('pref:peer:<peerId>:communicationPref:set:prefer upserts the override + returns a peer-scoped confirmation', async () => {
+        const viewer = await createTestUser();
+        const peer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:peer:${peer.id}:communicationPref:set:prefer` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(7);
+        expect(body.data?.content).toMatch(/Prefer threads/);
+
+        const { userPeerPrefs } = await import('../../lib/schema.js');
+        const db = getDb();
+        const [row] = await db
+          .select()
+          .from(userPeerPrefs)
+          .where(and(
+            eq(userPeerPrefs.userId, viewer.id),
+            eq(userPeerPrefs.peerUserId, peer.id),
+          ))
+          .limit(1);
+        expect(row?.communicationPref).toBe('prefer');
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('pref:peer:<peerId>:communicationPref:set:inherit clears the override (null)', async () => {
+        const viewer = await createTestUser({ communicationPref: 'allow' });
+        const peer = await createTestUser();
+
+        const { userPeerPrefs } = await import('../../lib/schema.js');
+        const db = getDb();
+        await db.insert(userPeerPrefs).values({
+          userId: viewer.id,
+          peerUserId: peer.id,
+          communicationPref: 'dm-only',
+        });
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:peer:${peer.id}:communicationPref:set:inherit` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(7);
+        expect(body.data?.content).toMatch(/Override cleared/);
+        // Confirmation quotes the now-effective self value (cascade falls back to 'allow').
+        expect(body.data?.content).toMatch(/Allow/);
+
+        const [row] = await db
+          .select()
+          .from(userPeerPrefs)
+          .where(and(
+            eq(userPeerPrefs.userId, viewer.id),
+            eq(userPeerPrefs.peerUserId, peer.id),
+          ))
+          .limit(1);
+        expect(row?.communicationPref).toBeNull();
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('pref:peer:<self-id>:...:open rejects with an ephemeral — no self-override via peer scope', async () => {
+        const viewer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:peer:${viewer.id}:communicationPref:open` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(4);
+        expect((res._json as { data?: { content?: string } }).data?.content)
+          .toMatch(/override prefs against yourself/i);
+
+        await viewer.cleanup();
+      });
+
+      it('pref:peer:<peerId>:unknownKey:open defers — registry rejects unknown peer-scoped keys', async () => {
+        const viewer = await createTestUser();
+        const peer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `pref:peer:${peer.id}:dmTradeProposals:open` },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        // dmTradeProposals exists at scope=self but NOT scope=peer;
+        // the handler should silently defer.
+        expect((res._json as { type: number }).type).toBe(6);
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+    });
+
+    describe('application commands (/swutrade settings + user context menu)', () => {
+      it('slash /swutrade settings (no user) returns self-prefs index ephemeral with one button per Discord-surfaced self pref', async () => {
+        const user = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 2, // APPLICATION_COMMAND
+            data: {
+              type: 1, // CHAT_INPUT
+              name: 'swutrade',
+              options: [
+                {
+                  type: 1, // SUB_COMMAND
+                  name: 'settings',
+                  options: [],
+                },
+              ],
+            },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { flags?: number; content?: string; components?: Array<{ components?: Array<{ label?: string; custom_id?: string }> }> };
+        };
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64);
+        const buttons = body.data?.components?.[0]?.components ?? [];
+        // Each Discord-surfaced self pref gets a button that opens its selector.
+        const customIds = buttons.map(b => b.custom_id ?? '');
+        expect(customIds.some(c => c === 'pref:communicationPref:open')).toBe(true);
+        expect(customIds.every(c => c.startsWith('pref:') && c.endsWith(':open'))).toBe(true);
+
+        await user.cleanup();
+      });
+
+      it('slash /swutrade settings user:@peer returns peer-prefs index ephemeral keyed to the peer id', async () => {
+        const viewer = await createTestUser();
+        const peer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 2,
+            data: {
+              type: 1,
+              name: 'swutrade',
+              options: [
+                {
+                  type: 1,
+                  name: 'settings',
+                  options: [
+                    { type: 6, name: 'user', value: peer.id },
+                  ],
+                },
+              ],
+              resolved: {
+                users: {
+                  [peer.id]: { id: peer.id, username: peer.handle },
+                },
+              },
+            },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { flags?: number; content?: string; components?: Array<{ components?: Array<{ custom_id?: string }> }> };
+        };
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64);
+        expect(body.data?.content).toMatch(/preferences for/i);
+        const buttons = body.data?.components?.[0]?.components ?? [];
+        // At least one button exists + they all carry the peer id + :open action.
+        expect(buttons.length).toBeGreaterThan(0);
+        for (const b of buttons) {
+          expect(b.custom_id).toMatch(new RegExp(`^pref:peer:${peer.id}:[^:]+:open$`));
+        }
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('slash with an unknown Discord id returns a helpful "not on SWUTrade" message', async () => {
+        const viewer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 2,
+            data: {
+              type: 1,
+              name: 'swutrade',
+              options: [
+                {
+                  type: 1,
+                  name: 'settings',
+                  options: [
+                    { type: 6, name: 'user', value: 'nonexistent-discord-id-999999' },
+                  ],
+                },
+              ],
+            },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(4);
+        expect(body.data?.content).toMatch(/isn't on SWUTrade yet/i);
+
+        await viewer.cleanup();
+      });
+
+      it('user context menu (type 2 command) returns the same peer-prefs index', async () => {
+        const viewer = await createTestUser();
+        const peer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 2,
+            data: {
+              type: 2, // USER context menu
+              name: 'SWUTrade prefs',
+              target_id: peer.id,
+              resolved: {
+                users: {
+                  [peer.id]: { id: peer.id, username: peer.handle },
+                },
+              },
+            },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(4);
+        expect(body.data?.content).toMatch(/preferences for/i);
+
+        await viewer.cleanup();
+        await peer.cleanup();
+      });
+
+      it('slash /swutrade settings user:<self> rejects — no self-override via peer surface', async () => {
+        const viewer = await createTestUser();
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 2,
+            data: {
+              type: 1,
+              name: 'swutrade',
+              options: [
+                {
+                  type: 1,
+                  name: 'settings',
+                  options: [{ type: 6, name: 'user', value: viewer.id }],
+                },
+              ],
+            },
+            user: { id: viewer.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { data?: { content?: string } }).data?.content)
+          .toMatch(/can't set per-trader prefs for yourself/i);
+
+        await viewer.cleanup();
       });
     });
 

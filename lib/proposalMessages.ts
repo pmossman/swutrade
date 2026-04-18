@@ -253,6 +253,139 @@ export function buildPrefOptionsMessage(
 }
 
 /**
+ * Peer-scoped variant of `buildPrefOptionsMessage`. Renders an extra
+ * leading "Inherit" button alongside the enum/boolean options; picking
+ * Inherit clears the override so the viewer's self value takes over
+ * via the cascade. `currentOverride` is the raw `user_peer_prefs`
+ * value (null = no row or null column); `currentEffective` is what
+ * `resolvePref` currently returns so the highlighted button matches
+ * the value the matrix is actually seeing.
+ */
+export function buildPeerPrefOptionsMessage(
+  def: PrefDefinition,
+  peerUserId: string,
+  peerHandle: string,
+  currentOverride: PrefValue,
+  currentEffective: PrefValue,
+): DiscordMessageBody {
+  // Inherit button — no override stored when selected.
+  const inheritButton = {
+    type: COMPONENT_TYPE_BUTTON,
+    // Highlight inherit when there's no override; otherwise secondary.
+    style: currentOverride == null ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+    label: 'Inherit',
+    custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:inherit`,
+  };
+  if (def.type.kind === 'boolean') {
+    const cur = currentOverride as boolean | null;
+    return {
+      content: `**${def.label}** for <@${peerUserId}> (@${peerHandle}) — ${def.description}\nCurrent effective value: **${currentEffective ? 'On' : 'Off'}**`,
+      components: [{
+        type: COMPONENT_TYPE_ACTION_ROW,
+        components: [
+          inheritButton,
+          {
+            type: COMPONENT_TYPE_BUTTON,
+            style: cur === true ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+            label: 'On',
+            custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:true`,
+          },
+          {
+            type: COMPONENT_TYPE_BUTTON,
+            style: cur === false ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+            label: 'Off',
+            custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:false`,
+          },
+        ],
+      }],
+    };
+  }
+  // Enum — max 4 options to fit alongside the leading Inherit button
+  // in a single 5-button action row. Registry invariant enforces ≤ 4
+  // option enums for peer-scoped Discord surfaces (see peer def for
+  // communicationPref — 4 options + inherit = 5 total).
+  return {
+    content: `**${def.label}** for <@${peerUserId}> (@${peerHandle}) — ${def.description}\nCurrent effective value is highlighted.`,
+    components: [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: [
+        inheritButton,
+        ...def.type.options.map(opt => ({
+          type: COMPONENT_TYPE_BUTTON,
+          style: opt.value === currentOverride ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+          label: opt.label,
+          custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:${opt.value}`,
+        })),
+      ],
+    }],
+  };
+}
+
+/**
+ * Top-level index shown when a user runs `/swutrade settings` with
+ * no target user — one button per Discord-surfaced self-scoped pref
+ * where the label is the human pref name and the button click opens
+ * that pref's selector. Buttons fit in a single action row today (4
+ * Discord-surfaced self prefs); if we register a 6th, the caller
+ * will need to split across multiple action rows.
+ */
+export function buildSelfPrefsIndexMessage(
+  defs: ReadonlyArray<PrefDefinition>,
+): DiscordMessageBody {
+  return {
+    content:
+      "**SWUTrade preferences** — choose a setting to change. " +
+      "These apply globally; per-trader overrides live on `/swutrade settings user:@someone`.",
+    components: [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: defs.map(def => ({
+        type: COMPONENT_TYPE_BUTTON,
+        style: BUTTON_STYLE_SECONDARY,
+        label: def.label,
+        custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:open`,
+      })),
+    }],
+  };
+}
+
+/**
+ * Peer-scoped index rendered when the user invokes `/swutrade settings
+ * user:@alice` or the "SWUTrade prefs" user context menu on someone.
+ * One button per Discord-surfaced peer-scoped pref; each click opens
+ * that pref's selector with the peer id baked in. The content line
+ * names the target user via an `@` mention so the user sees who
+ * they're setting prefs for.
+ */
+export function buildPeerPrefsIndexMessage(
+  defs: ReadonlyArray<PrefDefinition>,
+  peerUserId: string,
+  peerHandle: string,
+): DiscordMessageBody {
+  if (defs.length === 0) {
+    return {
+      content:
+        `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
+        "no per-trader settings are available yet. Your global defaults apply.",
+    };
+  }
+  return {
+    content:
+      `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
+      `choose a setting to override specifically for this trader. ` +
+      `Inherit (no override) = your global default applies.`,
+    components: [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: defs.map(def => ({
+        type: COMPONENT_TYPE_BUTTON,
+        style: BUTTON_STYLE_SECONDARY,
+        label: def.label,
+        custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:open`,
+      })),
+    }],
+  };
+}
+
+/**
  * Ephemeral update body shown after a pref is committed. Drops the
  * button row (decision is locked for this interaction) and echoes
  * the human-readable value back so the confirmation is specific.
@@ -270,6 +403,48 @@ export function buildPrefConfirmationMessage(
   }
   return {
     content: `Saved. **${def.label}** is now **${humanValue}**.`,
+    components: [],
+  };
+}
+
+/**
+ * Peer-scope variant of the confirmation. `newValue == null` means
+ * the override was cleared (inherit path); show the effective value
+ * the cascade now resolves to so the user sees the new answer, not
+ * just "removed."
+ */
+export function buildPeerPrefConfirmationMessage(
+  def: PrefDefinition,
+  peerUserId: string,
+  peerHandle: string,
+  newValue: PrefValue,
+  effectiveAfter: PrefValue,
+): DiscordMessageBody {
+  if (newValue == null) {
+    let humanEffective: string;
+    if (def.type.kind === 'boolean') {
+      humanEffective = effectiveAfter ? 'on' : 'off';
+    } else {
+      const opt = def.type.kind === 'enum'
+        ? def.type.options.find(o => o.value === effectiveAfter)
+        : undefined;
+      humanEffective = opt?.label ?? String(effectiveAfter ?? 'unset');
+    }
+    return {
+      content: `Override cleared for <@${peerUserId}> (@${peerHandle}). **${def.label}** now inherits: **${humanEffective}**.`,
+      components: [],
+    };
+  }
+  let humanValue: string;
+  if (def.type.kind === 'boolean') {
+    humanValue = newValue ? 'on' : 'off';
+  } else if (def.type.kind === 'enum') {
+    humanValue = def.type.options.find(o => o.value === newValue)?.label ?? String(newValue);
+  } else {
+    humanValue = String(newValue);
+  }
+  return {
+    content: `Saved. **${def.label}** for <@${peerUserId}> (@${peerHandle}) is now **${humanValue}**.`,
     components: [],
   };
 }
