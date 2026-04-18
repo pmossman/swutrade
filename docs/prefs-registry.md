@@ -313,18 +313,21 @@ For every preference + scope the Discord surface exposes, the same control exist
 
 ## Migration plan
 
-Eight small PRs, each independently shippable:
+Eight small PRs, each independently shippable. **Status: all eight shipped as of 2026-04-18.**
 
-1. **Add the registry module** (`lib/prefsRegistry.ts`) with `definePref` + type definitions. Unit test asserts every `column` exists on the scope's backing table and `default` matches the Drizzle default (for self-scoped).
-2. **Register the 4 current self-scoped prefs** (`communicationPref`, `dmTradeProposals`, `dmMatchAlerts`, `dmMeetupReminders`). No consumer changes yet.
-3. **Migrate `/api/me/settings` → `/api/me/prefs`** (self scope only, registry-driven). Keep the old path rewriting to the new one for one release.
-4. **Refactor `SettingsView.AccountSection`** to render from registry. `profileVisibility` stays bespoke initially (enum descriptions are richer than the generic renderer); fold it in once a richer enum renderer lands.
-5. **Rewrite the `⚙ Prefs` Discord button** on top of the registry. Match both `pref:*` and the existing `comm-pref:*` for one release; drop `comm-pref:*` after.
-6. **Add `user_peer_prefs` table + migration.** Drizzle schema, foreign-key cascades on both `user_id` and `peer_user_id`.
-7. **Register `communicationPref` at peer scope + extend resolver.** `handlePropose` switches from `recipient.communicationPref` direct read to `resolvePref({ key: 'communicationPref', viewerUserId: recipient.id, peerUserId: proposer.id })` (and symmetric for proposer). `threadConsent.ts` stays pure.
-8. **Web CommunityView directory editing** + Discord user context menu + `/swutrade settings user:@x`.
+1. ✅ **Add the registry module** (`lib/prefsRegistry.ts`) with `definePref` + type definitions. Unit test asserts every `column` exists on the scope's backing table and `default` matches the Drizzle default (for self-scoped). *(commit `731b8fb`)*
+2. ✅ **Register the 4 current self-scoped prefs** (`communicationPref`, `dmTradeProposals`, `dmMatchAlerts`, `dmMeetupReminders`). No consumer changes yet. *(commit `731b8fb`)*
+3. ✅ **Migrate `/api/me/settings` → `/api/me/prefs`** (self scope only, registry-driven). Keep the old path rewriting to the new one for one release. *(commit `7e57ce4`)*
+4. ✅ **Refactor `SettingsView.AccountSection`** to render from registry. `profileVisibility` folded in via `label — description` options on the generic `EnumSelectField` — bespoke `VisibilityField` retired. *(commit `70c67fa`)*
+5. ✅ **Rewrite the `⚙ Prefs` Discord button** on top of the registry. Match both `pref:*` and the existing `comm-pref:*` for one release; drop `comm-pref:*` after. *(commit `4dfb1bc`)*
+6. ✅ **Add `user_peer_prefs` table + migration.** Composite PK on `(user_id, peer_user_id)` + cascade FKs. *(commit `aea2f8b`)*
+7. ✅ **Register `communicationPref` at peer scope + `resolvePref` cascade.** `handlePropose` + `handleThreadFlowButton` now always resolve via the cascade. `threadConsent.ts` stays pure. *(commit `9014f4d`)*
+8. ✅ **Web CommunityView directory editing** + `/api/me/prefs?peer=<id>` extension + **Discord `/swutrade settings` slash command + user context menu** + peer-scope button handler. *(commits `fdb4add`, `8cf579d`, `31dbb2f`)*
 
-Steps 1–5 ship the self-scoped refactor (no new features, just abstraction). Steps 6–8 unlock per-peer overrides.
+Steps 1–5 shipped the self-scoped refactor (abstraction, no new features). Steps 6–8 unlocked per-peer overrides across both web (`CommunityView` row selects) and Discord (slash + context menu + ephemeral selectors).
+
+**Registering the Discord commands:**
+Commands are declared in `scripts/register-discord-commands.mjs` and registered via one-off PUTs to `/applications/{CLIENT_ID}/commands`. Guild-scoped registration is instant and recommended for testing (`node scripts/register-discord-commands.mjs guild <id>`); global registration takes up to an hour to propagate and is for production rollout.
 
 ---
 
