@@ -129,6 +129,13 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Tabbed trade view + trending removal (beta feedback)
+Beta users asked for a single-focus trade layout instead of always-both-sides. Added a new per-device `tradeViewMode` toggle (localStorage, split default) and a `TradeTabBar` component that replaces the two-panel layout with a single-tab view when active. Each tab shows its side's count + running $ total so the hidden side isn't a mystery. `TradeSide` grows a `headerless` prop so the in-panel "OFFERING TOTAL $X" strip doesn't duplicate the tab bar's own labeling — tabs sit flush on top of the single panel in tabbed mode. Toggle icon sits in the top action cluster, swaps between split/tabbed glyphs to reflect current state.
+
+Trending card strip removed from `TradeSearchOverlay` — overlay empty state was too busy, and the feature isn't load-bearing at current scale. The `/api/trending` endpoint stays (community view is a likely future home).
+
+Updated `e2e/mobile.spec.ts` to expect "Trade balance" instead of "ADD CARDS TO WEIGH THE TRADE" — the empty TradeBalance headline was quieted in the prior UX batch but the spec was missed.
+
 ### 2026-04-17 — UX copy + polish batch (agent-browser dogfooding)
 Ten friction points surfaced during a driven-through agent-browser pressure test, fixed in one batch:
 

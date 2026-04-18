@@ -35,7 +35,9 @@ test.describe('Mobile viewport sanity', () => {
 
     // The balance banner at the bottom shows in the idle state.
     await page.getByRole('button', { name: 'Close search' }).first().click();
-    // With no cards, the banner says "ADD CARDS TO WEIGH THE TRADE".
-    await expect(page.getByText(/ADD CARDS TO WEIGH THE TRADE/i)).toBeVisible();
+    // With no cards, the empty headline now reads "Trade balance"
+    // (quieted from the previous "ADD CARDS TO WEIGH THE TRADE" CTA,
+    // which was competing with the ProposeBar in propose mode).
+    await expect(page.getByText(/^Trade balance$/i)).toBeVisible();
   });
 });

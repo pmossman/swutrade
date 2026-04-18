@@ -67,6 +67,11 @@ export const PERSIST_KEYS = {
   // baseCardId (per-printing). v1 data is not migrated — fresh start.
   wants: 'swu.wants.v2',
   available: 'swu.available.v1',
+  // Per-device toggle between side-by-side and tabbed trade panels.
+  // Beta feedback: always-on both-sides layout feels cramped; users
+  // want a single-focus view. Default (absent) = split layout so
+  // existing users see no change; setting flips them to tabs.
+  tradeViewMode: 'swu.tradeView',
 } as const;
 
 export const DEFAULTS = {

@@ -5,9 +5,7 @@ import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { applySelectionFilters } from '../applySelectionFilters';
 import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
-import { useTrending } from '../hooks/useTrending';
-import { cardFamilyId, cardBaseName } from '../variants';
-import { adjustPrice, cardImageUrl, getCardPrice } from '../services/priceService';
+import { adjustPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
 
@@ -125,31 +123,10 @@ export function TradeSearchOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const search = useCardSearch({ allCards, setFilter: null });
   const [activeChipIds, setActiveChipIds] = useState<readonly string[]>([]);
-  const trending = useTrending();
 
   const hasQuery = search.query.length >= 2;
   const hdr = headerColors[accentColor];
   const searchBorder = searchBorderColors[accentColor];
-
-  // Resolve trending familyIds to card variants for display.
-  const trendingCards = useMemo(() => {
-    if (trending.length === 0) return [];
-    const byFamily = new Map<string, CardVariant>();
-    for (const card of allCards) {
-      const fid = cardFamilyId(card);
-      const existing = byFamily.get(fid);
-      if (!existing || card.variant === 'Standard') byFamily.set(fid, card);
-    }
-    return trending
-      .map(t => {
-        const card = byFamily.get(t.familyId);
-        if (!card) return null;
-        return { ...t, card };
-      })
-      .filter(Boolean) as Array<{ familyId: string; userCount: number; totalQty: number; card: CardVariant }>;
-  }, [trending, allCards]);
-
-  const showTrending = trendingCards.length > 0 && !hasQuery && activeChipIds.length === 0;
 
   // Auto-deactivate any chip whose pool drops to empty (e.g. user
   // pulls the last "My available" card into the trade). Without this
@@ -366,48 +343,10 @@ export function TradeSearchOverlay({
         <SelectionFilterBar filters={filters} />
       </div>
 
-      {/* Trending: horizontal card strip when browsing (no query, no source filter). */}
-      {showTrending && open && (
-        <div className="shrink-0 px-4 sm:px-6 pb-2 max-w-6xl mx-auto w-full">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500">
-              Trending
-            </span>
-            <span className="text-[9px] text-gray-600">
-              Most wanted by the community
-            </span>
-          </div>
-          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
-            {trendingCards.slice(0, 10).map(t => (
-              <button
-                key={t.familyId}
-                type="button"
-                onClick={() => onAdd(t.card)}
-                className="shrink-0 flex items-center gap-2 px-2 py-1.5 rounded-lg bg-space-800/80 border border-space-700 hover:border-gold/40 transition-colors"
-              >
-                <div className="w-6 h-8 rounded-sm bg-space-900 overflow-hidden shrink-0">
-                  {cardImageUrl(t.card.productId, 'sm') && (
-                    <img
-                      src={cardImageUrl(t.card.productId, 'sm')!}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  )}
-                </div>
-                <div className="text-left min-w-0">
-                  <div className="text-[11px] text-gray-200 truncate max-w-[120px]">
-                    {cardBaseName(t.card)}
-                  </div>
-                  <div className="text-[9px] text-gold">
-                    {t.userCount} {t.userCount === 1 ? 'trader' : 'traders'}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Trending card strip removed from the picker — early-dogfood
+          feedback: too much competing content in the overlay's empty
+          state. The /api/trending endpoint stays in place for when we
+          surface it elsewhere (community view's a likely home). */}
 
       {/* Grid only mounts when the overlay is actually shown — browse
           mode renders hundreds of tiles, so we don't pay that DOM

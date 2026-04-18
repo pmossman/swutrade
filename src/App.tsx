@@ -14,6 +14,8 @@ import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
 import { useRecipientProfile } from './hooks/useRecipientProfile';
+import { useTradeViewMode } from './hooks/useTradeViewMode';
+import { adjustPrice, getCardPrice } from './services/priceService';
 import { useSenderHandle } from './hooks/useSenderHandle';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
@@ -112,6 +114,12 @@ function App() {
   // not editing so the other gets more scroll room.
   const [offeringCollapsed, setOfferingCollapsed] = useState(false);
   const [receivingCollapsed, setReceivingCollapsed] = useState(false);
+  // Per-device trade layout: split (default, both panels visible) or
+  // tabbed (single-panel focus with OFFERING/RECEIVING tab bar).
+  // Active tab is ephemeral session state — no reason to persist
+  // "which tab did I last look at" across reloads.
+  const { mode: tradeViewMode, toggle: toggleTradeView } = useTradeViewMode();
+  const [activeTradeTab, setActiveTradeTab] = useState<'offering' | 'receiving'>('offering');
   // Mobile-only: manual split ratio between Offering and Receiving
   // panels (0 = all Receiving, 1 = all Offering). Null = auto.
   const [splitRatio, setSplitRatio] = useState<number | null>(null);
@@ -416,6 +424,7 @@ function App() {
             percentage={percentage}
             priceMode={priceMode}
           />
+          <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
           {/* Pricing controls (% + Market/Low) used to sit here. They
               moved into TradeBalance body so they live next to the
               totals they modify — mobile header is uncluttered and
@@ -507,72 +516,147 @@ function App() {
         />
       )}
 
-      {/* Trade panels — flex on mobile so a collapsed panel gives its
-          space to the expanded one. Grid on md+ keeps side-by-side. */}
-      <div className="flex-1 min-h-0 px-3 pb-2 max-w-5xl mx-auto w-full">
-        <div ref={panelsRef} className="flex flex-col md:grid md:grid-cols-2 gap-3 h-full">
-          <TradeSide
-            label="Offering"
-            cards={yourCards}
+      {/* Trade panels. Two layouts:
+           - split: both panels visible side-by-side (desktop default)
+             with mobile flex-col + collapsible panels + drag divider
+           - tabbed: single-focus tab bar + one panel at full width
+          The toggle flips between them and persists per-device. */}
+      <div className={`flex-1 min-h-0 px-3 pb-2 max-w-5xl mx-auto w-full flex flex-col ${tradeViewMode === 'tabbed' ? 'gap-0' : 'gap-2'}`}>
+        {tradeViewMode === 'tabbed' && (
+          <TradeTabBar
+            active={activeTradeTab}
+            onSelect={setActiveTradeTab}
+            yourCards={yourCards}
+            theirCards={theirCards}
             percentage={percentage}
             priceMode={priceMode}
-            onAdd={handleAddYour}
-            onRemove={handleRemoveYour}
-            onChangeQty={handleQtyYour}
-            accentColor="emerald"
-            borderColor="border-emerald-500/20"
-            setCards={priceData.cards}
-            isLoading={priceData.isAnyLoading}
-            onLoadAllSets={handleLoadAllSets}
-            filters={filters}
-            wants={wants}
-            available={available}
-            sharedLists={effectiveSharedLists}
-            byFamilyAll={cardIndex.byFamilyAll}
-            byProductId={cardIndex.byProductId}
-            collapsed={isMobile && offeringCollapsed}
-            onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
-            flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
-            autoOpenSharedLink={autoOpenOfferingFromShared}
-            onConsumeAutoOpen={consumeAutoOpenOffering}
-            communityWantFamilyIds={community.wantFamilyIds}
-            communityAvailableProductIds={community.availableProductIds}
-            autoScopeToTheirs={!!proposeHandle}
-            counterpartHandle={proposeHandle ?? senderHandle ?? null}
           />
-          {/* Mobile-only drag handle between the two panels. Collapsed
-              panels hide the divider — nothing to resize against. */}
-          {!offeringCollapsed && !receivingCollapsed && (
-            <PanelDivider containerRef={panelsRef} onRatioChange={setSplitRatio} />
-          )}
-          <TradeSide
-            label="Receiving"
-            cards={theirCards}
-            percentage={percentage}
-            priceMode={priceMode}
-            onAdd={handleAddTheir}
-            onRemove={handleRemoveTheir}
-            onChangeQty={handleQtyTheir}
-            accentColor="blue"
-            borderColor="border-blue-500/20"
-            setCards={priceData.cards}
-            isLoading={priceData.isAnyLoading}
-            onLoadAllSets={handleLoadAllSets}
-            filters={filters}
-            wants={wants}
-            available={available}
-            sharedLists={effectiveSharedLists}
-            byFamilyAll={cardIndex.byFamilyAll}
-            byProductId={cardIndex.byProductId}
-            collapsed={isMobile && receivingCollapsed}
-            onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
-            flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
-            communityWantFamilyIds={community.wantFamilyIds}
-            communityAvailableProductIds={community.availableProductIds}
-            autoScopeToTheirs={!!proposeHandle}
-            counterpartHandle={proposeHandle ?? senderHandle ?? null}
-          />
-        </div>
+        )}
+        {tradeViewMode === 'split' ? (
+          <div ref={panelsRef} className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
+            <TradeSide
+              label="Offering"
+              cards={yourCards}
+              percentage={percentage}
+              priceMode={priceMode}
+              onAdd={handleAddYour}
+              onRemove={handleRemoveYour}
+              onChangeQty={handleQtyYour}
+              accentColor="emerald"
+              borderColor="border-emerald-500/20"
+              setCards={priceData.cards}
+              isLoading={priceData.isAnyLoading}
+              onLoadAllSets={handleLoadAllSets}
+              filters={filters}
+              wants={wants}
+              available={available}
+              sharedLists={effectiveSharedLists}
+              byFamilyAll={cardIndex.byFamilyAll}
+              byProductId={cardIndex.byProductId}
+              collapsed={isMobile && offeringCollapsed}
+              onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
+              flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
+              autoOpenSharedLink={autoOpenOfferingFromShared}
+              onConsumeAutoOpen={consumeAutoOpenOffering}
+              communityWantFamilyIds={community.wantFamilyIds}
+              communityAvailableProductIds={community.availableProductIds}
+              autoScopeToTheirs={!!proposeHandle}
+              counterpartHandle={proposeHandle ?? senderHandle ?? null}
+            />
+            {/* Mobile-only drag handle between the two panels. Collapsed
+                panels hide the divider — nothing to resize against. */}
+            {!offeringCollapsed && !receivingCollapsed && (
+              <PanelDivider containerRef={panelsRef} onRatioChange={setSplitRatio} />
+            )}
+            <TradeSide
+              label="Receiving"
+              cards={theirCards}
+              percentage={percentage}
+              priceMode={priceMode}
+              onAdd={handleAddTheir}
+              onRemove={handleRemoveTheir}
+              onChangeQty={handleQtyTheir}
+              accentColor="blue"
+              borderColor="border-blue-500/20"
+              setCards={priceData.cards}
+              isLoading={priceData.isAnyLoading}
+              onLoadAllSets={handleLoadAllSets}
+              filters={filters}
+              wants={wants}
+              available={available}
+              sharedLists={effectiveSharedLists}
+              byFamilyAll={cardIndex.byFamilyAll}
+              byProductId={cardIndex.byProductId}
+              collapsed={isMobile && receivingCollapsed}
+              onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
+              flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
+              communityWantFamilyIds={community.wantFamilyIds}
+              communityAvailableProductIds={community.availableProductIds}
+              autoScopeToTheirs={!!proposeHandle}
+              counterpartHandle={proposeHandle ?? senderHandle ?? null}
+            />
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {activeTradeTab === 'offering' ? (
+              <TradeSide
+                label="Offering"
+                cards={yourCards}
+                percentage={percentage}
+                priceMode={priceMode}
+                onAdd={handleAddYour}
+                onRemove={handleRemoveYour}
+                onChangeQty={handleQtyYour}
+                accentColor="emerald"
+                borderColor="border-emerald-500/20"
+                setCards={priceData.cards}
+                isLoading={priceData.isAnyLoading}
+                onLoadAllSets={handleLoadAllSets}
+                filters={filters}
+                wants={wants}
+                available={available}
+                sharedLists={effectiveSharedLists}
+                byFamilyAll={cardIndex.byFamilyAll}
+                byProductId={cardIndex.byProductId}
+                collapsed={false}
+                headerless
+                autoOpenSharedLink={autoOpenOfferingFromShared}
+                onConsumeAutoOpen={consumeAutoOpenOffering}
+                communityWantFamilyIds={community.wantFamilyIds}
+                communityAvailableProductIds={community.availableProductIds}
+                autoScopeToTheirs={!!proposeHandle}
+                counterpartHandle={proposeHandle ?? senderHandle ?? null}
+              />
+            ) : (
+              <TradeSide
+                label="Receiving"
+                cards={theirCards}
+                percentage={percentage}
+                priceMode={priceMode}
+                onAdd={handleAddTheir}
+                onRemove={handleRemoveTheir}
+                onChangeQty={handleQtyTheir}
+                accentColor="blue"
+                borderColor="border-blue-500/20"
+                setCards={priceData.cards}
+                isLoading={priceData.isAnyLoading}
+                onLoadAllSets={handleLoadAllSets}
+                filters={filters}
+                wants={wants}
+                available={available}
+                sharedLists={effectiveSharedLists}
+                byFamilyAll={cardIndex.byFamilyAll}
+                byProductId={cardIndex.byProductId}
+                collapsed={false}
+                headerless
+                communityWantFamilyIds={community.wantFamilyIds}
+                communityAvailableProductIds={community.availableProductIds}
+                autoScopeToTheirs={!!proposeHandle}
+                counterpartHandle={proposeHandle ?? senderHandle ?? null}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Balance bar at bottom — TradeBalance owns its own click
@@ -691,6 +775,132 @@ function App() {
     </div>
     </>
   );
+}
+
+/**
+ * Small header button that flips the trade layout between split and
+ * tabbed. Icon swaps to visually echo the CURRENT mode — square
+ * (split) vs stacked-lines (tabbed). Title attribute clarifies what
+ * clicking will do.
+ */
+function TradeViewToggle({ mode, onToggle }: { mode: 'split' | 'tabbed'; onToggle: () => void }) {
+  const title = mode === 'split' ? 'Switch to tabbed view' : 'Switch to split view';
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={title}
+      title={title}
+      className="flex items-center justify-center w-8 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-400 hover:text-gold transition-colors"
+    >
+      {mode === 'split' ? (
+        // Two side-by-side rectangles
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden>
+          <rect x="3" y="5" width="7" height="14" rx="1.5" />
+          <rect x="14" y="5" width="7" height="14" rx="1.5" />
+        </svg>
+      ) : (
+        // Tab-like icon — single large panel with tab headers above
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden>
+          <rect x="3" y="8" width="18" height="12" rx="1.5" />
+          <line x1="5" y1="4" x2="10" y2="4" strokeLinecap="round" />
+          <line x1="14" y1="4" x2="19" y2="4" strokeLinecap="round" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+/**
+ * Tab bar that sits above a single-panel trade layout when the view
+ * mode is `tabbed`. Each tab shows the side's color accent, running
+ * card count, and running $ total — so the user can see the
+ * currently-hidden side's state at a glance and decide whether to
+ * switch to it.
+ */
+function TradeTabBar({
+  active,
+  onSelect,
+  yourCards,
+  theirCards,
+  percentage,
+  priceMode,
+}: {
+  active: 'offering' | 'receiving';
+  onSelect: (tab: 'offering' | 'receiving') => void;
+  yourCards: TradeCard[];
+  theirCards: TradeCard[];
+  percentage: number;
+  priceMode: PriceMode;
+}) {
+  const offerCount = yourCards.reduce((s, c) => s + c.qty, 0);
+  const receiveCount = theirCards.reduce((s, c) => s + c.qty, 0);
+  const tradeCardTotal = (cards: TradeCard[]) => cards.reduce((sum, tc) => {
+    const adj = (getTradeCardPrice(tc, priceMode, percentage));
+    return sum + adj * tc.qty;
+  }, 0);
+  const offerTotal = tradeCardTotal(yourCards);
+  const receiveTotal = tradeCardTotal(theirCards);
+
+  return (
+    <div role="tablist" aria-label="Trade side" className="flex gap-1 shrink-0">
+      <TradeTab
+        side="offering"
+        active={active === 'offering'}
+        count={offerCount}
+        total={offerTotal}
+        onSelect={() => onSelect('offering')}
+      />
+      <TradeTab
+        side="receiving"
+        active={active === 'receiving'}
+        count={receiveCount}
+        total={receiveTotal}
+        onSelect={() => onSelect('receiving')}
+      />
+    </div>
+  );
+}
+
+function TradeTab({
+  side,
+  active,
+  count,
+  total,
+  onSelect,
+}: {
+  side: 'offering' | 'receiving';
+  active: boolean;
+  count: number;
+  total: number;
+  onSelect: () => void;
+}) {
+  const activeCls = side === 'offering'
+    ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
+    : 'bg-blue-500/15 border-blue-400/50 text-blue-200';
+  const inactiveCls = 'bg-space-800/40 border-space-700 text-gray-400 hover:border-gray-500';
+  const label = side === 'offering' ? 'Offering' : 'Receiving';
+
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onSelect}
+      className={`flex-1 flex items-baseline justify-center gap-2 px-3 py-2 rounded-lg border text-xs font-semibold uppercase tracking-wider transition-colors ${active ? activeCls : inactiveCls}`}
+    >
+      <span>{label}</span>
+      {count > 0 && (
+        <span className="text-[10px] tabular-nums opacity-80">
+          {count} · ${total.toFixed(2)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function getTradeCardPrice(tc: TradeCard, priceMode: PriceMode, percentage: number): number {
+  return adjustPrice(getCardPrice(tc.card, priceMode), percentage) ?? 0;
 }
 
 export default App;

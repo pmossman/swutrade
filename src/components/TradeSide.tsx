@@ -73,6 +73,11 @@ interface TradeSideProps {
    *  @alice" — avoids the full-screen overlay feeling disconnected
    *  from its parent flow. */
   counterpartHandle?: string | null;
+  /** When true, skip the in-panel header strip (label + count +
+   *  total). Used in the tabbed layout where the tab bar above the
+   *  panel already carries that information — rendering both reads
+   *  as duplicated chrome. */
+  headerless?: boolean;
 }
 
 const headerColors: Record<string, string> = {
@@ -138,6 +143,7 @@ export function TradeSide({
   communityAvailableProductIds,
   autoScopeToTheirs,
   counterpartHandle,
+  headerless,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';
@@ -419,8 +425,10 @@ export function TradeSide({
         {/* Header — entire row toggles collapse on tap when collapse is
             available (mobile). The chevron is just a visual indicator,
             colored to match the side's accent so it reads as part of
-            the panel rather than a generic gray button. */}
-        {(() => {
+            the panel rather than a generic gray button.
+            Suppressed in tabbed mode (`headerless`) because the tab
+            bar above already carries label + count + total. */}
+        {!headerless && (() => {
           const headerContent = (
             <>
               {onToggleCollapse && (
@@ -463,6 +471,7 @@ export function TradeSide({
             <div className={headerClass}>{headerContent}</div>
           );
         })()}
+
 
         {/* Card list sits above the sticky Add Card footer below. */}
         <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${collapsed ? 'hidden' : ''}`}>
