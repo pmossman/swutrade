@@ -7,7 +7,7 @@ import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { useTrending } from '../hooks/useTrending';
 import { cardFamilyId, cardBaseName } from '../variants';
-import { cardImageUrl } from '../services/priceService';
+import { adjustPrice, cardImageUrl, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
 
@@ -40,6 +40,11 @@ export interface SourceChipConfig {
   /** Cards eligible for this source. The chip auto-hides when this
    *  drops to empty (parent does the qty-aware filtering). */
   cards: CardVariant[];
+  /** When true, the chip renders even at cards.length === 0.
+   *  Currently used for the Overlap chip — "0" is itself a useful
+   *  signal ("no match pool; go look at 'They want' to discover
+   *  what to source"). */
+  alwaysVisible?: boolean;
 }
 
 export interface TradeSearchOverlaySeed {
@@ -57,6 +62,11 @@ interface TradeSearchOverlayProps {
   // Side identity
   label: string;
   accentColor: AccentColor;
+  /** Counterpart handle when we're in a propose / shared-list context.
+   *  Rendered as "for @alice" in the header to keep users oriented —
+   *  the full-screen overlay was burying the "who am I trading with"
+   *  context and making the picker feel disconnected from its home. */
+  counterpartHandle?: string | null;
 
   // Card universe + filters
   allCards: CardVariant[];
@@ -98,6 +108,7 @@ export function TradeSearchOverlay({
   onDismiss,
   label,
   accentColor,
+  counterpartHandle,
   allCards,
   isLoading,
   filters,
@@ -227,11 +238,25 @@ export function TradeSearchOverlay({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, handleDismiss]);
 
-  const visibleChips = sourceChips.filter(c => c.cards.length > 0);
+  const visibleChips = sourceChips.filter(c => c.cards.length > 0 || c.alwaysVisible);
+
+  // Running summary for the context header — lets the user see "what
+  // I've picked so far on this side" without dismissing the overlay.
+  const pickedCount = cards.reduce((s, c) => s + c.qty, 0);
+  const pickedTotal = cards.reduce((s, c) => {
+    const p = adjustPrice(getCardPrice(c.card, priceMode), percentage) ?? 0;
+    return s + p * c.qty;
+  }, 0);
 
   return (
     <div
-      className={`fixed inset-0 z-40 bg-space-900 flex flex-col transition-all duration-200 ease-out ${
+      // Top inset (`top-10`) leaves the trade-view's wordmark visible
+      // above the overlay so users stay oriented — the "I'm inside a
+      // larger flow" feeling costs almost nothing in vertical real
+      // estate and makes dismissal feel like a return, not an exit.
+      // Kept constant across open/closed so the transition animates
+      // opacity + translate only, not the top inset too.
+      className={`fixed top-10 left-0 right-0 bottom-0 z-40 bg-space-900 flex flex-col transition-all duration-200 ease-out ${
         open
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-4 pointer-events-none'
@@ -242,16 +267,27 @@ export function TradeSearchOverlay({
           className={`absolute left-4 sm:left-6 top-3 bottom-3 w-[3px] rounded-full ${saberBarColors[accentColor]}`}
           aria-hidden
         />
-        <div className="pl-3 flex items-center justify-between">
-          <div>
-            <div className="text-[9px] tracking-[0.25em] text-gray-500 uppercase">Adding to</div>
+        <div className="pl-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[9px] tracking-[0.25em] text-gray-500 uppercase truncate">
+              Adding to
+              {counterpartHandle && (
+                <span className="normal-case tracking-normal text-gray-400"> · for <span className="text-gold">@{counterpartHandle}</span></span>
+              )}
+            </div>
             <div className={`swu-display text-base ${hdr.split(' ').pop()}`}>{label}</div>
+            {pickedCount > 0 && (
+              <div className="text-[10px] text-gray-500 mt-0.5">
+                Picked so far: <strong className="text-gray-300">{pickedCount}</strong>
+                {pickedTotal > 0 && <> · <strong className="text-gray-300">${pickedTotal.toFixed(2)}</strong></>}
+              </div>
+            )}
           </div>
           <button
             onClick={handleDismiss}
-            className="text-gray-400 hover:text-gray-200 transition-colors p-1.5"
+            className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 shrink-0"
             aria-label="Close search"
-            title="Close (Esc)"
+            title={counterpartHandle ? 'Back to proposal (Esc)' : 'Close (Esc)'}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />

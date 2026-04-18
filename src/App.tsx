@@ -538,6 +538,7 @@ function App() {
             communityWantFamilyIds={community.wantFamilyIds}
             communityAvailableProductIds={community.availableProductIds}
             autoScopeToTheirs={!!proposeHandle}
+            counterpartHandle={proposeHandle ?? senderHandle ?? null}
           />
           {/* Mobile-only drag handle between the two panels. Collapsed
               panels hide the divider — nothing to resize against. */}
@@ -569,6 +570,7 @@ function App() {
             communityWantFamilyIds={community.wantFamilyIds}
             communityAvailableProductIds={community.availableProductIds}
             autoScopeToTheirs={!!proposeHandle}
+            counterpartHandle={proposeHandle ?? senderHandle ?? null}
           />
         </div>
       </div>

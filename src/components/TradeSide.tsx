@@ -68,6 +68,11 @@ interface TradeSideProps {
    *  sees is the overlap with their counterpart, not the whole catalog.
    *  Manual chip toggling afterward stays the user's choice. */
   autoScopeToTheirs?: boolean;
+  /** Counterpart handle (propose or shared-list context). Threaded
+   *  into TradeSearchOverlay so the picker header can show "for
+   *  @alice" — avoids the full-screen overlay feeling disconnected
+   *  from its parent flow. */
+  counterpartHandle?: string | null;
 }
 
 const headerColors: Record<string, string> = {
@@ -132,6 +137,7 @@ export function TradeSide({
   communityWantFamilyIds,
   communityAvailableProductIds,
   autoScopeToTheirs,
+  counterpartHandle,
 }: TradeSideProps) {
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';
@@ -196,6 +202,53 @@ export function TradeSide({
     return { mineCards: mine, theirsCards: theirs };
   }, [isOffering, available.items, wants.items, sharedLists, byFamilyAll, byProductId, cards, priceMode]);
 
+  // Overlap chip — the intersection of the two sides' lists: cards
+  // the viewer could specifically trade with the counterpart. Exactly
+  // what the matchmaker's offering/receiving pool computes, surfaced
+  // as a pickable chip so users can see (and work from) the match
+  // pool directly instead of discovering it only when they click
+  // Suggest. Gated on `sharedLists` — this chip only makes sense in
+  // propose or shared-list context, never on the home editor.
+  const overlapCards = useMemo<CardVariant[]>(() => {
+    if (!sharedLists) return [];
+    if (isOffering) {
+      // Their wants ∩ my available (qty-aware).
+      const wantByFamily = new Map<string, typeof sharedLists.wants[number]>();
+      for (const w of sharedLists.wants) wantByFamily.set(w.familyId, w);
+      const out: CardVariant[] = [];
+      for (const item of available.items) {
+        const card = byProductId.get(item.productId);
+        if (!card) continue;
+        const want = wantByFamily.get(cardFamilyId(card));
+        if (!want) continue;
+        if (!matchesRestriction(card, want.restriction)) continue;
+        const inTrade = cards.reduce(
+          (s, tc) => tc.card.productId === item.productId ? s + tc.qty : s,
+          0,
+        );
+        if (item.qty - inTrade > 0) out.push(card);
+      }
+      return out;
+    }
+    // Receiving side: my wants ∩ their available (qty-aware).
+    const myWantByFamily = new Map<string, typeof wants.items[number]>();
+    for (const w of wants.items) myWantByFamily.set(w.familyId, w);
+    const out: CardVariant[] = [];
+    for (const a of sharedLists.available) {
+      const card = byProductId.get(a.productId);
+      if (!card) continue;
+      const want = myWantByFamily.get(cardFamilyId(card));
+      if (!want) continue;
+      if (!matchesRestriction(card, want.restriction)) continue;
+      const inTrade = cards.reduce(
+        (s, tc) => tc.card.productId === a.productId ? s + tc.qty : s,
+        0,
+      );
+      if (a.qty - inTrade > 0) out.push(card);
+    }
+    return out;
+  }, [sharedLists, isOffering, available.items, wants.items, byProductId, cards]);
+
   // Community chip — cards that other members of the viewer's
   // enrolled Discord guilds want or have available, intersected with
   // the viewer's own inventory/wishlist so the chip surfaces
@@ -250,7 +303,20 @@ export function TradeSide({
   ]);
 
   const sourceChips = useMemo<SourceChipConfig[]>(() => {
-    const chips: SourceChipConfig[] = [
+    const chips: SourceChipConfig[] = [];
+    // Overlap chip goes FIRST when there's a counterpart — it's the
+    // "where do I start" default. `alwaysVisible` keeps the chip
+    // rendered at 0 cards because "0" is itself a useful signal
+    // ("no overlap — go look at what they want instead").
+    if (sharedLists) {
+      chips.push({
+        id: 'overlap',
+        label: 'Overlap',
+        cards: overlapCards,
+        alwaysVisible: true,
+      });
+    }
+    chips.push(
       {
         id: 'mine',
         label: isOffering ? 'My available' : 'My wants',
@@ -261,12 +327,11 @@ export function TradeSide({
         label: isOffering ? 'They want' : 'They have',
         cards: theirsCards,
       },
-    ];
-    // Community chip only appears when there's something to show —
-    // the overlay hides zero-card chips anyway, but keeping it out of
-    // the list entirely is cheaper + avoids a flicker while the
-    // rollup fetch resolves.
-    if (communityCards.length > 0) {
+    );
+    // Community chip is about the generic guild rollup — off-topic
+    // when the user is already zoomed in on one specific counterpart.
+    // Hidden entirely in propose / shared-list contexts.
+    if (!sharedLists && communityCards.length > 0) {
       chips.push({
         id: 'community',
         label: isOffering ? 'Community wants' : 'Community has',
@@ -274,21 +339,20 @@ export function TradeSide({
       });
     }
     return chips;
-  }, [isOffering, mineCards, theirsCards, communityCards]);
+  }, [isOffering, sharedLists, overlapCards, mineCards, theirsCards, communityCards]);
 
   // Opening the overlay from the panel's Add-Card affordances. In
-  // propose mode (`autoScopeToTheirs`) we pre-activate the "theirs"
-  // chip so the first thing the user sees is the overlap with the
-  // recipient — full catalog stays one chip-click away. No-op when
-  // the chip would have no cards (e.g., recipient has zero matching
-  // wants) — the chip wouldn't render and the overlay would show an
-  // empty scoped view otherwise.
+  // propose mode the cascade is: overlap first (tightest match pool),
+  // theirs second (broader — lets user discover what to source or
+  // negotiate), no chip if both are empty (show the full catalog so
+  // the user isn't stranded in an empty view).
   const openOverlay = useCallback(() => {
-    if (autoScopeToTheirs && theirsCards.length > 0) {
-      setSeed({ activeChips: ['theirs'] });
+    if (autoScopeToTheirs) {
+      if (overlapCards.length > 0) setSeed({ activeChips: ['overlap'] });
+      else if (theirsCards.length > 0) setSeed({ activeChips: ['theirs'] });
     }
     setOverlayOpen(true);
-  }, [autoScopeToTheirs, theirsCards.length]);
+  }, [autoScopeToTheirs, overlapCards.length, theirsCards.length]);
 
   // Swap-variant handler for TradeRow kebab — seeds the overlay with
   // the card's basename so the picker shows every printing of that card.
@@ -330,6 +394,7 @@ export function TradeSide({
         onDismiss={handleDismissOverlay}
         label={label}
         accentColor={accentColor}
+        counterpartHandle={counterpartHandle}
         allCards={allCards}
         isLoading={isLoading}
         filters={filters}
