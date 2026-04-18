@@ -129,6 +129,11 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Picker rework: fullscreen + Done + consolidated filters (beta feedback)
+Picker overlay is back to fullscreen (`inset-0`). The top-peek gap was ambiguous in practice — beta feedback was "just make it full screen." Header Done button replaces the X icon + also replaces the touch-only bottom Done CTA, so the overlay has a single unambiguous dismiss affordance rendered in the side's accent color (emerald for Offering, blue for Receiving).
+
+Filter controls consolidated behind a single summary button. Collapsed state renders a compact row: `[🎚 All cards · Any variant · All sets ▾]` (with counts when a source chip is active: `Overlap (3)`). Tapping expands the full detail surface (source chips + variant + set selectors) inline below the summary. Summary button tints gold when any filter is active so users see at a glance that the grid is narrowed. Uses the existing `summarizeSelection` helper for variant/set summaries.
+
 ### 2026-04-17 — Header consolidation + propose cancel (beta feedback)
 Top bar dropped from five controls (Logo · AccountMenu · Lists · ViewToggle · Share/Clear) to two primary slots (AccountMenu · ViewToggle) in steady state. Changes:
 

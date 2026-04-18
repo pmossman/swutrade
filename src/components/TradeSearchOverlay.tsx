@@ -5,6 +5,8 @@ import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { applySelectionFilters } from '../applySelectionFilters';
 import { SearchResults } from './SearchResults';
 import { SelectionFilterBar } from './SelectionFilterBar';
+import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
+import { variantChipLabel, type CanonicalVariant } from '../variants';
 import { adjustPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
@@ -123,6 +125,9 @@ export function TradeSearchOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const search = useCardSearch({ allCards, setFilter: null });
   const [activeChipIds, setActiveChipIds] = useState<readonly string[]>([]);
+  // Filter row collapses behind a summary control so the default
+  // state shows the grid, not three rows of toggles. Expands on tap.
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const hasQuery = search.query.length >= 2;
   const hdr = headerColors[accentColor];
@@ -227,13 +232,13 @@ export function TradeSearchOverlay({
 
   return (
     <div
-      // Top inset (`top-10`) leaves the trade-view's wordmark visible
-      // above the overlay so users stay oriented — the "I'm inside a
-      // larger flow" feeling costs almost nothing in vertical real
-      // estate and makes dismissal feel like a return, not an exit.
-      // Kept constant across open/closed so the transition animates
-      // opacity + translate only, not the top inset too.
-      className={`fixed top-10 left-0 right-0 bottom-0 z-40 bg-space-900 flex flex-col transition-all duration-200 ease-out ${
+      // Back to fullscreen (`inset-0`). Beta feedback: the top peek
+      // from the prior iteration was pitched as a helpful "you're
+      // inside a larger flow" cue, but in practice it ate space on
+      // mobile without clarifying anything. The header's "Done"
+      // button + counterpart context line carry the orientation
+      // work on their own.
+      className={`fixed inset-0 z-40 bg-space-900 flex flex-col transition-all duration-200 ease-out ${
         open
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-4 pointer-events-none'
@@ -267,13 +272,11 @@ export function TradeSearchOverlay({
           </div>
           <button
             onClick={handleDismiss}
-            className="text-gray-400 hover:text-gray-200 transition-colors p-1.5 shrink-0"
+            className={`shrink-0 px-3 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors ${doneButtonColors[accentColor]}`}
             aria-label="Close search"
             title={counterpartHandle ? 'Back to proposal (Esc)' : 'Close (Esc)'}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            Done
           </button>
         </div>
       </div>
@@ -317,30 +320,45 @@ export function TradeSearchOverlay({
         </div>
       </div>
 
-      {/* Source chips + variant/set filters stacked. Source chips
-          narrow the grid to a personal or shared list. */}
-      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full space-y-2">
-        {visibleChips.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
-              Show
-            </span>
-            {visibleChips.map(chip => (
-              <SourceChip
-                key={chip.id}
-                active={activeChipIds.includes(chip.id)}
-                onClick={() => setActiveChipIds(prev =>
-                  prev.includes(chip.id)
-                    ? prev.filter(id => id !== chip.id)
-                    : [...prev, chip.id],
-                )}
-                label={chip.label}
-                count={chip.cards.length}
-              />
-            ))}
+      {/* Filter summary button — collapses source chips + variant +
+          set selectors behind one tap. Beta feedback said the picker
+          felt overloaded with multiple rows of controls always on
+          screen; the single summary reads as "here's what's filtered
+          right now, tap if you want to change it." */}
+      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
+        <FilterSummaryButton
+          visibleChips={visibleChips}
+          activeChipIds={activeChipIds}
+          selectedVariants={filters.selectedVariants}
+          selectedSets={filters.selectedSets}
+          isOpen={filtersOpen}
+          onToggle={() => setFiltersOpen(o => !o)}
+        />
+        {filtersOpen && (
+          <div className="mt-2 space-y-2">
+            {visibleChips.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
+                  Show
+                </span>
+                {visibleChips.map(chip => (
+                  <SourceChip
+                    key={chip.id}
+                    active={activeChipIds.includes(chip.id)}
+                    onClick={() => setActiveChipIds(prev =>
+                      prev.includes(chip.id)
+                        ? prev.filter(id => id !== chip.id)
+                        : [...prev, chip.id],
+                    )}
+                    label={chip.label}
+                    count={chip.cards.length}
+                  />
+                ))}
+              </div>
+            )}
+            <SelectionFilterBar filters={filters} />
           </div>
         )}
-        <SelectionFilterBar filters={filters} />
       </div>
 
       {/* Trending card strip removed from the picker — early-dogfood
@@ -367,17 +385,95 @@ export function TradeSearchOverlay({
         )}
       </div>
 
-      {/* Touch-only "Done" pill. Desktop closes via the X / Esc — tiles
-          are the primary action so a CTA at the bottom would compete. */}
-      <div className="shrink-0 px-3 pb-3 pt-1 touch-only">
-        <button
-          onClick={handleDismiss}
-          className={`w-full py-2.5 rounded-lg font-semibold text-sm transition-colors ${doneButtonColors[accentColor]}`}
-        >
-          Done
-        </button>
-      </div>
+      {/* Bottom Done removed — the Done button is now in the header
+          (labeled, colored to match the side accent) so it's the
+          single dismiss affordance on mobile and desktop. */}
     </div>
+  );
+}
+
+/**
+ * Collapsed-state summary button for the picker's filter row. Shows
+ * a compact "Overlap (3) · Hyperspace · All sets" style summary so
+ * users can see current filter state without the row taking up
+ * vertical space. Taps toggle the expanded detail surface (source
+ * chips + variant + set) below.
+ */
+function FilterSummaryButton({
+  visibleChips,
+  activeChipIds,
+  selectedVariants,
+  selectedSets,
+  isOpen,
+  onToggle,
+}: {
+  visibleChips: SourceChipConfig[];
+  activeChipIds: readonly string[];
+  selectedVariants: readonly string[];
+  selectedSets: readonly string[];
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const active = visibleChips.filter(c => activeChipIds.includes(c.id));
+  const chipPart = active.length === 0
+    ? 'All cards'
+    : active.length === 1
+      ? `${active[0].label}${active[0].cards.length > 0 ? ` (${active[0].cards.length})` : ''}`
+      : `${active.length} sources`;
+  const variantPart = summarizeSelection(
+    selectedVariants,
+    'Any variant',
+    (v) => variantChipLabel(v as CanonicalVariant),
+  );
+  const setPart = summarizeSelection(selectedSets, 'All sets', setSummaryLabel);
+
+  const anyActive = activeChipIds.length > 0
+    || selectedVariants.length > 0
+    || selectedSets.length > 0;
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={isOpen}
+      className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md border text-[11px] transition-colors ${
+        anyActive
+          ? 'bg-gold/10 border-gold/30 text-gray-200 hover:border-gold/50'
+          : 'bg-space-800/60 border-space-700 text-gray-400 hover:border-gray-500'
+      }`}
+    >
+      <FilterIcon className="w-3.5 h-3.5 shrink-0" />
+      <span className="flex-1 text-left truncate">
+        {chipPart} <span className="text-gray-500">·</span> {variantPart} <span className="text-gray-500">·</span> {setPart}
+      </span>
+      <svg
+        className={`w-3 h-3 shrink-0 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  );
+}
+
+function FilterIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M2 4h12M4 8h8M6 12h4" />
+    </svg>
   );
 }
 
