@@ -13,6 +13,8 @@
  * under tests/fixtures/discord/. See PHASE4_TESTING.md.
  */
 
+import { classifyDiscordError, DiscordRateLimitError } from './discordErrors.js';
+
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 
 export interface DiscordEmbed {
@@ -103,27 +105,70 @@ export interface DiscordBotClient {
   }>;
 }
 
-export function createDiscordBotClient(opts: { token?: string; apiBase?: string } = {}): DiscordBotClient {
+/**
+ * Bot client config knobs — primarily exposed so tests can pin the
+ * sleep function (no real setTimeout in unit tests) + disable the
+ * auto-retry to exercise the 429 path cleanly.
+ */
+export interface CreateBotClientOptions {
+  token?: string;
+  apiBase?: string;
+  /** Max automatic retries on 429. Default 1 — first retry waits
+   *  `Retry-After` then surfaces if it also 429s. Set to 0 to
+   *  disable retrying entirely. */
+  maxRetries?: number;
+  /** Cap the retry sleep so a malicious/buggy Discord response with
+   *  `retry_after: 3600` doesn't hang a serverless function for an
+   *  hour. Default 5s — Vercel's default function timeout is 10s
+   *  for Hobby, so half of that is a sensible ceiling. */
+  maxRetrySleepSeconds?: number;
+  /** Injected sleep for tests. Defaults to setTimeout-based. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injected fetch — tests stub this to drive the retry behaviour
+   *  deterministically. Defaults to the runtime's global fetch. */
+  fetch?: typeof fetch;
+}
+
+export function createDiscordBotClient(opts: CreateBotClientOptions = {}): DiscordBotClient {
   const token = opts.token ?? process.env.DISCORD_BOT_TOKEN;
   if (!token) {
     throw new Error('DISCORD_BOT_TOKEN is not set — bot cannot make API calls');
   }
   const apiBase = opts.apiBase ?? DISCORD_API_BASE;
+  const maxRetries = opts.maxRetries ?? 1;
+  const maxRetrySleepSeconds = opts.maxRetrySleepSeconds ?? 5;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
+  const fetchImpl = opts.fetch ?? globalThis.fetch;
 
   async function request(path: string, init: RequestInit): Promise<Response> {
-    const res = await fetch(`${apiBase}${path}`, {
-      ...init,
-      headers: {
-        ...(init.headers ?? {}),
-        Authorization: `Bot ${token}`,
-        'Content-Type': 'application/json',
-      },
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '<no body>');
-      throw new Error(`Discord bot API ${init.method ?? 'GET'} ${path} failed: ${res.status} ${detail}`);
+    const method = init.method ?? 'GET';
+    let attempt = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const res = await fetchImpl(`${apiBase}${path}`, {
+        ...init,
+        headers: {
+          ...(init.headers ?? {}),
+          Authorization: `Bot ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (res.ok) return res;
+
+      const bodyText = await res.text().catch(() => '');
+      const err = classifyDiscordError(res.status, method, path, bodyText, res.headers);
+
+      // Auto-retry on 429 up to `maxRetries` times. We don't retry
+      // 5xx because most bot writes (POST /messages, PATCH /members)
+      // aren't idempotent and a blind retry can dupe.
+      if (err instanceof DiscordRateLimitError && attempt < maxRetries) {
+        attempt += 1;
+        const sleepSeconds = Math.min(err.retryAfterSeconds, maxRetrySleepSeconds);
+        await sleep(Math.max(0, sleepSeconds * 1000));
+        continue;
+      }
+      throw err;
     }
-    return res;
   }
 
   return {
