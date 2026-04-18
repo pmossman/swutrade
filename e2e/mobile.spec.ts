@@ -28,9 +28,10 @@ test.describe('Mobile viewport sanity', () => {
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
     await expect(page.getByPlaceholder('Search cards...').first()).toBeVisible();
 
-    // Touch-only "Done" button is the mobile dismiss CTA — one per
-    // side's overlay renders, match the first.
-    await expect(page.getByRole('button', { name: /^Done$/ }).first()).toBeVisible();
+    // The mobile dismiss CTA — text reads "Done" but its accessible
+    // name is `aria-label="Close search"` (post-picker-rework), so
+    // role lookups match by that. One per side's overlay renders.
+    await expect(page.getByRole('button', { name: 'Close search' }).first()).toBeVisible();
 
     // The balance banner at the bottom shows in the idle state.
     await page.getByRole('button', { name: 'Close search' }).first().click();

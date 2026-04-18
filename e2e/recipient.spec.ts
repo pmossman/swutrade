@@ -28,10 +28,13 @@ test.describe('Recipient: end-to-end trade from a shared link', () => {
     const addingTo = page.getByText('Adding to', { exact: false }).first();
     await expect(addingTo).toBeVisible({ timeout: 5_000 });
 
-    // "They want" chip is the active source (pressed state).
-    const theyWantChip = page.getByRole('button', { name: /They want \d+/ });
-    await expect(theyWantChip).toBeVisible();
-    await expect(theyWantChip).toHaveAttribute('aria-pressed', 'true');
+    // The picker rework collapsed source chips + filters into one
+    // compact FilterSummaryButton. The active source ("They want")
+    // now surfaces inline in the summary label with its card count,
+    // instead of via aria-pressed on a standalone chip.
+    await expect(
+      page.getByRole('button', { name: /They want \(\d+\)/ }),
+    ).toBeVisible();
 
     // The grid should be scoped to the sender's wants — Luke
     // Skywalker - Hero of Yavin (Hyperspace) is the best-match rep
@@ -68,6 +71,13 @@ test.describe('Source chip is qty-aware', () => {
 
     // Open the Offering search overlay.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
+
+    // Expand the FilterSummaryButton to reach the source-chip row —
+    // post-picker-rework, chips live inside a collapsed detail panel.
+    // Both sides' overlays mount simultaneously (each with its own
+    // summary button in identical "All cards" default state), so
+    // `.first()` pins this click to the Offering side that's open.
+    await page.getByRole('button', { name: /All cards · Any variant · All sets/ }).first().click();
 
     // "My available" chip visible with count 1.
     const mineChip = page.getByRole('button', { name: 'My available 1' });
