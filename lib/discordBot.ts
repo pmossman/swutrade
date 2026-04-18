@@ -65,6 +65,11 @@ export interface DiscordBotClient {
   /** Add a user to a thread. Sends them a "X added you to a thread"
    *  system message + push notification. */
   addThreadMember(threadId: string, userId: string): Promise<void>;
+  /** Delete a channel or thread. Used to clean up an orphan thread
+   *  after `addThreadMember` fails (e.g. recipient isn't a real
+   *  Discord user) — otherwise the parent channel accumulates empty
+   *  threads with just the bot/proposer inside. */
+  deleteChannel(channelId: string): Promise<void>;
 }
 
 export function createDiscordBotClient(opts: { token?: string; apiBase?: string } = {}): DiscordBotClient {
@@ -144,6 +149,10 @@ export function createDiscordBotClient(opts: { token?: string; apiBase?: string 
       await request(`/channels/${threadId}/thread-members/${userId}`, {
         method: 'PUT',
       });
+    },
+
+    async deleteChannel(channelId) {
+      await request(`/channels/${channelId}`, { method: 'DELETE' });
     },
   };
 }

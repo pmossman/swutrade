@@ -23,7 +23,16 @@ interface FakeBotOpts {
   /** Enable the thread path. When set, `createPrivateThread` returns
    *  a fake thread and `postChannelMessage` records the embed send.
    *  Leave unset for legacy DM-path tests. */
-  thread?: { id: string; parentId: string; failCreate?: boolean };
+  thread?: {
+    id: string;
+    parentId: string;
+    /** `createPrivateThread` throws (e.g. bot perms missing). */
+    failCreate?: boolean;
+    /** `addThreadMember` throws (e.g. recipient isn't a real Discord
+     *  user — like the dev-seed fakes). Exercises the orphan-cleanup
+     *  path where the thread was created but add-member failed. */
+    failAddMember?: boolean;
+  };
 }
 
 interface FakeBot extends DiscordBotClient {
@@ -31,6 +40,7 @@ interface FakeBot extends DiscordBotClient {
   threadCalls: Array<{ parentChannelId: string; name: string }>;
   addMemberCalls: Array<{ threadId: string; userId: string }>;
   threadPosts: Array<{ channelId: string; body: DiscordMessageBody }>;
+  deleteCalls: string[];
 }
 
 function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
@@ -38,11 +48,13 @@ function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
   const threadCalls: FakeBot['threadCalls'] = [];
   const addMemberCalls: FakeBot['addMemberCalls'] = [];
   const threadPosts: FakeBot['threadPosts'] = [];
+  const deleteCalls: string[] = [];
   return {
     sendCalls,
     threadCalls,
     addMemberCalls,
     threadPosts,
+    deleteCalls,
     async postChannelMessage(channelId, body) {
       threadPosts.push({ channelId, body });
       return { id: opts.messageId ?? 'thread-msg-1', channel_id: channelId };
@@ -63,6 +75,10 @@ function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
     },
     async addThreadMember(threadId, userId) {
       addMemberCalls.push({ threadId, userId });
+      if (opts.thread?.failAddMember) throw new Error('simulated add-member failure');
+    },
+    async deleteChannel(channelId) {
+      deleteCalls.push(channelId);
     },
   };
 }
@@ -442,6 +458,48 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(row.discordThreadId).toBeNull();
       expect(row.discordDmChannelId).toBe('dm-fallback');
       expect(row.discordDmMessageId).toBe('msg-fallback');
+    });
+
+    it('cleans up the orphan thread when addThreadMember fails (e.g. recipient is a dev-seed fake)', async () => {
+      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
+      const proposer = await createTestUser();
+      const recipient = await createTestUser();
+      fixtures.push(proposer, recipient);
+
+      // Thread creation succeeds, but addThreadMember fails — mirrors
+      // the real "fake Discord ID" case. Must delete the orphan
+      // thread and fall back to DM.
+      const bot = makeFakeBot({
+        thread: { id: 'orphan-thread-1', parentId: 'parent-channel-1', failAddMember: true },
+        channelId: 'dm-cleanup',
+        messageId: 'msg-cleanup',
+      });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+
+      // Thread was created, add-member failed, cleanup ran, DM took over.
+      expect(bot.threadCalls).toHaveLength(1);
+      expect(bot.deleteCalls).toEqual(['orphan-thread-1']);
+      expect(bot.sendCalls).toHaveLength(1);
+
+      const db = getDb();
+      const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, id)).limit(1);
+      expect(row.discordThreadId).toBeNull();
+      expect(row.discordDmChannelId).toBe('dm-cleanup');
     });
 
     it('uses DM path when TRADES_CHANNEL_ID is unset (existing behavior preserved)', async () => {

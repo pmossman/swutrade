@@ -33,6 +33,7 @@ function makeFakeBot(): DiscordBotClient & {
     async getGuild() { throw new Error('unused'); },
     async createPrivateThread() { throw new Error('unused'); },
     async addThreadMember() { throw new Error('unused'); },
+    async deleteChannel() { throw new Error('unused'); },
   };
 }
 

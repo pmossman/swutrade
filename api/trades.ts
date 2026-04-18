@@ -242,12 +242,18 @@ export async function handlePropose(
 
   const tradesChannelId = process.env.TRADES_CHANNEL_ID;
   if (tradesChannelId && proposerFull?.discordId) {
+    let createdThreadId: string | null = null;
     try {
       const thread = await bot.createPrivateThread(tradesChannelId, {
         name: threadName(proposer.handle, recipient.handle, id),
       });
+      createdThreadId = thread.id;
       // Add both traders. Do these in parallel — sequential adds add
       // a noticeable delay to the proposer's "Send" response.
+      // Promise.all fails-fast on the first rejection, which is what
+      // we want: if either add fails (e.g., recipient isn't a real
+      // Discord user, like the dev-seed fakes), we bail and fall
+      // through to DM. The catch below cleans up the partial thread.
       await Promise.all([
         bot.addThreadMember(thread.id, proposerFull.discordId),
         bot.addThreadMember(thread.id, recipient.discordId),
@@ -260,6 +266,16 @@ export async function handlePropose(
       deliveryStatus = 'delivered';
     } catch (err) {
       console.error('handlePropose: thread flow failed, falling back to DM', err);
+      // Clean up the orphan thread so the parent channel doesn't
+      // accumulate empty "proposer only" threads. Best-effort —
+      // if the delete itself fails, we've already logged the
+      // original thread-flow error so debugging the chain is
+      // traceable; swallow this cleanup error to avoid masking it.
+      if (createdThreadId) {
+        bot.deleteChannel(createdThreadId).catch(cleanupErr => {
+          console.error('handlePropose: orphan thread cleanup failed', cleanupErr);
+        });
+      }
     }
   }
 
