@@ -232,12 +232,20 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
       handle = `${handle}-${Math.random().toString(36).slice(2, 6)}`;
     }
 
+    // Public-by-default for new users. Beta feedback: private-by-
+    // default made every feature feel walled and required newcomers
+    // to hunt through Settings just to appear in community queries.
+    // Safer primitive for a discovery-oriented trading app. Existing
+    // users' settings are preserved (they're not re-migrated).
     await db.insert(users).values({
       id: discordUser.id,
       discordId: discordUser.id,
       username: displayName,
       handle,
       avatarUrl,
+      profileVisibility: 'public',
+      wantsPublic: true,
+      availablePublic: true,
     });
   }
 

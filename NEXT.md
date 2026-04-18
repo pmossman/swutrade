@@ -129,6 +129,17 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Public defaults + auto-enroll + clickable logo (beta feedback)
+Beta users were bouncing off the private-by-default wall: new accounts had to hunt through Settings just to appear in community queries, and the per-guild enrollment toggle was a second opt-in wall on top. Three related fixes:
+
+- **New-user defaults** (api/auth.ts): `profileVisibility: 'public'`, `wantsPublic: true`, `availablePublic: true` set explicitly on user insert. Existing users' settings are preserved — only new accounts see the change.
+- **Auto-enroll on bot-installed guilds** (lib/guildSync.ts): when a new `user_guild_memberships` row is inserted and that guild is in `bot_installed_guilds`, set `enrolled` / `includeInRollups` / `appearInQueries` all to `true`. Existing rows keep the user's prior choice — the change is additive for new joins, not a retroactive flip of explicit opt-outs.
+- **Clickable SWUTrade logo** (PageHeader.tsx): wordmark becomes a link to `/`, so tapping it from any view returns to home. Full navigation (not SPA pushState) so sub-view params like `?propose=` drop off.
+
+New test: `guild-sync.test.ts` pins "auto-enrolls new memberships in guilds where the bot is installed" — `g1` has the bot (all three consent axes flip to true), `g2` doesn't (stays default off).
+
+Also deleted `e2e/trending.auth.spec.ts` — the picker's trending card strip was removed in the prior slice and the spec was asserting UI that no longer exists.
+
 ### 2026-04-17 — Tabbed trade view + trending removal (beta feedback)
 Beta users asked for a single-focus trade layout instead of always-both-sides. Added a new per-device `tradeViewMode` toggle (localStorage, split default) and a `TradeTabBar` component that replaces the two-panel layout with a single-tab view when active. Each tab shows its side's count + running $ total so the hidden side isn't a mystery. `TradeSide` grows a `headerless` prop so the in-panel "OFFERING TOTAL $X" strip doesn't duplicate the tab bar's own labeling — tabs sit flush on top of the single panel in tabbed mode. Toggle icon sits in the top action cluster, swaps between split/tabbed glyphs to reflect current state.
 

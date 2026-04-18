@@ -4,7 +4,7 @@ import { eq, and } from 'drizzle-orm';
 import { syncGuildMemberships } from '../../lib/guildSync.js';
 import { getDb } from '../../lib/db.js';
 import { userGuildMemberships } from '../../lib/schema.js';
-import { createTestUser, createFakeDiscordClient, createGuildMembership } from './helpers.js';
+import { createTestUser, createFakeDiscordClient, createGuildMembership, installBotInGuild } from './helpers.js';
 
 describeWithDb('syncGuildMemberships', () => {
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
@@ -62,6 +62,39 @@ describeWithDb('syncGuildMemberships', () => {
       const member = rows.find(r => r.guildId === 'member-guild');
       expect(admin?.canManage).toBe(true);
       expect(member?.canManage).toBe(false);
+    });
+
+    it('auto-enrolls new memberships in guilds where the bot is installed', async () => {
+      const user = await createTestUser();
+      fixtures.push(user);
+
+      // g1 has the bot; g2 does not. New user is a member of both.
+      cleanups.push(await installBotInGuild('g1', { guildName: 'Bot Guild' }));
+
+      const discord = createFakeDiscordClient({
+        'tok': [
+          { id: 'g1', name: 'Bot Guild', icon: null, permissions: '0' },
+          { id: 'g2', name: 'No-Bot Guild', icon: null, permissions: '0' },
+        ],
+      });
+
+      await syncGuildMemberships(user.id, 'tok', discord);
+
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(userGuildMemberships)
+        .where(eq(userGuildMemberships.userId, user.id));
+      const g1 = rows.find(r => r.guildId === 'g1')!;
+      const g2 = rows.find(r => r.guildId === 'g2')!;
+      // Bot-installed guild: enrolled across all three consent axes.
+      expect(g1.enrolled).toBe(true);
+      expect(g1.appearInQueries).toBe(true);
+      expect(g1.includeInRollups).toBe(true);
+      // Non-bot guild: stays off (no point enrolling if features need the bot).
+      expect(g2.enrolled).toBe(false);
+      expect(g2.appearInQueries).toBe(false);
+      expect(g2.includeInRollups).toBe(false);
     });
 
     it('preserves enrolled + bundle flags across re-syncs', async () => {

@@ -27,18 +27,29 @@ export function PageHeader({ onBack, kicker, children }: PageHeaderProps) {
   return (
     <header>
       <div className="flex items-center gap-3">
-        <h1 className="relative flex items-center select-none shrink-0">
-          {/* Logo sits flush against the "S" — the tiny ml-px gap matches
-              the inter-letter tracking so it reads as a glyph in the
-              word, not a separate icon. */}
-          <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
-          <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
-            <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
-          </span>
-          {/* Beta tag as an absolute-positioned kicker beneath the
-              wordmark — text-only, hugs the wordmark baseline so it
-              doesn't extend into the content below. */}
-          <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
+        <h1 className="shrink-0">
+          {/* Logo + wordmark wrapped in an anchor to `/` — the standard
+              "click the logo to go home" affordance. Uses a raw <a> so
+              it's a full navigation (drops any sub-view params like
+              ?propose= or ?community=) rather than an SPA-internal link
+              that might preserve state we don't want. */}
+          <a
+            href="/"
+            aria-label="SWUTrade home"
+            className="relative flex items-center select-none rounded-md hover:opacity-90 transition-opacity"
+          >
+            {/* Logo sits flush against the "S" — the tiny ml-px gap matches
+                the inter-letter tracking so it reads as a glyph in the
+                word, not a separate icon. */}
+            <Logo className="w-6 h-6 sm:w-7 sm:h-7 shrink-0" />
+            <span className="ml-px text-sm sm:text-lg font-bold tracking-[0.1em] sm:tracking-[0.12em] leading-none">
+              <span className="text-gray-200 uppercase">SWU</span><span className="text-gold uppercase">Trade</span>
+            </span>
+            {/* Beta tag as an absolute-positioned kicker beneath the
+                wordmark — text-only, hugs the wordmark baseline so it
+                doesn't extend into the content below. */}
+            <BetaBadge className="absolute bottom-0 left-7 sm:left-8 translate-y-[calc(100%-2px)]" />
+          </a>
         </h1>
         {(onBack || children) && (
           <div className="ml-auto flex items-center gap-1.5 md:gap-2">

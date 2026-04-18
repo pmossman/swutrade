@@ -1,6 +1,6 @@
-import { and, eq, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { getDb } from './db.js';
-import { userGuildMemberships } from './schema.js';
+import { userGuildMemberships, botInstalledGuilds } from './schema.js';
 import { createDiscordClient, type DiscordClient } from './discordClient.js';
 
 const MANAGE_GUILD = 0x20n;
@@ -47,11 +47,27 @@ export async function syncGuildMemberships(
   const now = new Date();
   const guildIds = guilds.map(g => g.id);
 
+  // Pre-fetch the set of guilds where SWUTrade's bot is installed.
+  // New memberships in those guilds auto-enroll (enrolled + appear
+  // in queries + include in rollups), so new users don't have to
+  // dig through Settings to access the features the bot enables.
+  // Existing memberships preserve the user's prior choice — beta
+  // feedback was specifically "new users bounce off the opt-in
+  // wall," not "override existing preferences."
+  const botGuildRows = guildIds.length > 0
+    ? await db
+        .select({ guildId: botInstalledGuilds.guildId })
+        .from(botInstalledGuilds)
+        .where(inArray(botInstalledGuilds.guildId, guildIds))
+    : [];
+  const botInstalledIds = new Set(botGuildRows.map(r => r.guildId));
+
   // Upsert every current guild. onConflictDoUpdate preserves consent
   // flags (enrolled / includeInRollups / appearInQueries) by omitting
   // them from the SET clause.
   for (const g of guilds) {
     const canManage = g.permissions ? (BigInt(g.permissions) & MANAGE_GUILD) !== 0n : false;
+    const autoEnroll = botInstalledIds.has(g.id);
     await db
       .insert(userGuildMemberships)
       .values({
@@ -61,9 +77,9 @@ export async function syncGuildMemberships(
         guildName: g.name,
         guildIcon: g.icon,
         canManage,
-        enrolled: false,
-        includeInRollups: false,
-        appearInQueries: false,
+        enrolled: autoEnroll,
+        includeInRollups: autoEnroll,
+        appearInQueries: autoEnroll,
         joinedAt: now,
         lastSeenAt: now,
       })
