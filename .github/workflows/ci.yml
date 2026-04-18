@@ -40,7 +40,7 @@ jobs:
           BODY=$(jq -cn \
             --arg b "$BRANCH" --arg s "$SHORT" --arg cu "$COMMIT_URL" \
             --arg m "$FIRST_LINE" --arg ru "$RUN_URL" \
-            '{ content: ":rocket: **\($b)** deploying [`\($s)`](<\($cu)>) · \($m)\n[CI run](<\($ru)>)" }')
+            '{ content: "🚀 **\($b)** deploying [`\($s)`](<\($cu)>) · \($m)\n[CI run](<\($ru)>)" }')
           RESP=$(curl -sS -H 'Content-Type: application/json' -d "$BODY" "${WEBHOOK_URL}?wait=true")
           MSG_ID=$(echo "$RESP" | jq -r '.id // empty')
           if [ -z "$MSG_ID" ]; then
@@ -274,7 +274,7 @@ jobs:
           BODY=$(jq -cn \
             --arg b "$BRANCH" --arg s "$SHORT" --arg cu "$COMMIT_URL" \
             --arg m "$FIRST_LINE" --arg ru "$RUN_URL" --arg pu "$PREVIEW_URL" \
-            '{ content: ":large_green_circle: **\($b)** live [`\($s)`](<\($cu)>) · \($m)\n[preview](<\($pu)>) · [CI run](<\($ru)>) _(still verifying)_" }')
+            '{ content: "🟢 **\($b)** live [`\($s)`](<\($cu)>) · \($m)\n[preview](<\($pu)>) · [CI run](<\($ru)>) — still verifying" }')
           HTTP=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X PATCH \
             -H 'Content-Type: application/json' -d "$BODY" \
             "${WEBHOOK_URL}/messages/${MSG_ID}")
@@ -323,20 +323,23 @@ jobs:
             esac
           done
           if [ "$OVERALL" = "success" ]; then
-            PREFIX=":white_check_mark:"
+            PREFIX="✅"
             VERB="verified"
           else
-            PREFIX=":x:"
+            PREFIX="❌"
             VERB="CI failed"
           fi
-          # Emoji per job for at-a-glance breakdown.
+          # Emoji per job for at-a-glance breakdown. Unicode chars
+          # directly — shortcode names like :white_check_mark: contain
+          # underscores that Discord's markdown parser treats as italic
+          # markers, breaking the emoji substitution.
           emoji_for() {
             case "$1" in
-              success) echo ":white_check_mark:";;
-              failure) echo ":x:";;
-              cancelled) echo ":no_entry_sign:";;
-              skipped) echo ":fast_forward:";;
-              *) echo ":question:";;
+              success) echo "✅";;
+              failure) echo "❌";;
+              cancelled) echo "🚫";;
+              skipped) echo "⏭";;
+              *) echo "❓";;
             esac
           }
           JOB_LINE="$(emoji_for "$CHECK_RESULT") check · $(emoji_for "$ANON_RESULT") anon e2e · $(emoji_for "$DEPLOY_RESULT") deploy · $(emoji_for "$AUTH_RESULT") auth e2e"
