@@ -68,11 +68,20 @@ test.describe('Community source chip', () => {
     }));
 
     await page.goto('/');
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    // Header consolidated — username lives behind the account menu
+    // now, but all we actually care about is "signed in" so assert
+    // the account menu trigger exists.
+    await expect(page.getByRole('button', { name: 'Account menu' }))
+      .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
     // Open the Offering picker.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
+
+    // Filters are now collapsed behind a summary button — click to
+    // expand and reveal the source chips (Community wants / My
+    // available / etc.).
+    await page.getByRole('button', { name: /Any variant/i }).click();
 
     // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(
@@ -93,9 +102,12 @@ test.describe('Community source chip', () => {
     }));
 
     await page.goto('/');
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' }))
+      .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
+    // Expand filters (see above).
+    await page.getByRole('button', { name: /Any variant/i }).click();
 
     await expect(
       page.getByRole('button', { name: /Community wants/ }),

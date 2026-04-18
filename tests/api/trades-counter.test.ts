@@ -62,6 +62,8 @@ describeWithDb('POST /api/trades/counter', () => {
         return { id: 'counter-msg-1', channel_id: 'dm-counter' };
       },
       async getGuild() { throw new Error('unused'); },
+      async createPrivateThread() { throw new Error('unused'); },
+      async addThreadMember() { throw new Error('unused'); },
     };
   }
 

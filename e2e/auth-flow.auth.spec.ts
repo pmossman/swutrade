@@ -18,21 +18,30 @@ test.describe('Authenticated state', () => {
 
   test('header shows username when signed in', async ({ page }) => {
     await page.goto('/');
+    // Header was consolidated: the username no longer renders inline in
+    // the top bar (it used to sit beside the avatar on desktop-width
+    // viewports). It lives inside the account-menu popover now, so
+    // verifying the signed-in state means opening the menu.
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Account menu' }).click();
     await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
   });
 
   test('signing out clears the session', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // New account-menu flow: tap the avatar pill opens a popover
     // instead of logging out immediately (the old behavior was a
     // papercut — one accidental tap killed the session). Sign out
-    // lives inside the popover.
+    // lives inside the popover, as does the username identity line.
     await page.getByRole('button', { name: 'Account menu' }).click();
+    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
     await page.getByRole('button', { name: 'Sign out' }).click();
 
     // Logout does a fetch then clears React state — may take a moment.
-    await expect(page.getByRole('button', { name: /Sign in/i })).toBeVisible({ timeout: 10_000 });
+    // After sign-out the account menu button is still "Account menu"
+    // (signed-out anon-avatar variant uses the same label).
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
   });
 });

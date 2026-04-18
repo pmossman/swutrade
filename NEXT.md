@@ -129,6 +129,20 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — Private threads for trade proposals (propose path, feature-gated)
+Implements the research doc's recommendation: when `TRADES_CHANNEL_ID` is set, a new proposal lands as a **private thread** inside that parent channel, with both traders auto-added. Each trader gets a push-style notification on add and can chat with the other directly in the thread. Falls back to the existing per-user DM when thread creation fails (user not in guild, bot perms missing, or env unset).
+
+**Changes:**
+- Schema: `discord_thread_id` + `discord_thread_parent_channel_id` columns on `trade_proposals` (migration `0009_steady_ultimates.sql`, applied to Neon).
+- `lib/discordBot.ts`: `createPrivateThread(parentChannelId, {name, autoArchive})` + `addThreadMember(threadId, userId)` methods. `type: 12 (PRIVATE_THREAD)`, `invitable: false`, auto-archive default 1440 (24h).
+- `api/trades.ts` `handlePropose`: delivery cascade — thread first when env is set, DM fallback on any failure. Thread id doubles as `channel_id` for downstream PATCH-message edits (Accept/Decline path unchanged).
+- Thread naming: `trade-{proposer}-{recipient}-{shortId}` — truncated to Discord's 100-char cap.
+- Tests: three new cases in `trades-propose.test.ts` covering happy-path thread flow, fallback-on-failure, and env-unset legacy path. `makeFakeBot` fakes updated across all four test files to satisfy the expanded interface.
+
+**E2E spec fixes from prior slices' header consolidation:** auth-flow, community, matchmaker, migration, sync all used `page.getByText(user.username)` as the signed-in gate — moved to `getByRole('button', { name: 'Account menu' })` since the username now lives inside the popover. Community spec also needed to click the filter-summary button to expand the collapsed chip row. New `e2e/helpers/waitForSignedIn.ts` helper for future specs.
+
+**Counter + accept/decline refinements are NOT in this slice** — they still use the existing edit-message path, which works because thread ids are interchangeable with channel ids in Discord's model. A follow-up slice will add thread-aware counter logic + skip the separate proposer-notification DM when the thread flow was used.
+
 ### 2026-04-17 — Send-proposal confirm flow + Discord multi-user research
 Two slices delivered in parallel via subagents:
 

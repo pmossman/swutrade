@@ -64,6 +64,13 @@
       "when": 1776460140518,
       "tag": "0008_blushing_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1776492130299,
+      "tag": "0009_steady_ultimates",
+      "breakpoints": true
     }
   ]
 }

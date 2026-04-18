@@ -96,8 +96,9 @@ test.describe('First sign-in migration flow', () => {
     await signIn(context, user);
     await page.goto('/');
 
-    // Wait for auth to load — should see username, NOT the migration dialog.
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 15_000 });
+    // Wait for auth to load — account menu button is the stable
+    // signed-in signal now (username lives inside the popover).
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 15_000 });
     // Explicitly verify dialog does NOT appear.
     await page.waitForTimeout(2000);
     await expect(page.getByText('Import your lists?')).not.toBeVisible();

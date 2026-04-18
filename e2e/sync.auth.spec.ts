@@ -18,7 +18,7 @@ test.describe('Server sync', () => {
 
   test('wants survive localStorage wipe (restored from server)', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Open the drawer and add a want via the picker.
     await openMyLists(page);
@@ -59,7 +59,7 @@ test.describe('Server sync', () => {
       localStorage.removeItem('swu.available.v1');
     });
     await page.reload();
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Reopen drawer — the want should still be there.
     await openMyLists(page);
@@ -72,7 +72,7 @@ test.describe('Server sync', () => {
 
   test('available items sync to server and back', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Add an available item via the drawer.
     await openMyLists(page);

@@ -31,6 +31,8 @@ function makeFakeBot(): DiscordBotClient & {
       return { id: 'notify-msg-1', channel_id: 'dm-fake' };
     },
     async getGuild() { throw new Error('unused'); },
+    async createPrivateThread() { throw new Error('unused'); },
+    async addThreadMember() { throw new Error('unused'); },
   };
 }
 

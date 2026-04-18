@@ -205,29 +205,73 @@ export async function handlePropose(
     deliveryStatus: 'pending',
   });
 
-  // Fire the DM. Errors never 5xx the propose call — the row is
-  // already persisted and the proposer should still get a 201.
-  // The client reads delivery_status to decide whether to show a
-  // "saved but couldn't DM" fallback.
+  // Get proposer's discordId too — thread flow adds both users as
+  // members, not just the recipient.
+  const [proposerFull] = await db
+    .select({ discordId: users.discordId })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+
+  const bot = deps.bot ?? createDiscordBotClient();
+  const payload = buildProposalMessage({
+    tradeId: id,
+    proposerHandle: proposer.handle,
+    proposerUsername: proposer.username,
+    offeringCards,
+    receivingCards,
+    message,
+  });
+
+  // Deliver the proposal. Errors never 5xx — the row is already
+  // persisted and the proposer should still get a 201. The client
+  // reads delivery_status to decide whether to show a "saved but
+  // couldn't deliver" fallback.
+  //
+  // Delivery path resolves in priority order:
+  //   1. Thread flow (preferred) — private thread in the configured
+  //      TRADES_CHANNEL_ID, both users added. They can chat directly.
+  //   2. DM fallback — per-user DM (legacy behavior). Used when
+  //      thread creation fails (user not in guild, bot perms missing,
+  //      or env unset).
   let deliveryStatus: 'delivered' | 'failed' = 'failed';
   let channelId: string | null = null;
   let messageId: string | null = null;
-  try {
-    const bot = deps.bot ?? createDiscordBotClient();
-    const payload = buildProposalMessage({
-      tradeId: id,
-      proposerHandle: proposer.handle,
-      proposerUsername: proposer.username,
-      offeringCards,
-      receivingCards,
-      message,
-    });
-    const posted = await bot.sendDirectMessage(recipient.discordId, payload);
-    channelId = posted.channel_id;
-    messageId = posted.id;
-    deliveryStatus = 'delivered';
-  } catch (err) {
-    console.error('handlePropose: DM send failed', err);
+  let threadId: string | null = null;
+  let threadParentChannelId: string | null = null;
+
+  const tradesChannelId = process.env.TRADES_CHANNEL_ID;
+  if (tradesChannelId && proposerFull?.discordId) {
+    try {
+      const thread = await bot.createPrivateThread(tradesChannelId, {
+        name: threadName(proposer.handle, recipient.handle, id),
+      });
+      // Add both traders. Do these in parallel — sequential adds add
+      // a noticeable delay to the proposer's "Send" response.
+      await Promise.all([
+        bot.addThreadMember(thread.id, proposerFull.discordId),
+        bot.addThreadMember(thread.id, recipient.discordId),
+      ]);
+      const posted = await bot.postChannelMessage(thread.id, payload);
+      threadId = thread.id;
+      threadParentChannelId = thread.parent_id ?? tradesChannelId;
+      channelId = thread.id;
+      messageId = posted.id;
+      deliveryStatus = 'delivered';
+    } catch (err) {
+      console.error('handlePropose: thread flow failed, falling back to DM', err);
+    }
+  }
+
+  if (deliveryStatus === 'failed') {
+    try {
+      const posted = await bot.sendDirectMessage(recipient.discordId, payload);
+      channelId = posted.channel_id;
+      messageId = posted.id;
+      deliveryStatus = 'delivered';
+    } catch (err) {
+      console.error('handlePropose: DM send failed', err);
+    }
   }
 
   await db.update(tradeProposals)
@@ -235,11 +279,29 @@ export async function handlePropose(
       deliveryStatus,
       discordDmChannelId: channelId,
       discordDmMessageId: messageId,
+      discordThreadId: threadId,
+      discordThreadParentChannelId: threadParentChannelId,
       updatedAt: new Date(),
     })
     .where(eq(tradeProposals.id, id));
 
   return res.status(201).json({ id, deliveryStatus });
+}
+
+/**
+ * Thread names live in Discord's sidebar alongside other channels so
+ * a human-readable form beats the trade UUID. Format:
+ * `trade-<proposer>-<recipient>-<short_id>` — the short id is the
+ * first 4 chars of the UUID, enough to disambiguate when the same
+ * two users have multiple open threads.
+ */
+function threadName(proposerHandle: string, recipientHandle: string, tradeId: string): string {
+  const shortId = tradeId.slice(0, 4);
+  // Discord thread names cap at 100 chars. Truncate defensively —
+  // real handles are 32 chars max per our schema, so this is usually
+  // safe but handles could grow.
+  const raw = `trade-${proposerHandle}-${recipientHandle}-${shortId}`;
+  return raw.slice(0, 100);
 }
 
 // --- get (Phase 4c slice 4 — for CounterBar to seed its composer) -----------

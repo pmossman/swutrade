@@ -16,17 +16,37 @@ import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.
  *  assert both the payload shape AND the delivery semantics
  *  (delivery_status + persisted channel/message ids) without
  *  touching real Discord. */
-function makeFakeBot(opts: {
+interface FakeBotOpts {
   shouldFailSend?: boolean;
   channelId?: string;
   messageId?: string;
-} = {}): DiscordBotClient & {
+  /** Enable the thread path. When set, `createPrivateThread` returns
+   *  a fake thread and `postChannelMessage` records the embed send.
+   *  Leave unset for legacy DM-path tests. */
+  thread?: { id: string; parentId: string; failCreate?: boolean };
+}
+
+interface FakeBot extends DiscordBotClient {
   sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
-} {
-  const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
+  threadCalls: Array<{ parentChannelId: string; name: string }>;
+  addMemberCalls: Array<{ threadId: string; userId: string }>;
+  threadPosts: Array<{ channelId: string; body: DiscordMessageBody }>;
+}
+
+function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
+  const sendCalls: FakeBot['sendCalls'] = [];
+  const threadCalls: FakeBot['threadCalls'] = [];
+  const addMemberCalls: FakeBot['addMemberCalls'] = [];
+  const threadPosts: FakeBot['threadPosts'] = [];
   return {
     sendCalls,
-    async postChannelMessage() { throw new Error('unused in propose tests'); },
+    threadCalls,
+    addMemberCalls,
+    threadPosts,
+    async postChannelMessage(channelId, body) {
+      threadPosts.push({ channelId, body });
+      return { id: opts.messageId ?? 'thread-msg-1', channel_id: channelId };
+    },
     async editChannelMessage() { /* not exercised here */ },
     async createDmChannel() { return { id: opts.channelId ?? 'dm-1' }; },
     async sendDirectMessage(userId, body) {
@@ -35,6 +55,15 @@ function makeFakeBot(opts: {
       return { id: opts.messageId ?? 'msg-1', channel_id: opts.channelId ?? 'dm-1' };
     },
     async getGuild() { throw new Error('unused in propose tests'); },
+    async createPrivateThread(parentChannelId, threadOpts) {
+      threadCalls.push({ parentChannelId, name: threadOpts.name });
+      if (opts.thread?.failCreate) throw new Error('simulated thread create failure');
+      if (!opts.thread) throw new Error('thread flow not opted-in; set opts.thread');
+      return { id: opts.thread.id, parent_id: opts.thread.parentId };
+    },
+    async addThreadMember(threadId, userId) {
+      addMemberCalls.push({ threadId, userId });
+    },
   };
 }
 
@@ -310,6 +339,143 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(row.deliveryStatus).toBe('failed');
       expect(row.discordDmChannelId).toBeNull();
       expect(row.discordDmMessageId).toBeNull();
+    });
+  });
+
+  describe('Discord thread delivery (TRADES_CHANNEL_ID set)', () => {
+    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
+    afterEach(() => {
+      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
+      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
+    });
+
+    it('creates a private thread, adds both users, posts the embed, and stores thread ids', async () => {
+      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
+      const proposer = await createTestUser();
+      const recipient = await createTestUser();
+      fixtures.push(proposer, recipient);
+
+      const bot = makeFakeBot({ thread: { id: 'thread-abc', parentId: 'parent-channel-1' } });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [snapshot('p-2')],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      expect(res._json).toMatchObject({ deliveryStatus: 'delivered' });
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+
+      // Thread was created in the configured parent channel.
+      expect(bot.threadCalls).toHaveLength(1);
+      expect(bot.threadCalls[0].parentChannelId).toBe('parent-channel-1');
+      expect(bot.threadCalls[0].name).toContain('trade-');
+
+      // Both users added.
+      const addedIds = bot.addMemberCalls.map(c => c.userId).sort();
+      expect(addedIds).toEqual([proposer.id, recipient.id].sort());
+
+      // Embed posted inside the thread (channelId === thread id).
+      expect(bot.threadPosts).toHaveLength(1);
+      expect(bot.threadPosts[0].channelId).toBe('thread-abc');
+      expect(bot.threadPosts[0].body.embeds?.[0].title).toContain('Trade proposal from');
+
+      // DM path NOT taken.
+      expect(bot.sendCalls).toHaveLength(0);
+
+      // Row reflects thread delivery.
+      const db = getDb();
+      const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, id)).limit(1);
+      expect(row.deliveryStatus).toBe('delivered');
+      expect(row.discordThreadId).toBe('thread-abc');
+      expect(row.discordThreadParentChannelId).toBe('parent-channel-1');
+      // Channel + message ids reflect the thread (thread id doubles as the
+      // channel id for PATCH message edits on the Accept/Decline path).
+      expect(row.discordDmChannelId).toBe('thread-abc');
+      expect(row.discordDmMessageId).toBe('thread-msg-1');
+    });
+
+    it('falls back to DM when thread creation fails (user not in guild, bot perms missing, etc.)', async () => {
+      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
+      const proposer = await createTestUser();
+      const recipient = await createTestUser();
+      fixtures.push(proposer, recipient);
+
+      const bot = makeFakeBot({
+        thread: { id: 'ignored', parentId: 'ignored', failCreate: true },
+        channelId: 'dm-fallback',
+        messageId: 'msg-fallback',
+      });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      expect(res._json).toMatchObject({ deliveryStatus: 'delivered' });
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+
+      // Thread attempted, failed → DM was used.
+      expect(bot.threadCalls).toHaveLength(1);
+      expect(bot.sendCalls).toHaveLength(1);
+      expect(bot.sendCalls[0].userId).toBe(recipient.id);
+
+      const db = getDb();
+      const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, id)).limit(1);
+      expect(row.discordThreadId).toBeNull();
+      expect(row.discordDmChannelId).toBe('dm-fallback');
+      expect(row.discordDmMessageId).toBe('msg-fallback');
+    });
+
+    it('uses DM path when TRADES_CHANNEL_ID is unset (existing behavior preserved)', async () => {
+      delete process.env.TRADES_CHANNEL_ID;
+      const proposer = await createTestUser();
+      const recipient = await createTestUser();
+      fixtures.push(proposer, recipient);
+
+      const bot = makeFakeBot({ channelId: 'dm-legacy', messageId: 'msg-legacy' });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+
+      expect(res._status).toBe(201);
+      const id = (res._json as { id: string }).id;
+      createdProposalIds.push(id);
+
+      // No thread attempted, DM succeeded.
+      expect(bot.threadCalls).toHaveLength(0);
+      expect(bot.sendCalls).toHaveLength(1);
+
+      const db = getDb();
+      const [row] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, id)).limit(1);
+      expect(row.discordThreadId).toBeNull();
+      expect(row.discordDmChannelId).toBe('dm-legacy');
     });
   });
 

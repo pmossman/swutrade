@@ -54,6 +54,17 @@ export interface DiscordBotClient {
   /** Look up basic guild metadata — used by the install webhook to
    *  cache guild_name / guild_icon without a second round-trip. */
   getGuild(guildId: string): Promise<{ id: string; name: string; icon: string | null }>;
+  /** Create a private thread in the given parent channel. Used for the
+   *  multi-user trade-conversation flow — both traders get added via
+   *  `addThreadMember` and chat directly in the thread. `autoArchive`
+   *  is minutes: 60, 1440 (1d), 4320 (3d), or 10080 (7d). */
+  createPrivateThread(
+    parentChannelId: string,
+    opts: { name: string; autoArchive?: 60 | 1440 | 4320 | 10080 },
+  ): Promise<{ id: string; parent_id: string }>;
+  /** Add a user to a thread. Sends them a "X added you to a thread"
+   *  system message + push notification. */
+  addThreadMember(threadId: string, userId: string): Promise<void>;
 }
 
 export function createDiscordBotClient(opts: { token?: string; apiBase?: string } = {}): DiscordBotClient {
@@ -111,6 +122,28 @@ export function createDiscordBotClient(opts: { token?: string; apiBase?: string 
     async getGuild(guildId) {
       const res = await request(`/guilds/${guildId}`, { method: 'GET' });
       return res.json() as Promise<{ id: string; name: string; icon: string | null }>;
+    },
+
+    async createPrivateThread(parentChannelId, opts) {
+      const res = await request(`/channels/${parentChannelId}/threads`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: opts.name,
+          // type 12 = PRIVATE_THREAD. Requires CREATE_PRIVATE_THREADS
+          // on the parent channel. Invisible to members who aren't
+          // explicitly added via addThreadMember.
+          type: 12,
+          auto_archive_duration: opts.autoArchive ?? 1440,
+          invitable: false,
+        }),
+      });
+      return res.json() as Promise<{ id: string; parent_id: string }>;
+    },
+
+    async addThreadMember(threadId, userId) {
+      await request(`/channels/${threadId}/thread-members/${userId}`, {
+        method: 'PUT',
+      });
     },
   };
 }

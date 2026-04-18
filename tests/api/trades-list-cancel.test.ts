@@ -33,6 +33,8 @@ function makeFakeBot(): DiscordBotClient & {
     async createDmChannel() { return { id: 'dm-cancel' }; },
     async sendDirectMessage() { throw new Error('unused'); },
     async getGuild() { throw new Error('unused'); },
+    async createPrivateThread() { throw new Error('unused'); },
+    async addThreadMember() { throw new Error('unused'); },
   };
 }
 

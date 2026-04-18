@@ -47,13 +47,13 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
 
   test('banner does not appear without ?from= context', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Trade preview|Checking what you could trade/)).toHaveCount(0);
   });
 
   test('banner surfaces a preview with ?from=<handle> on an empty trade', async ({ page }) => {
     await page.goto(`/?from=${sender.handle}`);
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
     // Viewer has empty lists; sender has 1 want + 1 available. The
@@ -71,7 +71,7 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
     }));
 
     await page.goto(`/?from=${sender.handle}&autoBalance=1`);
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
     // Either the match auto-applied ("Loaded N cards...") or the
@@ -87,7 +87,7 @@ test.describe('Auto-balance banner (context-aware matchmaker)', () => {
 
   test('dismissing the banner hides it for the session', async ({ page }) => {
     await page.goto(`/?from=${sender.handle}`);
-    await expect(page.getByText(viewer.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Banner in any post-fetch state is fine for this test — we
     // just want to verify the dismiss interaction.

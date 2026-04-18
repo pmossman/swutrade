@@ -226,6 +226,15 @@ export const tradeProposals = pgTable(
       .notNull(),
     discordDmChannelId: text('discord_dm_channel_id'),
     discordDmMessageId: text('discord_dm_message_id'),
+    // Private-thread mode (preferred when TRADES_CHANNEL_ID env is set).
+    // When a proposal lands, the bot creates a private thread in the
+    // configured parent channel, adds both users, and posts the embed
+    // there instead of per-user DMs. Both users get a push-style
+    // notification on add, and both can chat in-thread. DM columns
+    // above remain the fallback when thread creation fails (user not
+    // in the guild, perms missing, etc.).
+    discordThreadId: text('discord_thread_id'),
+    discordThreadParentChannelId: text('discord_thread_parent_channel_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     respondedAt: timestamp('responded_at', { withTimezone: true }),
