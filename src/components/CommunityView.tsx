@@ -20,7 +20,15 @@ interface CommunityViewProps {
   onClose: () => void;
 }
 
-type SortMode = 'overlap' | 'offer' | 'receive' | 'alpha';
+type SortMode = 'overlap' | 'offer' | 'receive' | 'alpha' | 'configured';
+
+/** True when at least one peer-scoped pref has a non-null override
+ *  value on this member. Generic over registered peer prefs today
+ *  (communicationPref is the only one); extra keys flow through
+ *  without changes. */
+function hasAnyPeerOverride(m: CommunityMember): boolean {
+  return Object.values(m.peerPrefs.override).some(v => v !== null);
+}
 
 interface MemberWithOverlap extends CommunityMember {
   iCanOfferThem: number;
@@ -94,12 +102,21 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
   }, [members, viewerAvailableFamilies, viewerWantFamilies, byProductId]);
 
   const sorted = useMemo(() => {
-    const copy = [...enriched];
+    // 'configured' is a filter-AND-sort mode: narrow to rows with at
+    // least one non-null peer override, then fall back to overlap
+    // ordering. Intended for "did I set a pref for alice already?"
+    // scans — there's no equivalent on the other tabs.
+    const source = sort === 'configured'
+      ? enriched.filter(hasAnyPeerOverride)
+      : enriched;
+    const copy = [...source];
     copy.sort((a, b) => {
       switch (sort) {
         case 'offer': return b.iCanOfferThem - a.iCanOfferThem || b.totalOverlap - a.totalOverlap;
         case 'receive': return b.theyCanOfferMe - a.theyCanOfferMe || b.totalOverlap - a.totalOverlap;
         case 'alpha': return a.handle.localeCompare(b.handle);
+        case 'configured':
+          return b.totalOverlap - a.totalOverlap || a.handle.localeCompare(b.handle);
         case 'overlap':
         default:
           return b.totalOverlap - a.totalOverlap || a.handle.localeCompare(b.handle);
@@ -134,11 +151,20 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
           {status === 'ready' && members.length > 0 && (
             <>
               <SortTabs sort={sort} onChange={setSort} />
-              <ul className="flex flex-col gap-3">
-                {sorted.map(m => (
-                  <MemberRow key={m.userId} member={m} setPeerPref={setPeerPref} />
-                ))}
-              </ul>
+              {sort === 'configured' && sorted.length === 0 ? (
+                <EmptyState title="No per-trader overrides yet.">
+                  Overrides let you tweak pref behavior for a specific person —
+                  pick another tab to find a trader, then use the selector on
+                  their row (or <span className="font-mono">⚙ Prefs</span> on a proposal DM,
+                  or <span className="font-mono">/swutrade settings user:@them</span> in Discord).
+                </EmptyState>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {sorted.map(m => (
+                    <MemberRow key={m.userId} member={m} setPeerPref={setPeerPref} />
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </section>
@@ -148,11 +174,16 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
 }
 
 function SortTabs({ sort, onChange }: { sort: SortMode; onChange: (s: SortMode) => void }) {
+  // 'configured' narrows the list to rows with a peer override set,
+  // so the label reflects "look only at rows I've touched" rather
+  // than a pure sort. It's sequenced last because it's a
+  // manage-my-overrides mode, distinct from the discovery modes.
   const tabs: Array<{ id: SortMode; label: string }> = [
     { id: 'overlap', label: 'Best overlap' },
     { id: 'offer', label: 'I can offer' },
     { id: 'receive', label: 'They have' },
     { id: 'alpha', label: 'A–Z' },
+    { id: 'configured', label: 'Configured' },
   ];
   return (
     <div className="flex gap-1.5 mb-4 overflow-x-auto -mx-1 px-1" role="tablist" aria-label="Sort members">
