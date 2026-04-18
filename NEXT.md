@@ -111,10 +111,6 @@ Rate limits (429), server errors (5xx), and permanent client errors (4xx) all th
 
 `detectViewMode` + `useTradeUrl` strip-guards drift every time a new view mode ships. We've eaten two silent bugs from this (`?autoBalance=1`, `?trade=<id>`). A single config object listing every mode + its preserve-params would make "new view mode" a one-place change. 3-4 hours. High ROI but no immediate pain; do before the next view mode ships.
 
-### Embed truncation for large proposals
-
-Discord embed field limit is 1024 chars. A proposal with 10+ expensive cards can silently truncate. Add a length check to `formatCardList`; if output exceeds ~900 chars, cap at N cards and append "+X more — open the web app" with the detail URL.
-
 ### Chain visualization timeline
 
 Trade detail view currently shows one-hop chain context (↑ counter to / ↓ countered by). A proper timeline walking the FK chain back to the root. Defer until chain depth > 2 actually happens in the wild — right now a timeline would only show two nodes.

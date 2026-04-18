@@ -49,16 +49,39 @@ const BUTTON_STYLE_SECONDARY = 2; // grey
 const BUTTON_STYLE_SUCCESS = 3;   // green
 const BUTTON_STYLE_DANGER = 4;    // red
 
+// Discord caps embed field values at 1024 characters; sends with a
+// field over the cap return 400 and fail the WHOLE message, which
+// manifests to users as "I sent the proposal but the bot never DMed
+// the recipient." Truncate at a safe margin below the cap + reserve
+// room for a summary line so large lists gracefully degrade to
+// "N shown + X more — open the web app."
+const EMBED_FIELD_MAX = 1024;
+// Overflow summary line is ~54 chars at worst ("+999 more — …").
+// Reserve 70 for it + 4 for the joining newline + 20 buffer.
+const EMBED_FIELD_SOFT_CAP = EMBED_FIELD_MAX - 94;
+
 function formatCardList(cards: TradeCardSnapshot[]): string {
   if (cards.length === 0) return '_none_';
-  // Keep lines compact — Discord embed fields truncate at 1024
-  // chars and proposals could get chunky. If we hit that limit in
-  // practice we'll summarize (e.g. "+ 5 more"); for now assume
-  // proposals stay small.
-  return cards.map(c => {
+  const lines: string[] = [];
+  let runningLength = 0;
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[i];
     const price = c.unitPrice != null && c.unitPrice > 0 ? ` — $${c.unitPrice.toFixed(2)}` : '';
-    return `• ${c.qty}× ${c.name} (${c.variant})${price}`;
-  }).join('\n');
+    const line = `• ${c.qty}× ${c.name} (${c.variant})${price}`;
+    // Cost of adding this line: the line itself + a joining newline
+    // when the list isn't empty.
+    const cost = (lines.length === 0 ? 0 : 1) + line.length;
+    if (runningLength + cost > EMBED_FIELD_SOFT_CAP) {
+      const remaining = cards.length - i;
+      // Markdown `_..._` = italics. The pair is balanced so underscores
+      // in the interpolated number can't break parsing.
+      lines.push(`• _+${remaining} more — open the web app for the full list_`);
+      return lines.join('\n');
+    }
+    lines.push(line);
+    runningLength += cost;
+  }
+  return lines.join('\n');
 }
 
 function subtotal(cards: TradeCardSnapshot[]): number {
