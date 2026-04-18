@@ -311,7 +311,9 @@ export function TradeSide({
     if (sharedLists) {
       chips.push({
         id: 'overlap',
-        label: 'Overlap',
+        // Side-specific label avoids the jargon of "Overlap". Each
+        // side reads as a direct answer to "what should I look at?"
+        label: isOffering ? 'Their wants you have' : 'Yours they have',
         cards: overlapCards,
         alwaysVisible: true,
       });
@@ -469,6 +471,11 @@ export function TradeSide({
               label={label}
               accentColor={accentColor}
               onOpen={openOverlay}
+              hint={
+                counterpartHandle && overlapCards.length > 0
+                  ? 'Or tap ✨ Suggest a match above'
+                  : undefined
+              }
             />
           ) : (
             <div className="divide-y divide-space-700">
@@ -524,10 +531,15 @@ function AddCardsTile({
   label,
   accentColor,
   onOpen,
+  hint,
 }: {
   label: string;
   accentColor: 'emerald' | 'blue';
   onOpen: () => void;
+  /** Optional second line rendered beneath the "Add cards" CTA —
+   *  used in propose mode to point at the ✨ Suggest button above
+   *  so undecided users know an auto-fill option exists. */
+  hint?: string;
 }) {
   const accentText = accentColor === 'emerald' ? 'text-emerald-300' : 'text-blue-300';
   const accentHoverBorder = accentColor === 'emerald' ? 'hover:border-emerald-500/50' : 'hover:border-blue-500/50';
@@ -545,6 +557,9 @@ function AddCardsTile({
       </svg>
       <div className="text-center">
         <div className={`text-sm font-semibold ${accentText}`}>Add cards to {label}</div>
+        {hint && (
+          <div className="text-[11px] text-gray-500 mt-1">{hint}</div>
+        )}
       </div>
     </button>
   );

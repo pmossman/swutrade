@@ -242,8 +242,12 @@ export function TradeRow({
         )}
       </div>
       {/* Secondary actions collapsed behind a kebab to keep the row
-          scannable. Qty controls stay primary. */}
-      <div className="shrink-0">
+          scannable. Qty controls stay primary. `hover-reveal` hides
+          the kebab until the row is hovered or focused — touch
+          devices (no hover) see it at 0.7 opacity via the media-query
+          in index.css, so mobile still has access without the dense
+          always-on eight-zone row. */}
+      <div className="shrink-0 hover-reveal">
         <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
       </div>
       <div className="flex items-center gap-0.5 shrink-0">

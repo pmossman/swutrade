@@ -240,14 +240,18 @@ export function ProposeBar({
     // Status line has two modes: empty (hint at overlap possibilities)
     // and in-progress (running card counts). Splitting keeps the first-
     // open state informative without cluttering the working state.
+    // Phrasing preferred for the empty state: "N cards you have match
+    // their wants · M of theirs match yours" — more explicit than
+    // "of their wants / of yours", which read as "they want 4 specific
+    // things" when it's really "4 family-level overlaps."
     const status = isEmpty && preview ? (
       <span className="flex-1">
         <span className="text-gray-400">Proposing to </span>
         <strong className="text-gold">@{recipientHandle}</strong>
         {overlapAvailable ? (
           <span className="text-gray-500 text-[11px] ml-2">
-            · You could offer <strong className="text-emerald-300">{preview.overlapOffering}</strong> of their wants
-            · They have <strong className="text-blue-300">{preview.overlapReceiving}</strong> of yours
+            · <strong className="text-emerald-300">{preview.overlapOffering}</strong> cards you have match their wants
+            · <strong className="text-blue-300">{preview.overlapReceiving}</strong> of theirs match yours
           </span>
         ) : (
           <span className="text-gray-500 text-[11px] ml-2">
@@ -295,6 +299,11 @@ export function ProposeBar({
           type="button"
           onClick={handleSend}
           disabled={!canSend}
+          title={
+            !canSend && sendState !== 'sending'
+              ? 'Add at least one card to either side to enable.'
+              : undefined
+          }
           className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {sendState === 'sending' ? 'Sending…' : 'Send proposal'}

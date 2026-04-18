@@ -173,9 +173,13 @@ async function seed(sql, { viewerHandle, guildId, count, strategy }) {
     const { wants: wantsSlice, available: availSlice } = plans[i];
 
     for (const [j, familyId] of wantsSlice.entries()) {
+      // Star roughly every 3rd want as priority so the ★ Priorities
+      // suggest mode has something meaningful to work with — matches
+      // how real users would sparsely star items, not the whole list.
+      const isPriority = j % 3 === 0;
       await sql`
-        INSERT INTO wants_items (id, user_id, family_id, qty, restriction_mode, restriction_key, added_at)
-        VALUES (${`${PREFIX}w-${u.handle}-${j}`}, ${userId}, ${familyId}, ${1 + (j % 3)}, 'any', 'any', ${Date.now()})
+        INSERT INTO wants_items (id, user_id, family_id, qty, restriction_mode, restriction_key, is_priority, added_at)
+        VALUES (${`${PREFIX}w-${u.handle}-${j}`}, ${userId}, ${familyId}, ${1 + (j % 3)}, 'any', 'any', ${isPriority}, ${Date.now()})
       `;
     }
 

@@ -178,15 +178,18 @@ export function ProfileView({
               </svg>
             </a>
           ) : (
-            // Own profile or signed-out visitor: "Start a trade" still
-            // maps to the local balance flow — no Discord send, just
-            // the editor pre-seeded with this profile's context.
+            // Own profile or signed-out visitor — the local balance
+            // flow (editor pre-seeded with this profile's context, no
+            // Discord send). Label splits by case to avoid conflating
+            // with the "Trade with @handle" CTA shown to other viewers:
+            //   - own profile: "Open trade editor" (no counterpart)
+            //   - signed-out other: "Start a trade" (auto-balance flow)
             <button
               type="button"
               onClick={() => onStartTrade(profile.user.handle, true)}
               className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
             >
-              Start a trade
+              {auth.user?.handle === profile.user.handle ? 'Open trade editor' : 'Start a trade'}
               <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M3 8h10M9 4l4 4-4 4" />
               </svg>
@@ -337,8 +340,17 @@ function ProfileListTab({
   onSelect: (t: ListTab) => void;
 }) {
   const label = tab === 'wants' ? 'Wants' : 'Available';
-  const accent = tab === 'wants' ? 'text-blue-300 border-blue-400' : 'text-emerald-300 border-emerald-400';
+  // Active tab gets a thicker underline, accent-colored badge pill,
+  // AND bolder label — multiple simultaneous affordances so "which
+  // tab am I on" never requires pixel-peeping on a 2px underline.
+  const activeAccent = tab === 'wants'
+    ? 'text-blue-300 border-blue-400'
+    : 'text-emerald-300 border-emerald-400';
+  const activeBadge = tab === 'wants'
+    ? 'bg-blue-500/15 text-blue-200 border-blue-400/40'
+    : 'bg-emerald-500/15 text-emerald-200 border-emerald-400/40';
   const inactive = 'text-gray-500 border-transparent hover:text-gray-300';
+  const inactiveBadge = 'bg-space-800/60 text-gray-400 border-space-700';
   // Show "private" instead of a count when the list is gated — count
   // would be 0 and misleading. The tab itself stays clickable so
   // users can still land on the panel and read the explainer.
@@ -349,12 +361,12 @@ function ProfileListTab({
       role="tab"
       aria-selected={active}
       onClick={() => onSelect(tab)}
-      className={`flex items-baseline gap-2 pb-2 -mb-px border-b-2 transition-colors ${
-        active ? accent : inactive
+      className={`flex items-baseline gap-2 pb-2 -mb-[3px] border-b-[3px] transition-colors ${
+        active ? activeAccent : inactive
       }`}
     >
       <span className="text-xs sm:text-sm font-bold tracking-[0.18em] uppercase">{label}</span>
-      <span className={`text-[11px] ${isPrivate ? 'italic text-gray-600' : 'text-gray-600'}`}>
+      <span className={`text-[10px] px-1.5 py-px rounded-full border font-semibold ${isPrivate ? 'italic' : ''} ${active ? activeBadge : inactiveBadge}`}>
         {badge}
       </span>
     </button>

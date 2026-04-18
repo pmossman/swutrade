@@ -129,6 +129,22 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 
 *(append here as slices ship)*
 
+### 2026-04-17 — UX copy + polish batch (agent-browser dogfooding)
+Ten friction points surfaced during a driven-through agent-browser pressure test, fixed in one batch:
+
+- **Propose hint phrasing**: *"You could offer 4 of their wants"* → *"4 cards you have match their wants"* — less ambiguous about what the 4 is.
+- **Balance-strip copy**: *"Ask for $X more to restore balance"* → *"Ask for $X more — cards or cash"* (and symmetric for offer). Cash settlement now explicit.
+- **Disabled Send tooltip**: *"Add at least one card to either side to enable."*
+- **Overlap chip relabel**: *Overlap* → *Their wants you have* (offering) / *Yours they have* (receiving). Jargon replaced with direct answer.
+- **Quieter empty TradeBalance**: headline tier==='empty' now uses a plain gray uppercase label with no glow + neutral border. Two gold bars in propose mode no longer fight for attention; the ProposeBar keeps primary weight. Also renamed the empty headline from *"Add cards to weigh the trade"* (which read as a CTA) to *"Trade balance"* (section header).
+- **Variant pill tooltips**: `VariantBadge` gains title-attribute hints for Hyperspace / Hyperspace Foil / Showcase / Prestige / Serialized etc. so non-players hovering get a one-line explainer.
+- **Profile tab accent**: active tab now has a 3px underline + colored badge pill instead of 2px underline + muted pill. "Which tab am I on" no longer requires pixel-peeping.
+- **Own-profile CTA relabel**: *Start a trade* → *Open trade editor* when viewing your own profile (was conflating with the "Trade with @handle" CTA on other profiles).
+- **Row kebab hover-reveal**: secondary-actions kebab hidden behind `.hover-reveal` on desktop, 0.7 opacity on touch via the existing media-query. Row density reduced without losing access.
+- **Empty-panel suggest prompt**: when in propose mode with overlap available, the empty *Add cards to Offering* tile gets a quiet *"Or tap ✨ Suggest a match above"* hint so undecided users discover the auto-fill shortcut.
+
+Also re-seeded the fake bots with priority-starred wants (~every 3rd) so future testing can exercise the ★ Priorities suggest button once the pool happens to diverge between modes.
+
 ### 2026-04-17 — Fix URL passthrough for propose/from/counter context
 `useTradeUrl`'s sync effect was replacing the entire search string with `buildTradeSearch` output, which ONLY emits `y`/`t`/`pct`/`pm`. Every card add stripped `propose`, `from`, `counter`, and anything else. Within a session the lazy-init hooks (`useProposeHandle`, `useSenderHandle`, `useCounterId`) cushioned it by capturing on mount — but refresh dropped the context (ProposeBar unmounted, Send button disappeared) while cards themselves restored, creating a confusing half-restore. Fix: merge trade-codec params into the existing URL params instead of overwriting, so unknown keys pass through automatically. Also gated the new "Picked so far" overlay summary on `open` — the overlay's DOM stays mounted through the transition, and the hidden "3" was triggering strict-mode locator ambiguity in the anonymous e2e suite.
 

@@ -37,7 +37,12 @@ export function computeBalance(
       diff: 0,
       absDiff: 0,
       ratio: 0,
-      headline: 'Add cards to weigh the trade',
+      // Plain, quiet label instead of a CTA-looking headline. In
+      // propose mode this bar sits next to the ProposeBar's own
+      // gold-tinted chrome and the two fighting for attention was
+      // confusing — this just reads as a section header, not an
+      // action.
+      headline: 'Trade balance',
       tone: 'neutral',
     };
   }

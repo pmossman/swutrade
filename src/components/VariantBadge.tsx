@@ -1,5 +1,21 @@
 import { variantBadgeColor, variantDisplayLabel } from '../variants';
 
+// Short hover explainers — help new players (and non-players stumbling
+// onto a shared trade) decode the alphabet soup of SWU print variants
+// without having to leave the page. Title-attribute hovers are the
+// cheapest path; a proper tooltip component can come later.
+const VARIANT_HINTS: Record<string, string> = {
+  'Hyperspace': 'Hyperspace — alternate-art print run; more collectible than Standard.',
+  'Hyperspace Foil': 'Hyperspace Foil — foil treatment of the Hyperspace alt-art. Rarer + pricier.',
+  'Foil': 'Foil — foil treatment of the Standard print.',
+  'Showcase': 'Showcase — premium alternate-art variant with decorative frame.',
+  'Prestige': 'Prestige — ultra-rare alternate printing (typically leader cards).',
+  'Prestige Foil': 'Prestige Foil — foil version of the Prestige variant.',
+  'Serialized': 'Serialized — numbered print run; one of the scarcest variants.',
+  'Gold': 'Gold — limited convention/event variant.',
+  'Regional': 'Regional — tournament-exclusive variant.',
+};
+
 export type VariantBadgeSize = 'xs' | 'sm';
 
 interface VariantBadgeProps {
@@ -44,6 +60,7 @@ export function VariantBadge({
   if (!label) return null;
   return (
     <span
+      title={VARIANT_HINTS[variant]}
       className={[
         SIZE_CLASSES[size],
         'leading-none rounded font-bold uppercase tracking-wide',

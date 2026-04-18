@@ -51,25 +51,35 @@ export function TradeBalance({
   const missingThem = countMissingPrices(theirCards, priceMode);
   const missingTotal = missingYou + missingThem;
 
-  const glowClass = balance.tier === 'chaos' ? 'animate-pulse-crimson' : chrome.glow;
+  // Empty-state visually recedes: no glow, neutral border. See headline
+  // comment below for why — in propose mode the ProposeBar owns attention.
+  const glowClass = balance.tier === 'empty'
+    ? ''
+    : balance.tier === 'chaos'
+      ? 'animate-pulse-crimson'
+      : chrome.glow;
+  const outerBorder = balance.tier === 'empty' ? 'border-space-700' : chrome.border;
+  const outerBg = balance.tier === 'empty' ? 'bg-space-800/40' : chrome.bg;
 
   // Thematic action line. The "offer" / "seek" verbs depend on who's
   // currently underpaying: if the trade favors THEM, you need to ask
-  // for more; if it favors YOU, they need to give more (you'd offer a
-  // card OR ask them for cash).
+  // for more; if it favors YOU, they need to give more. The "or settle
+  // in cash" tail makes cash settlement explicit — without it, early
+  // users asked "how do I restore balance?" without realizing cash was
+  // an option.
   let actionLine: React.ReactNode = null;
   if (balance.tier !== 'balanced' && balance.absDiff >= 0.01) {
     const amount = formatDollars(balance.absDiff);
     if (balance.favored === 'them') {
       actionLine = (
         <>
-          Ask for <span className={`font-bold tabular-nums ${chrome.headline}`}>{amount}</span> more to restore balance
+          Ask for <span className={`font-bold tabular-nums ${chrome.headline}`}>{amount}</span> more — cards or cash
         </>
       );
     } else {
       actionLine = (
         <>
-          Offer <span className={`font-bold tabular-nums ${chrome.headline}`}>{amount}</span> more to restore balance
+          Offer <span className={`font-bold tabular-nums ${chrome.headline}`}>{amount}</span> more — cards or cash
         </>
       );
     }
@@ -129,6 +139,14 @@ export function TradeBalance({
   // summary" footer is the only thing that opens the summary modal —
   // the body content (totals, missing-price warnings) is informational
   // and inert to clicks.
+  // Empty-state styling is deliberately quiet: the ProposeBar above
+  // (when in propose mode) carries the primary call-to-action, and
+  // two gold-tinted display-font bars fighting for attention was
+  // making the page feel unfocused. Populated-state keeps the full
+  // swu-display drama.
+  const headlineClass = balance.tier === 'empty'
+    ? 'text-[10px] sm:text-[11px] text-center tracking-[0.18em] uppercase text-gray-500 font-semibold'
+    : `swu-display text-[11px] sm:text-base text-center ${chrome.headline}`;
   const headerArea = (
     <div className={`relative ${onToggleCollapse ? 'pl-8' : ''} pr-3 pt-1 sm:pt-1.5`}>
       {chevron && (
@@ -136,7 +154,7 @@ export function TradeBalance({
           {chevron}
         </div>
       )}
-      <div className={`swu-display text-[11px] sm:text-base text-center ${chrome.headline}`}>
+      <div className={headlineClass}>
         {balance.headline}
       </div>
       {actionLine && (
@@ -148,7 +166,7 @@ export function TradeBalance({
   );
 
   return (
-    <div className={`rounded-xl border transition-all ${chrome.border} ${chrome.bg} ${glowClass}`}>
+    <div className={`rounded-xl border transition-all ${outerBorder} ${outerBg} ${glowClass}`}>
       {/* Header zone — collapse toggle when interactive */}
       {onToggleCollapse ? (
         <button
