@@ -41,7 +41,7 @@ Server code imports from sibling modules with explicit `.js` extensions (`from '
 
 Every message shape a trade proposal takes (initial DM, thread post, edit-on-accept, edit-on-counter, thread-requested variant, thread-moved variant, thread-declined variant, proposer notification) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module.
 
-Button `custom_id` prefixes live here as exported constants (`BUTTON_CUSTOM_ID_PREFIX`, `COMM_PREF_CUSTOM_ID_PREFIX`) so the dispatcher in `api/bot.ts` stays in sync.
+Button `custom_id` prefixes live here as exported constants (`BUTTON_CUSTOM_ID_PREFIX` for trade-proposal actions; `PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `COMM_PREF_CUSTOM_ID_PREFIX` retained as a transitional alias for DMs that predate the registry migration) so the dispatcher in `api/bot.ts` stays in sync.
 
 ### `threadConsent.ts` is pure
 

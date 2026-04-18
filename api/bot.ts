@@ -7,6 +7,7 @@ import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot
 import {
   BUTTON_CUSTOM_ID_PREFIX,
   COMM_PREF_CUSTOM_ID_PREFIX,
+  PREF_CUSTOM_ID_PREFIX,
   buildProposalMessage,
   buildResolvedProposalMessage,
   buildCounteredProposalMessage,
@@ -15,10 +16,11 @@ import {
   buildThreadApprovalRequestMessage,
   buildThreadMovedProposalMessage,
   buildThreadRequestDeclinedMessage,
-  buildCommPrefOptionsMessage,
-  buildCommPrefConfirmationMessage,
+  buildPrefOptionsMessage,
+  buildPrefConfirmationMessage,
 } from '../lib/proposalMessages.js';
-import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
+import { handleThreadRequest } from '../lib/threadConsent.js';
+import { getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -198,8 +200,11 @@ async function handleInteraction(
     if (customId.startsWith(`${BUTTON_CUSTOM_ID_PREFIX}:`)) {
       return handleTradeProposalButton(payload, res, deps);
     }
-    if (customId.startsWith(`${COMM_PREF_CUSTOM_ID_PREFIX}:`)) {
-      return handleCommPrefButton(payload, res);
+    if (
+      customId.startsWith(`${PREF_CUSTOM_ID_PREFIX}:`)
+      || customId.startsWith(`${COMM_PREF_CUSTOM_ID_PREFIX}:`)
+    ) {
+      return handlePrefsButton(payload, res);
     }
   }
 
@@ -872,32 +877,61 @@ async function _autoApproveMoveThread(args: {
   });
 }
 
-// --- communication pref buttons --------------------------------------------
+// --- preference buttons ----------------------------------------------------
 
 /**
- * `⚙ Prefs` button flow surfaced on every proposal DM. Two shapes:
- *   - `comm-pref:open` — clicker wants to see their options; reply
- *     with an ephemeral 4-button selector (highlighting current pref).
- *   - `comm-pref:set:{pref}` — clicker picked an option; UPDATE their
- *     `users.communication_pref` and reply with an ephemeral confirm
- *     that replaces the selector.
+ * `⚙ Prefs` button flow surfaced on proposal DMs and (future) the
+ * `/swutrade settings` slash command. Shapes:
+ *   - `pref:{key}:open` — reply with an ephemeral selector; each
+ *     option button carries the commit custom_id.
+ *   - `pref:{key}:set:{value}` — UPDATE the user's corresponding
+ *     column and reply with an ephemeral confirmation that replaces
+ *     the selector.
  *
- * The ephemeral reply is scoped to the clicker alone (flag 64), so
- * other thread members — if the DM is somehow in a shared context —
- * never see each other's pref choices.
+ * Legacy `comm-pref:*` custom_ids from DMs shipped before the
+ * registry existed dispatch through this handler too — they pin the
+ * key to `communicationPref`. Remove once deployed DMs have rolled
+ * over to the `pref:*` form.
  *
- * Unlike the trade-proposal buttons, NO trade context is needed: the
- * pref is user-level. The clicker's Discord id is resolved from the
- * interaction payload and mapped to the `users` row by `discord_id`.
+ * Rejects any key that isn't registered self-scope + Discord-surfaced.
+ * A user forging a custom_id for a web-only pref (e.g. profileVisibility)
+ * gets a silent deferred ack — no write, no surface leak.
  */
-export async function handleCommPrefButton(
+export async function handlePrefsButton(
   payload: Record<string, unknown>,
   res: VercelResponse,
 ): Promise<void> {
   const data = payload.data as { custom_id?: string } | undefined;
-  const parts = (data?.custom_id ?? '').split(':');
-  // [prefix, action] or [prefix, 'set', pref]
-  const action = parts[1] ?? '';
+  const customId = data?.custom_id ?? '';
+  const parts = customId.split(':');
+
+  // Parse into (defKey, action, rawValue). The two prefixes differ in
+  // arity — legacy `comm-pref:{action}[:{value}]` vs new
+  // `pref:{key}:{action}[:{value}]` — so keep the dispatch explicit.
+  let defKey: string;
+  let action: string;
+  let rawValue: string | undefined;
+  if (parts[0] === PREF_CUSTOM_ID_PREFIX) {
+    defKey = parts[1] ?? '';
+    action = parts[2] ?? '';
+    rawValue = parts[3];
+  } else if (parts[0] === COMM_PREF_CUSTOM_ID_PREFIX) {
+    defKey = 'communicationPref';
+    action = parts[1] ?? '';
+    rawValue = parts[2];
+  } else {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  // Registry lookup is the authorization gate. Unknown keys + keys
+  // the registry doesn't surface on Discord (web-only, like
+  // profileVisibility) silently defer — nothing to do, no leak.
+  const def = getPrefDefinition(defKey, 'self');
+  if (!def || !def.surfaces.includes('discord')) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
 
   const maybeMember = payload.member as { user?: { id?: string } } | undefined;
   const maybeUser = payload.user as { id?: string } | undefined;
@@ -908,19 +942,24 @@ export async function handleCommPrefButton(
   }
 
   const db = getDb();
+  // Dynamic column access — `def.column` is validated against the
+  // users schema at registry test time, so the runtime property
+  // lookup is safe. Used for both read (selector highlight) and
+  // write (commit).
+  const usersColumns = users as unknown as Record<
+    string,
+    import('drizzle-orm/pg-core').AnyPgColumn
+  >;
+  const column = usersColumns[def.column];
 
   if (action === 'open') {
-    // Look up the current pref so the selector can highlight it. If
-    // the clicker isn't linked yet (a rare edge — we only send these
-    // buttons to users who received a proposal DM, which requires a
-    // linked Discord id), default to 'allow'.
     const [row] = await db
-      .select({ communicationPref: users.communicationPref })
+      .select({ value: column })
       .from(users)
       .where(eq(users.discordId, clickerDiscordId))
       .limit(1);
-    const current = (row?.communicationPref ?? 'allow') as CommunicationPref;
-    const body = buildCommPrefOptionsMessage(current);
+    const current = (row?.value ?? def.default) as boolean | string;
+    const body = buildPrefOptionsMessage(def, current);
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
       data: { ...body, flags: MESSAGE_FLAG_EPHEMERAL },
@@ -929,26 +968,28 @@ export async function handleCommPrefButton(
   }
 
   if (action === 'set') {
-    const rawPref = parts[2] ?? '';
-    const ALLOWED: CommunicationPref[] = ['prefer', 'auto-accept', 'allow', 'dm-only'];
-    if (!ALLOWED.includes(rawPref as CommunicationPref)) {
+    // `rawValue` arrives as a string fragment from the custom_id.
+    // Coerce to the def's expected type before validating — boolean
+    // prefs encode as the literal strings 'true' / 'false'.
+    let candidate: unknown = rawValue;
+    if (def.type.kind === 'boolean') {
+      if (rawValue === 'true') candidate = true;
+      else if (rawValue === 'false') candidate = false;
+    }
+    const validated = validatePrefValue(def, candidate);
+    if (!validated.ok) {
       res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
       return;
     }
-    const newPref = rawPref as CommunicationPref;
 
-    // Update the row. If no row matches (user unlinked — shouldn't
-    // happen given how we surface the button, but belt-and-suspenders)
-    // `rowsAffected` is 0; the confirmation message still fires so
-    // the click isn't a dead-end.
     await db
       .update(users)
-      .set({ communicationPref: newPref, updatedAt: new Date() })
+      .set({ [def.column]: validated.value, updatedAt: new Date() })
       .where(eq(users.discordId, clickerDiscordId));
 
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-      data: buildCommPrefConfirmationMessage(newPref),
+      data: buildPrefConfirmationMessage(def, validated.value),
     });
     return;
   }

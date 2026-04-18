@@ -373,15 +373,15 @@ describeWithDb('/api/bot dispatcher', () => {
       });
     });
 
-    describe('comm-pref buttons', () => {
-      it('comm-pref:open replies ephemerally with a 4-button selector, highlighting the current pref', async () => {
+    describe('prefs buttons (registry-driven)', () => {
+      it('pref:communicationPref:open returns a 4-button selector with current highlighted, buttons carrying the new `pref:*` commit ids', async () => {
         const user = await createTestUser({ communicationPref: 'auto-accept' });
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'comm-pref:open' },
+            data: { custom_id: 'pref:communicationPref:open' },
             user: { id: user.id },
           },
           res,
@@ -392,34 +392,31 @@ describeWithDb('/api/bot dispatcher', () => {
           type: number;
           data?: { flags?: number; components?: Array<{ components?: Array<{ style?: number; custom_id?: string; label?: string }> }> };
         };
-        expect(body.type).toBe(4); // CHANNEL_MESSAGE_WITH_SOURCE
-        expect(body.data?.flags).toBe(64); // ephemeral
+        expect(body.type).toBe(4);
+        expect(body.data?.flags).toBe(64);
         const buttons = body.data?.components?.[0]?.components ?? [];
         expect(buttons).toHaveLength(4);
-        const customIds = buttons.map(b => b.custom_id);
-        expect(customIds).toEqual([
-          'comm-pref:set:prefer',
-          'comm-pref:set:auto-accept',
-          'comm-pref:set:allow',
-          'comm-pref:set:dm-only',
+        expect(buttons.map(b => b.custom_id)).toEqual([
+          'pref:communicationPref:set:prefer',
+          'pref:communicationPref:set:auto-accept',
+          'pref:communicationPref:set:allow',
+          'pref:communicationPref:set:dm-only',
         ]);
-        // Current pref rendered as success (style 3); others secondary (2).
-        const styleOfAutoAccept = buttons.find(b => b.custom_id === 'comm-pref:set:auto-accept')?.style;
-        const styleOfPrefer = buttons.find(b => b.custom_id === 'comm-pref:set:prefer')?.style;
-        expect(styleOfAutoAccept).toBe(3);
-        expect(styleOfPrefer).toBe(2);
+        // Current value rendered as success (style 3); others secondary (2).
+        expect(buttons.find(b => b.custom_id === 'pref:communicationPref:set:auto-accept')?.style).toBe(3);
+        expect(buttons.find(b => b.custom_id === 'pref:communicationPref:set:prefer')?.style).toBe(2);
 
         await user.cleanup();
       });
 
-      it('comm-pref:set:{pref} updates users.communication_pref + replies with UPDATE_MESSAGE (type 7) confirmation', async () => {
+      it('pref:communicationPref:set:prefer updates users.communication_pref + returns UPDATE_MESSAGE confirmation', async () => {
         const user = await createTestUser({ communicationPref: 'allow' });
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'comm-pref:set:prefer' },
+            data: { custom_id: 'pref:communicationPref:set:prefer' },
             user: { id: user.id },
           },
           res,
@@ -429,7 +426,6 @@ describeWithDb('/api/bot dispatcher', () => {
         const body = res._json as { type: number; data?: { content?: string; components?: unknown[] } };
         expect(body.type).toBe(7);
         expect(body.data?.content).toMatch(/Prefer threads/);
-        // Buttons dropped from the ephemeral — the decision is locked.
         expect(body.data?.components).toEqual([]);
 
         const db = getDb();
@@ -443,14 +439,110 @@ describeWithDb('/api/bot dispatcher', () => {
         await user.cleanup();
       });
 
-      it('comm-pref:set:{invalid-pref} falls through to a deferred-update ack (no DB write)', async () => {
+      it('pref:dmTradeProposals:open returns On/Off buttons for a boolean pref, current highlighted', async () => {
+        const user = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'pref:dmTradeProposals:open' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { components?: Array<{ components?: Array<{ style?: number; label?: string; custom_id?: string }> }> };
+        };
+        const buttons = body.data?.components?.[0]?.components ?? [];
+        expect(buttons.map(b => b.label)).toEqual(['On', 'Off']);
+        expect(buttons.map(b => b.custom_id)).toEqual([
+          'pref:dmTradeProposals:set:true',
+          'pref:dmTradeProposals:set:false',
+        ]);
+        // Default for dmTradeProposals is true → On is success (3), Off secondary (2).
+        expect(buttons[0].style).toBe(3);
+        expect(buttons[1].style).toBe(2);
+
+        await user.cleanup();
+      });
+
+      it('pref:dmMatchAlerts:set:true updates the boolean column', async () => {
+        const user = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'pref:dmMatchAlerts:set:true' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(7);
+
+        const db = getDb();
+        const [row] = await db
+          .select({ dmMatchAlerts: users.dmMatchAlerts })
+          .from(users)
+          .where(eq(users.discordId, user.id))
+          .limit(1);
+        expect(row.dmMatchAlerts).toBe(true);
+
+        await user.cleanup();
+      });
+
+      it('pref:profileVisibility:open defers — profileVisibility is web-only in the registry, not Discord-surfaced', async () => {
+        const user = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'pref:profileVisibility:open' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(6);
+
+        await user.cleanup();
+      });
+
+      it('pref:{unknown-key}:open defers — no registered def', async () => {
+        const user = await createTestUser();
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'pref:notAPref:open' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(6);
+
+        await user.cleanup();
+      });
+
+      it('pref:communicationPref:set:bogus defers + no DB write', async () => {
         const user = await createTestUser({ communicationPref: 'allow' });
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'comm-pref:set:bogus' },
+            data: { custom_id: 'pref:communicationPref:set:bogus' },
             user: { id: user.id },
           },
           res,
@@ -466,6 +558,65 @@ describeWithDb('/api/bot dispatcher', () => {
           .where(eq(users.discordId, user.id))
           .limit(1);
         expect(row.communicationPref).toBe('allow');
+
+        await user.cleanup();
+      });
+    });
+
+    // Legacy `comm-pref:*` custom_ids are retained during the
+    // transition so in-flight DMs posted before the registry-driven
+    // handler shipped keep working. Drop this block once deployed
+    // DMs have had a release to roll over.
+    describe('comm-pref buttons (legacy alias)', () => {
+      it('comm-pref:open still works — selector renders using the new `pref:*` commit ids', async () => {
+        const user = await createTestUser({ communicationPref: 'allow' });
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'comm-pref:open' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as {
+          type: number;
+          data?: { components?: Array<{ components?: Array<{ custom_id?: string }> }> };
+        };
+        const customIds = body.data?.components?.[0]?.components?.map(b => b.custom_id) ?? [];
+        // Selector is forward-compatible — clicks on these buttons
+        // route through the new `pref:*` handler, not the legacy path.
+        expect(customIds[0]).toMatch(/^pref:communicationPref:set:/);
+
+        await user.cleanup();
+      });
+
+      it('comm-pref:set:dm-only still writes through to users.communication_pref', async () => {
+        const user = await createTestUser({ communicationPref: 'allow' });
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: 'comm-pref:set:dm-only' },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(7);
+
+        const db = getDb();
+        const [row] = await db
+          .select({ communicationPref: users.communicationPref })
+          .from(users)
+          .where(eq(users.discordId, user.id))
+          .limit(1);
+        expect(row.communicationPref).toBe('dm-only');
 
         await user.cleanup();
       });

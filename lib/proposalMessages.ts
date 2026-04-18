@@ -1,5 +1,6 @@
 import type { DiscordMessageBody, DiscordEmbed } from './discordBot.js';
 import type { TradeCardSnapshot } from './schema.js';
+import type { PrefDefinition, PrefValue } from './prefsRegistry.js';
 
 /**
  * Builders for the Discord messages that carry a trade proposal
@@ -20,10 +21,17 @@ import type { TradeCardSnapshot } from './schema.js';
  */
 
 export const BUTTON_CUSTOM_ID_PREFIX = 'trade-proposal';
-/** Separate namespace for the ⚙ Prefs button surfaced on proposal
- *  DMs. Lives under its own prefix because the action is user-scoped
- *  (update communication_pref) rather than trade-scoped — no tradeId
- *  is carried in the custom_id. See api/bot.ts handleCommPrefButton. */
+/** Namespace for registry-driven preference controls surfaced on
+ *  proposal DMs and (future) the /swutrade settings slash command.
+ *  Format: `pref:{key}:open` or `pref:{key}:set:{value}`. The `key`
+ *  resolves against `PREF_DEFINITIONS` (self-scope, discord-surfaced).
+ *  See api/bot.ts handlePrefsButton. */
+export const PREF_CUSTOM_ID_PREFIX = 'pref';
+/** Legacy prefix for the comm-pref button shipped before the registry
+ *  existed. The dispatcher accepts this during the transition and
+ *  infers the key as `communicationPref`; new DMs emit the `pref:*`
+ *  form instead. Remove once deployed DM buttons have had a release
+ *  to roll over. */
 export const COMM_PREF_CUSTOM_ID_PREFIX = 'comm-pref';
 
 const COLORS = {
@@ -177,7 +185,11 @@ export function buildProposalMessage(
           type: COMPONENT_TYPE_BUTTON,
           style: BUTTON_STYLE_SECONDARY,
           label: '⚙ Prefs',
-          custom_id: `${COMM_PREF_CUSTOM_ID_PREFIX}:open`,
+          // Opens the communicationPref selector specifically — the
+          // most relevant pref when the user is staring at a proposal
+          // DM. Broader pref browsing is a future slash-command entry
+          // point, not an inline-button one.
+          custom_id: `${PREF_CUSTOM_ID_PREFIX}:communicationPref:open`,
         },
       ],
     });
@@ -190,57 +202,74 @@ export function buildProposalMessage(
 }
 
 /**
- * Ephemeral-button body shown when a user clicks ⚙ Prefs. Four
- * secondary-style buttons, one per `CommunicationPref`, with the
- * currently-active pref rendered as success (green) so the user sees
- * where they stand at a glance. The custom_id carries the new pref
- * value; click is handled by `handleCommPrefButton` in api/bot.ts.
+ * Ephemeral body shown when the user opens a pref selector — enum
+ * prefs render one button per option, boolean prefs render On/Off.
+ * The currently-active value is SUCCESS (green) so the user sees
+ * where they stand at a glance; other values stay SECONDARY. Click
+ * dispatch is `handlePrefsButton` in api/bot.ts.
  */
-export function buildCommPrefOptionsMessage(
-  current: 'prefer' | 'auto-accept' | 'allow' | 'dm-only',
+export function buildPrefOptionsMessage(
+  def: PrefDefinition,
+  currentValue: PrefValue,
 ): DiscordMessageBody {
-  const options: Array<{ pref: typeof current; label: string }> = [
-    { pref: 'prefer',      label: 'Prefer threads' },
-    { pref: 'auto-accept', label: 'Auto-accept requests' },
-    { pref: 'allow',       label: 'Allow (ask each time)' },
-    { pref: 'dm-only',     label: 'DM only' },
-  ];
-  return {
-    content: [
-      'Choose how SWUTrade should handle thread conversations for new proposals.',
-      'Your current setting is highlighted in green.',
-    ].join('\n'),
-    components: [
-      {
+  if (def.type.kind === 'boolean') {
+    const cur = currentValue as boolean;
+    return {
+      content: `**${def.label}** — ${def.description}`,
+      components: [{
         type: COMPONENT_TYPE_ACTION_ROW,
-        components: options.map(o => ({
-          type: COMPONENT_TYPE_BUTTON,
-          style: o.pref === current ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-          label: o.label,
-          custom_id: `${COMM_PREF_CUSTOM_ID_PREFIX}:set:${o.pref}`,
-        })),
-      },
-    ],
+        components: [
+          {
+            type: COMPONENT_TYPE_BUTTON,
+            style: cur === true ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+            label: 'On',
+            custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:set:true`,
+          },
+          {
+            type: COMPONENT_TYPE_BUTTON,
+            style: cur === false ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+            label: 'Off',
+            custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:set:false`,
+          },
+        ],
+      }],
+    };
+  }
+  // Enum — registry guarantees ≤ 5 options for Discord-surfaced defs
+  // (enforced in the registry unit test), so the single action row
+  // never overflows.
+  return {
+    content: `**${def.label}** — ${def.description}\nYour current setting is highlighted.`,
+    components: [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: def.type.options.map(opt => ({
+        type: COMPONENT_TYPE_BUTTON,
+        style: opt.value === currentValue ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
+        label: opt.label,
+        custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:set:${opt.value}`,
+      })),
+    }],
   };
 }
 
 /**
- * Ephemeral update body shown after the user picks a new pref. Drops
- * the button row (the decision is locked in for this interaction) and
- * echoes the human-readable label so the confirmation is specific.
+ * Ephemeral update body shown after a pref is committed. Drops the
+ * button row (decision is locked for this interaction) and echoes
+ * the human-readable value back so the confirmation is specific.
  */
-export function buildCommPrefConfirmationMessage(
-  pref: 'prefer' | 'auto-accept' | 'allow' | 'dm-only',
+export function buildPrefConfirmationMessage(
+  def: PrefDefinition,
+  newValue: PrefValue,
 ): DiscordMessageBody {
-  const label = pref === 'prefer'
-    ? 'Prefer threads'
-    : pref === 'auto-accept'
-      ? 'Auto-accept requests'
-      : pref === 'allow'
-        ? 'Allow (ask each time)'
-        : 'DM only';
+  let humanValue: string;
+  if (def.type.kind === 'boolean') {
+    humanValue = (newValue as boolean) ? 'on' : 'off';
+  } else {
+    const option = def.type.options.find(o => o.value === newValue);
+    humanValue = option?.label ?? String(newValue);
+  }
   return {
-    content: `Saved. Your thread preference is now **${label}**.`,
+    content: `Saved. **${def.label}** is now **${humanValue}**.`,
     components: [],
   };
 }
