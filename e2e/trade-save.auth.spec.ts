@@ -20,7 +20,7 @@ test.describe('Trade history save', () => {
 
     // Wait for BOTH card data AND auth to resolve before opening summary.
     await expect(page.getByText('Luke Skywalker').first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(user.username).first()).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'Open trade summary' }).click();
 

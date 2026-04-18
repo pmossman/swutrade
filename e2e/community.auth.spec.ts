@@ -81,7 +81,10 @@ test.describe('Community source chip', () => {
     // Filters are now collapsed behind a summary button — click to
     // expand and reveal the source chips (Community wants / My
     // available / etc.).
-    await page.getByRole('button', { name: /Any variant/i }).click();
+    // Both sides' overlays mount simultaneously post-picker-rework,
+    // so the FilterSummaryButton matches twice. Pin to the Offering
+    // side (first in DOM order).
+    await page.getByRole('button', { name: /Any variant/i }).first().click();
 
     // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(
@@ -107,7 +110,10 @@ test.describe('Community source chip', () => {
     await waitForPricesLoaded(page);
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
     // Expand filters (see above).
-    await page.getByRole('button', { name: /Any variant/i }).click();
+    // Both sides' overlays mount simultaneously post-picker-rework,
+    // so the FilterSummaryButton matches twice. Pin to the Offering
+    // side (first in DOM order).
+    await page.getByRole('button', { name: /Any variant/i }).first().click();
 
     await expect(
       page.getByRole('button', { name: /Community wants/ }),

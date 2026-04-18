@@ -24,7 +24,11 @@ test.describe('Authenticated state', () => {
     // verifying the signed-in state means opening the menu.
     await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
     await page.getByRole('button', { name: 'Account menu' }).click();
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    // On desktop viewports the username renders twice — once inline in
+    // the account-menu trigger (hidden sm:inline) and once as the
+    // popover header. Either match is fine for "signed in"; pin the
+    // locator so strict mode doesn't reject the 2-element resolution.
+    await expect(page.getByText(user.username).first()).toBeVisible({ timeout: 10_000 });
   });
 
   test('signing out clears the session', async ({ page }) => {
@@ -36,7 +40,11 @@ test.describe('Authenticated state', () => {
     // papercut — one accidental tap killed the session). Sign out
     // lives inside the popover, as does the username identity line.
     await page.getByRole('button', { name: 'Account menu' }).click();
-    await expect(page.getByText(user.username)).toBeVisible({ timeout: 10_000 });
+    // On desktop viewports the username renders twice — once inline in
+    // the account-menu trigger (hidden sm:inline) and once as the
+    // popover header. Either match is fine for "signed in"; pin the
+    // locator so strict mode doesn't reject the 2-element resolution.
+    await expect(page.getByText(user.username).first()).toBeVisible({ timeout: 10_000 });
     await page.getByRole('button', { name: 'Sign out' }).click();
 
     // Logout does a fetch then clears React state — may take a moment.
