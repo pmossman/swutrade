@@ -133,6 +133,13 @@ function AccountSection({ account }: { account: AccountSettingsApi }) {
               </fieldset>
             );
           })}
+          <p className="text-[11px] text-gray-500 leading-relaxed pt-2 border-t border-space-700/40">
+            Want different behavior with specific traders? Per-trader overrides live in the{' '}
+            <a href="/?community=1" className="text-gold hover:underline">Community directory</a>{' '}
+            — each member row has its own preference selector. Or use{' '}
+            <span className="font-mono text-gray-400">/swutrade settings user:@them</span>{' '}
+            in Discord.
+          </p>
         </div>
       )}
     </section>

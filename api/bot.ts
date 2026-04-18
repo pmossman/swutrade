@@ -1397,6 +1397,17 @@ async function handleApplicationAuthorized(
   }
 
   const db = getDb();
+
+  // Check for pre-existing row FIRST so we know whether this is a
+  // fresh install (welcome-DM the admin) vs a re-authorization (stay
+  // quiet — they already got the welcome once).
+  const [priorRow] = await db
+    .select({ tradesChannelId: botInstalledGuilds.tradesChannelId })
+    .from(botInstalledGuilds)
+    .where(eq(botInstalledGuilds.guildId, guildId))
+    .limit(1);
+  const isFreshInstall = !priorRow;
+
   await db
     .insert(botInstalledGuilds)
     .values({
@@ -1412,12 +1423,7 @@ async function handleApplicationAuthorized(
 
   // Skip auto-create if this guild already has a trades channel —
   // re-auth / re-install shouldn't spawn duplicates.
-  const [existing] = await db
-    .select({ tradesChannelId: botInstalledGuilds.tradesChannelId })
-    .from(botInstalledGuilds)
-    .where(eq(botInstalledGuilds.guildId, guildId))
-    .limit(1);
-  if (existing?.tradesChannelId) {
+  if (priorRow?.tradesChannelId) {
     return;
   }
 
@@ -1466,6 +1472,35 @@ async function handleApplicationAuthorized(
       .where(eq(botInstalledGuilds.guildId, guildId));
   } catch (err) {
     console.error('discord-bot: auto-create channel failed', err);
+  }
+
+  // Welcome DM — fresh installs only. The admin who actually added
+  // the bot is our best discovery vector; they're most-engaged and
+  // least likely to miss a DM. Failures don't block the install.
+  if (isFreshInstall && installedByUserId) {
+    try {
+      const bot = deps.bot ?? createDiscordBotClient();
+      await bot.sendDirectMessage(installedByUserId, {
+        embeds: [{
+          title: `SWUTrade is installed in ${guildName}`,
+          description: [
+            "Here's how to use it:",
+            "",
+            "• **`/swutrade settings`** — manage your global preferences (thread behavior, notification toggles, profile visibility).",
+            "• **`/swutrade settings user:@someone`** — set per-trader overrides for a specific person.",
+            "• **Right-click any SWUTrade user → Apps → SWUTrade prefs** — same as the above, without typing.",
+            "• **Web app**: sign in at https://beta.swutrade.com to manage wants + available lists and see the community directory for this server.",
+            "",
+            "Your preferences follow you across every server the bot is in. Server members set their own independently.",
+          ].join('\n'),
+          color: 0xD4AF37,
+          footer: { text: 'SWUTrade — local trading, structured' },
+        }],
+      });
+    } catch (err) {
+      // Installing admin might have DMs disabled. Log + move on.
+      console.error('discord-bot: welcome DM to installer failed', err);
+    }
   }
 }
 

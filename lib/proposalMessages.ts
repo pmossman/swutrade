@@ -273,7 +273,10 @@ export function buildPeerPrefOptionsMessage(
     type: COMPONENT_TYPE_BUTTON,
     // Highlight inherit when there's no override; otherwise secondary.
     style: currentOverride == null ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-    label: 'Inherit',
+    // Button copy is "Use my default" — end-user readable vs the
+    // dev-jargon "Inherit". The custom_id action stays `:set:inherit`
+    // (internal contract with the handler) to avoid a migration.
+    label: 'Use my default',
     custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:inherit`,
   };
   if (def.type.kind === 'boolean') {
@@ -372,7 +375,7 @@ export function buildPeerPrefsIndexMessage(
     content:
       `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
       `choose a setting to override specifically for this trader. ` +
-      `Inherit (no override) = your global default applies.`,
+      `"Use my default" = no override, your global setting applies.`,
     components: [{
       type: COMPONENT_TYPE_ACTION_ROW,
       components: defs.map(def => ({
@@ -431,7 +434,7 @@ export function buildPeerPrefConfirmationMessage(
       humanEffective = opt?.label ?? String(effectiveAfter ?? 'unset');
     }
     return {
-      content: `Override cleared for <@${peerUserId}> (@${peerHandle}). **${def.label}** now inherits: **${humanEffective}**.`,
+      content: `Override cleared for <@${peerUserId}> (@${peerHandle}). **${def.label}** now uses your default: **${humanEffective}**.`,
       components: [],
     };
   }

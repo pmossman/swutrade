@@ -570,7 +570,7 @@ describeWithDb('/api/bot dispatcher', () => {
     });
 
     describe('peer prefs buttons (pref:peer:...)', () => {
-      it('pref:peer:<peerId>:communicationPref:open returns Inherit + 4 option buttons, highlights override when set', async () => {
+      it('pref:peer:<peerId>:communicationPref:open returns Use-my-default + 4 option buttons, highlights override when set', async () => {
         const viewer = await createTestUser();
         const peer = await createTestUser();
 
@@ -603,7 +603,7 @@ describeWithDb('/api/bot dispatcher', () => {
         expect(body.data?.flags).toBe(64);
         const buttons = body.data?.components?.[0]?.components ?? [];
         expect(buttons.map(b => b.label)).toEqual([
-          'Inherit', 'Prefer threads', 'Auto-accept requests', 'Allow (ask each time)', 'DM only',
+          'Use my default', 'Prefer threads', 'Auto-accept requests', 'Allow (ask each time)', 'DM only',
         ]);
         // Override is 'dm-only' → DM only button is success (3).
         const dmOnly = buttons.find(b => b.custom_id === `pref:peer:${peer.id}:communicationPref:set:dm-only`);
@@ -1033,6 +1033,70 @@ describeWithDb('/api/bot dispatcher', () => {
       expect(row.guildName).toBe('Star Wars SD Test');
       expect(row.guildIcon).toBe('abc123');
       expect(row.installedByUserId).toBe('installer-user');
+    });
+
+    it('APPLICATION_AUTHORIZED sends a welcome DM to the installing admin (fresh install only)', async () => {
+      const guildId = `e2e-welcome-${Date.now()}`;
+      cleanupGuildIds.push(guildId);
+
+      const bot = makeFakeBot();
+      const res = mockResponse();
+      await dispatchBotPayload('events', {
+        type: 1,
+        event: {
+          type: 'APPLICATION_AUTHORIZED',
+          data: {
+            integration_type: 0,
+            scopes: ['bot', 'applications.commands'],
+            user: { id: 'installer-parker', username: 'Parker' },
+            guild: { id: guildId, name: 'My New Server', icon: null },
+          },
+        },
+      }, res, { bot });
+
+      expect(res._status).toBe(204);
+      // Welcome DM fired to the installing admin with the guild name
+      // and pointers to `/swutrade settings` + the web app.
+      const dm = bot.sendCalls.find(c => c.userId === 'installer-parker');
+      expect(dm, 'expected welcome DM to installer').toBeTruthy();
+      const embed = dm?.body.embeds?.[0];
+      expect(embed?.title).toContain('My New Server');
+      const description = embed?.description ?? '';
+      expect(description).toMatch(/swutrade settings/i);
+      expect(description).toMatch(/beta\.swutrade\.com|swutrade\.com/);
+    });
+
+    it('APPLICATION_AUTHORIZED skips the welcome DM on a re-authorization (row already existed)', async () => {
+      const guildId = `e2e-reinstall-welcome-${Date.now()}`;
+      cleanupGuildIds.push(guildId);
+
+      // Seed the row as if it already existed (prior install).
+      const db = getDb();
+      await db.insert(botInstalledGuilds).values({
+        guildId,
+        guildName: 'Previously Installed',
+        guildIcon: null,
+      });
+
+      const bot = makeFakeBot();
+      const res = mockResponse();
+      await dispatchBotPayload('events', {
+        type: 1,
+        event: {
+          type: 'APPLICATION_AUTHORIZED',
+          data: {
+            integration_type: 0,
+            scopes: ['bot', 'applications.commands'],
+            user: { id: 'installer-parker-reauth', username: 'Parker' },
+            guild: { id: guildId, name: 'Previously Installed', icon: null },
+          },
+        },
+      }, res, { bot });
+
+      expect(res._status).toBe(204);
+      // No welcome DM — the admin already got one when they first installed.
+      const dm = bot.sendCalls.find(c => c.userId === 'installer-parker-reauth');
+      expect(dm, 'expected NO welcome DM on re-auth').toBeUndefined();
     });
 
     it('APPLICATION_AUTHORIZED auto-creates #swutrade-threads + persists the channel id when the bot client succeeds', async () => {

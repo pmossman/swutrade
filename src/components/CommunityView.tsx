@@ -290,7 +290,14 @@ function PeerPrefSelect({
   // as "inherit". The sentinel we use in the <select> value is the
   // empty string (can't use the literal null on an <option>).
   const currentValue = override == null ? '' : String(override);
+  const hasOverride = override != null;
   const effectiveLabel = def.type.options.find(o => o.value === effective)?.label ?? String(effective ?? '');
+  // Override active → gold ring + non-empty value shows the user at a
+  // glance that they've configured something specific here, without
+  // needing to read the option text.
+  const selectClass = hasOverride
+    ? 'w-full bg-space-800 border border-gold/50 text-gold text-[11px] rounded-md px-2 py-1.5 focus:border-gold/70 focus:outline-none'
+    : 'w-full bg-space-800 border border-space-700 text-gray-200 text-[11px] rounded-md px-2 py-1.5 focus:border-gold/50 focus:outline-none';
   return (
     <div>
       <label htmlFor={id} className="sr-only">
@@ -303,11 +310,11 @@ function PeerPrefSelect({
           const v = e.target.value;
           onChange(v === '' ? null : v);
         }}
-        className="w-full bg-space-800 border border-space-700 text-gray-200 text-[11px] rounded-md px-2 py-1.5 focus:border-gold/50 focus:outline-none"
-        aria-label={`${def.label} for this user`}
-        title={def.description}
+        className={selectClass}
+        aria-label={`${def.label} for this user${hasOverride ? ' (override active)' : ''}`}
+        title={hasOverride ? `${def.description}\nOverride active — currently applies instead of your default.` : def.description}
       >
-        <option value="">{`Inherit (${effectiveLabel})`}</option>
+        <option value="">{`Use my default (${effectiveLabel})`}</option>
         {def.type.options.map(opt => (
           <option key={opt.value} value={opt.value}>
             {opt.label}
