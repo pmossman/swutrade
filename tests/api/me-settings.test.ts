@@ -16,7 +16,7 @@ import {
   insertAvailable,
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
-import { userGuildMemberships, botInstalledGuilds, users, wantsItems, availableItems } from '../../lib/schema.js';
+import { userGuildMemberships, userPeerPrefs, botInstalledGuilds, users, wantsItems, availableItems } from '../../lib/schema.js';
 import { and, eq } from 'drizzle-orm';
 
 describeWithDb('Phase 4 account + guild settings', () => {
@@ -178,6 +178,178 @@ describeWithDb('Phase 4 account + guild settings', () => {
       const res = mockResponse();
       await prefsHandler(req, res);
 
+      expect(res._status).toBe(400);
+    });
+  });
+
+  describe('peer scope — /api/me/prefs?peer=<id> + PUT with peerUserId', () => {
+    it('GET returns override (null when no row) + resolved effective values', async () => {
+      const viewer = await createTestUser({ communicationPref: 'prefer' });
+      const peer = await createTestUser();
+      fixtures.push(viewer, peer);
+      const cookie = await sealTestCookie(viewer.id);
+
+      const req = mockRequest({
+        method: 'GET',
+        cookies: { swu_session: cookie },
+        query: { peer: peer.id },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(200);
+      expect(res._json).toEqual({
+        override: { communicationPref: null },
+        // No override → effective falls through to the viewer's self value.
+        effective: { communicationPref: 'prefer' },
+      });
+    });
+
+    it('PUT with {peerUserId, key, value} upserts a peer override', async () => {
+      const viewer = await createTestUser({ communicationPref: 'allow' });
+      const peer = await createTestUser();
+      fixtures.push(viewer, peer);
+      const cookie = await sealTestCookie(viewer.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: {
+          peerUserId: peer.id,
+          key: 'communicationPref',
+          value: 'dm-only',
+        },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(200);
+      const db = getDb();
+      const [row] = await db
+        .select()
+        .from(userPeerPrefs)
+        .where(and(
+          eq(userPeerPrefs.userId, viewer.id),
+          eq(userPeerPrefs.peerUserId, peer.id),
+        ))
+        .limit(1);
+      expect(row?.communicationPref).toBe('dm-only');
+
+      // GET now reflects both the raw override and the resolved effective value.
+      const getReq = mockRequest({
+        method: 'GET',
+        cookies: { swu_session: cookie },
+        query: { peer: peer.id },
+      });
+      const getRes = mockResponse();
+      await prefsHandler(getReq, getRes);
+      expect(getRes._json).toEqual({
+        override: { communicationPref: 'dm-only' },
+        effective: { communicationPref: 'dm-only' },
+      });
+    });
+
+    it('PUT with value: null clears the override (resolver falls back to self)', async () => {
+      const viewer = await createTestUser({ communicationPref: 'prefer' });
+      const peer = await createTestUser();
+      fixtures.push(viewer, peer);
+      const cookie = await sealTestCookie(viewer.id);
+      const db = getDb();
+      await db.insert(userPeerPrefs).values({
+        userId: viewer.id,
+        peerUserId: peer.id,
+        communicationPref: 'dm-only',
+      });
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: {
+          peerUserId: peer.id,
+          key: 'communicationPref',
+          value: null,
+        },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+
+      expect(res._status).toBe(200);
+      const [row] = await db
+        .select()
+        .from(userPeerPrefs)
+        .where(and(
+          eq(userPeerPrefs.userId, viewer.id),
+          eq(userPeerPrefs.peerUserId, peer.id),
+        ))
+        .limit(1);
+      expect(row?.communicationPref).toBeNull();
+    });
+
+    it('PUT upserting a second time updates the same row (no duplicates)', async () => {
+      const viewer = await createTestUser();
+      const peer = await createTestUser();
+      fixtures.push(viewer, peer);
+      const cookie = await sealTestCookie(viewer.id);
+
+      for (const value of ['dm-only', 'prefer', 'auto-accept']) {
+        const req = mockRequest({
+          method: 'PUT',
+          cookies: { swu_session: cookie },
+          body: { peerUserId: peer.id, key: 'communicationPref', value },
+        });
+        const res = mockResponse();
+        await prefsHandler(req, res);
+        expect(res._status).toBe(200);
+      }
+
+      const db = getDb();
+      const rows = await db
+        .select()
+        .from(userPeerPrefs)
+        .where(and(
+          eq(userPeerPrefs.userId, viewer.id),
+          eq(userPeerPrefs.peerUserId, peer.id),
+        ));
+      expect(rows).toHaveLength(1);
+      expect(rows[0].communicationPref).toBe('auto-accept');
+    });
+
+    it('PUT rejects self-override (peerUserId === viewer)', async () => {
+      const viewer = await createTestUser();
+      fixtures.push(viewer);
+      const cookie = await sealTestCookie(viewer.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: {
+          peerUserId: viewer.id,
+          key: 'communicationPref',
+          value: 'prefer',
+        },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
+      expect(res._status).toBe(400);
+    });
+
+    it('PUT rejects unknown peer-scoped key', async () => {
+      const viewer = await createTestUser();
+      const peer = await createTestUser();
+      fixtures.push(viewer, peer);
+      const cookie = await sealTestCookie(viewer.id);
+
+      const req = mockRequest({
+        method: 'PUT',
+        cookies: { swu_session: cookie },
+        body: {
+          peerUserId: peer.id,
+          key: 'dmTradeProposals', // not registered at peer scope
+          value: false,
+        },
+      });
+      const res = mockResponse();
+      await prefsHandler(req, res);
       expect(res._status).toBe(400);
     });
   });

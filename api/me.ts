@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
+import { users, userGuildMemberships, userPeerPrefs, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
 import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
@@ -11,6 +11,7 @@ import {
   getPrefDefinition,
   validatePrefValue,
 } from '../lib/prefsRegistry.js';
+import { resolvePref } from '../lib/prefsResolver.js';
 
 /**
  * Single dispatcher for every `/api/me/*` endpoint.
@@ -53,18 +54,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // --- prefs ------------------------------------------------------------------
 
 /**
- * Registry-driven GET + PUT for every self-scoped pref the app knows
- * about. Both the `prefs` and deprecated `settings` actions route
- * here; the only difference is the URL the caller hit.
+ * Registry-driven GET + PUT for every pref the app knows about —
+ * both self-scoped and peer-scoped. `/api/me/prefs` and the legacy
+ * `/api/me/settings` alias route here.
  *
- * GET: project the registered columns off the users row, return as
- *   `{ [key]: value }`.
- * PUT: accept a partial `{ [key]: value }` patch; every key must match
- *   a self-scoped registered def and its value must pass the type
- *   check. Unknown keys fail the whole request — the registry is the
- *   contract, and silently dropping unrecognized keys hides typos.
+ * Self scope (no `?peer=` / `peerUserId`):
+ *   GET  → `{ [selfKey]: value, ... }` projected off users.
+ *   PUT  → partial patch `{ [key]: value, ... }` against users.
+ *          Unknown keys fail the whole request.
  *
- * Peer-scoped prefs are handled separately in a later migration step.
+ * Peer scope (GET `?peer=<id>`, PUT body includes `peerUserId`):
+ *   GET  → `{ override: { [key]: value | null }, effective: { [key]: value } }`
+ *          `override` = what's stored in user_peer_prefs (null when
+ *          no row / null column — treated identically by the cascade).
+ *          `effective` = what `resolvePref` would return, so the UI
+ *          can render "inherit (currently: X)" without a second call.
+ *   PUT  → `{ peerUserId, key, value }` where `value: null` clears
+ *          the override. Only peer-scoped registered keys accepted.
  */
 export async function handlePrefs(req: VercelRequest, res: VercelResponse) {
   const session = await requireSession(req, res);
@@ -72,65 +78,163 @@ export async function handlePrefs(req: VercelRequest, res: VercelResponse) {
 
   const db = getDb();
 
-  const selfDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'self');
+  const peerId = typeof req.query.peer === 'string' ? req.query.peer : undefined;
 
   if (req.method === 'GET') {
-    // Cast once so we can dynamically project the Drizzle column
-    // objects by name — the registry's `column` values are validated
-    // against the users table schema at test time so the runtime
-    // property access is safe.
-    const usersCols = users as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
-    const projection: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
-    for (const def of selfDefs) {
-      projection[def.key] = usersCols[def.column];
-    }
-
-    const [row] = await db
-      .select(projection)
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-    if (!row) return res.status(404).json({ error: 'User not found' });
-    res.setHeader('Cache-Control', 'private, no-store');
-    return res.json(row);
+    if (peerId) return handlePrefsPeerGet(req, res, session.userId, peerId);
+    return handlePrefsSelfGet(res, session.userId);
   }
 
   if (req.method === 'PUT') {
     if (typeof req.body !== 'object' || req.body == null || Array.isArray(req.body)) {
       return res.status(400).json({ error: 'Invalid body' });
     }
-    const patch = req.body as Record<string, unknown>;
-    const keys = Object.keys(patch);
-    if (keys.length === 0) {
-      return res.status(400).json({ error: 'Empty patch' });
+    const body = req.body as Record<string, unknown>;
+    if (typeof body.peerUserId === 'string') {
+      return handlePrefsPeerPut(res, session.userId, body);
     }
-
-    // Validate every key against the registry before writing anything.
-    // A single bad key rejects the whole request — partial writes on
-    // validation failure would leave the client guessing which fields
-    // landed.
-    const updates: Record<string, boolean | string> = {};
-    for (const key of keys) {
-      const def = getPrefDefinition(key, 'self');
-      if (!def) {
-        return res.status(400).json({ error: 'Unknown pref', key });
-      }
-      const v = validatePrefValue(def, patch[key]);
-      if (!v.ok) {
-        return res.status(400).json({ error: 'Invalid value', key, reason: v.reason });
-      }
-      updates[def.column] = v.value;
-    }
-
-    await db
-      .update(users)
-      .set({ ...updates, updatedAt: new Date() })
-      .where(eq(users.id, session.userId));
-    return res.json({ ok: true });
+    return handlePrefsSelfPut(res, session.userId, body);
   }
 
   res.setHeader('Allow', 'GET, PUT');
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+async function handlePrefsSelfGet(res: VercelResponse, userId: string) {
+  const db = getDb();
+  const selfDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'self');
+  const usersCols = users as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
+  const projection: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
+  for (const def of selfDefs) {
+    projection[def.key] = usersCols[def.column];
+  }
+  const [row] = await db
+    .select(projection)
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!row) return res.status(404).json({ error: 'User not found' });
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json(row);
+}
+
+async function handlePrefsSelfPut(
+  res: VercelResponse,
+  userId: string,
+  patch: Record<string, unknown>,
+) {
+  const db = getDb();
+  const keys = Object.keys(patch);
+  if (keys.length === 0) return res.status(400).json({ error: 'Empty patch' });
+
+  const updates: Record<string, boolean | string> = {};
+  for (const key of keys) {
+    const def = getPrefDefinition(key, 'self');
+    if (!def) return res.status(400).json({ error: 'Unknown pref', key });
+    const v = validatePrefValue(def, patch[key]);
+    if (!v.ok) return res.status(400).json({ error: 'Invalid value', key, reason: v.reason });
+    updates[def.column] = v.value;
+  }
+  await db
+    .update(users)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(eq(users.id, userId));
+  return res.json({ ok: true });
+}
+
+async function handlePrefsPeerGet(
+  _req: VercelRequest,
+  res: VercelResponse,
+  userId: string,
+  peerUserId: string,
+) {
+  const db = getDb();
+  const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
+  const peerCols = userPeerPrefs as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
+
+  // Fetch the single peer-prefs row if it exists; project every
+  // registered peer-scoped column.
+  const projection: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
+  for (const def of peerDefs) {
+    projection[def.key] = peerCols[def.column];
+  }
+  const [overrideRow] = Object.keys(projection).length > 0
+    ? await db
+        .select(projection)
+        .from(userPeerPrefs)
+        .where(and(
+          eq(userPeerPrefs.userId, userId),
+          eq(userPeerPrefs.peerUserId, peerUserId),
+        ))
+        .limit(1)
+    : [undefined];
+
+  const override: Record<string, boolean | string | null> = {};
+  const effective: Record<string, boolean | string | null> = {};
+  for (const def of peerDefs) {
+    const stored = overrideRow ? overrideRow[def.key] : null;
+    override[def.key] = (stored ?? null) as boolean | string | null;
+    // Resolve separately so the client gets both the raw override and
+    // the value the cascade would produce (for "inherit (currently X)").
+    effective[def.key] = (await resolvePref({
+      key: def.key,
+      viewerUserId: userId,
+      peerUserId,
+    })) as boolean | string | null;
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ override, effective });
+}
+
+async function handlePrefsPeerPut(
+  res: VercelResponse,
+  userId: string,
+  body: Record<string, unknown>,
+) {
+  const db = getDb();
+  const peerUserId = body.peerUserId as string;
+  const key = typeof body.key === 'string' ? body.key : '';
+  const value = body.value;
+
+  if (!key) return res.status(400).json({ error: 'Missing key' });
+  if (peerUserId === userId) {
+    return res.status(400).json({ error: "Can't override prefs against yourself" });
+  }
+
+  const def = getPrefDefinition(key, 'peer');
+  if (!def) return res.status(400).json({ error: 'Unknown peer pref', key });
+
+  // Null = clear override (fall back to self default). Any other
+  // value goes through the validator.
+  let persisted: boolean | string | null;
+  if (value === null) {
+    persisted = null;
+  } else {
+    const v = validatePrefValue(def, value);
+    if (!v.ok) return res.status(400).json({ error: 'Invalid value', key, reason: v.reason });
+    persisted = v.value;
+  }
+
+  // Upsert on (userId, peerUserId). Keep the row even when every
+  // column is nulled — simpler than delete-when-all-null, and a
+  // future peer-scoped column can land in the same row.
+  const now = new Date();
+  await db
+    .insert(userPeerPrefs)
+    .values({
+      userId,
+      peerUserId,
+      [def.column]: persisted,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [userPeerPrefs.userId, userPeerPrefs.peerUserId],
+      set: { [def.column]: persisted, updatedAt: now },
+    });
+
+  return res.json({ ok: true });
 }
 
 /**
