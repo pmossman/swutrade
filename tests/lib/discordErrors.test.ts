@@ -85,6 +85,22 @@ describe('classifyDiscordError', () => {
     expect(err.discordCode).toBe(50035);
   });
 
+  // Code 40003 ("opening DMs too fast") comes back as HTTP 400 but is
+  // semantically a rate limit — we re-classify it so silent-fail noise
+  // from fast bulk declines doesn't leak to #bot-errors.
+  it('400 + code 40003 → DiscordRateLimitError (DM-open rate limit)', () => {
+    const err = classifyDiscordError(
+      400,
+      'POST',
+      '/users/@me/channels',
+      '{"message":"You are opening direct messages too fast.","code":40003}',
+      headers(),
+    );
+    expect(err).toBeInstanceOf(DiscordRateLimitError);
+    expect((err as DiscordRateLimitError).retryAfterSeconds).toBeGreaterThan(0);
+    expect((err as DiscordRateLimitError).global).toBe(false);
+  });
+
   it('500 + 502 + 503 → DiscordServerError', () => {
     for (const status of [500, 502, 503]) {
       const err = classifyDiscordError(status, 'GET', '/gateway', '', headers());

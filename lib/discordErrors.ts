@@ -129,6 +129,19 @@ export function classifyDiscordError(
       : (retryAfterFromBody ?? 1);
     return new DiscordRateLimitError(message, { ...baseDetail, retryAfterSeconds, global });
   }
+  // Discord code 40003 — "You are opening direct messages too fast."
+  // Comes back as HTTP 400 instead of 429 but is semantically a rate
+  // limit on DM-channel creation. Classify it alongside 429 so callers
+  // (auto-retry, errorReporter noise filter) treat it consistently.
+  // Retry window isn't documented; 2s is empirically enough to land
+  // the next call on most attempts.
+  if (status === 400 && discordCode === 40003) {
+    return new DiscordRateLimitError(message, {
+      ...baseDetail,
+      retryAfterSeconds: retryAfterFromBody ?? 2,
+      global: false,
+    });
+  }
   if (status === 403) return new DiscordPermissionError(message, baseDetail);
   if (status === 404) return new DiscordNotFoundError(message, baseDetail);
   if (status === 400) return new DiscordValidationError(message, baseDetail);
