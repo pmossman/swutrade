@@ -148,6 +148,15 @@ Separate-flow in-person collaborative trading. See ROADMAP.md Phase 5b for scope
 
 *(append here as slices ship)*
 
+### 2026-04-19 — My Trades inline expand
+Commit: `6602874`. Clicking a trade row in HomeView's pending callout, the recent-activity feed, or any TradesHistoryView tab now expands an inline peek instead of navigating. The peek renders both sides as a card-image grid (viewer-centric "You offer / You receive" labels, flipped for recipients), shows the proposal message when set, and carries an "Open full details →" affordance. Single `expandedId` per list collapses the prior open row; tab switch + list-shape changes collapse automatically. `useTradeDetail` grew a module-scoped cache so repeat expansions are instant; successful mutations invalidate the affected entry. Anon e2e updated: the trades-history row-click spec now clicks through the peek's full-details button to reach `/?trade=<id>`.
+
+### 2026-04-19 — Home flicker fix
+Commit: `8cf5016`. Returning signed-in users saw a one-frame flash of the trade builder before HomeView took over because `detectViewMode(!!user)` ran with `user=null` before `/api/auth/me` resolved. `useAuth` now persists a `swu.signedInHint` flag to localStorage after each confirmed auth (cleared on logout / confirmed-signed-out) and exposes `isSignedIn = !!user || (isLoading && initialHint)`. App.tsx seeds the view router from `isSignedIn` instead of `!!user`, so the first render lands on the right view. Stale hints are self-correcting on the next fetch.
+
+### 2026-04-19 — Handle-picker dogfood fix
+Commit: `2d39d14`. Signed-in dogfood pass surfaced two conflicting hints stacking in HandlePickerDialog: the new red "No SWUTrade user…" validation error on top and the pre-existing grey "Press Go to send anyway" hint underneath. Gated the grey hint on `validation.kind !== 'error'`; it reappears automatically when the user edits the input and the error clears.
+
 ### 2026-04-19 — Handle-picker improvements
 Three upgrades to `HandlePickerDialog`: (1) new `GET /api/me/recent-partners` endpoint + `useRecentPartners` hook drive a "Recent" chips row above the typed-handle input (up to 5 distinct counterparties, newest proposal interaction first, hidden once the user starts typing to avoid clutter); (2) typed-handle validation on submit — unknown-in-community handles are verified against `/api/user/:handle` before navigating, so a 404 now surfaces as an inline "No SWUTrade user with the handle @…" error instead of bouncing into a broken composer; (3) richer empty state when the viewer has no mutual Discord guilds — a distinct panel with a deep link into `Settings → Discord servers`. 3 new integration tests cover distinct-counterpart dedupe, the 5-partner cap, and the empty case.
 
