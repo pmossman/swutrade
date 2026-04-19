@@ -19,6 +19,7 @@
     { "source": "/api/trades/counter", "destination": "/api/trades?action=counter" },
     { "source": "/api/trades/cancel", "destination": "/api/trades?action=cancel" },
     { "source": "/api/trades/nudge", "destination": "/api/trades?action=nudge" },
+    { "source": "/api/trades/bulk-resolve", "destination": "/api/trades?action=bulk-resolve" },
     { "source": "/api/trades/proposals", "destination": "/api/trades?action=proposals" },
     { "source": "/api/trades/:id", "destination": "/api/trades?action=get&id=:id" },
     { "source": "/api/bot/interactions", "destination": "/api/bot?action=interactions" },

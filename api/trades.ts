@@ -10,6 +10,7 @@ import {
   buildCounterProposalMessage,
   buildCounteredProposalMessage,
   buildResolvedProposalMessage,
+  buildBulkDeclineNotification,
 } from '../lib/proposalMessages.js';
 import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js';
 import { resolvePref } from '../lib/prefsResolver.js';
@@ -44,6 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'decline':    return handleAcceptDecline(req, res, 'declined');
     case 'edit':       return handleEdit(req, res);
     case 'nudge':      return handleNudge(req, res);
+    case 'bulk-resolve': return handleBulkResolve(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -1254,4 +1256,231 @@ export async function handleNudge(
   });
 
   return res.json({ id, nudgedAt: nudgedAt.toISOString() });
+}
+
+// --- bulk-resolve (decline/cancel many proposals in one request) -----------
+
+const BulkResolveBody = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+  action: z.enum(['decline', 'cancel']),
+});
+
+/**
+ * Defensive delay between coalesced summary DMs. Discord rate-limits
+ * DM-channel creation separately from the usual 429 (error 40003:
+ * "You are opening direct messages too fast"), and firing 10 DMs
+ * back-to-back from the same serverless function invocation can still
+ * trip it even after coalescing per proposer. 200ms spacing = 2s for
+ * a 10-proposer burst, which is acceptable given the UI already shows
+ * a "working…" state while the request is in flight.
+ */
+const BULK_SUMMARY_DM_SPACING_MS = 200;
+
+type BulkOutcome = 'ok' | 'already-resolved' | 'not-found' | 'forbidden';
+
+/**
+ * Decline or cancel N pending proposals in a single request, with
+ * per-proposer notification COALESCING. Built to replace the per-row
+ * firehose that caused production error 40003 when a user rapidly
+ * declined ~10 proposals from the web UI.
+ *
+ * For each id the handler runs the same auth/race checks as the
+ * single-row endpoints (`handleAcceptDecline`, `handleCancel`). The
+ * critical difference: per-row proposer DMs are NOT sent from the
+ * loop. They're collected, grouped by proposer, and emitted as ONE
+ * summary DM per unique proposer after the loop — with a small
+ * spacing between sends as belt-and-suspenders against 40003.
+ *
+ * Accept is intentionally excluded — accepting stays per-row because
+ * an accept's downstream effects (coordination message, etc) aren't
+ * safely batchable.
+ */
+export async function handleBulkResolve(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient; sleep?: (ms: number) => Promise<void> } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = BulkResolveBody.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { ids, action } = parsed.data;
+
+  const db = getDb();
+  const bot = deps.bot ?? createDiscordBotClient();
+  const sleep = deps.sleep ?? ((ms: number) => new Promise(r => setTimeout(r, ms)));
+
+  const newStatus = action === 'decline' ? 'declined' : 'cancelled';
+  const eventType = action === 'decline' ? 'declined' : 'cancelled';
+
+  const results: Array<{ id: string; outcome: BulkOutcome }> = [];
+  /** Ok-declined proposals keyed by proposerUserId — used to coalesce
+   *  one summary DM per unique proposer after the loop. */
+  const declinesByProposer = new Map<string, { proposalIds: string[] }>();
+
+  // Look up the viewer's handle once for the summary DM copy.
+  const [viewer] = await db
+    .select({ handle: users.handle, username: users.username })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+
+  for (const id of ids) {
+    const [row] = await db
+      .select()
+      .from(tradeProposals)
+      .where(eq(tradeProposals.id, id))
+      .limit(1);
+    if (!row) {
+      results.push({ id, outcome: 'not-found' });
+      continue;
+    }
+
+    // Auth: decline → must be recipient (fold non-recipient into
+    // not-found to avoid existence leak). Cancel → must be proposer
+    // (403 forbidden, since the trade's existence isn't secret from
+    // the proposer — they sent it).
+    if (action === 'decline' && row.recipientUserId !== session.userId) {
+      results.push({ id, outcome: 'not-found' });
+      continue;
+    }
+    if (action === 'cancel' && row.proposerUserId !== session.userId) {
+      results.push({ id, outcome: 'forbidden' });
+      continue;
+    }
+
+    if (row.status !== 'pending') {
+      results.push({ id, outcome: 'already-resolved' });
+      continue;
+    }
+
+    // Optimistic concurrency: same pattern as the single-row paths.
+    const updated = await db
+      .update(tradeProposals)
+      .set({
+        status: newStatus,
+        respondedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(tradeProposals.id, id),
+        eq(tradeProposals.status, 'pending'),
+      ))
+      .returning({ id: tradeProposals.id });
+
+    if (updated.length === 0) {
+      results.push({ id, outcome: 'already-resolved' });
+      continue;
+    }
+
+    await recordEvent(db, {
+      proposalId: id,
+      actorUserId: session.userId,
+      type: eventType,
+    });
+
+    // Edit the original DM in place — best effort. Failures here
+    // MUST NOT block the remaining batch.
+    if (row.discordDmChannelId && row.discordDmMessageId) {
+      try {
+        const [proposer] = await db
+          .select({ handle: users.handle, username: users.username })
+          .from(users)
+          .where(eq(users.id, row.proposerUserId))
+          .limit(1);
+        if (proposer) {
+          // For `decline` the responder IS the viewer (= recipient).
+          // For `cancel` the responder IS the viewer (= proposer).
+          const responderHandle = viewer?.handle ?? '';
+          const patched = buildResolvedProposalMessage(
+            {
+              tradeId: row.id,
+              proposerUserId: row.proposerUserId,
+              proposerHandle: proposer.handle,
+              proposerUsername: proposer.username,
+              offeringCards: row.offeringCards,
+              receivingCards: row.receivingCards,
+              message: row.message,
+            },
+            newStatus,
+            responderHandle,
+          );
+          await bot.editChannelMessage(row.discordDmChannelId, row.discordDmMessageId, patched);
+        }
+      } catch (err) {
+        console.error('handleBulkResolve: DM edit failed', err);
+        await reportError({
+          source: 'trades.bulk-resolve.dm-edit',
+          tags: { tradeId: id, action, actorId: session.userId },
+        }, err);
+        // keep processing the rest of the batch.
+      }
+    }
+
+    // Stash decline for coalesced notification. Cancels don't need
+    // a summary DM — the edit-in-place above already informs the
+    // recipient (who HAS the DM open on their end already), and the
+    // cancel edits go to KNOWN channel/message ids — they don't hit
+    // `/users/@me/channels` at all.
+    if (action === 'decline') {
+      const bucket = declinesByProposer.get(row.proposerUserId);
+      if (bucket) {
+        bucket.proposalIds.push(id);
+      } else {
+        declinesByProposer.set(row.proposerUserId, { proposalIds: [id] });
+      }
+    }
+
+    results.push({ id, outcome: 'ok' });
+  }
+
+  // Coalesced summary DMs — decline only. Sequential with a small
+  // spacing to defuse 40003 even when the viewer had pending
+  // proposals from many distinct proposers.
+  let notificationsSent = 0;
+  if (action === 'decline' && declinesByProposer.size > 0 && viewer) {
+    const entries = Array.from(declinesByProposer.entries());
+    for (let i = 0; i < entries.length; i++) {
+      const [proposerUserId, bucket] = entries[i];
+      try {
+        const [proposer] = await db
+          .select({ discordId: users.discordId })
+          .from(users)
+          .where(eq(users.id, proposerUserId))
+          .limit(1);
+        if (!proposer) continue;
+
+        const summary = buildBulkDeclineNotification({
+          recipientHandle: viewer.handle,
+          recipientUsername: viewer.username,
+          declinedCount: bucket.proposalIds.length,
+          sampleTradeIds: bucket.proposalIds.slice(0, 3),
+        });
+        await bot.sendDirectMessage(proposer.discordId, summary);
+        notificationsSent += 1;
+      } catch (err) {
+        console.error('handleBulkResolve: summary DM failed', err);
+        await reportError({
+          source: 'trades.bulk-resolve.summary-dm',
+          tags: { proposerId: proposerUserId, viewerId: session.userId, declinedCount: bucket.proposalIds.length },
+        }, err);
+      }
+      // Space out subsequent sends. Last iteration skips the sleep
+      // so the response fires as soon as the final DM settles.
+      if (i < entries.length - 1) {
+        await sleep(BULK_SUMMARY_DM_SPACING_MS);
+      }
+    }
+  }
+
+  const okCount = results.reduce((n, r) => n + (r.outcome === 'ok' ? 1 : 0), 0);
+  return res.json({ results, okCount, notificationsSent });
 }

@@ -835,6 +835,48 @@ export function buildResolvedProposalMessage(
 }
 
 /**
+ * Coalesced notification DM'd to a proposer when their recipient
+ * bulk-declines several of their proposals in one action. One
+ * summary DM replaces N per-proposal notifications — Discord
+ * rate-limits DM-channel creation (error code 40003, "You are
+ * opening direct messages too fast") separately from the usual
+ * 429, and rapidly firing per-row DMs trips it.
+ *
+ * Contract: at least one declined id is implied. `sampleTradeIds`
+ * is clamped to the first 3 for embed brevity — the full list
+ * lives in the web history view.
+ */
+export function buildBulkDeclineNotification(opts: {
+  recipientHandle: string;
+  recipientUsername: string;
+  declinedCount: number;
+  sampleTradeIds: string[];
+}): DiscordMessageBody {
+  const n = opts.declinedCount;
+  const title = `${n} of your proposal${n === 1 ? ' was' : 's were'} declined`;
+  const samples = opts.sampleTradeIds.slice(0, 3);
+  const sampleList = samples
+    .map(id => `• \`${id.slice(0, 8)}\``)
+    .join('\n');
+  const remainder = n - samples.length;
+  const sampleValue = remainder > 0
+    ? `${sampleList}\n_…and ${remainder} more — open SWUTrade to see the rest._`
+    : sampleList || '_none_';
+
+  return {
+    embeds: [{
+      title: `❌ ${title}`,
+      description: `@${opts.recipientHandle} (${opts.recipientUsername}) declined ${n === 1 ? 'a proposal' : `${n} proposals`} you sent them.`,
+      color: COLORS.red,
+      fields: [
+        { name: n === 1 ? 'Trade' : 'Trades', value: sampleValue },
+      ],
+      footer: { text: 'SWUTrade bulk response' },
+    }],
+  };
+}
+
+/**
  * Concise notification DM'd back to the proposer when the recipient
  * accepts or declines. Not the same shape as the recipient's DM —
  * the proposer already knows what they offered; they just need the
