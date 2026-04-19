@@ -447,12 +447,17 @@ function App() {
   if (viewMode === 'trade-detail') {
     const tradeId = new URLSearchParams(window.location.search).get('trade') ?? '';
     const goBack = () => {
-      // Back = /?trades=1 (history) so the proposer can see a fresh
-      // list after cancelling, rather than vanishing to the trade
-      // balancer.
-      const params = new URLSearchParams();
-      params.set('trades', '1');
-      window.history.pushState(null, '', `?${params.toString()}`);
+      // Back = pop the browser history so the user returns to wherever
+      // they came from (Home, Trades History, Profile, etc.). Intra-SPA
+      // navigation uses pushState, which updates history.length but not
+      // document.referrer — so history.length is the only reliable
+      // signal here. Fall back to bare `/` on direct deep-links so we
+      // never strand the user on a "Back" that does nothing.
+      if (window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+      window.history.pushState(null, '', '/');
       setViewMode(detectViewMode(!!user));
     };
     return <TradeDetailView tradeId={tradeId} onClose={goBack} />;
