@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState } from 'react';
-import type { PriceMode, TradeCard } from '../types';
+import type { TradeCard } from '../types';
 import { adjustPrice, getCardPrice } from '../services/priceService';
 import { extractVariantLabel } from '../variants';
 import { apiPost } from '../services/apiClient';
+import { usePricing } from '../contexts/PricingContext';
 
 /**
  * Shared send-state + snapshot + message plumbing for the three
@@ -84,8 +85,6 @@ export interface ComposerBarApi {
 export interface UseComposerBarOptions {
   yourCards: TradeCard[];
   theirCards: TradeCard[];
-  percentage: number;
-  priceMode: PriceMode;
   /** Optional max message length — defaults to 500 (server-enforced
    *  cap). Here as a knob for a future composer variant that wants a
    *  different ceiling. */
@@ -95,7 +94,8 @@ export interface UseComposerBarOptions {
 const DEFAULT_MESSAGE_MAX_LENGTH = 500;
 
 export function useComposerBar(opts: UseComposerBarOptions): ComposerBarApi {
-  const { yourCards, theirCards, percentage, priceMode } = opts;
+  const { yourCards, theirCards } = opts;
+  const { percentage, priceMode } = usePricing();
   const messageMaxLength = opts.messageMaxLength ?? DEFAULT_MESSAGE_MAX_LENGTH;
 
   const [message, setMessageRaw] = useState('');

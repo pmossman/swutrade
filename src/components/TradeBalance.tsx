@@ -3,14 +3,11 @@ import { adjustPrice, getCardPrice, countMissingPrices } from '../services/price
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 import { PriceSlider } from './PriceSlider';
 import { PriceModeToggle } from './PriceModeToggle';
+import { usePricing } from '../contexts/PricingContext';
 
 interface TradeBalanceProps {
   yourCards: TradeCard[];
   theirCards: TradeCard[];
-  percentage: number;
-  priceMode: PriceMode;
-  onPercentageChange: (value: number) => void;
-  onPriceModeChange: (mode: PriceMode) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   /** Primary action when the banner is tapped while expanded — opens
@@ -33,14 +30,11 @@ function formatDollars(n: number) {
 export function TradeBalance({
   yourCards,
   theirCards,
-  percentage,
-  priceMode,
-  onPercentageChange,
-  onPriceModeChange,
   collapsed = false,
   onToggleCollapse,
   onPrimary,
 }: TradeBalanceProps) {
+  const { percentage, setPercentage, priceMode, setPriceMode } = usePricing();
   const yourTotal = calcTotal(yourCards, percentage, priceMode);
   const theirTotal = calcTotal(theirCards, percentage, priceMode);
   const isEmpty = yourCards.length === 0 && theirCards.length === 0;
@@ -205,12 +199,12 @@ export function TradeBalance({
           )}
           <span className="flex items-center gap-1.5 text-gray-500">
             <span className="text-[10px] sm:text-[11px]">@</span>
-            <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
+            <PriceModeToggle value={priceMode} onChange={setPriceMode} />
             {/* Toggle is visible inline here, so the slider doesn't
                 need its own mobile mode-label/popover-toggle fallback. */}
             <PriceSlider
               value={percentage}
-              onChange={onPercentageChange}
+              onChange={setPercentage}
             />
           </span>
         </div>

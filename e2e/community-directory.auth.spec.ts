@@ -67,7 +67,17 @@ test.describe('Community directory view', () => {
     }));
 
     await page.goto('/?community=1');
-    await expect(page.getByText(/^Community$/i).first()).toBeVisible({ timeout: 10_000 });
+    // Community 2.0 auto-redirects single-guild users into that
+    // guild's page — wait for the Members tab to appear as the
+    // structural "we made it into the guild space" signal. The
+    // breadcrumb "Community" link was flaky on CI (timing-dependent
+    // on the redirect + render) so anchor to a stable guild-view
+    // element instead.
+    await expect(page.getByRole('tab', { name: /members/i }).first())
+      .toBeVisible({ timeout: 10_000 });
+    // Click into the Members tab to ensure we're looking at the
+    // directory content the rest of the assertions check against.
+    await page.getByRole('tab', { name: /members/i }).click();
 
     await expect(page.getByText(`@${visible.handle}`)).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText(`@${hidden.handle}`)).toHaveCount(0);

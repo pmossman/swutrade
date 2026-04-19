@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import type { PriceMode, TradeCard } from '../types';
+import type { TradeCard } from '../types';
 import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { usePricing } from '../contexts/PricingContext';
 import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
 
 interface ProposeBarProps {
   recipientHandle: string;
-  percentage: number;
-  priceMode: PriceMode;
   wants: WantsApi;
   available: AvailableApi;
   yourCards: TradeCard[];
@@ -52,8 +51,6 @@ interface ProposeBarProps {
  */
 export function ProposeBar({
   recipientHandle,
-  percentage,
-  priceMode,
   wants,
   available,
   yourCards,
@@ -63,10 +60,11 @@ export function ProposeBar({
   onApplyMatch,
 }: ProposeBarProps) {
   const { allLoadedCards: allCards } = useCardIndexContext();
+  const { percentage, priceMode } = usePricing();
   const [sentTradeId, setSentTradeId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const composer = useComposerBar({ yourCards, theirCards, percentage, priceMode });
+  const composer = useComposerBar({ yourCards, theirCards });
   const { message, setMessage, sendState, submit, buildSnapshot, resetSendState } = composer;
 
   // Build a preview for the given mode. Both modes share the same

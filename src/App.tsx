@@ -23,17 +23,12 @@ import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { useSelectionFilters } from './hooks/useSelectionFilters';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
-import { usePersistedState } from './hooks/usePersistedState';
-import {
-  PERSIST_KEYS,
-  PercentageSchema,
-  PriceModeSchema,
-  DEFAULTS,
-} from './persistence';
+import { PERSIST_KEYS } from './persistence';
 import { useAuthContext } from './contexts/AuthContext';
 import { usePriceDataContext } from './contexts/PriceDataContext';
 import { useCardIndexContext } from './contexts/CardIndexContext';
 import { useDrawerContext } from './contexts/DrawerContext';
+import { usePricing } from './contexts/PricingContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
@@ -75,19 +70,19 @@ function App() {
   const auth = useAuthContext();
   const { user } = auth;
 
-  // Persist the user's preferred pricing knobs across sessions. The raw
-  // setters bypass localStorage so URL-driven updates (share links,
-  // back/forward) don't clobber the saved preference.
-  const [percentage, setPercentage, setPercentageRaw] = usePersistedState(
-    PERSIST_KEYS.percentage,
-    PercentageSchema,
-    DEFAULTS.percentage,
-  );
-  const [priceMode, setPriceMode, setPriceModeRaw] = usePersistedState<PriceMode>(
-    PERSIST_KEYS.priceMode,
-    PriceModeSchema,
-    DEFAULTS.priceMode,
-  );
+  // Pricing knobs live in PricingContext — state + persistence are
+  // owned there so every view that renders a price can read them
+  // without threading through props. Raw setters (bypass-localStorage)
+  // are exposed for useTradeUrl's URL-restore path. App reads the
+  // values for local calls (card-total calcs in TradeTabBar, etc.);
+  // setters are consumed directly from context by TradeBalance +
+  // TradeSummary where the pricing widgets live.
+  const {
+    percentage,
+    setPercentageRaw,
+    priceMode,
+    setPriceModeRaw,
+  } = usePricing();
   const [yourCards, setYourCards] = useState<TradeCard[]>([]);
   const [theirCards, setTheirCards] = useState<TradeCard[]>([]);
   const [showSummary, setShowSummary] = useState(false);
@@ -485,8 +480,6 @@ function App() {
       {editId ? (
         <EditBar
           editingTradeId={editId}
-          percentage={percentage}
-          priceMode={priceMode}
           yourCards={yourCards}
           theirCards={theirCards}
           onApplyMatch={(yours, theirs) => {
@@ -497,8 +490,6 @@ function App() {
       ) : counterId ? (
         <CounterBar
           originalTradeId={counterId}
-          percentage={percentage}
-          priceMode={priceMode}
           yourCards={yourCards}
           theirCards={theirCards}
           onApplyMatch={(yours, theirs) => {
@@ -509,8 +500,6 @@ function App() {
       ) : proposeHandle ? (
         <ProposeBar
           recipientHandle={proposeHandle}
-          percentage={percentage}
-          priceMode={priceMode}
           wants={wants}
           available={available}
           yourCards={yourCards}
@@ -528,8 +517,6 @@ function App() {
           isSignedIn={!!user}
           hasCards={hasCards}
           allCards={allLoadedCards}
-          percentage={percentage}
-          priceMode={priceMode}
           wants={wants}
           available={available}
           onApplyMatch={(yours, theirs) => {
@@ -681,10 +668,6 @@ function App() {
         <TradeBalance
           yourCards={yourCards}
           theirCards={theirCards}
-          percentage={percentage}
-          priceMode={priceMode}
-          onPercentageChange={setPercentage}
-          onPriceModeChange={setPriceMode}
           collapsed={isMobile && bannerCollapsed}
           onToggleCollapse={isMobile ? () => setBannerCollapsed(c => !c) : undefined}
           onPrimary={hasCards ? () => setShowSummary(true) : undefined}
@@ -699,10 +682,6 @@ function App() {
         <TradeSummary
           yourCards={yourCards}
           theirCards={theirCards}
-          percentage={percentage}
-          priceMode={priceMode}
-          onPriceModeChange={setPriceMode}
-          onPercentageChange={setPercentage}
           onClose={() => setShowSummary(false)}
         />
       )}

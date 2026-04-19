@@ -10,14 +10,11 @@ import { extractVariantLabel, extractBaseName } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 import { useAuthContext } from '../contexts/AuthContext';
+import { usePricing } from '../contexts/PricingContext';
 
 interface TradeSummaryProps {
   yourCards: TradeCard[];
   theirCards: TradeCard[];
-  percentage: number;
-  priceMode: PriceMode;
-  onPriceModeChange: (mode: PriceMode) => void;
-  onPercentageChange: (value: number) => void;
   onClose: () => void;
 }
 
@@ -143,8 +140,9 @@ function SidePanel({ cards, percentage, priceMode, label, accentColor }: {
   );
 }
 
-export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onPriceModeChange, onPercentageChange, onClose }: TradeSummaryProps) {
+export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryProps) {
   const { user } = useAuthContext();
+  const { percentage, setPercentage, priceMode, setPriceMode } = usePricing();
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
@@ -223,9 +221,9 @@ export function TradeSummary({ yourCards, theirCards, percentage, priceMode, onP
         </button>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg bg-space-800/60 border border-space-700">
-            <PriceModeToggle value={priceMode} onChange={onPriceModeChange} />
+            <PriceModeToggle value={priceMode} onChange={setPriceMode} />
             <span className="w-px h-5 bg-space-700" aria-hidden />
-            <PriceSlider value={percentage} onChange={onPercentageChange} />
+            <PriceSlider value={percentage} onChange={setPercentage} />
           </div>
           {/* Desktop shows inline Link/Image pills; mobile collapses
               them into a kebab to save header width. */}

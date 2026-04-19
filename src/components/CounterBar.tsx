@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { PriceMode, TradeCard } from '../types';
+import type { TradeCard } from '../types';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useComposerBar } from '../hooks/useComposerBar';
 
@@ -13,8 +13,6 @@ interface CardSnapshot {
 
 interface CounterBarProps {
   originalTradeId: string;
-  percentage: number;
-  priceMode: PriceMode;
   yourCards: TradeCard[];
   theirCards: TradeCard[];
   onApplyMatch: (yours: TradeCard[], theirs: TradeCard[]) => void;
@@ -55,8 +53,6 @@ interface OriginalTradeResponse {
  */
 export function CounterBar({
   originalTradeId,
-  percentage,
-  priceMode,
   yourCards,
   theirCards,
   onApplyMatch,
@@ -67,7 +63,7 @@ export function CounterBar({
   const autoAppliedRef = useRef(false);
   const fetchStartedRef = useRef(false);
 
-  const composer = useComposerBar({ yourCards, theirCards, percentage, priceMode });
+  const composer = useComposerBar({ yourCards, theirCards });
   const {
     message,
     setMessage,

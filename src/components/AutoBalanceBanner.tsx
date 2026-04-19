@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CardVariant, PriceMode, TradeCard } from '../types';
+import type { CardVariant, TradeCard } from '../types';
 import type { VariantRestriction } from '../persistence';
 import { computeMatch, type MatchResult } from '../utils/matchmaker';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import { usePricing } from '../contexts/PricingContext';
 
 interface AutoBalanceBannerProps {
   senderHandle: string | null;
   isSignedIn: boolean;
   hasCards: boolean;
   allCards: CardVariant[];
-  percentage: number;
-  priceMode: PriceMode;
   wants: WantsApi;
   available: AvailableApi;
   onApplyMatch: (yours: TradeCard[], theirs: TradeCard[]) => void;
@@ -46,12 +45,11 @@ export function AutoBalanceBanner({
   isSignedIn,
   hasCards,
   allCards,
-  percentage,
-  priceMode,
   wants,
   available,
   onApplyMatch,
 }: AutoBalanceBannerProps) {
+  const { percentage, priceMode } = usePricing();
   const [dismissed, setDismissed] = useState(false);
   const [profile, setProfile] = useState<RemoteProfile | null>(null);
   const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle');
