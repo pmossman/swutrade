@@ -9,6 +9,9 @@ export interface TradeListEntry {
   offeringCount: number;
   receivingCount: number;
   hasMessage: boolean;
+  /** Highest-priced card across both sides — a preview so repeat rows
+   *  from the same counterpart don't all look identical in dense lists. */
+  topCard: { name: string; variant: string } | null;
   counterpart: UserStub | null;
   createdAt: string;
   updatedAt: string;

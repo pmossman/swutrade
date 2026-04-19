@@ -384,6 +384,11 @@ function App() {
           for (const key of ['view', 'community', 'trade', 'trades', 'profile']) p.delete(key);
           p.set('settings', '1');
         })}
+        onManageCommunities={() => navigateParams(p => {
+          for (const key of ['view', 'community', 'trade', 'trades', 'profile']) p.delete(key);
+          p.set('settings', '1');
+          p.set('tab', 'servers');
+        })}
         onOpenCommunity={() => navigateParams(p => {
           for (const key of ['view', 'settings', 'trade', 'trades', 'profile']) p.delete(key);
           p.set('community', '1');

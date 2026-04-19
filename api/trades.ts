@@ -516,6 +516,17 @@ export async function handleProposalsList(req: VercelRequest, res: VercelRespons
   const proposals = rows.map(r => {
     const direction: 'sent' | 'received' = r.proposerUserId === session.userId ? 'sent' : 'received';
     const counterpartId = direction === 'sent' ? r.recipientUserId : r.proposerUserId;
+    // Preview = the highest-priced card across both sides. Null pricing
+    // sorts last. Used by the Home list so repeat rows from the same
+    // sender don't look identical — a concrete card name anchors each.
+    const allCards = [...r.offeringCards, ...r.receivingCards];
+    const topCard = allCards.length === 0
+      ? null
+      : allCards.reduce((best, c) => {
+          const bestPrice = best.unitPrice ?? -1;
+          const cPrice = c.unitPrice ?? -1;
+          return cPrice > bestPrice ? c : best;
+        });
     return {
       id: r.id,
       direction,
@@ -524,6 +535,7 @@ export async function handleProposalsList(req: VercelRequest, res: VercelRespons
       offeringCount: r.offeringCards.reduce((n, c) => n + c.qty, 0),
       receivingCount: r.receivingCards.reduce((n, c) => n + c.qty, 0),
       hasMessage: !!r.message,
+      topCard: topCard ? { name: topCard.name, variant: topCard.variant } : null,
       counterpart: counterpartsById.get(counterpartId) ?? null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),

@@ -15,6 +15,10 @@ interface HomeViewProps {
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
   onOpenSettings: () => void;
+  /** Deep-link into Settings > Discord servers (list view). Used by the
+   *  "Manage" action on Your Communities so the user lands next to the
+   *  guild-level toggles, not at the Settings hub root. */
+  onManageCommunities: () => void;
   onOpenCommunity: () => void;
   onBuildTrade: () => void;
   onOpenProfile: (handle: string) => void;
@@ -37,6 +41,7 @@ export function HomeView({
   onOpenTrade,
   onOpenTradesHistory,
   onOpenSettings,
+  onManageCommunities,
   onOpenCommunity,
   onBuildTrade,
   onOpenProfile,
@@ -72,7 +77,7 @@ export function HomeView({
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
         <PageHeader>
           <AccountMenu auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
         </PageHeader>
@@ -88,7 +93,12 @@ export function HomeView({
         onOpenChange={setListsDrawerOpen}
       />
 
-      <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-3xl mx-auto w-full flex flex-col gap-6">
+      {/* Layout: mobile stacks everything single-column in priority
+          order. Desktop (`lg+`) splits into two columns after the
+          greeting + primary actions — actionable trades on the left,
+          community/context on the right — so horizontal space isn't
+          wasted. Bump max-w from 3xl → 5xl here to give the grid room. */}
+      <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
         {user && <GreetingRow user={user} onOpenProfile={onOpenProfile} />}
 
         <PrimaryActions
@@ -96,27 +106,34 @@ export function HomeView({
           onOpenTradesHistory={onOpenTradesHistory}
         />
 
-        <NeedsResponseSection
-          status={trades.status}
-          proposals={needsResponse}
-          onOpenTrade={onOpenTrade}
-          onOpenTradesHistory={onOpenTradesHistory}
-        />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+          <div className="flex flex-col gap-6">
+            <NeedsResponseSection
+              status={trades.status}
+              proposals={needsResponse}
+              onOpenTrade={onOpenTrade}
+              onOpenTradesHistory={onOpenTradesHistory}
+            />
 
-        <WaitingOnOthersSection
-          proposals={waitingOnOthers}
-          onOpenTrade={onOpenTrade}
-          onOpenTradesHistory={onOpenTradesHistory}
-        />
+            <WaitingOnOthersSection
+              proposals={waitingOnOthers}
+              onOpenTrade={onOpenTrade}
+              onOpenTradesHistory={onOpenTradesHistory}
+            />
+          </div>
 
-        <CommunitiesSection
-          guilds={enrolledGuilds}
-          status={guilds.status}
-          onOpenSettings={onOpenSettings}
-          onOpenCommunity={onOpenCommunity}
-        />
+          <div className="flex flex-col gap-6">
+            <CommunitiesSection
+              guilds={enrolledGuilds}
+              status={guilds.status}
+              onOpenSettings={onOpenSettings}
+              onManageCommunities={onManageCommunities}
+              onOpenCommunity={onOpenCommunity}
+            />
 
-        <UpcomingSection />
+            <UpcomingSection />
+          </div>
+        </div>
       </main>
     </div>
   );
@@ -301,11 +318,13 @@ function CommunitiesSection({
   guilds,
   status,
   onOpenSettings,
+  onManageCommunities,
   onOpenCommunity,
 }: {
   guilds: GuildMembershipSummary[];
   status: 'loading' | 'ready' | 'saving' | 'error';
   onOpenSettings: () => void;
+  onManageCommunities: () => void;
   onOpenCommunity: () => void;
 }) {
   return (
@@ -316,7 +335,7 @@ function CommunitiesSection({
         action={
           <button
             type="button"
-            onClick={onOpenSettings}
+            onClick={onManageCommunities}
             className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
           >
             Manage
@@ -403,9 +422,29 @@ function TradeRow({
 }) {
   const counterpart = trade.counterpart;
   const label = counterpart ? `@${counterpart.handle}` : 'Unknown trader';
+  // Viewer-centric grammar. For a received proposal, the counterpart is
+  // offering `offeringCount` to me and asking for `receivingCount` from
+  // me — so "Receive X · Give Y" reads directly. Sent is the mirror.
+  // Consistent with trades-history's `Offer ↔ Receive` vocab so the two
+  // surfaces don't teach conflicting phrasing.
   const detail = trade.direction === 'received'
-    ? `wants ${trade.receivingCount} · offering ${trade.offeringCount}`
-    : `offering ${trade.offeringCount} · wants ${trade.receivingCount}`;
+    ? `Receive ${trade.receivingCount} · Give ${trade.offeringCount}`
+    : `Offer ${trade.offeringCount} · Want ${trade.receivingCount}`;
+  const when = timeAgoShort(trade.updatedAt);
+  // Preview line: top-card hint + message flag, truncated so the row
+  // stays two lines on mobile. Variant appended only when non-standard
+  // ("Luke · Standard" would read as noise).
+  const previewBits: string[] = [];
+  if (trade.topCard) {
+    const variant = trade.topCard.variant;
+    const variantSuffix = variant && variant.toLowerCase() !== 'standard'
+      ? ` (${formatVariant(variant)})`
+      : '';
+    previewBits.push(`${trade.topCard.name}${variantSuffix}`);
+  }
+  if (trade.hasMessage) previewBits.push('has message');
+  const preview = previewBits.join(' · ');
+
   return (
     <li>
       <button
@@ -419,18 +458,42 @@ function TradeRow({
       >
         <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-gray-100 truncate">
-            {label}
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-sm font-medium text-gray-100 truncate">
+              {label}
+            </span>
+            <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
+              {when}
+            </span>
           </div>
           <div className="text-[11px] text-gray-500 mt-0.5 truncate">
             {detail}
-            {trade.hasMessage && ' · has message'}
+            {preview && ` · ${preview}`}
           </div>
         </div>
         <ChevronIcon className="w-4 h-4 text-gray-500 shrink-0 -rotate-90" />
       </button>
     </li>
   );
+}
+
+function timeAgoShort(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function formatVariant(variant: string): string {
+  // Variants arrive uppercase ("HYPERSPACE FOIL"). Title-case the whole
+  // string for inline reading — `(Hyperspace foil)`.
+  const lower = variant.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 function SectionHeader({
