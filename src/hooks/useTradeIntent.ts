@@ -24,11 +24,11 @@ import { useCallback, useEffect, useState } from 'react';
  *     shortly after mount, but the captured state outlives the strip —
  *     we don't re-read the URL except on popstate.
  *
- * The six tracked intents are the union of what used to live in
+ * The five tracked intents are the union of what used to live in
  * useProposeHandle, useSenderHandle, useCounterId, useEditId, and the
  * inline `autoBalance=1` check in AutoBalanceBanner. `w` + `a` shared-
- * list payloads stay in the dedicated `useSharedLists` hook because
- * they decode large structured payloads, not scalar handles.
+ * list payloads live in `useSharedLists` — same seed + popstate
+ * contract, just decoded arrays instead of scalars.
  */
 export interface TradeIntent {
   /** `?propose=<handle>` — open ProposeBar with this recipient. */
