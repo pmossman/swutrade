@@ -99,6 +99,12 @@ The drop-into-a-server demo: compose + send + receive + respond to trade proposa
 - [x] Counter flow: Counter button → ephemeral deep-link to `/?counter=<id>` web composer → submits new proposal with `counter_of_id` FK; original flips to `countered` terminal state; chain supports arbitrary depth
 - [x] Trade history at `/?trades=1` and detail at `/?trade=<id>` — sent + received view, status chips, chain-context links, proposer-can-cancel-if-pending
 - [x] Signed-interaction e2e (synthetic button click via test keypair) closes the server-contract gap Discord couldn't cover from real button clicks
+- [x] **Private threads for trade proposals** — proposals land in a `#trades` thread with both traders auto-added instead of per-user DMs (fallback to DM when thread creation fails); auto-created on bot install (`2026-04-17`, `2026-04-18`)
+- [x] **Prefs registry** — typed registry with self/peer/guild scopes, cascade resolver, Discord ⚙ Prefs button, `/swutrade settings` slash command + user context menu (`2026-04-17/18`)
+- [x] **Bot-install outreach** — DM existing SWUTrade users in a guild on bot install with a one-tap Enroll button; `dmServerNewInstall` / `autoEnrollOnBotInstall` prefs added (`2026-04-18`)
+- [x] **Slack-style Settings drill-down + persistent Done button** — per-trader peer prefs live under Settings > Servers > Guild > Members > User (`2026-04-18`)
+- [x] **Signed-in Home landing page** — pending trades + enrolled communities + Build-a-trade CTA; signed-out users still land on trade builder (`2026-04-18`)
+- [x] **Error observability** — typed Discord error hierarchy + 429 auto-retry + `#bot-errors` webhook reporter + CI `#releases` notifier (`2026-04-18`)
 
 **Phase 4 v1 — not shipped / deferred:**
 
@@ -272,6 +278,26 @@ Each DM focuses on "here's what's on the table now," with at most a one-line ref
 ### 2026-04-17 — Dual-key Ed25519 fallback for test-signed interactions
 
 `api/bot.ts` verifies against the primary `DISCORD_APP_PUBLIC_KEY` first, falling back to `DISCORD_APP_PUBLIC_KEY_TEST` if set. Only Preview deploys have the test key; Production never does. Lets the signed-interaction e2e POST a synthetic button click through the real verification + dispatch pipeline without needing a real human Discord click (which Playwright can't generate). See upcoming quality bundle for the runtime env-gate that closes the "test key accidentally on prod" foot-shot.
+
+### 2026-04-18 — Typed prefs registry with self/peer/guild scope cascade
+
+User preferences are defined once in `lib/prefsRegistry.ts` with explicit `scope={self,peer,guild}` and `section={privacy,notifications,communication,membership}`. `lib/prefsResolver.ts` cascades peer override → viewer self column → registry default. Both the SettingsView drill-down and the Discord ⚙ Prefs button render from the registry, so adding a new pref is a single-place change. Rejected alternative: per-view prefs tables — would have required parallel UI + API + migration work for every new pref. Trade-off: one registry file becomes the canonical source of truth, any addition needs to think about all three scopes.
+
+### 2026-04-18 — Silent-fail observability via typed errors + webhook alerts
+
+Discord bot errors used to throw as generic `Error`s, making it impossible to distinguish "429 retry this" from "permission missing, alert the human" from "user's DMs are disabled, don't alert." `lib/discordErrors.ts` introduces a typed hierarchy (`DiscordRateLimitError`, `DiscordPermissionError`, `DiscordNotFoundError`, `DiscordValidationError`, `DiscordServerError`, `DiscordUnknownError`), `DiscordBotClient` auto-retries 429s once with capped sleep, and `lib/errorReporter.ts` posts real failures to a `#bot-errors` webhook (filtering test traffic + expected 404s + DM-disabled). Pattern emerged after the 1024-char embed-cap silent-fail bug (`f77dc51`) — we want the system to tell us when things break, not wait for a user report.
+
+### 2026-04-18 — Bot-install outreach with one-tap Enroll
+
+When the bot lands in a guild with existing SWUTrade users, those users get a DM invite with a one-tap Enroll button rather than being silently added to the guild's enrollment rolls. Two prefs gate it: `dmServerNewInstall` (default on — the outreach DM itself) and `autoEnrollOnBotInstall` (default off — whether to skip the DM and just enroll). Rationale: bot-install is a high-leverage moment — existing users are exactly the ones most likely to convert the server into an active trading community. "Delight the potential user with a magic experience."
+
+### 2026-04-18 — Home view becomes the signed-in default landing
+
+Signed-in users with a bare URL land on a Home page surfacing pending trades + enrolled communities + a Build-a-trade CTA, not the trade builder. Rejected alternative: keeping the builder as the default and adding a "Home" menu item. Builder-as-default made the signed-in experience indistinguishable from anonymous — no acknowledgment of user state, no visible pending proposals, no entry point to community. Signed-out users still land on the builder so the public share-URL experience is unchanged. Lists cap at 5 per section (with "See all N →" overflow to the full Trades history) to survive users with high pending volume.
+
+### 2026-04-18 — Slack-style Settings drill-down with persistent Done button
+
+Settings grew beyond a single scrollable page (profile + global prefs + per-server + per-server-member prefs). Rebuilt as a drill-down hub with query-param routing: `/?settings=1&tab=servers&guild=X&members&user=Y`. A persistent gold "Done" button in the header exits to the main app from any depth — direct response to beta feedback ("tapping back 5 times is bad UX"). Native popstate handles back/forward navigation.
 
 ---
 

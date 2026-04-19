@@ -37,7 +37,26 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. Copy + context fixes *(Foundation bundle, part 5)*
+### 1. Home view polish from real dogfooding
+
+**Why:** Home landed on 2026-04-18. A beta user immediately surfaced a cap-needed papercut (~20 pending proposals flooding the page, fixed same day in `09c9c94`). That's one surface-level finding on day one — there are almost certainly more latent issues from a real user's session. Best to pressure-test with agent-browser + a real beta account before moving on to other work.
+
+**What to look for:**
+- Loading order (is the initial paint empty? does the greeting flash?)
+- Empty states at every section (no guilds, no pending, no trades history ever)
+- What the Home looks like for a user with 0 enrolled communities but SWUTrade in their servers — does it point them into the enrollment flow clearly?
+- The "Manage" link on Your Communities — does it land where they expect?
+- Mobile viewport at 375×667 specifically (the tightest real iPhone we target)
+- What happens when a proposal gets accepted/declined while the Home page is open — does the count go stale?
+
+**Done when:**
+- [ ] Ran through the Home view with a real seeded account in agent-browser
+- [ ] Fixed any discovered papercuts OR explicitly tagged them as parked (with rationale)
+- [ ] Between-slice ritual passes
+
+---
+
+### 2. Copy + context fixes *(Foundation bundle, part 5)*
 
 **Why:** Many small clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
 
@@ -60,7 +79,7 @@ Skipping any of 1-3 is a bug in the process.
 
 ---
 
-### 2. Test-file dedup *(Foundation bundle, part 6)*
+### 3. Test-file dedup *(Foundation bundle, part 6)*
 
 **Why:** `makeFakeBot()` is defined in 4 test files, each slightly different. Proposal-row seeding helpers are in 4 test files, each slightly different. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Consolidation is small, one-shot, pays off immediately on the next schema touch.
 
@@ -124,6 +143,24 @@ LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-18 — Home view (signed-in landing page)
+Commits: `f120765`, `09c9c94`. Signed-in users with a bare URL now land on a Home page (`src/components/HomeView.tsx`) instead of an empty trade builder. Surfaces pending proposals that need their response (capped at 5 with "See all N pending →" overflow), waiting-on-others (collapsed, also capped), enrolled Discord communities, an LGS placeholder, and a primary "Build a trade" CTA. `detectViewMode` grew an `isSignedIn` parameter; auth-resolution + popstate both call it through a ref. Signed-out users still land on the trade builder so the public share-URL experience is unchanged.
+
+### 2026-04-18 — Bot-install outreach: DM existing members on install
+Commit: `3de0a5f`. When the bot lands in a guild that already has SWUTrade users, DM them a polished invite with a one-tap Enroll button instead of silently adding the guild to their enrollment list. Two new prefs on `users`: `dmServerNewInstall` (default on) + `autoEnrollOnBotInstall` (default off), plumbed through the prefs registry. Batch size of 5 respects user opt-outs. "Delight the potential user with a magic experience" per user framing.
+
+### 2026-04-18 — Slack-style Settings hub + peer prefs move out of CommunityView
+Commits: `72d7a38`, `9d839a4`. Settings page becomes a drill-down hub (profile / preferences / servers → guild → members → per-user prefs) with query-param routing + popstate. Persistent "Done" button (gold) in the header provides one-tap escape from any depth — beta feedback was "Back 5 times is bad UX." Peer prefs move out of CommunityView into the Settings servers/guild/members drill-down; CommunityView stripped the inline peer-pref select and gets a "Prefs" deep-link per row instead.
+
+### 2026-04-18 — Error observability: typed Discord errors + #bot-errors channel + CI notifier
+Commits: `b51a5c1`, `86b2e9a`, `14449fa`, `43f6ff8`, `97bcc49`, `97f1e2e`, `dc79443`. Six related slices. `lib/discordErrors.ts` adds typed error hierarchy (RateLimit / Permission / NotFound / Validation / ServerError / Unknown). `DiscordBotClient` auto-retries 429s once with capped sleep (5s default). `lib/errorReporter.ts` posts catch-site failures to a `#bot-errors` webhook, filtering e2e/dev-seed noise + expected 404s/DM-disabled. CI gets a `#releases` notifier that flips to 🟢 live the moment the preview deploys (BEFORE CI finishes), with per-job breakdown only on failure. `scripts/discord-admin.mjs` is a dev-ops wrapper for channel/webhook/member management using a separate admin token (kept minimal permissions on the bot). Unicode emoji (not shortcodes) so markdown underscores don't break the render. `getGuildBotMember` fix — Discord rejects `/members/@me` for bots with 403, must pass botUserId explicitly.
+
+### 2026-04-17 — Fix: large proposals silently failed to DM (1024-char embed cap)
+Commit: `f77dc51`. User reported: ~15+ card proposals silently dropped. Root cause: Discord embed field value cap of 1024 chars. `formatCardList` in `lib/proposalMessages.ts` now truncates with a 94-char buffer reserved for a "+N more" summary line. Fix shipped before the error-observability channel existed — worth noting that this kind of silent fail is exactly what the observability work prevents going forward.
+
+### 2026-04-17/18 — Prefs registry migration (8 steps, complete)
+Commits: `2f9271d`, `31dbb2f`, `9b92e8f`, `f30d8bd`, `8cf579d`, `fdb4add`, `9014f4d`, `aea2f8b`, `4dfb1bc`, `70c67fa`, `224d543`, `1e9581f`. Rewrote all user settings through a typed registry (`lib/prefsRegistry.ts`) with scope={self,peer,guild}, section={privacy,notifications,communication,membership}, and type={boolean,enum}. Cascade resolver (`lib/prefsResolver.ts`) walks peer override → viewer self column → registry default. `user_peer_prefs` table with composite PK + cascade FKs. SettingsView + proposal DM ⚙ Prefs button render from the registry. `/swutrade settings` slash command + user context menu item. Combined self+peer ephemeral when opening ⚙ Prefs on a proposal DM — user sees both surfaces in one place. Welcome DM to installer on bot-install. Auto-create `#swutrade-threads` channel on bot install so proposals have somewhere to land.
 
 ### 2026-04-17 — Private threads for trade proposals (propose path, feature-gated)
 Implements the research doc's recommendation: when `TRADES_CHANNEL_ID` is set, a new proposal lands as a **private thread** inside that parent channel, with both traders auto-added. Each trader gets a push-style notification on add and can chat with the other directly in the thread. Falls back to the existing per-user DM when thread creation fails (user not in guild, bot perms missing, or env unset).
