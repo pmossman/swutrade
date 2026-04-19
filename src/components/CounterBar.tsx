@@ -195,31 +195,31 @@ export function CounterBar({
 
   const body = (() => {
     if (loadState === 'loading') {
-      return <span className="flex-1 text-gray-400 animate-pulse">Loading the original proposal…</span>;
+      return <span className="flex-1 min-w-0 text-gray-400 animate-pulse">Loading the original proposal…</span>;
     }
     if (loadState === 'not-found' || loadState === 'forbidden') {
       return (
-        <span className="flex-1 text-red-300">
+        <span className="flex-1 min-w-0 text-red-300">
           Couldn't load the original proposal — it may have been cancelled or sent to someone else.
         </span>
       );
     }
     if (loadState === 'not-recipient') {
       return (
-        <span className="flex-1 text-red-300">
+        <span className="flex-1 min-w-0 text-red-300">
           Only the recipient of a proposal can counter it.
         </span>
       );
     }
     if (loadState === 'not-pending' && original) {
       return (
-        <span className="flex-1 text-amber-200">
+        <span className="flex-1 min-w-0 text-amber-200">
           This proposal is already <strong>{original.status}</strong> — you can't counter it anymore.
         </span>
       );
     }
     if (loadState === 'error') {
-      return <span className="flex-1 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
+      return <span className="flex-1 min-w-0 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
     }
 
     if (sendState === 'sent' || sendState === 'sent-undelivered') {
@@ -243,7 +243,7 @@ export function CounterBar({
 
     if (sendState === 'already-resolved') {
       return (
-        <span className="flex-1 text-amber-200">
+        <span className="flex-1 min-w-0 text-amber-200">
           @{proposerHandle} accepted or changed the original proposal before your counter landed.
           Open their profile to compose a fresh proposal if you still want to trade.
         </span>
@@ -253,7 +253,7 @@ export function CounterBar({
     const canSend = offerCount + receiveCount > 0 && sendState !== 'sending';
     return (
       <>
-        <span className="flex-1">
+        <span className="flex-1 min-w-0">
           <span className="text-gray-400">Countering </span>
           <strong className="text-gold">@{proposerHandle}</strong>'s proposal
           <span className="text-gray-500 text-[11px] ml-2">
@@ -291,7 +291,7 @@ export function CounterBar({
       data-testid="counter-bar"
       data-state={debugState}
     >
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
       {showMessageInput && (

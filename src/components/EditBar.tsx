@@ -197,37 +197,37 @@ export function EditBar({
 
   const body = (() => {
     if (loadState === 'loading') {
-      return <span className="flex-1 text-gray-400 animate-pulse">Loading the proposal…</span>;
+      return <span className="flex-1 min-w-0 text-gray-400 animate-pulse">Loading the proposal…</span>;
     }
     if (loadState === 'not-found' || loadState === 'forbidden') {
       return (
-        <span className="flex-1 text-red-300">
+        <span className="flex-1 min-w-0 text-red-300">
           Couldn't load this proposal — it may have been cancelled, resolved, or sent by someone else.
         </span>
       );
     }
     if (loadState === 'not-proposer') {
       return (
-        <span className="flex-1 text-red-300">
+        <span className="flex-1 min-w-0 text-red-300">
           Only the proposer can edit a proposal. You'll want Counter instead.
         </span>
       );
     }
     if (loadState === 'not-pending' && original) {
       return (
-        <span className="flex-1 text-amber-200">
+        <span className="flex-1 min-w-0 text-amber-200">
           This proposal is already <strong>{original.status}</strong> — editing is only available while it's pending.
         </span>
       );
     }
     if (loadState === 'error') {
-      return <span className="flex-1 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
+      return <span className="flex-1 min-w-0 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
     }
 
     if (saveState === 'saved') {
       return (
         <>
-          <span className="flex-1 text-emerald-300">
+          <span className="flex-1 min-w-0 text-emerald-300">
             Saved. <strong>@{recipientHandle}</strong>'s Discord message has been updated.
           </span>
           <a
@@ -242,7 +242,7 @@ export function EditBar({
 
     if (saveState === 'already-resolved') {
       return (
-        <span className="flex-1 text-amber-200">
+        <span className="flex-1 min-w-0 text-amber-200">
           <strong>@{recipientHandle}</strong> responded before your edit landed. Open the proposal to
           see the new state.
         </span>
@@ -252,7 +252,7 @@ export function EditBar({
     const canSave = offerCount + receiveCount > 0 && saveState !== 'saving';
     return (
       <>
-        <span className="flex-1">
+        <span className="flex-1 min-w-0">
           <span className="text-gray-400">Editing your proposal to </span>
           <strong className="text-gold">@{recipientHandle}</strong>
           <span className="text-gray-500 text-[11px] ml-2">
@@ -280,7 +280,7 @@ export function EditBar({
       data-testid="edit-bar"
       data-state={loadState === 'ready' ? saveState : loadState}
     >
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
       {showMessageInput && (

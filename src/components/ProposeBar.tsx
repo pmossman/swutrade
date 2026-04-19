@@ -226,15 +226,17 @@ export function ProposeBar({
     if (sendState === 'sent') {
       return (
         <>
-          <span className="flex-1 text-emerald-300">
+          <span className="flex-1 min-w-0 text-emerald-300">
             Proposal sent to <strong>@{recipientHandle}</strong>. They'll see it in a Discord DM.
           </span>
-          <a
-            href="/?community=1"
-            className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
-          >
-            Back to community
-          </a>
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href="/?community=1"
+              className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
+            >
+              Back to community
+            </a>
+          </div>
         </>
       );
     }
@@ -242,23 +244,25 @@ export function ProposeBar({
     if (sendState === 'sent-undelivered') {
       return (
         <>
-          <span className="flex-1 text-amber-200">
+          <span className="flex-1 min-w-0 text-amber-200">
             Proposal saved, but Discord wouldn't let us DM <strong>@{recipientHandle}</strong> —
             they may have DMs from the bot disabled. Send them a message on Discord so they know to check.
           </span>
-          <a
-            href="/?community=1"
-            className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
-          >
-            Back to community
-          </a>
+          <div className="flex items-center gap-2 flex-wrap">
+            <a
+              href="/?community=1"
+              className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
+            >
+              Back to community
+            </a>
+          </div>
         </>
       );
     }
 
     if (fetchState === 'error') {
       return (
-        <span className="flex-1 text-red-300">
+        <span className="flex-1 min-w-0 text-red-300">
           Couldn't reach @{recipientHandle}'s profile — they may have made it private.
         </span>
       );
@@ -266,7 +270,7 @@ export function ProposeBar({
 
     if (!profile) {
       return (
-        <span className="flex-1 text-gray-400 animate-pulse">
+        <span className="flex-1 min-w-0 text-gray-400 animate-pulse">
           Loading @{recipientHandle}'s lists…
         </span>
       );
@@ -287,7 +291,7 @@ export function ProposeBar({
     // "of their wants / of yours", which read as "they want 4 specific
     // things" when it's really "4 family-level overlaps."
     const status = isEmpty && preview ? (
-      <span className="flex-1">
+      <span className="flex-1 min-w-0">
         <span className="text-gray-400">Proposing to </span>
         <strong className="text-gold">@{recipientHandle}</strong>
         {overlapAvailable ? (
@@ -302,7 +306,7 @@ export function ProposeBar({
         )}
       </span>
     ) : (
-      <span className="flex-1">
+      <span className="flex-1 min-w-0">
         <span className="text-gray-400">Proposing to </span>
         <strong className="text-gold">@{recipientHandle}</strong>
         <span className="text-gray-500 text-[11px] ml-2">
@@ -314,64 +318,71 @@ export function ProposeBar({
 
     return (
       <>
-        {/* Cancel / back affordance. First-beta users reported
-            feeling stuck in the propose flow with no obvious exit
-            — browser back worked but wasn't visible. */}
-        <button
-          type="button"
-          onClick={handleCancel}
-          title="Cancel and return to community"
-          className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-gray-500 hover:text-gray-200 hover:bg-space-700/60 transition-colors"
-          aria-label="Cancel proposal"
-        >
-          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M10 4L6 8l4 4" />
-          </svg>
-        </button>
-        {status}
-        {overlapAvailable && (
+        {/* Cancel + status ride together on the first row (mobile)
+            so the back-arrow stays anchored to the info text rather
+            than drifting above an empty action cluster. */}
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {/* Cancel / back affordance. First-beta users reported
+              feeling stuck in the propose flow with no obvious exit
+              — browser back worked but wasn't visible. */}
           <button
             type="button"
-            onClick={() => handleSuggest('minimize-imbalance')}
-            data-testid="propose-suggest"
-            title="Tightest card-for-card match; any remainder is implied cash."
-            className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
+            onClick={handleCancel}
+            title="Cancel and return to community"
+            className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-gray-500 hover:text-gray-200 hover:bg-space-700/60 transition-colors"
+            aria-label="Cancel proposal"
           >
-            ✨ Suggest a match
+            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M10 4L6 8l4 4" />
+            </svg>
           </button>
-        )}
-        {showPrioritiesSuggest && (
+          {status}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {overlapAvailable && (
+            <button
+              type="button"
+              onClick={() => handleSuggest('minimize-imbalance')}
+              data-testid="propose-suggest"
+              title="Tightest card-for-card match; any remainder is implied cash."
+              className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
+            >
+              ✨ Suggest a match
+            </button>
+          )}
+          {showPrioritiesSuggest && (
+            <button
+              type="button"
+              onClick={() => handleSuggest('maximize-priorities')}
+              data-testid="propose-suggest-priorities"
+              title="Include every priority-starred card, even if it widens the imbalance."
+              className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold-bright/40 text-gray-300 hover:text-gold-bright text-[11px] font-semibold transition-colors"
+            >
+              ★ Priorities
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => handleSuggest('maximize-priorities')}
-            data-testid="propose-suggest-priorities"
-            title="Include every priority-starred card, even if it widens the imbalance."
-            className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold-bright/40 text-gray-300 hover:text-gold-bright text-[11px] font-semibold transition-colors"
+            onClick={() => {
+              if (!canSend) return;
+              setSendError(null);
+              // Previous failed attempt shouldn't leave the bar stuck
+              // in 'error' once the user re-opens the modal to retry.
+              if (sendState === 'error') setSendState('idle');
+              setConfirmOpen(true);
+            }}
+            disabled={!canSend}
+            data-testid="propose-open-confirm"
+            title={
+              !canSend && sendState !== 'sending'
+                ? 'Add at least one card to either side to enable.'
+                : undefined
+            }
+            className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            ★ Priorities
+            {sendState === 'sending' ? 'Sending…' : 'Send proposal'}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => {
-            if (!canSend) return;
-            setSendError(null);
-            // Previous failed attempt shouldn't leave the bar stuck
-            // in 'error' once the user re-opens the modal to retry.
-            if (sendState === 'error') setSendState('idle');
-            setConfirmOpen(true);
-          }}
-          disabled={!canSend}
-          data-testid="propose-open-confirm"
-          title={
-            !canSend && sendState !== 'sending'
-              ? 'Add at least one card to either side to enable.'
-              : undefined
-          }
-          className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {sendState === 'sending' ? 'Sending…' : 'Send proposal'}
-        </button>
+        </div>
       </>
     );
   })();
@@ -396,7 +407,7 @@ export function ProposeBar({
       data-testid="propose-bar"
       data-state={debugState}
     >
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
       {sendState === 'error' && sendError && (
