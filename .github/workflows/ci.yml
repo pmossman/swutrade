@@ -314,21 +314,35 @@ jobs:
         run: |
           SHORT=${SHA:0:7}
           FIRST_LINE=$(echo "$COMMIT_MSG" | head -1)
-          # Overall outcome: anything that FAILED or was CANCELLED is a
-          # red state. Skipped (e.g. auth-e2e on a PR) is acceptable.
+          # Overall outcome has three buckets: failure > cancelled > success.
+          # A real failing job always wins — even if other jobs were
+          # cancelled by a concurrent push — so genuine breakage still
+          # surfaces as red. Pure cancellation (the common "push over
+          # push" case) renders as a neutral "superseded" state, not
+          # a red ❌. Skipped (e.g. auth-e2e on a PR) counts as success.
           OVERALL="success"
           for r in "$CHECK_RESULT" "$ANON_RESULT" "$DEPLOY_RESULT" "$AUTH_RESULT"; do
             case "$r" in
-              failure|cancelled) OVERALL="failure";;
+              failure) OVERALL="failure";;
+              cancelled)
+                if [ "$OVERALL" != "failure" ]; then OVERALL="cancelled"; fi
+                ;;
             esac
           done
-          if [ "$OVERALL" = "success" ]; then
-            PREFIX="✅"
-            VERB="verified"
-          else
-            PREFIX="❌"
-            VERB="CI failed"
-          fi
+          case "$OVERALL" in
+            success)
+              PREFIX="✅"
+              VERB="verified"
+              ;;
+            cancelled)
+              PREFIX="⏭"
+              VERB="superseded by new push"
+              ;;
+            *)
+              PREFIX="❌"
+              VERB="CI failed"
+              ;;
+          esac
           # Emoji per job for at-a-glance breakdown. Unicode chars
           # directly — shortcode names like :white_check_mark: contain
           # underscores that Discord's markdown parser treats as italic
@@ -342,14 +356,15 @@ jobs:
               *) echo "❓";;
             esac
           }
-          # Per-job breakdown is only interesting on failure — a healthy
-          # run doesn't need four ✅ emojis repeating the single green
-          # checkmark in the header. Keep the message compact on the
-          # happy path.
-          if [ "$OVERALL" = "success" ]; then
-            JOB_LINE=""
-          else
+          # Per-job breakdown is only interesting on a real failure — a
+          # healthy run doesn't need four ✅ emojis repeating the single
+          # green checkmark in the header, and a cancelled run has every
+          # job in the same cancelled state so the breakdown is just
+          # noise. Keep the message compact unless we actually failed.
+          if [ "$OVERALL" = "failure" ]; then
             JOB_LINE="$(emoji_for "$CHECK_RESULT") check · $(emoji_for "$ANON_RESULT") anon e2e · $(emoji_for "$DEPLOY_RESULT") deploy · $(emoji_for "$AUTH_RESULT") auth e2e"
+          else
+            JOB_LINE=""
           fi
           # Preview link only when deploy succeeded + URL is set.
           if [ -n "$PREVIEW_URL" ] && [ "$DEPLOY_RESULT" = "success" ]; then
