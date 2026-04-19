@@ -56,7 +56,7 @@ export function AppHeader({
   slim = false,
 }: AppHeaderProps) {
   const signedIn = !!auth.user;
-  const showNavMenu = !slim && onOpenLists !== undefined;
+  const showNavMenu = !slim;
   const showAccountMenu = !slim;
 
   return (
@@ -84,7 +84,7 @@ export function AppHeader({
 
       <div className="ml-auto flex items-center gap-1.5 md:gap-2 shrink-0">
         {actions}
-        {showNavMenu && onOpenLists && (
+        {showNavMenu && (
           <NavMenu signedIn={signedIn} onOpenLists={onOpenLists} />
         )}
         {showAccountMenu && <AccountMenu auth={auth} />}

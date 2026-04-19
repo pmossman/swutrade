@@ -6,10 +6,11 @@ interface NavMenuProps {
    *  (My Trades, Community) that require an account. Lists work in both
    *  states since they're localStorage-backed until sync opts in. */
   signedIn: boolean;
-  /** Opens the controlled ListsDrawer. The drawer itself lives at each
-   *  view's root so it can portal over content; this handler is the
-   *  view's bridge from the header into its local drawer state. */
-  onOpenLists: () => void;
+  /** Opens the controlled ListsDrawer. Optional — views that don't own
+   *  a drawer omit it and the "My Lists" entry hides. Callers that do
+   *  want lists access must render a ListsDrawer locally and pass its
+   *  setter. */
+  onOpenLists?: () => void;
 }
 
 /**
@@ -46,11 +47,13 @@ export function NavMenu({ signedIn, onOpenLists }: NavMenuProps) {
             label={signedIn ? 'Home' : 'Trade builder'}
             onClose={close}
           />
-          <NavRow
-            onClick={() => { onOpenLists(); close(); }}
-            icon={<ListsIcon className="w-3.5 h-3.5 text-gray-400" />}
-            label="My Lists"
-          />
+          {onOpenLists && (
+            <NavRow
+              onClick={() => { onOpenLists(); close(); }}
+              icon={<ListsIcon className="w-3.5 h-3.5 text-gray-400" />}
+              label="My Lists"
+            />
+          )}
           {signedIn && (
             <>
               <NavRow
