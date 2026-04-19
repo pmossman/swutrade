@@ -26,6 +26,8 @@
     { "source": "/api/trades/:id", "destination": "/api/trades?action=get&id=:id" },
     { "source": "/api/bot/interactions", "destination": "/api/bot?action=interactions" },
     { "source": "/api/bot/events", "destination": "/api/bot?action=events" },
+    { "source": "/api/me/sessions", "destination": "/api/sessions?action=list" },
+    { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
 }

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   primaryKey,
@@ -8,6 +9,7 @@ import {
   numeric,
   timestamp,
   unique,
+  uniqueIndex,
   index,
   jsonb,
   type AnyPgColumn,
@@ -438,5 +440,160 @@ export const communityEvents = pgTable(
   },
   (t) => [
     index('community_events_guild_created_idx').on(t.guildId, t.createdAt),
+  ],
+);
+
+/**
+ * Phase 5b — Shared trade sessions. A collaborative alternative to
+ * `trade_proposals`: two users share a single mutable trade object
+ * they both edit over time. Same primitive serves both the live case
+ * (both connected, phones on the table, polling every 2-3s) and the
+ * async case (edit-and-come-back with Discord pings on the other
+ * side's changes).
+ *
+ * Why distinct from trade_proposals:
+ *   - Proposals are ping-pong, convergent via counter chain, formal.
+ *   - Sessions are collaborative, convergent via a single mutable
+ *     object, confirm-at-the-end. Different modalities, coexist.
+ *
+ * Status transitions:
+ *   active → settled (both parties confirm)
+ *   active → cancelled (either party explicitly cancels)
+ *   active → expired (TTL cron sweep)
+ *
+ * Conflict model: each participant edits only their OWN half of the
+ * trade — `user_a_cards` is owned by `user_a_id`, `user_b_cards` by
+ * `user_b_id`. Per-side ownership → no concurrent writes to the same
+ * field → no CRDT needed for v1. The cards columns hold live state,
+ * mutated in place (unlike trade_proposals' frozen snapshots).
+ *
+ * Pair uniqueness: a partial unique index on (least(user_a_id,
+ * user_b_id), greatest(user_a_id, user_b_id)) WHERE status='active'
+ * enforces "at most one active session per pair" at the DB layer. The
+ * sorted pair lets us ignore ordering — `(alice, bob)` and `(bob,
+ * alice)` collide. Settled/expired/cancelled rows don't count against
+ * the cap so a pair who completes a trade can start a new session.
+ *
+ * Async resumption: `last_notified_at` is a JSONB map keyed by user
+ * id → ISO timestamp of the last DM we sent that user about changes
+ * here. The debounce-DM job reads this to decide whether to ping on
+ * a new edit. Per-user so each side has its own debounce window.
+ */
+export const sessionStatuses = ['active', 'settled', 'cancelled', 'expired'] as const;
+export type SessionStatus = typeof sessionStatuses[number];
+
+export const tradeSessions = pgTable(
+  'trade_sessions',
+  {
+    // Short alphanumeric code (8 chars, nanoid-like, unambiguous
+    // alphabet — no 0/O/1/I/l). Used directly in the /s/<code> URL
+    // + QR handoff. Large enough for no collisions under realistic
+    // active-session volumes.
+    id: text('id').primaryKey(),
+    // Participants stored canonically — `user_a_id` < `user_b_id`
+    // lexicographically. Lets the partial unique index + lookups
+    // work without coalesce gymnastics. Callers normalise before
+    // insert; select queries check both positions when filtering by
+    // viewer id.
+    userAId: text('user_a_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    userBId: text('user_b_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    // Live card state — what each side currently offers. Mutated
+    // in place by PUT endpoints. Same TradeCardSnapshot shape as
+    // trade_proposals for code reuse on the render side.
+    userACards: jsonb('user_a_cards').notNull().default([]).$type<TradeCardSnapshot[]>(),
+    userBCards: jsonb('user_b_cards').notNull().default([]).$type<TradeCardSnapshot[]>(),
+    status: text('status', { enum: sessionStatuses }).default('active').notNull(),
+    // Both participants must be in this array for the session to
+    // transition to `settled`. Any edit from either side clears it.
+    // Stored as a text[] (not jsonb) so we can use array operators
+    // when checking membership at the query layer.
+    confirmedByUserIds: text('confirmed_by_user_ids').array().notNull().default(sql`ARRAY[]::text[]`),
+    // Last edit bookkeeping. `last_edited_by_user_id` lets the
+    // debounce job target the OTHER user; `last_edited_at` drives
+    // both the UI "last activity" timestamp and the ping cooldown.
+    lastEditedAt: timestamp('last_edited_at', { withTimezone: true }).defaultNow().notNull(),
+    lastEditedByUserId: text('last_edited_by_user_id')
+      .references(() => users.id, { onDelete: 'set null' }),
+    // Map user_id → ISO timestamp of last DM sent to them about
+    // changes here. The debounce-DM job reads this entry for the
+    // OTHER user when deciding whether to ping. Updated atomically
+    // with the DM send.
+    lastNotifiedAt: jsonb('last_notified_at').notNull().default({}).$type<Record<string, string>>(),
+    // Longer TTL than proposals (days, not hours) because async
+    // sessions can span multi-day negotiations. Exact policy (N days
+    // of inactivity? N days from creation?) is the cron's call.
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    // Optional final-state timestamp — when the session first left
+    // `active`. Symmetric with trade_proposals.respondedAt.
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    // Partial unique index: only ONE active session per sorted pair.
+    // Settled/cancelled/expired rows skipped via the WHERE clause
+    // (Postgres partial indexes), which means a pair can start a
+    // fresh session after completing an old one.
+    uniqueIndex('trade_sessions_active_pair_idx')
+      .on(t.userAId, t.userBId)
+      .where(sql`${t.status} = 'active'`),
+    // Lookup by viewer id — the "my sessions" query hits these.
+    index('trade_sessions_user_a_status_idx').on(t.userAId, t.status),
+    index('trade_sessions_user_b_status_idx').on(t.userBId, t.status),
+    // Expiry cron scans `active` rows by `expires_at`.
+    index('trade_sessions_status_expires_idx').on(t.status, t.expiresAt),
+  ],
+);
+
+/**
+ * Append-only event log for a session. Powers the timeline UI +
+ * audit trail for "who changed what, when." Kept sparse — we don't
+ * log every card add/remove as its own row (that would balloon),
+ * just lifecycle beats.
+ *
+ * Event types:
+ *   created      — session opened
+ *   edited       — one side mutated their half (batched per PUT call)
+ *   confirmed    — a participant tapped Confirm
+ *   unconfirmed  — confirmations cleared because of a subsequent edit
+ *   settled      — both parties confirmed, session frozen
+ *   cancelled    — explicit cancel by a participant
+ *   expired      — TTL cron moved it to terminal
+ *   notified     — debounce-DM job sent a ping (helps reason about
+ *                  why a user got/didn't get a DM)
+ *
+ * Payload shape varies by type — see the write call sites.
+ */
+export const sessionEventTypes = [
+  'created',
+  'edited',
+  'confirmed',
+  'unconfirmed',
+  'settled',
+  'cancelled',
+  'expired',
+  'notified',
+] as const;
+export type SessionEventType = typeof sessionEventTypes[number];
+
+export const sessionEvents = pgTable(
+  'session_events',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .references(() => tradeSessions.id, { onDelete: 'cascade' })
+      .notNull(),
+    actorUserId: text('actor_user_id')
+      .references(() => users.id, { onDelete: 'set null' }),
+    type: text('type', { enum: sessionEventTypes }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('session_events_session_created_idx').on(t.sessionId, t.createdAt),
   ],
 );
