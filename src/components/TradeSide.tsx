@@ -481,7 +481,7 @@ export function TradeSide({
               onOpen={openOverlay}
               hint={
                 counterpartHandle && overlapCards.length > 0
-                  ? 'Or tap ✨ Suggest a match above'
+                  ? 'Or tap the Suggest a match button above'
                   : undefined
               }
             />
@@ -545,7 +545,7 @@ function AddCardsTile({
   accentColor: 'emerald' | 'blue';
   onOpen: () => void;
   /** Optional second line rendered beneath the "Add cards" CTA —
-   *  used in propose mode to point at the ✨ Suggest button above
+   *  used in propose mode to point at the Suggest button above
    *  so undecided users know an auto-fill option exists. */
   hint?: string;
 }) {

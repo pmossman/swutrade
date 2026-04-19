@@ -1,4 +1,18 @@
 import { useMemo, useState } from 'react';
+import {
+  AlarmClock,
+  ArrowLeftRight,
+  Ban,
+  Check,
+  ClipboardList,
+  Hand,
+  Hourglass,
+  Pencil,
+  Repeat2,
+  Store,
+  Undo2,
+  Users,
+} from 'lucide-react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
@@ -273,7 +287,7 @@ function NeedsResponseCallout({
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
         <h2 id="needs-response-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
-          <span aria-hidden>⏰</span>
+          <AlarmClock aria-hidden className="w-4 h-4" />
           <span>Needs your response</span>
           <span className="text-xs tabular-nums text-gold font-bold">{proposals.length}</span>
         </h2>
@@ -340,7 +354,7 @@ function TradesModule({
 
   return (
     <ModuleSection
-      icon="💱"
+      icon={<ArrowLeftRight aria-hidden className="w-4 h-4" />}
       label="My Trades"
       headingId="my-trades-heading"
       action={
@@ -453,7 +467,7 @@ function ActivityRow({
           : 'bg-space-800/30 border-space-700 hover:border-gold/30 hover:bg-space-800/50'
       }`}
     >
-      <span aria-hidden className="text-base leading-none shrink-0">{glyphForActivityType(activity.type)}</span>
+      <span aria-hidden className="shrink-0 flex items-center justify-center">{glyphForActivityType(activity.type)}</span>
       <div className="flex-1 min-w-0">
         <div className="text-[12px] text-gray-200 truncate">
           <span className="font-medium">{actorLabel}</span>{' '}
@@ -478,15 +492,20 @@ function verbForActivityType(t: TradeActivityType): string {
   }
 }
 
-function glyphForActivityType(t: TradeActivityType): string {
+function glyphForActivityType(t: TradeActivityType): React.ReactNode {
+  // Sized to match the `text-base leading-none` span this replaced —
+  // w-4 h-4 keeps the row rhythm identical. Accepted/declined get a
+  // semantic tint so the positive/negative read at a glance; the rest
+  // stay neutral and lean on the adjacent verb for meaning.
+  const cls = 'w-4 h-4';
   switch (t) {
-    case 'accepted':  return '✅';
-    case 'declined':  return '🛑';
-    case 'cancelled': return '↩️';
-    case 'countered': return '🔁';
-    case 'edited':    return '✏️';
-    case 'nudged':    return '👋';
-    case 'expired':   return '⌛';
+    case 'accepted':  return <Check className={`${cls} text-emerald-400`} />;
+    case 'declined':  return <Ban className={`${cls} text-red-400`} />;
+    case 'cancelled': return <Undo2 className={cls} />;
+    case 'countered': return <Repeat2 className={cls} />;
+    case 'edited':    return <Pencil className={cls} />;
+    case 'nudged':    return <Hand className={cls} />;
+    case 'expired':   return <Hourglass className={cls} />;
   }
 }
 
@@ -509,7 +528,7 @@ function ListsModule({
 
   return (
     <ModuleSection
-      icon="📋"
+      icon={<ClipboardList aria-hidden className="w-4 h-4" />}
       label="My Lists"
       headingId="my-lists-heading"
       action={
@@ -594,7 +613,7 @@ function CommunitiesModule({
 }) {
   return (
     <ModuleSection
-      icon="👥"
+      icon={<Users aria-hidden className="w-4 h-4" />}
       label="My Communities"
       headingId="my-communities-heading"
       action={
@@ -693,7 +712,7 @@ function StoresModule() {
           id="my-stores-heading"
           className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold"
         >
-          <span aria-hidden>🏪</span>
+          <Store aria-hidden className="w-4 h-4" />
           <span>My Stores</span>
         </h2>
         <span className="text-[11px] text-gray-600 font-medium">Coming soon</span>
@@ -714,7 +733,7 @@ function ModuleSection({
   action,
   children,
 }: {
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   headingId: string;
   action?: React.ReactNode;
@@ -734,7 +753,7 @@ function ModuleSection({
           id={headingId}
           className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold"
         >
-          <span aria-hidden className="text-base leading-none">{icon}</span>
+          {icon}
           <span>{label}</span>
         </h2>
         {action}

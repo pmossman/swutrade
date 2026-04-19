@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
+import { Sparkles } from 'lucide-react';
 import type { TradeCard } from '../types';
 import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
 import type { WantsApi } from '../hooks/useWants';
@@ -299,9 +300,10 @@ export function ProposeBar({
               onClick={() => handleSuggest('minimize-imbalance')}
               data-testid="propose-suggest"
               title="Tightest card-for-card match; any remainder is implied cash."
-              className="px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
+              className="inline-flex items-center px-2.5 py-1.5 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-semibold transition-colors"
             >
-              ✨ Suggest a match
+              <Sparkles aria-hidden className="w-4 h-4 mr-1" />
+              Suggest a match
             </button>
           )}
           {showPrioritiesSuggest && (
