@@ -12,8 +12,10 @@ test.describe('Profile view', () => {
     await expect(page.getByText('E2E Test User')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('main').getByText('@e2e-test', { exact: true })).toBeVisible();
 
-    // Start a trade CTA.
-    await expect(page.getByRole('banner').getByRole('button', { name: 'Start a trade' })).toBeVisible();
+    // Start a trade CTA — the primary action now lives in the profile
+    // hero inside <main> (it was moved out of <header> to free up
+    // breadcrumb space; see the header-separation slice).
+    await expect(page.getByRole('main').getByRole('button', { name: 'Start a trade' })).toBeVisible();
   });
 
   test('shows error for non-existent profile', async ({ page }) => {
