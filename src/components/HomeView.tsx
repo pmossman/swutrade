@@ -100,11 +100,13 @@ export function HomeView({
           status={trades.status}
           proposals={needsResponse}
           onOpenTrade={onOpenTrade}
+          onOpenTradesHistory={onOpenTradesHistory}
         />
 
         <WaitingOnOthersSection
           proposals={waitingOnOthers}
           onOpenTrade={onOpenTrade}
+          onOpenTradesHistory={onOpenTradesHistory}
         />
 
         <CommunitiesSection
@@ -182,15 +184,24 @@ function PrimaryActions({
 
 // --- Needs your response ---------------------------------------------------
 
+// Cap on the Home screen so a user with dozens of pending proposals
+// doesn't get an endless wall — they see the N freshest and drop into
+// the full Trades history for the rest.
+const HOME_PROPOSAL_CAP = 5;
+
 function NeedsResponseSection({
   status,
   proposals,
   onOpenTrade,
+  onOpenTradesHistory,
 }: {
   status: 'loading' | 'ready' | 'error';
   proposals: TradeListEntry[];
   onOpenTrade: (tradeId: string) => void;
+  onOpenTradesHistory: () => void;
 }) {
+  const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
+  const overflow = proposals.length - visible.length;
   return (
     <section aria-labelledby="needs-response-heading">
       <SectionHeader
@@ -206,12 +217,21 @@ function NeedsResponseSection({
           You're all caught up.
         </div>
       )}
-      {proposals.length > 0 && (
+      {visible.length > 0 && (
         <ul className="flex flex-col gap-1.5">
-          {proposals.map(p => (
+          {visible.map(p => (
             <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} highlight />
           ))}
         </ul>
+      )}
+      {overflow > 0 && (
+        <button
+          type="button"
+          onClick={onOpenTradesHistory}
+          className="mt-2 w-full flex items-center justify-center gap-1 px-4 py-2 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 text-xs font-medium text-gray-400 hover:text-gold transition-colors"
+        >
+          See all {proposals.length} pending →
+        </button>
       )}
     </section>
   );
@@ -222,12 +242,17 @@ function NeedsResponseSection({
 function WaitingOnOthersSection({
   proposals,
   onOpenTrade,
+  onOpenTradesHistory,
 }: {
   proposals: TradeListEntry[];
   onOpenTrade: (tradeId: string) => void;
+  onOpenTradesHistory: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   if (proposals.length === 0) return null;
+
+  const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
+  const overflow = proposals.length - visible.length;
 
   return (
     <section aria-labelledby="waiting-heading">
@@ -249,11 +274,22 @@ function WaitingOnOthersSection({
         <ChevronIcon className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
       </button>
       {expanded && (
-        <ul className="flex flex-col gap-1.5 mt-2">
-          {proposals.map(p => (
-            <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} />
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-1.5 mt-2">
+            {visible.map(p => (
+              <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} />
+            ))}
+          </ul>
+          {overflow > 0 && (
+            <button
+              type="button"
+              onClick={onOpenTradesHistory}
+              className="mt-2 w-full flex items-center justify-center gap-1 px-4 py-2 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 text-xs font-medium text-gray-400 hover:text-gold transition-colors"
+            >
+              See all {proposals.length} pending →
+            </button>
+          )}
+        </>
       )}
     </section>
   );
