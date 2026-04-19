@@ -442,33 +442,17 @@ function App() {
   }
 
   if (viewMode === 'trades-history') {
-    const goHome = () => {
-      const params = new URLSearchParams(window.location.search);
-      params.delete('trades');
-      const search = params.toString();
-      window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode(!!user));
-    };
-    return <TradesHistoryView onClose={goHome} />;
+    // AppHeader's breadcrumb ("Home ›") handles return-to-root; the
+    // view owns its navigation via the header links.
+    return <TradesHistoryView />;
   }
 
   if (viewMode === 'trade-detail') {
     const tradeId = new URLSearchParams(window.location.search).get('trade') ?? '';
-    const goBack = () => {
-      // Back = pop the browser history so the user returns to wherever
-      // they came from (Home, Trades History, Profile, etc.). Intra-SPA
-      // navigation uses pushState, which updates history.length but not
-      // document.referrer — so history.length is the only reliable
-      // signal here. Fall back to bare `/` on direct deep-links so we
-      // never strand the user on a "Back" that does nothing.
-      if (window.history.length > 1) {
-        window.history.back();
-        return;
-      }
-      window.history.pushState(null, '', '/');
-      setViewMode(detectViewMode(!!user));
-    };
-    return <TradeDetailView tradeId={tradeId} onClose={goBack} />;
+    // AppHeader's breadcrumb ("Home › My trades › @counterpart") owns
+    // the return path — deep-linked users get "/?trades=1", in-SPA
+    // users get the native back via the header's Home link.
+    return <TradeDetailView tradeId={tradeId} />;
   }
 
   // Profile view — /u/<handle> shows a user's public lists.

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader } from './ui/AppHeader';
 import { StatusBadge } from './ui/StatusBadge';
 import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import { NudgeDialog } from './NudgeDialog';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useTradesList, type TradeListEntry } from '../hooks/useTradesList';
 import type { UserStub } from '../hooks/useTradeDetail';
 import {
@@ -15,10 +16,6 @@ import {
 } from '../services/tradeActions';
 
 type Tab = 'incoming' | 'outgoing' | 'history';
-
-interface TradesHistoryViewProps {
-  onClose: () => void;
-}
 
 /**
  * /?trades=1 — proposals involving the viewer, split into three tabs:
@@ -41,7 +38,8 @@ interface TradesHistoryViewProps {
 // ship a "select all 200" action that gets rejected by the API.
 const BULK_RESOLVE_CAP = 50;
 
-export function TradesHistoryView({ onClose }: TradesHistoryViewProps) {
+export function TradesHistoryView() {
+  const auth = useAuthContext();
   const { proposals, status, refresh } = useTradesList();
   const [tab, setTab] = useState<Tab | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
@@ -179,9 +177,13 @@ export function TradesHistoryView({ onClose }: TradesHistoryViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <PageHeader onBack={onClose} kicker="My trades" />
-      </div>
+      <AppHeader
+        auth={auth}
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'My trades' },
+        ]}
+      />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full" data-testid="trades-history">
         <TabBar

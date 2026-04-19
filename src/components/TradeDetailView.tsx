@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { PageHeader } from './ui/PageHeader';
+import { useMemo, useState } from 'react';
+import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { StatusBadge } from './ui/StatusBadge';
 import { LoadingState, ErrorState } from './ui/states';
 import { NudgeDialog } from './NudgeDialog';
+import { useAuthContext } from '../contexts/AuthContext';
 import {
   useTradeDetail,
   type CardSnapshot,
@@ -13,7 +14,6 @@ import {
 
 interface TradeDetailViewProps {
   tradeId: string;
-  onClose: () => void;
 }
 
 /**
@@ -30,10 +30,31 @@ interface TradeDetailViewProps {
  * web endpoints, duplicating the bot button surface for users who
  * prefer staying in the web app.
  */
-export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
+export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
+  const auth = useAuthContext();
   const { trade, status, cancel, cancelling, accept, decline, nudge, mutating } = useTradeDetail(tradeId);
   const [actionError, setActionError] = useState<string | null>(null);
   const [nudgeOpen, setNudgeOpen] = useState(false);
+
+  // Counterpart handle (if known) makes the final breadcrumb segment
+  // richer than a generic "Proposal" label — easier to orient when the
+  // user has several detail pages open or navigates back from a deep
+  // link. Falls back to "Proposal" while the trade is still loading so
+  // the header doesn't flicker between labels.
+  const breadcrumbs = useMemo<BreadcrumbSegment[]>(() => {
+    const base: BreadcrumbSegment[] = [
+      { label: 'Home', href: '/' },
+      { label: 'My trades', href: '/?trades=1' },
+    ];
+    if (status === 'ready' && trade) {
+      const counterpart = trade.viewerIsProposer ? trade.recipient : trade.proposer;
+      const handle = counterpart?.handle;
+      base.push({ label: handle ? `@${handle}` : 'Proposal' });
+    } else {
+      base.push({ label: 'Proposal' });
+    }
+    return base;
+  }, [status, trade]);
 
   const handleCancel = async () => {
     setActionError(null);
@@ -73,9 +94,7 @@ export function TradeDetailView({ tradeId, onClose }: TradeDetailViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <PageHeader onBack={onClose} kicker="Trade proposal" />
-      </div>
+      <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full" data-testid="trade-detail">
         {status === 'loading' && <LoadingState className="mt-6" />}
