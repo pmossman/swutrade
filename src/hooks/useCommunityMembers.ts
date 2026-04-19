@@ -20,6 +20,9 @@ export interface CommunityMember {
   username: string;
   avatarUrl: string | null;
   mutualGuildNames: string[];
+  /** Guild ids parallel to `mutualGuildNames`. Used by the Settings
+   *  page's per-guild members sub-route to filter the directory. */
+  mutualGuildIds: string[];
   wantsPublic: boolean;
   availablePublic: boolean;
   wantsTotal: number;

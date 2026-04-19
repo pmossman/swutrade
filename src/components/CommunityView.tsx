@@ -4,14 +4,11 @@ import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import {
   useCommunityMembers,
   type CommunityMember,
-  type CommunityMembersApi,
-  type PrefValue,
 } from '../hooks/useCommunityMembers';
 import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
-import { PREF_DEFINITIONS, type PrefDefinition } from '../../lib/prefsRegistry';
 
 interface CommunityViewProps {
   byProductId: Map<string, CardVariant>;
@@ -20,15 +17,7 @@ interface CommunityViewProps {
   onClose: () => void;
 }
 
-type SortMode = 'overlap' | 'offer' | 'receive' | 'alpha' | 'configured';
-
-/** True when at least one peer-scoped pref has a non-null override
- *  value on this member. Generic over registered peer prefs today
- *  (communicationPref is the only one); extra keys flow through
- *  without changes. */
-function hasAnyPeerOverride(m: CommunityMember): boolean {
-  return Object.values(m.peerPrefs.override).some(v => v !== null);
-}
+type SortMode = 'overlap' | 'offer' | 'receive' | 'alpha';
 
 interface MemberWithOverlap extends CommunityMember {
   iCanOfferThem: number;
@@ -55,7 +44,7 @@ interface MemberWithOverlap extends CommunityMember {
  */
 export function CommunityView({ byProductId, wants, available, onClose }: CommunityViewProps) {
   const community = useCommunityMembers();
-  const { members, status, setPeerPref } = community;
+  const { members, status } = community;
   const [sort, setSort] = useState<SortMode>('overlap');
 
   // Viewer's available converted to familyIds (one card can exist
@@ -102,21 +91,12 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
   }, [members, viewerAvailableFamilies, viewerWantFamilies, byProductId]);
 
   const sorted = useMemo(() => {
-    // 'configured' is a filter-AND-sort mode: narrow to rows with at
-    // least one non-null peer override, then fall back to overlap
-    // ordering. Intended for "did I set a pref for alice already?"
-    // scans — there's no equivalent on the other tabs.
-    const source = sort === 'configured'
-      ? enriched.filter(hasAnyPeerOverride)
-      : enriched;
-    const copy = [...source];
+    const copy = [...enriched];
     copy.sort((a, b) => {
       switch (sort) {
         case 'offer': return b.iCanOfferThem - a.iCanOfferThem || b.totalOverlap - a.totalOverlap;
         case 'receive': return b.theyCanOfferMe - a.theyCanOfferMe || b.totalOverlap - a.totalOverlap;
         case 'alpha': return a.handle.localeCompare(b.handle);
-        case 'configured':
-          return b.totalOverlap - a.totalOverlap || a.handle.localeCompare(b.handle);
         case 'overlap':
         default:
           return b.totalOverlap - a.totalOverlap || a.handle.localeCompare(b.handle);
@@ -151,20 +131,11 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
           {status === 'ready' && members.length > 0 && (
             <>
               <SortTabs sort={sort} onChange={setSort} />
-              {sort === 'configured' && sorted.length === 0 ? (
-                <EmptyState title="No per-trader overrides yet.">
-                  Overrides let you tweak pref behavior for a specific person —
-                  pick another tab to find a trader, then use the selector on
-                  their row (or <span className="font-mono">⚙ Prefs</span> on a proposal DM,
-                  or <span className="font-mono">/swutrade settings user:@them</span> in Discord).
-                </EmptyState>
-              ) : (
-                <ul className="flex flex-col gap-3">
-                  {sorted.map(m => (
-                    <MemberRow key={m.userId} member={m} setPeerPref={setPeerPref} />
-                  ))}
-                </ul>
-              )}
+              <ul className="flex flex-col gap-3">
+                {sorted.map(m => (
+                  <MemberRow key={m.userId} member={m} />
+                ))}
+              </ul>
             </>
           )}
         </section>
@@ -174,16 +145,11 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
 }
 
 function SortTabs({ sort, onChange }: { sort: SortMode; onChange: (s: SortMode) => void }) {
-  // 'configured' narrows the list to rows with a peer override set,
-  // so the label reflects "look only at rows I've touched" rather
-  // than a pure sort. It's sequenced last because it's a
-  // manage-my-overrides mode, distinct from the discovery modes.
   const tabs: Array<{ id: SortMode; label: string }> = [
     { id: 'overlap', label: 'Best overlap' },
     { id: 'offer', label: 'I can offer' },
     { id: 'receive', label: 'They have' },
     { id: 'alpha', label: 'A–Z' },
-    { id: 'configured', label: 'Configured' },
   ];
   return (
     <div className="flex gap-1.5 mb-4 overflow-x-auto -mx-1 px-1" role="tablist" aria-label="Sort members">
@@ -207,16 +173,18 @@ function SortTabs({ sort, onChange }: { sort: SortMode; onChange: (s: SortMode) 
   );
 }
 
-function MemberRow({
-  member,
-  setPeerPref,
-}: {
-  member: MemberWithOverlap;
-  setPeerPref: CommunityMembersApi['setPeerPref'];
-}) {
-  const { handle, username, avatarUrl, mutualGuildNames, iCanOfferThem, theyCanOfferMe, wantsTotal, availableTotal, peerPrefs } = member;
-  const href = `/u/${encodeURIComponent(handle)}`;
+function MemberRow({ member }: { member: MemberWithOverlap }) {
+  const { handle, username, avatarUrl, mutualGuildNames, mutualGuildIds, iCanOfferThem, theyCanOfferMe, wantsTotal, availableTotal } = member;
+  const profileHref = `/u/${encodeURIComponent(handle)}`;
   const hasOverlap = iCanOfferThem + theyCanOfferMe > 0;
+  const hasOverride = hasAnyPeerOverride(member);
+  // Deep-link to the Settings member-prefs detail, scoped to the
+  // first mutual guild — that's the most relevant "community context"
+  // for the viewer landing on this member. Overrides apply globally,
+  // so the choice of guild is cosmetic.
+  const prefsHref = mutualGuildIds.length > 0
+    ? `/?settings=1&tab=servers&guild=${encodeURIComponent(mutualGuildIds[0])}&members=1&user=${encodeURIComponent(member.userId)}`
+    : null;
 
   return (
     <li
@@ -226,16 +194,18 @@ function MemberRow({
           : 'bg-space-800/40 border-space-700 hover:border-gold/30'
       }`}
     >
-      {/* The clickable/navigational region is a nested <a>; the peer
-          pref controls live outside it so they don't trigger a
-          navigation on change. */}
-      <a href={href} className="flex items-start gap-3 flex-1 min-w-0">
+      <a href={profileHref} className="flex items-start gap-3 flex-1 min-w-0">
         <Avatar avatarUrl={avatarUrl} username={username} />
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-sm font-semibold text-gray-100 truncate">@{handle}</span>
             {username !== handle && (
               <span className="text-[11px] text-gray-500 truncate">{username}</span>
+            )}
+            {hasOverride && (
+              <span className="text-[10px] tracking-wide uppercase text-gold font-bold">
+                Prefs set
+              </span>
             )}
           </div>
           {mutualGuildNames.length > 0 && (
@@ -259,101 +229,21 @@ function MemberRow({
           </div>
         </div>
       </a>
-      <PeerPrefsPanel
-        peerUserId={member.userId}
-        peerPrefs={peerPrefs}
-        setPeerPref={setPeerPref}
-      />
+      {prefsHref && (
+        <a
+          href={prefsHref}
+          className="shrink-0 self-start text-[10px] tracking-wide uppercase text-gray-500 hover:text-gold font-semibold py-1 px-2 rounded-md border border-space-700 hover:border-gold/40 transition-colors"
+          title="Manage per-trader preferences in Settings"
+        >
+          Prefs
+        </a>
+      )}
     </li>
   );
 }
 
-/**
- * Inline peer-pref editor. Renders one control per registered
- * peer-scoped def (today just `communicationPref`, one <select>
- * with 5 options — Inherit + the 4 enum values). "Inherit" maps
- * to `value: null` on the PUT, clearing any override so the
- * resolver falls back to the viewer's self default.
- */
-function PeerPrefsPanel({
-  peerUserId,
-  peerPrefs,
-  setPeerPref,
-}: {
-  peerUserId: string;
-  peerPrefs: CommunityMember['peerPrefs'];
-  setPeerPref: CommunityMembersApi['setPeerPref'];
-}) {
-  const defs = PREF_DEFINITIONS.filter(
-    d => d.scope.kind === 'peer' && d.surfaces.includes('web'),
-  );
-  if (defs.length === 0) return null;
-
-  return (
-    <div className="shrink-0 w-44 flex flex-col gap-1.5">
-      {defs.map(def => (
-        <PeerPrefSelect
-          key={def.key}
-          def={def}
-          override={peerPrefs.override[def.key] ?? null}
-          effective={peerPrefs.effective[def.key] ?? null}
-          onChange={value => { void setPeerPref(peerUserId, def.key, value); }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function PeerPrefSelect({
-  def,
-  override,
-  effective,
-  onChange,
-}: {
-  def: PrefDefinition;
-  override: PrefValue;
-  effective: PrefValue;
-  onChange: (value: PrefValue) => void;
-}) {
-  if (def.type.kind !== 'enum') return null;
-  const id = `peer-pref-${def.key}`;
-  // `override === null` means "no override set" → the select reads
-  // as "inherit". The sentinel we use in the <select> value is the
-  // empty string (can't use the literal null on an <option>).
-  const currentValue = override == null ? '' : String(override);
-  const hasOverride = override != null;
-  const effectiveLabel = def.type.options.find(o => o.value === effective)?.label ?? String(effective ?? '');
-  // Override active → gold ring + non-empty value shows the user at a
-  // glance that they've configured something specific here, without
-  // needing to read the option text.
-  const selectClass = hasOverride
-    ? 'w-full bg-space-800 border border-gold/50 text-gold text-[11px] rounded-md px-2 py-1.5 focus:border-gold/70 focus:outline-none'
-    : 'w-full bg-space-800 border border-space-700 text-gray-200 text-[11px] rounded-md px-2 py-1.5 focus:border-gold/50 focus:outline-none';
-  return (
-    <div>
-      <label htmlFor={id} className="sr-only">
-        {def.label} for this user
-      </label>
-      <select
-        id={id}
-        value={currentValue}
-        onChange={e => {
-          const v = e.target.value;
-          onChange(v === '' ? null : v);
-        }}
-        className={selectClass}
-        aria-label={`${def.label} for this user${hasOverride ? ' (override active)' : ''}`}
-        title={hasOverride ? `${def.description}\nOverride active — currently applies instead of your default.` : def.description}
-      >
-        <option value="">{`Use my default (${effectiveLabel})`}</option>
-        {def.type.options.map(opt => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
+function hasAnyPeerOverride(m: CommunityMember): boolean {
+  return Object.values(m.peerPrefs.override).some(v => v !== null);
 }
 
 function OverlapChip({ label, count, total, tone }: {

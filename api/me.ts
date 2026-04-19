@@ -552,6 +552,10 @@ export interface CommunityMember {
   username: string;
   avatarUrl: string | null;
   mutualGuildNames: string[];
+  /** Parallel array to mutualGuildNames — the Discord guild ids so
+   *  the Settings page's Servers → Members sub-route can filter the
+   *  directory to one specific guild without a new endpoint. */
+  mutualGuildIds: string[];
   wantsPublic: boolean;
   availablePublic: boolean;
   wantsTotal: number;
@@ -669,10 +673,14 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
 
   // Group everything by userId for shape assembly.
   const guildsByUser = new Map<string, string[]>();
+  const guildIdsByUser = new Map<string, string[]>();
   for (const m of memberRows) {
-    const list = guildsByUser.get(m.userId) ?? [];
-    if (!list.includes(m.guildName)) list.push(m.guildName);
-    guildsByUser.set(m.userId, list);
+    const names = guildsByUser.get(m.userId) ?? [];
+    if (!names.includes(m.guildName)) names.push(m.guildName);
+    guildsByUser.set(m.userId, names);
+    const ids = guildIdsByUser.get(m.userId) ?? [];
+    if (!ids.includes(m.guildId)) ids.push(m.guildId);
+    guildIdsByUser.set(m.userId, ids);
   }
 
   const wantsByUser = new Map<string, Set<string>>();
@@ -764,6 +772,7 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
       username: u.username,
       avatarUrl: u.avatarUrl,
       mutualGuildNames: guildsByUser.get(u.id) ?? [],
+      mutualGuildIds: guildIdsByUser.get(u.id) ?? [],
       wantsPublic: u.wantsPublic,
       availablePublic: u.availablePublic,
       wantsTotal: wantsTotalByUser.get(u.id)?.size ?? 0,

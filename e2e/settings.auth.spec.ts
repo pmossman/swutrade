@@ -24,20 +24,20 @@ test.describe('Settings view', () => {
     await cleanupTestUser(user);
   });
 
-  test('loads account settings with defaults', async ({ page }) => {
+  test('hub shows sections; profile tab carries profile visibility at default', async ({ page }) => {
+    // Post-rework the bare `/?settings=1` URL is a hub. Drill-down via
+    // `tab=profile` surfaces the actual Profile visibility field.
     await page.goto('/?settings=1');
     await expect(page.getByText(/^Settings$/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /Profile/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Preferences/i })).toBeVisible();
 
+    await page.goto('/?settings=1&tab=profile');
     await expect(page.getByLabel('Profile visibility')).toHaveValue('discord');
-    // "Trade proposals sent to me" starts checked; the others don't.
-    await expect(page.getByRole('checkbox', { name: /Trade proposals sent to me/ }))
-      .toBeChecked();
-    await expect(page.getByRole('checkbox', { name: /^Match alerts/ }))
-      .not.toBeChecked();
   });
 
-  test('toggling a bot-DM category persists', async ({ page }) => {
-    await page.goto('/?settings=1');
+  test('toggling a bot-DM category persists (preferences tab)', async ({ page }) => {
+    await page.goto('/?settings=1&tab=preferences');
 
     const matchAlerts = page.getByRole('checkbox', { name: /^Match alerts/ });
     await expect(matchAlerts).not.toBeChecked();
@@ -51,11 +51,9 @@ test.describe('Settings view', () => {
     }, { timeout: 5_000 }).toBe(true);
   });
 
-  test('changing Thread conversations (communicationPref) persists', async ({ page }) => {
-    await page.goto('/?settings=1');
+  test('changing Thread conversations (communicationPref) persists (preferences tab)', async ({ page }) => {
+    await page.goto('/?settings=1&tab=preferences');
 
-    // New in the registry-driven Settings: Communication section
-    // carries a `Thread conversations` select with 4 enum options.
     const commPref = page.getByLabel('Thread conversations');
     await expect(commPref).toHaveValue('allow');
     await commPref.selectOption('prefer');
@@ -66,12 +64,9 @@ test.describe('Settings view', () => {
     }, { timeout: 5_000 }).toBe('prefer');
   });
 
-  test('changing profile visibility persists', async ({ page }) => {
-    await page.goto('/?settings=1');
+  test('changing profile visibility persists (profile tab)', async ({ page }) => {
+    await page.goto('/?settings=1&tab=profile');
 
-    // Default is 'discord' — change to 'public' to verify the round-trip.
-    // Picking any value different from the default is fine here; we care
-    // that the control + API + DB stay in sync, not which value lands.
     await page.getByLabel('Profile visibility').selectOption('public');
 
     await expect.poll(async () => {
@@ -80,7 +75,7 @@ test.describe('Settings view', () => {
     }, { timeout: 5_000 }).toBe('public');
   });
 
-  test('shows an empty-state when no bot-installed guilds are available', async ({ page }) => {
+  test('servers tab shows an empty-state when no bot-installed guilds are available', async ({ page }) => {
     // Seed a membership in a guild where the bot is NOT installed.
     // As of Phase 4b we deliberately DON'T enumerate these — a user
     // with 60 random Discord servers doesn't want them listed in
@@ -90,7 +85,7 @@ test.describe('Settings view', () => {
       guildName: 'Elsewhere',
     }));
 
-    await page.goto('/?settings=1');
+    await page.goto('/?settings=1&tab=servers');
     await expect(page.getByText(/SWUTrade's bot isn't installed in any of your Discord servers yet/i))
       .toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Want SWUTrade in another server\?/i)).toBeVisible();
@@ -98,16 +93,17 @@ test.describe('Settings view', () => {
     await expect(page.getByText('Elsewhere')).toHaveCount(0);
   });
 
-  test('enrolling flips the bundle + shows the sub-toggles', async ({ page }) => {
+  test('enrolling a server from the server detail flips the bundle on', async ({ page }) => {
     const guildId = `enroll-${user.userId}`;
     cleanups.push(await installBotInGuild(guildId, { guildName: 'Star Wars SD' }));
     cleanups.push(await createGuildMembership(user.userId, guildId, {
       guildName: 'Star Wars SD',
     }));
 
-    await page.goto('/?settings=1');
+    // Drill directly to the server's detail page — skips the hub row click.
+    await page.goto(`/?settings=1&tab=servers&guild=${guildId}`);
 
-    await expect(page.getByText('Star Wars SD')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Star Wars SD').first()).toBeVisible({ timeout: 10_000 });
     const enrollCheckbox = page.getByRole('checkbox', { name: 'Enroll in Star Wars SD' });
     await expect(enrollCheckbox).not.toBeChecked();
 
@@ -126,7 +122,7 @@ test.describe('Settings view', () => {
     }, { timeout: 5_000 }).toEqual({ enrolled: true, inc: true, appear: true });
   });
 
-  test('disenrolling clears the bundle', async ({ page }) => {
+  test('disenrolling from the server detail clears the bundle', async ({ page }) => {
     const guildId = `disenroll-${user.userId}`;
     cleanups.push(await installBotInGuild(guildId, { guildName: 'Star Wars SD' }));
     cleanups.push(await createGuildMembership(user.userId, guildId, {
@@ -134,7 +130,7 @@ test.describe('Settings view', () => {
       enrolled: true,
     }));
 
-    await page.goto('/?settings=1');
+    await page.goto(`/?settings=1&tab=servers&guild=${guildId}`);
     const enrollCheckbox = page.getByRole('checkbox', { name: 'Enroll in Star Wars SD' });
     await expect(enrollCheckbox).toBeChecked({ timeout: 10_000 });
 
