@@ -39,6 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'get':        return handleGetProposal(req, res);
     case 'proposals':  return handleProposalsList(req, res);
     case 'cancel':     return handleCancel(req, res);
+    case 'edit':       return handleEdit(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -907,4 +908,131 @@ export async function handleCounter(
   });
 
   return res.status(201).json({ id: counterId, deliveryStatus: counterDeliveryStatus });
+}
+
+// --- edit (Phase 4c — proposer tweaks a still-pending proposal) -------------
+
+const EditBodySchema = z.object({
+  id: z.string().min(1),
+  offeringCards: z.array(TradeCardSnapshotSchema),
+  receivingCards: z.array(TradeCardSnapshotSchema),
+  message: z.string().max(500).optional(),
+}).refine(
+  data => data.offeringCards.length > 0 || data.receivingCards.length > 0,
+  { message: 'Proposal must include at least one card' },
+);
+
+/**
+ * Proposer-only. Mutates an existing `pending` proposal in place —
+ * cards and/or message — and re-renders the delivered Discord
+ * message so the recipient sees the updated offer without a new
+ * notification channel. Status and respondedAt are untouched.
+ *
+ * Preconditions: status === 'pending' AND responded_at IS NULL.
+ * Anything else 409s. Recipient is fixed at creation time and
+ * cannot be edited here — a recipient change would be a new
+ * proposal, not an edit.
+ *
+ * The Discord re-render is best-effort (same pattern as cancel).
+ * If the bot call fails, the row still updates and the event is
+ * still recorded; the proposer gets 200 and the DM just shows
+ * stale content until next action.
+ */
+export async function handleEdit(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = EditBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { id, offeringCards, receivingCards, message } = parsed.data;
+
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, id))
+    .limit(1);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.proposerUserId !== session.userId) {
+    return res.status(403).json({ error: 'Only the proposer can edit' });
+  }
+  if (row.status !== 'pending' || row.respondedAt !== null) {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: `This proposal is ${row.status} and can no longer be edited.`,
+    });
+  }
+
+  // Compute what actually changed so the event payload is honest. JSON
+  // stringify is stable for our snapshot shape (deterministic key order
+  // from the schema) and cheap enough vs the DB round-trip.
+  const cardsChanged =
+    JSON.stringify(row.offeringCards) !== JSON.stringify(offeringCards) ||
+    JSON.stringify(row.receivingCards) !== JSON.stringify(receivingCards);
+  const newMessage = message ?? null;
+  const messageChanged = (row.message ?? null) !== newMessage;
+
+  await db
+    .update(tradeProposals)
+    .set({
+      offeringCards,
+      receivingCards,
+      message: newMessage,
+      updatedAt: new Date(),
+    })
+    .where(eq(tradeProposals.id, id));
+
+  await recordEvent(db, {
+    proposalId: id,
+    actorUserId: session.userId,
+    type: 'edited',
+    payload: { cardsChanged, messageChanged },
+  });
+
+  // Re-render the delivered Discord message in place. Works for both
+  // DM-backed and thread-backed proposals: the thread's message id is
+  // stored in the same channel/message columns (channel_id = thread_id
+  // for thread-backed rows). Keep the Accept/Counter/Decline buttons
+  // intact — status is still pending.
+  if (row.discordDmChannelId && row.discordDmMessageId) {
+    try {
+      const [proposer] = await db
+        .select({ handle: users.handle, username: users.username })
+        .from(users)
+        .where(eq(users.id, row.proposerUserId))
+        .limit(1);
+      if (proposer) {
+        const bot = deps.bot ?? createDiscordBotClient();
+        const patched = buildProposalMessage({
+          tradeId: row.id,
+          proposerUserId: row.proposerUserId,
+          proposerHandle: proposer.handle,
+          proposerUsername: proposer.username,
+          offeringCards,
+          receivingCards,
+          message: newMessage,
+        });
+        await bot.editChannelMessage(row.discordDmChannelId, row.discordDmMessageId, patched);
+      }
+    } catch (err) {
+      console.error('handleEdit: Discord message edit failed', err);
+      await reportError({
+        source: 'trades.edit.message-edit',
+        tags: { tradeId: id, proposerId: session.userId },
+      }, err);
+    }
+  }
+
+  return res.json({ id, status: 'pending' });
 }
