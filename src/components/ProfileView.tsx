@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   cardImageUrl,
@@ -12,7 +12,7 @@ import {
 import { VariantBadge } from './VariantBadge';
 import { bestMatchForWant } from '../listMatching';
 import type { VariantRestriction } from '../persistence';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader } from './ui/AppHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 
 interface ProfileUser {
@@ -62,25 +62,6 @@ export function ProfileView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const auth = useAuthContext();
-
-  // ProfileView is typically reached via a row click in /?community=1
-  // or a link from elsewhere in the app. Without a Back affordance
-  // users lose the thread (browser Back works but isn't obvious).
-  // Prefer history.back() when the referrer is same-origin, otherwise
-  // fall through to the home route — covers direct-URL visits where
-  // there's no previous SWU page to return to.
-  const handleProfileBack = useCallback(() => {
-    try {
-      const ref = document.referrer;
-      if (ref && new URL(ref).origin === window.location.origin) {
-        window.history.back();
-        return;
-      }
-    } catch {
-      // Malformed referrer — fall through.
-    }
-    window.location.href = '/';
-  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -140,65 +121,77 @@ export function ProfileView({
 
   if (!profile) return null;
 
+  // Slim variant for signed-out viewers on a shared /u/<handle> URL —
+  // NavMenu + AccountMenu are hidden so we don't push sign-up chrome at
+  // someone who just clicked a link to see a list. Signed-in viewers
+  // (looking at their own profile or someone else's) get the normal
+  // chrome. Breadcrumb stays minimal — [Home, @handle] — because
+  // viewers arrive via several paths (Community, trade detail, direct
+  // link) and we have no reliable referrer to disambiguate.
+  const tradeCta = auth.user && auth.user.handle !== profile.user.handle ? (
+    // Signed-in, viewing someone else: single primary CTA that lands
+    // in the propose composer. Specific label "Trade with @alice" is
+    // unambiguous — the prior "Propose a trade" + "Just balance" pair
+    // was confusing (both auto-filled the editor; the only real
+    // difference was whether the Send button rendered).
+    <a
+      href={`/?propose=${encodeURIComponent(profile.user.handle)}`}
+      className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+    >
+      Trade with @{profile.user.handle}
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 8h10M9 4l4 4-4 4" />
+      </svg>
+    </a>
+  ) : (
+    // Own profile or signed-out visitor — the local balance flow
+    // (editor pre-seeded with this profile's context, no Discord send).
+    // Label splits by case to avoid conflating with the "Trade with
+    // @handle" CTA shown to other viewers:
+    //   - own profile: "Open trade editor" (no counterpart)
+    //   - signed-out other: "Start a trade" (auto-balance flow)
+    <button
+      type="button"
+      onClick={() => onStartTrade(profile.user.handle, true)}
+      className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+    >
+      {auth.user?.handle === profile.user.handle ? 'Open trade editor' : 'Start a trade'}
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 8h10M9 4l4 4-4 4" />
+      </svg>
+    </button>
+  );
+
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
-        <PageHeader
-          onBack={handleProfileBack}
-          kicker={
-            <div className="flex items-center gap-3">
-              {profile.user.avatarUrl && (
-                <img
-                  src={profile.user.avatarUrl}
-                  alt=""
-                  className="w-10 h-10 rounded-full border-2 border-space-700"
-                />
-              )}
-              <div>
-                <div className="text-sm font-bold text-gray-100">{profile.user.username}</div>
-                <div className="text-[11px] text-gray-500">@{profile.user.handle}</div>
-              </div>
-            </div>
-          }
-        >
-          {auth.user && auth.user.handle !== profile.user.handle ? (
-            // Signed-in, viewing someone else: single primary CTA that
-            // lands in the propose composer. Specific label "Trade with
-            // @alice" is unambiguous — the prior "Propose a trade" +
-            // "Just balance" pair was confusing (both auto-filled the
-            // editor; the only real difference was whether the Send
-            // button rendered).
-            <a
-              href={`/?propose=${encodeURIComponent(profile.user.handle)}`}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
-            >
-              Trade with @{profile.user.handle}
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M3 8h10M9 4l4 4-4 4" />
-              </svg>
-            </a>
-          ) : (
-            // Own profile or signed-out visitor — the local balance
-            // flow (editor pre-seeded with this profile's context, no
-            // Discord send). Label splits by case to avoid conflating
-            // with the "Trade with @handle" CTA shown to other viewers:
-            //   - own profile: "Open trade editor" (no counterpart)
-            //   - signed-out other: "Start a trade" (auto-balance flow)
-            <button
-              type="button"
-              onClick={() => onStartTrade(profile.user.handle, true)}
-              className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg border bg-gold/15 border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
-            >
-              {auth.user?.handle === profile.user.handle ? 'Open trade editor' : 'Start a trade'}
-              <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <path d="M3 8h10M9 4l4 4-4 4" />
-              </svg>
-            </button>
-          )}
-        </PageHeader>
-      </header>
+      <AppHeader
+        auth={auth}
+        slim={!auth.user}
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: `@${profile.user.handle}` },
+        ]}
+        actions={tradeCta}
+      />
 
       <main className="flex-1 px-3 sm:px-6 pb-8 pt-4 max-w-5xl mx-auto w-full">
+        {/* Identity strip — avatar + display name now that the breadcrumb
+            carries the @handle. Kept in main so it scrolls with the
+            list rather than pinning to the header chrome. */}
+        <div className="flex items-center gap-3 mb-4">
+          {profile.user.avatarUrl && (
+            <img
+              src={profile.user.avatarUrl}
+              alt=""
+              className="w-10 h-10 rounded-full border-2 border-space-700"
+            />
+          )}
+          <div>
+            <div className="text-sm font-bold text-gray-100">{profile.user.username}</div>
+            <div className="text-[11px] text-gray-500">@{profile.user.handle}</div>
+          </div>
+        </div>
+
         <ProfileLists
           profile={profile}
           wantsRows={wantsRows}

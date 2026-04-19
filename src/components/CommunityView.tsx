@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader } from './ui/AppHeader';
 import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import {
   useCommunityMembers,
@@ -9,12 +9,12 @@ import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import { useAuthContext } from '../contexts/AuthContext';
 
 interface CommunityViewProps {
   byProductId: Map<string, CardVariant>;
   wants: WantsApi;
   available: AvailableApi;
-  onClose: () => void;
 }
 
 type SortMode = 'overlap' | 'offer' | 'receive' | 'alpha';
@@ -42,7 +42,8 @@ interface MemberWithOverlap extends CommunityMember {
  *   - receive: cards they could give me, desc
  *   - alpha: handle A-Z — for when you're scanning a specific user
  */
-export function CommunityView({ byProductId, wants, available, onClose }: CommunityViewProps) {
+export function CommunityView({ byProductId, wants, available }: CommunityViewProps) {
+  const auth = useAuthContext();
   const community = useCommunityMembers();
   const { members, status } = community;
   const [sort, setSort] = useState<SortMode>('overlap');
@@ -107,9 +108,10 @@ export function CommunityView({ byProductId, wants, available, onClose }: Commun
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <PageHeader onBack={onClose} kicker="Community" />
-      </div>
+      <AppHeader
+        auth={auth}
+        breadcrumbs={[{ label: 'Home', href: '/' }, { label: 'Community' }]}
+      />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         <section className="mt-6" aria-labelledby="community-heading">

@@ -424,19 +424,13 @@ function App() {
   }
 
   if (viewMode === 'community') {
-    const goHome = () => {
-      const params = new URLSearchParams(window.location.search);
-      params.delete('community');
-      const search = params.toString();
-      window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode(!!user));
-    };
+    // AppHeader's breadcrumb (Home ›) handles the return-to-root path;
+    // no onClose prop needed — the link is a full navigation to `/`.
     return (
       <CommunityView
         byProductId={cardIndex.byProductId}
         wants={wants}
         available={available}
-        onClose={goHome}
       />
     );
   }
