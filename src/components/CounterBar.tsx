@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PriceMode, TradeCard } from '../types';
-import {
-  adjustPrice,
-  getCardPrice,
-} from '../services/priceService';
-import { extractVariantLabel } from '../variants';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { useComposerBar } from '../hooks/useComposerBar';
 
 interface CardSnapshot {
   productId: string;
@@ -35,8 +31,6 @@ interface OriginalTradeResponse {
   viewerIsRecipient: boolean;
 }
 
-type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'already-resolved' | 'error';
-
 /**
  * Sticky bar for `/?counter=<id>`. Sibling of ProposeBar — distinct
  * enough in lifecycle (loads an existing trade instead of a user
@@ -54,6 +48,10 @@ type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'already-res
  *      transitions original → 'countered' + inserts the new row.
  *   4. On 409 (original resolved mid-compose) show an explicit
  *      "beaten to the punch" message, not the generic error state.
+ *
+ * Shared send/snapshot/message state lives in `useComposerBar`; the
+ * per-bar mount fetch + seed-once pattern stays inline here because
+ * the fetch shape differs between the three composers.
  */
 export function CounterBar({
   originalTradeId,
@@ -66,12 +64,18 @@ export function CounterBar({
   const { byProductId } = useCardIndexContext();
   const [original, setOriginal] = useState<OriginalTradeResponse | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'forbidden' | 'not-found' | 'error' | 'not-recipient' | 'not-pending'>('loading');
-  const [sendState, setSendState] = useState<SendState>('idle');
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [message, setMessage] = useState('');
-  const [messageOpen, setMessageOpen] = useState(false);
   const autoAppliedRef = useRef(false);
   const fetchStartedRef = useRef(false);
+
+  const composer = useComposerBar({ yourCards, theirCards, percentage, priceMode });
+  const {
+    message,
+    setMessage,
+    messageOpen,
+    toggleMessage,
+    sendState,
+    submit,
+  } = composer;
 
   // One-shot fetch.
   useEffect(() => {
@@ -146,52 +150,22 @@ export function CounterBar({
     onApplyMatch(seeded.yours, seeded.theirs);
   }, [seeded, onApplyMatch]);
 
-  const handleSend = useCallback(async () => {
-    if (sendState === 'sending' || sendState === 'sent' || sendState === 'sent-undelivered') return;
-    if (yourCards.length === 0 && theirCards.length === 0) return;
-
-    setSendState('sending');
-    setSendError(null);
-
-    const snapshot = (cards: TradeCard[]) =>
-      cards.map(tc => ({
-        productId: tc.card.productId ?? '',
-        name: tc.card.name.replace(/\s*\([^)]+\)\s*$/, ''),
-        variant: extractVariantLabel(tc.card.name) || tc.card.variant || 'Standard',
-        qty: tc.qty,
-        unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
-      }));
-
-    try {
-      const res = await fetch('/api/trades/counter', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          counterOfId: originalTradeId,
-          offeringCards: snapshot(yourCards),
-          receivingCards: snapshot(theirCards),
-          ...(message.trim() ? { message: message.trim() } : {}),
-        }),
-      });
-      if (res.status === 409) {
-        setSendState('already-resolved');
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `HTTP ${res.status}`);
-      }
-      const data: { id: string; deliveryStatus?: 'delivered' | 'failed' } = await res.json();
-      setSendState(data.deliveryStatus === 'failed' ? 'sent-undelivered' : 'sent');
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : 'Failed to send');
-      setSendState('error');
-    }
-  }, [sendState, yourCards, theirCards, originalTradeId, percentage, priceMode, message]);
+  const handleSend = () => {
+    submit({
+      endpoint: '/api/trades/counter',
+      body: { counterOfId: originalTradeId },
+    });
+  };
 
   const proposerHandle = original?.proposer?.handle ?? null;
   const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
   const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
+
+  const sending = sendState.kind === 'sending';
+  const sent = sendState.kind === 'sent';
+  const undelivered = sent && sendState.deliveryStatus === 'failed';
+  const alreadyResolved = sendState.kind === 'already-resolved';
+  const sendError = sendState.kind === 'error' ? sendState.message : null;
 
   const body = (() => {
     if (loadState === 'loading') {
@@ -222,8 +196,7 @@ export function CounterBar({
       return <span className="flex-1 min-w-0 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
     }
 
-    if (sendState === 'sent' || sendState === 'sent-undelivered') {
-      const undelivered = sendState === 'sent-undelivered';
+    if (sent) {
       return (
         <>
           <span className={`flex-1 ${undelivered ? 'text-amber-200' : 'text-emerald-300'}`}>
@@ -241,7 +214,7 @@ export function CounterBar({
       );
     }
 
-    if (sendState === 'already-resolved') {
+    if (alreadyResolved) {
       return (
         <span className="flex-1 min-w-0 text-amber-200">
           @{proposerHandle} accepted or changed the original proposal before your counter landed.
@@ -250,7 +223,7 @@ export function CounterBar({
       );
     }
 
-    const canSend = offerCount + receiveCount > 0 && sendState !== 'sending';
+    const canSend = offerCount + receiveCount > 0 && !sending;
     return (
       <>
         <span className="flex-1 min-w-0">
@@ -267,29 +240,31 @@ export function CounterBar({
           disabled={!canSend}
           className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {sendState === 'sending' ? 'Sending…' : 'Send counter'}
+          {sending ? 'Sending…' : 'Send counter'}
         </button>
       </>
     );
   })();
 
-  const debugState = (() => {
-    if (sendState === 'sent') return 'sent';
-    if (sendState === 'sent-undelivered') return 'sent-undelivered';
-    if (sendState === 'sending') return 'sending';
-    if (sendState === 'already-resolved') return 'already-resolved';
-    if (sendState === 'error') return 'send-error';
+  // Preserve the prior `data-state` attribute values for e2e /
+  // debugging continuity. `sent-undelivered` is derived from the
+  // (collapsed) `sent` + deliveryStatus so selectors keep working.
+  const dataState = (() => {
+    if (sent) return undelivered ? 'sent-undelivered' : 'sent';
+    if (sending) return 'sending';
+    if (alreadyResolved) return 'already-resolved';
+    if (sendState.kind === 'error') return 'send-error';
     if (loadState !== 'ready') return loadState;
     return 'ready';
   })();
 
-  const showMessageInput = loadState === 'ready' && sendState !== 'sent' && sendState !== 'sent-undelivered';
+  const showMessageInput = loadState === 'ready' && !sent;
 
   return (
     <div
       className="shrink-0 px-3 pt-2 pb-3 max-w-5xl mx-auto w-full"
       data-testid="counter-bar"
-      data-state={debugState}
+      data-state={dataState}
     >
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
@@ -298,7 +273,7 @@ export function CounterBar({
         <div className="mt-1.5 px-1">
           <button
             type="button"
-            onClick={() => setMessageOpen(o => !o)}
+            onClick={toggleMessage}
             className="inline-flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-gold transition-colors"
             aria-expanded={messageOpen}
           >
@@ -307,8 +282,8 @@ export function CounterBar({
           {messageOpen && (
             <textarea
               value={message}
-              onChange={e => setMessage(e.target.value.slice(0, 500))}
-              disabled={sendState === 'sending'}
+              onChange={e => setMessage(e.target.value)}
+              disabled={sending}
               placeholder="Explain the counter — why this split works better for you, etc."
               rows={2}
               maxLength={500}
@@ -318,7 +293,7 @@ export function CounterBar({
           )}
         </div>
       )}
-      {sendState === 'error' && sendError && (
+      {sendError && (
         <div className="mt-1 text-[11px] text-red-300 px-1">
           Couldn't send: {sendError}
         </div>

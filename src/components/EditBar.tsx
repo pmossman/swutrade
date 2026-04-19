@@ -1,11 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PriceMode, TradeCard } from '../types';
-import {
-  adjustPrice,
-  getCardPrice,
-} from '../services/priceService';
-import { extractVariantLabel } from '../variants';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { useComposerBar } from '../hooks/useComposerBar';
 
 interface CardSnapshot {
   productId: string;
@@ -35,8 +31,6 @@ interface EditingTradeResponse {
   viewerIsProposer: boolean;
 }
 
-type SaveState = 'idle' | 'saving' | 'saved' | 'already-resolved' | 'error';
-
 /**
  * Sticky bar for `/?edit=<id>` — proposer revises a still-pending
  * proposal in place. Sibling of ProposeBar/CounterBar:
@@ -51,6 +45,10 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'already-resolved' | 'error';
  *
  * Non-proposer / non-pending cases render a clear banner — no fallback
  * to an empty composer.
+ *
+ * Shared send/snapshot/message state lives in `useComposerBar`; the
+ * per-bar mount fetch + seed-once pattern stays inline here because
+ * the fetch shape differs between the three composers.
  */
 export function EditBar({
   editingTradeId,
@@ -65,13 +63,19 @@ export function EditBar({
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'forbidden' | 'not-found' | 'error' | 'not-proposer' | 'not-pending'
   >('loading');
-  const [saveState, setSaveState] = useState<SaveState>('idle');
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [message, setMessage] = useState('');
-  const [messageOpen, setMessageOpen] = useState(false);
   const [messageDirty, setMessageDirty] = useState(false);
   const autoAppliedRef = useRef(false);
   const fetchStartedRef = useRef(false);
+
+  const composer = useComposerBar({ yourCards, theirCards, percentage, priceMode });
+  const {
+    message,
+    setMessage,
+    messageOpen,
+    toggleMessage,
+    sendState,
+    submit,
+  } = composer;
 
   // One-shot fetch.
   useEffect(() => {
@@ -118,7 +122,7 @@ export function EditBar({
       }
     })();
     return () => { cancelled = true; };
-  }, [editingTradeId, messageDirty]);
+  }, [editingTradeId, messageDirty, setMessage]);
 
   // Seed the trade panels once we have the original AND the card
   // index is populated. No side-swap: the proposer keeps their own
@@ -149,51 +153,24 @@ export function EditBar({
     onApplyMatch(seeded.yours, seeded.theirs);
   }, [seeded, onApplyMatch]);
 
-  const handleSave = useCallback(async () => {
-    if (saveState === 'saving' || saveState === 'saved') return;
-    if (yourCards.length === 0 && theirCards.length === 0) return;
-
-    setSaveState('saving');
-    setSaveError(null);
-
-    const snapshot = (cards: TradeCard[]) =>
-      cards.map(tc => ({
-        productId: tc.card.productId ?? '',
-        name: tc.card.name.replace(/\s*\([^)]+\)\s*$/, ''),
-        variant: extractVariantLabel(tc.card.name) || tc.card.variant || 'Standard',
-        qty: tc.qty,
-        unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
-      }));
-
-    try {
-      const res = await fetch('/api/trades?action=edit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          id: editingTradeId,
-          offeringCards: snapshot(yourCards),
-          receivingCards: snapshot(theirCards),
-          message: message.trim() || undefined,
-        }),
-      });
-      if (res.status === 409) {
-        setSaveState('already-resolved');
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `HTTP ${res.status}`);
-      }
-      setSaveState('saved');
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to save');
-      setSaveState('error');
-    }
-  }, [saveState, yourCards, theirCards, editingTradeId, percentage, priceMode, message]);
+  const handleSave = () => {
+    submit({
+      endpoint: '/api/trades?action=edit',
+      body: { id: editingTradeId },
+    });
+  };
 
   const recipientHandle = original?.recipient?.handle ?? null;
   const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
   const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
+
+  // EditBar doesn't branch on deliveryStatus — re-delivery of an edit
+  // is best-effort DM update, not a fresh send. `sent` collapses to
+  // "saved" here regardless of the delivery outcome.
+  const saved = sendState.kind === 'sent';
+  const alreadyResolved = sendState.kind === 'already-resolved';
+  const saving = sendState.kind === 'sending';
+  const sendError = sendState.kind === 'error' ? sendState.message : null;
 
   const body = (() => {
     if (loadState === 'loading') {
@@ -224,7 +201,7 @@ export function EditBar({
       return <span className="flex-1 min-w-0 text-red-300">Couldn't load the proposal. Try refreshing.</span>;
     }
 
-    if (saveState === 'saved') {
+    if (saved) {
       return (
         <>
           <span className="flex-1 min-w-0 text-emerald-300">
@@ -240,7 +217,7 @@ export function EditBar({
       );
     }
 
-    if (saveState === 'already-resolved') {
+    if (alreadyResolved) {
       return (
         <span className="flex-1 min-w-0 text-amber-200">
           <strong>@{recipientHandle}</strong> responded before your edit landed. Open the proposal to
@@ -249,7 +226,7 @@ export function EditBar({
       );
     }
 
-    const canSave = offerCount + receiveCount > 0 && saveState !== 'saving';
+    const canSave = offerCount + receiveCount > 0 && !saving;
     return (
       <>
         <span className="flex-1 min-w-0">
@@ -266,19 +243,31 @@ export function EditBar({
           disabled={!canSave}
           className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {saveState === 'saving' ? 'Saving…' : 'Save edits'}
+          {saving ? 'Saving…' : 'Save edits'}
         </button>
       </>
     );
   })();
 
-  const showMessageInput = loadState === 'ready' && saveState !== 'saved';
+  // Preserve the prior `data-state` contract: loadState wins when the
+  // bar isn't ready yet; once ready, the send machine drives it.
+  // Values map 1:1 to the previous SaveState names.
+  const dataState = (() => {
+    if (loadState !== 'ready') return loadState;
+    if (sendState.kind === 'sent') return 'saved';
+    if (sendState.kind === 'sending') return 'saving';
+    if (sendState.kind === 'already-resolved') return 'already-resolved';
+    if (sendState.kind === 'error') return 'error';
+    return 'idle';
+  })();
+
+  const showMessageInput = loadState === 'ready' && !saved;
 
   return (
     <div
       className="shrink-0 px-3 pt-2 pb-3 max-w-5xl mx-auto w-full"
       data-testid="edit-bar"
-      data-state={loadState === 'ready' ? saveState : loadState}
+      data-state={dataState}
     >
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
@@ -287,7 +276,7 @@ export function EditBar({
         <div className="mt-1.5 px-1">
           <button
             type="button"
-            onClick={() => setMessageOpen(o => !o)}
+            onClick={toggleMessage}
             className="inline-flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-gold transition-colors"
             aria-expanded={messageOpen}
           >
@@ -301,10 +290,10 @@ export function EditBar({
             <textarea
               value={message}
               onChange={e => {
-                setMessage(e.target.value.slice(0, 500));
+                setMessage(e.target.value);
                 setMessageDirty(true);
               }}
-              disabled={saveState === 'saving'}
+              disabled={saving}
               placeholder="Update the note sent to the recipient — why the revision, timing, etc."
               rows={2}
               maxLength={500}
@@ -314,9 +303,9 @@ export function EditBar({
           )}
         </div>
       )}
-      {saveState === 'error' && saveError && (
+      {sendError && (
         <div className="mt-1 text-[11px] text-red-300 px-1">
-          Couldn't save: {saveError}
+          Couldn't save: {sendError}
         </div>
       )}
     </div>

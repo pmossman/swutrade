@@ -2,15 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import type { PriceMode, TradeCard } from '../types';
 import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
-import {
-  adjustPrice,
-  getCardPrice,
-} from '../services/priceService';
-import { extractVariantLabel } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -27,8 +23,6 @@ interface ProposeBarProps {
   recipientFetchState: FetchState;
   onApplyMatch: (yours: TradeCard[], theirs: TradeCard[]) => void;
 }
-
-type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'error';
 
 /**
  * Sticky bottom bar shown while composing a proposal at
@@ -50,11 +44,11 @@ type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'error';
  * and the final review a proper home — and users get a beat to
  * double-check before committing.
  *
- * Trade-card snapshots are built inline here (matching the helper
- * in TradeSummary) so the DB row captures exact price / variant
- * labels at proposal time, not whatever the client might compute
- * later. See `trade_proposals` schema comment for why the snapshot
- * matters.
+ * Trade-card snapshots are built by `useComposerBar.buildSnapshot`
+ * (matching the helper in TradeSummary) so the DB row captures exact
+ * price / variant labels at proposal time, not whatever the client
+ * might compute later. See `trade_proposals` schema comment for why
+ * the snapshot matters.
  */
 export function ProposeBar({
   recipientHandle,
@@ -69,17 +63,11 @@ export function ProposeBar({
   onApplyMatch,
 }: ProposeBarProps) {
   const { allLoadedCards: allCards } = useCardIndexContext();
-  const [sendState, setSendState] = useState<SendState>('idle');
   const [sentTradeId, setSentTradeId] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<string | null>(null);
-  // Optional note the proposer can attach. Persisted in the DM embed's
-  // description (rendered as a blockquote). Server caps at 500 chars;
-  // we enforce client-side too so the textarea doesn't silently
-  // accept more than the server will take. Lives here (rather than
-  // inside the modal) so the user's draft note survives accidental
-  // modal dismissal.
-  const [message, setMessage] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const composer = useComposerBar({ yourCards, theirCards, percentage, priceMode });
+  const { message, setMessage, sendState, submit, buildSnapshot, resetSendState } = composer;
 
   // Build a preview for the given mode. Both modes share the same
   // overlap pool computation inside computeMatch — only the subset-
@@ -144,61 +132,24 @@ export function ProposeBar({
     || !productIdsEqual(preview.receiving, priorityPreview.receiving)
   );
 
-  // Snapshot helper used for both modal preview and the POST payload.
-  // Kept as a single function so the preview can't drift from what
+  // Snapshots for the confirm modal preview + the POST payload share
+  // the hook's `buildSnapshot` so the preview can't drift from what
   // the server actually receives.
-  const snapshotCards = useCallback((cards: TradeCard[]): ConfirmSnapshot[] => {
-    return cards.map(tc => ({
-      productId: tc.card.productId ?? '',
-      // TradeCard.card.name includes the variant in parens — split
-      // into base name + variant label to match the snapshot shape
-      // we stored in tests (and that future DM embeds will render).
-      name: tc.card.name.replace(/\s*\([^)]+\)\s*$/, ''),
-      variant: extractVariantLabel(tc.card.name) || tc.card.variant || 'Standard',
-      qty: tc.qty,
-      unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
-    }));
-  }, [percentage, priceMode]);
-
-  const offeringSnapshot = useMemo(() => snapshotCards(yourCards), [snapshotCards, yourCards]);
-  const receivingSnapshot = useMemo(() => snapshotCards(theirCards), [snapshotCards, theirCards]);
+  const offeringSnapshot = useMemo(() => buildSnapshot(yourCards), [buildSnapshot, yourCards]);
+  const receivingSnapshot = useMemo(() => buildSnapshot(theirCards), [buildSnapshot, theirCards]);
 
   const handleSend = useCallback(async () => {
-    if (sendState === 'sending' || sendState === 'sent') return;
-    if (yourCards.length === 0 && theirCards.length === 0) return;
-
-    setSendState('sending');
-    setSendError(null);
-
-    try {
-      const res = await fetch('/api/trades/propose', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          recipientHandle,
-          offeringCards: offeringSnapshot,
-          receivingCards: receivingSnapshot,
-          ...(message.trim() ? { message: message.trim() } : {}),
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `HTTP ${res.status}`);
-      }
-      const data: { id: string; deliveryStatus?: 'delivered' | 'failed' } = await res.json();
-      setSentTradeId(data.id);
-      // Split the success path: row is saved either way, but if the
-      // DM didn't land we want to surface that so the proposer can
-      // share the trade URL manually or retry.
-      setSendState(data.deliveryStatus === 'failed' ? 'sent-undelivered' : 'sent');
-      // Close the confirm modal — the post-send banner lives in the
-      // main bar, not the modal.
-      setConfirmOpen(false);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : 'Failed to send');
-      setSendState('error');
-    }
-  }, [sendState, yourCards.length, theirCards.length, recipientHandle, offeringSnapshot, receivingSnapshot, message]);
+    await submit({
+      endpoint: '/api/trades/propose',
+      body: { recipientHandle },
+      onSuccess: data => {
+        if (data.id) setSentTradeId(data.id);
+        // Close the confirm modal — the post-send banner lives in the
+        // main bar, not the modal.
+        setConfirmOpen(false);
+      },
+    });
+  }, [submit, recipientHandle]);
 
   // Cancelling a draft proposal returns the user to the place they
   // arrived from (community directory or the counterpart's profile).
@@ -222,8 +173,13 @@ export function ProposeBar({
     window.location.href = '/?community=1';
   }, [yourCards.length, theirCards.length, message]);
 
+  const sending = sendState.kind === 'sending';
+  const sent = sendState.kind === 'sent';
+  const undelivered = sent && sendState.deliveryStatus === 'failed';
+  const sendError = sendState.kind === 'error' ? sendState.message : null;
+
   const body = (() => {
-    if (sendState === 'sent') {
+    if (sent && !undelivered) {
       return (
         <>
           <span className="flex-1 min-w-0 text-emerald-300">
@@ -241,7 +197,7 @@ export function ProposeBar({
       );
     }
 
-    if (sendState === 'sent-undelivered') {
+    if (undelivered) {
       return (
         <>
           <span className="flex-1 min-w-0 text-amber-200">
@@ -278,7 +234,7 @@ export function ProposeBar({
 
     const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
     const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
-    const canSend = offerCount + receiveCount > 0 && sendState !== 'sending';
+    const canSend = offerCount + receiveCount > 0 && !sending;
     const overlapAvailable = !!preview
       && (preview.overlapOffering > 0 || preview.overlapReceiving > 0);
     const isEmpty = offerCount + receiveCount === 0;
@@ -365,41 +321,41 @@ export function ProposeBar({
             type="button"
             onClick={() => {
               if (!canSend) return;
-              setSendError(null);
               // Previous failed attempt shouldn't leave the bar stuck
               // in 'error' once the user re-opens the modal to retry.
-              if (sendState === 'error') setSendState('idle');
+              if (sendState.kind === 'error') resetSendState();
               setConfirmOpen(true);
             }}
             disabled={!canSend}
             data-testid="propose-open-confirm"
             title={
-              !canSend && sendState !== 'sending'
+              !canSend && !sending
                 ? 'Add at least one card to either side to enable.'
                 : undefined
             }
             className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {sendState === 'sending' ? 'Sending…' : 'Send proposal'}
+            {sending ? 'Sending…' : 'Send proposal'}
           </button>
         </div>
       </>
     );
   })();
 
-  const debugState = sendState === 'sent'
-    ? 'sent'
-    : sendState === 'sent-undelivered'
-      ? 'sent-undelivered'
-      : sendState === 'sending'
-        ? 'sending'
-        : fetchState === 'error'
-          ? 'fetch-error'
-          : !profile
-            ? 'loading-profile'
-            : sendState === 'error'
-              ? 'send-error'
-              : 'ready';
+  // Preserve the prior `data-state` contract. `sent-undelivered` is
+  // derived from the (collapsed) `sent` + deliveryStatus so debug
+  // selectors keep working.
+  const debugState = sent
+    ? (undelivered ? 'sent-undelivered' : 'sent')
+    : sending
+      ? 'sending'
+      : fetchState === 'error'
+        ? 'fetch-error'
+        : !profile
+          ? 'loading-profile'
+          : sendState.kind === 'error'
+            ? 'send-error'
+            : 'ready';
 
   return (
     <div
@@ -410,7 +366,7 @@ export function ProposeBar({
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
-      {sendState === 'error' && sendError && (
+      {sendError && (
         <div className="mt-1 text-[11px] text-red-300 px-1">
           Couldn't send: {sendError}
         </div>
@@ -429,8 +385,8 @@ export function ProposeBar({
         receiving={receivingSnapshot}
         message={message}
         onChangeMessage={setMessage}
-        sending={sendState === 'sending'}
-        errorMessage={sendState === 'error' ? sendError : null}
+        sending={sending}
+        errorMessage={sendError}
         onSend={handleSend}
       />
     </div>
@@ -448,23 +404,12 @@ function productIdsEqual(a: { productId?: string }[], b: { productId?: string }[
 
 const MESSAGE_MAX_LENGTH = 500;
 
-/** Shape mirrors CardSnapshot in api/trades.ts — what we POST and
- *  what the DB row stores. unitPrice is number-or-null to match the
- *  server contract (some cards genuinely have no price). */
-interface ConfirmSnapshot {
-  productId: string;
-  name: string;
-  variant: string;
-  qty: number;
-  unitPrice: number | null;
-}
-
 interface ConfirmProposalDialogProps {
   open: boolean;
   onOpenChange: (next: boolean) => void;
   recipientHandle: string;
-  offering: ConfirmSnapshot[];
-  receiving: ConfirmSnapshot[];
+  offering: SnapshotCard[];
+  receiving: SnapshotCard[];
   message: string;
   onChangeMessage: (next: string) => void;
   sending: boolean;
@@ -584,7 +529,7 @@ function ConfirmProposalDialog({
                 id="propose-confirm-note"
                 ref={setTextareaEl}
                 value={message}
-                onChange={e => onChangeMessage(e.target.value.slice(0, MESSAGE_MAX_LENGTH))}
+                onChange={e => onChangeMessage(e.target.value)}
                 disabled={sending}
                 placeholder="Optional context for the recipient — a deck they're building for, a meetup time, etc."
                 rows={5}
@@ -647,7 +592,7 @@ function ConfirmCardGroup({
 }: {
   label: string;
   tone: 'emerald' | 'blue';
-  cards: ConfirmSnapshot[];
+  cards: SnapshotCard[];
 }) {
   const accent = tone === 'emerald' ? 'text-emerald-300' : 'text-blue-300';
   const border = tone === 'emerald' ? 'border-emerald-500/30' : 'border-blue-500/30';
