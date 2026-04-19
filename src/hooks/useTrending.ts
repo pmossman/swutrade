@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiGet } from '../services/apiClient';
 
 export interface TrendingCard {
   familyId: string;
@@ -10,10 +11,13 @@ export function useTrending(): TrendingCard[] {
   const [trending, setTrending] = useState<TrendingCard[]>([]);
 
   useEffect(() => {
-    fetch('/api/trending')
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setTrending(Array.isArray(data) ? data : []))
-      .catch(() => {});
+    let cancelled = false;
+    (async () => {
+      const result = await apiGet<TrendingCard[]>('/api/trending');
+      if (cancelled) return;
+      if (result.ok && Array.isArray(result.data)) setTrending(result.data);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   return trending;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet, apiPut } from '../services/apiClient';
 
 /**
  * One row in the CommunityView directory. Shape mirrors the server
@@ -54,16 +55,16 @@ export function useCommunityMembers(): CommunityMembersApi {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch('/api/me/community-members');
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data: { members: CommunityMember[] } = await res.json();
-        if (cancelled) return;
-        setMembers(data.members);
-        setStatus('ready');
-      } catch {
-        if (!cancelled) setStatus('error');
+      const result = await apiGet<{ members: CommunityMember[] }>(
+        '/api/me/community-members',
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setStatus('error');
+        return;
       }
+      setMembers(result.data.members);
+      setStatus('ready');
     })();
     return () => { cancelled = true; };
   }, []);
@@ -87,29 +88,22 @@ export function useCommunityMembers(): CommunityMembersApi {
       return { ...m, peerPrefs: { override: nextOverride, effective: nextEffective } };
     }));
 
-    try {
-      const res = await fetch('/api/me/prefs', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ peerUserId, key, value }),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      // If we cleared an override (value = null), refetch to pick up
-      // the authoritative effective value from the server's cascade.
-      if (value === null) {
-        const refreshed = await fetch('/api/me/community-members');
-        if (refreshed.ok) {
-          const data: { members: CommunityMember[] } = await refreshed.json();
-          setMembers(data.members);
-        }
-      }
-    } catch {
+    const result = await apiPut('/api/me/prefs', { peerUserId, key, value });
+    if (!result.ok) {
       // Roll back by refetching from source of truth.
-      const refreshed = await fetch('/api/me/community-members');
-      if (refreshed.ok) {
-        const data: { members: CommunityMember[] } = await refreshed.json();
-        setMembers(data.members);
-      }
+      const refreshed = await apiGet<{ members: CommunityMember[] }>(
+        '/api/me/community-members',
+      );
+      if (refreshed.ok) setMembers(refreshed.data.members);
+      return;
+    }
+    // If we cleared an override (value = null), refetch to pick up
+    // the authoritative effective value from the server's cascade.
+    if (value === null) {
+      const refreshed = await apiGet<{ members: CommunityMember[] }>(
+        '/api/me/community-members',
+      );
+      if (refreshed.ok) setMembers(refreshed.data.members);
     }
   }, []);
 

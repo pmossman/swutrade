@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { apiGet } from '../services/apiClient';
 import type { VariantRestriction } from '../persistence';
 
 export interface RecipientProfile {
@@ -42,20 +43,16 @@ export function useRecipientProfile(handle: string | null): {
     let cancelled = false;
     setFetchState('loading');
     (async () => {
-      try {
-        const res = await fetch(`/api/user/${encodeURIComponent(handle)}`);
-        if (cancelled) return;
-        if (!res.ok) {
-          setFetchState('error');
-          return;
-        }
-        const data: RecipientProfile = await res.json();
-        if (cancelled) return;
-        setProfile(data);
-        setFetchState('idle');
-      } catch {
-        if (!cancelled) setFetchState('error');
+      const result = await apiGet<RecipientProfile>(
+        `/api/user/${encodeURIComponent(handle)}`,
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setFetchState('error');
+        return;
       }
+      setProfile(result.data);
+      setFetchState('idle');
     })();
     return () => { cancelled = true; };
   }, [handle]);

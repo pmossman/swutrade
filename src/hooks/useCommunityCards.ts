@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiGet } from '../services/apiClient';
 
 export interface CommunityCardsApi {
   /** familyIds at least one other enrolled community member wants. */
@@ -31,19 +32,22 @@ export function useCommunityCards(isSignedIn: boolean): CommunityCardsApi {
     }
     let cancelled = false;
     setStatus('loading');
-    fetch('/api/me/community')
-      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((data: { wantFamilyIds?: string[]; availableProductIds?: string[] }) => {
-        if (cancelled) return;
-        const wants = data.wantFamilyIds ?? [];
-        const avail = data.availableProductIds ?? [];
-        setWantFamilyIds(wants);
-        setAvailableProductIds(avail);
-        setStatus(wants.length === 0 && avail.length === 0 ? 'empty' : 'ready');
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('error');
-      });
+    (async () => {
+      const result = await apiGet<{
+        wantFamilyIds?: string[];
+        availableProductIds?: string[];
+      }>('/api/me/community');
+      if (cancelled) return;
+      if (!result.ok) {
+        setStatus('error');
+        return;
+      }
+      const wants = result.data.wantFamilyIds ?? [];
+      const avail = result.data.availableProductIds ?? [];
+      setWantFamilyIds(wants);
+      setAvailableProductIds(avail);
+      setStatus(wants.length === 0 && avail.length === 0 ? 'empty' : 'ready');
+    })();
     return () => { cancelled = true; };
   }, [isSignedIn]);
 

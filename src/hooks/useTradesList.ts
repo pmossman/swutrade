@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet } from '../services/apiClient';
 import type { TradeStatus, UserStub } from './useTradeDetail';
 
 export interface TradeListEntry {
@@ -90,26 +91,24 @@ export function useTradesList(): TradesListApi {
   );
 
   const fetchOnce = useCallback(async () => {
-    try {
-      const res = await fetch('/api/trades/proposals');
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      const data: {
-        proposals: TradeListEntry[];
-        // `recentActivity` may be absent in older deploys (the field
-        // shipped alongside the Home 2.0 rework). Tolerate its absence
-        // by defaulting to an empty list rather than crashing.
-        recentActivity?: TradeActivityEntry[];
-      } = await res.json();
-      const activity = data.recentActivity ?? [];
-      cachedTrades = { proposals: data.proposals, recentActivity: activity };
-      setProposals(data.proposals);
-      setRecentActivity(activity);
-      setStatus('ready');
-    } catch {
+    // `recentActivity` may be absent in older deploys (the field
+    // shipped alongside the Home 2.0 rework). Tolerate its absence
+    // by defaulting to an empty list rather than crashing.
+    const result = await apiGet<{
+      proposals: TradeListEntry[];
+      recentActivity?: TradeActivityEntry[];
+    }>('/api/trades/proposals');
+    if (!result.ok) {
       // If we have cached data, keep showing it rather than flipping
       // to an error state — the user already saw something real.
       if (cachedTrades === null) setStatus('error');
+      return;
     }
+    const activity = result.data.recentActivity ?? [];
+    cachedTrades = { proposals: result.data.proposals, recentActivity: activity };
+    setProposals(result.data.proposals);
+    setRecentActivity(activity);
+    setStatus('ready');
   }, []);
 
   useEffect(() => {

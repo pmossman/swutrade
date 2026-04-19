@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiGet, apiPost } from '../services/apiClient';
 
 export interface User {
   id: string;
@@ -22,14 +23,19 @@ export function useAuth(): AuthApi {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.json())
-      .then(data => {
-        setUser(data.user ?? null);
-        setBotInstallUrl(data.botInstallUrl ?? null);
-      })
-      .catch(() => setUser(null))
-      .finally(() => setIsLoading(false));
+    (async () => {
+      const result = await apiGet<{
+        user?: User | null;
+        botInstallUrl?: string | null;
+      }>('/api/auth/me');
+      if (result.ok) {
+        setUser(result.data.user ?? null);
+        setBotInstallUrl(result.data.botInstallUrl ?? null);
+      } else {
+        setUser(null);
+      }
+      setIsLoading(false);
+    })();
   }, []);
 
   const login = useCallback(() => {
@@ -37,7 +43,7 @@ export function useAuth(): AuthApi {
   }, []);
 
   const logout = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    await apiPost('/api/auth/logout');
     setUser(null);
   }, []);
 

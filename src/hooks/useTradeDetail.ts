@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet } from '../services/apiClient';
 import {
   acceptProposal,
   cancelProposal,
@@ -117,23 +118,16 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
     let cancelled = false;
     setStatus('loading');
     (async () => {
-      try {
-        const res = await fetch(`/api/trades/${encodeURIComponent(id)}`);
-        if (cancelled) return;
-        if (res.status === 404) {
-          setStatus('not-found');
-          return;
-        }
-        if (!res.ok) {
-          setStatus('error');
-          return;
-        }
-        const data: TradeDetail = await res.json();
-        setTrade(data);
-        setStatus('ready');
-      } catch {
-        if (!cancelled) setStatus('error');
+      const result = await apiGet<TradeDetail>(
+        `/api/trades/${encodeURIComponent(id)}`,
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setStatus(result.reason === 'not-found' ? 'not-found' : 'error');
+        return;
       }
+      setTrade(result.data);
+      setStatus('ready');
     })();
     return () => { cancelled = true; };
   }, [id, reloadTick]);

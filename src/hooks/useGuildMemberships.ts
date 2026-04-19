@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet, apiPost, apiPut } from '../services/apiClient';
 
 export interface GuildMembershipSummary {
   guildId: string;
@@ -83,38 +84,45 @@ export function useGuildMemberships(): GuildMembershipsApi {
   }, []);
 
   const loadLocal = useCallback(async () => {
-    try {
-      const res = await fetch('/api/me/guilds');
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      applyPayload(await res.json());
-      setStatus('ready');
-    } catch {
+    const result = await apiGet<{
+      enrollable: GuildMembershipSummary[];
+      other: GuildMembershipSummary[];
+    }>('/api/me/guilds');
+    if (!result.ok) {
       // If we already have cached data, keep showing it rather than
       // flipping to an error state — the user already saw something real.
       if (cachedGuilds === null) setStatus('error');
+      return;
     }
+    applyPayload(result.data);
+    setStatus('ready');
   }, [applyPayload]);
 
   const refreshFromDiscord = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (!opts.silent) setRefreshStatus('refreshing');
-    try {
-      const res = await fetch('/api/me/guilds/refresh', { method: 'POST' });
-      if (res.status === 409) {
-        // Token expired / revoked / legacy session without token.
-        // Silent auto-refresh: swallow — local data is already shown,
-        // no need to scare the user. Manual click: show banner.
+    const result = await apiPost<{
+      enrollable: GuildMembershipSummary[];
+      other: GuildMembershipSummary[];
+    }>('/api/me/guilds/refresh');
+    if (!result.ok) {
+      // 409 on refresh means the Discord access token is expired /
+      // revoked / never stored (legacy session). The apiClient maps
+      // that to `already-resolved`, which is the idiomatic "you can't
+      // do this right now" bucket. Silent auto-refresh: swallow —
+      // local data is already shown, no need to scare the user.
+      // Manual click: show the banner.
+      if (result.reason === 'already-resolved') {
         if (!opts.silent) setRefreshStatus('needs-reauth');
         else setRefreshStatus('idle');
         return;
       }
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      applyPayload(await res.json());
-      setStatus('ready');
-      setRefreshStatus('idle');
-    } catch {
       if (!opts.silent) setRefreshStatus('error');
       else setRefreshStatus('idle');
+      return;
     }
+    applyPayload(result.data);
+    setStatus('ready');
+    setRefreshStatus('idle');
   }, [applyPayload]);
 
   // Initial load: local DB, then a one-shot Discord refresh per tab
@@ -150,25 +158,23 @@ export function useGuildMemberships(): GuildMembershipsApi {
       return next;
     });
     setStatus('saving');
-    try {
-      const res = await fetch(`/api/me/guilds/${encodeURIComponent(guildId)}`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
-      const canonical: GuildPatch = await res.json();
-      setEnrollable(prev => {
-        const next = prev.map(g => g.guildId === guildId ? { ...g, ...canonical } : g);
-        if (cachedGuilds) cachedGuilds = { ...cachedGuilds, enrollable: next };
-        return next;
-      });
-      setStatus('ready');
-    } catch {
+    const result = await apiPut<GuildPatch>(
+      `/api/me/guilds/${encodeURIComponent(guildId)}`,
+      patch,
+    );
+    if (!result.ok) {
       setStatus('error');
       // Re-fetch to bring the UI back to truth.
       loadLocal();
+      return;
     }
+    const canonical = result.data;
+    setEnrollable(prev => {
+      const next = prev.map(g => g.guildId === guildId ? { ...g, ...canonical } : g);
+      if (cachedGuilds) cachedGuilds = { ...cachedGuilds, enrollable: next };
+      return next;
+    });
+    setStatus('ready');
   }, [loadLocal]);
 
   return { enrollable, other, status, refreshStatus, refreshFromDiscord, updateGuild };

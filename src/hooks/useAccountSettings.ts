@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { apiGet, apiPut } from '../services/apiClient';
 
 export type ProfileVisibility = 'public' | 'discord' | 'private';
 
@@ -36,16 +37,14 @@ export function useAccountSettings(): AccountSettingsApi {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch('/api/me/prefs');
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data: PrefsMap = await res.json();
-        if (cancelled) return;
-        setSettings(data);
-        setStatus('ready');
-      } catch {
-        if (!cancelled) setStatus('error');
+      const result = await apiGet<PrefsMap>('/api/me/prefs');
+      if (cancelled) return;
+      if (!result.ok) {
+        setStatus('error');
+        return;
       }
+      setSettings(result.data);
+      setStatus('ready');
     })();
     return () => { cancelled = true; };
   }, []);
@@ -53,27 +52,15 @@ export function useAccountSettings(): AccountSettingsApi {
   const update = useCallback(async (patch: PrefsMap) => {
     setSettings(prev => (prev ? { ...prev, ...patch } : prev));
     setStatus('saving');
-    try {
-      const res = await fetch('/api/me/prefs', {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(`status ${res.status}`);
+    const result = await apiPut('/api/me/prefs', patch);
+    if (result.ok) {
       setStatus('ready');
-    } catch {
-      // Roll back on failure — re-fetch to resync with the server.
-      try {
-        const res = await fetch('/api/me/prefs');
-        if (res.ok) {
-          const data: PrefsMap = await res.json();
-          setSettings(data);
-        }
-      } catch {
-        // swallow — status stays 'error', user sees the banner
-      }
-      setStatus('error');
+      return;
     }
+    // Roll back on failure — re-fetch to resync with the server.
+    const refreshed = await apiGet<PrefsMap>('/api/me/prefs');
+    if (refreshed.ok) setSettings(refreshed.data);
+    setStatus('error');
   }, []);
 
   return { settings, status, update };

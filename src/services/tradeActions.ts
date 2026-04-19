@@ -16,6 +16,7 @@ export type ActionFailureReason =
   | 'rate-limited'
   | 'not-found'
   | 'forbidden'
+  | 'unauthorized'
   | 'error';
 
 export type ActionResult<T = Record<string, never>> =
@@ -41,6 +42,7 @@ function failure(
   }
   if (status === 404) return { ok: false, reason: 'not-found', detail };
   if (status === 403) return { ok: false, reason: 'forbidden', detail };
+  if (status === 401) return { ok: false, reason: 'unauthorized', detail };
   return { ok: false, reason: 'error', detail };
 }
 

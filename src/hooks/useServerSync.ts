@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { apiGet, apiPut } from '../services/apiClient';
 import type { User } from './useAuth';
 import type { WantsApi } from './useWants';
 import type { AvailableApi } from './useAvailable';
@@ -12,14 +13,23 @@ export interface MigrationPrompt {
   onSkip: () => void;
 }
 
-async function fetchJson<T>(url: string, opts?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...opts,
-    headers: { 'Content-Type': 'application/json', ...opts?.headers },
-  });
-  if (res.status === 401) throw new Error('auth-expired');
-  if (!res.ok) throw new Error(`${res.status}`);
-  return res.json();
+// Wraps apiGet/apiPut with the legacy 'auth-expired' sentinel so the
+// surrounding control flow (which distinguishes a real 401 from a
+// generic network blip) keeps working. Once Phase 4 lands a context-
+// layer auth-lifecycle, this can be collapsed into plain discriminated
+// handling at each call site.
+async function syncGet<T>(url: string): Promise<T> {
+  const result = await apiGet<T>(url);
+  if (result.ok) return result.data;
+  if (result.reason === 'unauthorized') throw new Error('auth-expired');
+  throw new Error(result.reason);
+}
+
+async function syncPut<T>(url: string, body: unknown): Promise<T> {
+  const result = await apiPut<T>(url, body);
+  if (result.ok) return result.data;
+  if (result.reason === 'unauthorized') throw new Error('auth-expired');
+  throw new Error(result.reason);
 }
 
 export interface ServerSyncApi {
@@ -45,23 +55,17 @@ export function useServerSync(
   const initialSyncDoneRef = useRef(false);
 
   const pushWants = useCallback(async (items: typeof wants.items) => {
-    return fetchJson<typeof wants.items>('/api/sync/wants', {
-      method: 'PUT',
-      body: JSON.stringify(items),
-    });
+    return syncPut<typeof wants.items>('/api/sync/wants', items);
   }, []);
 
   const pushAvailable = useCallback(async (items: typeof available.items) => {
-    return fetchJson<typeof available.items>('/api/sync/available', {
-      method: 'PUT',
-      body: JSON.stringify(items),
-    });
+    return syncPut<typeof available.items>('/api/sync/available', items);
   }, []);
 
   const pullAndApply = useCallback(async () => {
     const [serverWants, serverAvailable] = await Promise.all([
-      fetchJson<typeof wants.items>('/api/sync/wants'),
-      fetchJson<typeof available.items>('/api/sync/available'),
+      syncGet<typeof wants.items>('/api/sync/wants'),
+      syncGet<typeof available.items>('/api/sync/available'),
     ]);
     writingBackRef.current = true;
     wants.setAll(serverWants);
@@ -121,8 +125,8 @@ export function useServerSync(
         // new device, or second sign-in). If so, skip the migration
         // prompt — just pull.
         const [serverWants, serverAvailable] = await Promise.all([
-          fetchJson<unknown[]>('/api/sync/wants'),
-          fetchJson<unknown[]>('/api/sync/available'),
+          syncGet<unknown[]>('/api/sync/wants'),
+          syncGet<unknown[]>('/api/sync/available'),
         ]);
         const serverHasData = serverWants.length > 0 || serverAvailable.length > 0;
 
