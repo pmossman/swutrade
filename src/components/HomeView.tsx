@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
@@ -76,6 +76,15 @@ export function HomeView({
   const priceData = usePriceData();
   const [listsDrawerOpen, setListsDrawerOpen] = useState(false);
   const [handlePickerOpen, setHandlePickerOpen] = useState(false);
+
+  // Load all sets on mount so the ListsDrawer + Priority wants preview
+  // can resolve familyId → card name. `usePriceData` is hook-state, not
+  // context — every view that needs card resolution has to trigger the
+  // load itself. Without this, wants rows fall back to their raw slug
+  // keys (e.g. "a-lawless-time::lieutenant-gorn-…") in the drawer.
+  useEffect(() => {
+    priceData.loadAllSets();
+  }, [priceData.loadAllSets]);
 
   const allLoadedCards = useMemo(
     () => Object.values(priceData.cards).flat(),
