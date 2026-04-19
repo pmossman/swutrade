@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, count, eq, inArray, ne } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, userPeerPrefs, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
+import { users, userGuildMemberships, userPeerPrefs, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
 import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
@@ -52,6 +52,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleCommunityMembers(req, res);
     case 'community-activity':
       return handleCommunityActivity(req, res);
+    case 'recent-partners':
+      return handleRecentPartners(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -879,4 +881,98 @@ export async function handleCommunityActivity(req: VercelRequest, res: VercelRes
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ events });
+}
+
+// --- recent trade partners -------------------------------------------------
+
+/**
+ * Up to 5 distinct counterparties the viewer has recently interacted
+ * with through a trade proposal — whether they proposed it or received
+ * it. Powers the "Recent" chips row in HandlePickerDialog.
+ *
+ * Ordering: most-recent proposal interaction first (by `updated_at`).
+ * Status is ignored — we surface partners from cancelled/declined
+ * proposals too, since the intent ("you've traded through this
+ * person's inbox before") is what the chip row signals.
+ *
+ * Shape: `{ partners: [{ userId, handle, username, avatarUrl, lastInteractionAt }] }`.
+ * Private-profile users are included — the dialog just needs a handle
+ * to navigate to; the profile gate applies when they try to load the
+ * profile page, not when sending them a proposal.
+ */
+export async function handleRecentPartners(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const db = getDb();
+
+  // Pull each proposal where the viewer is either side, sorted most
+  // recent first. Over-fetch (50) so that after dedupe-by-counterpart
+  // we still have enough rows to hit the 5-partner target even when
+  // the same pair has several recent proposals.
+  const rows = await db
+    .select({
+      proposerUserId: tradeProposals.proposerUserId,
+      recipientUserId: tradeProposals.recipientUserId,
+      updatedAt: tradeProposals.updatedAt,
+    })
+    .from(tradeProposals)
+    .where(or(
+      eq(tradeProposals.proposerUserId, session.userId),
+      eq(tradeProposals.recipientUserId, session.userId),
+    ))
+    .orderBy(desc(tradeProposals.updatedAt))
+    .limit(50);
+
+  const partnerOrder: string[] = [];
+  const lastSeen = new Map<string, Date>();
+  for (const r of rows) {
+    const counterpartId = r.proposerUserId === session.userId
+      ? r.recipientUserId
+      : r.proposerUserId;
+    if (counterpartId === session.userId) continue;
+    if (!lastSeen.has(counterpartId)) {
+      partnerOrder.push(counterpartId);
+      lastSeen.set(counterpartId, r.updatedAt);
+    }
+    if (partnerOrder.length >= 5) break;
+  }
+
+  if (partnerOrder.length === 0) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ partners: [] });
+  }
+
+  const userRows = await db
+    .select({
+      id: users.id,
+      handle: users.handle,
+      username: users.username,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(users)
+    .where(inArray(users.id, partnerOrder));
+
+  const byId = new Map(userRows.map(u => [u.id, u]));
+  const partners = partnerOrder
+    .map(id => {
+      const u = byId.get(id);
+      if (!u) return null;
+      return {
+        userId: u.id,
+        handle: u.handle,
+        username: u.username,
+        avatarUrl: u.avatarUrl,
+        lastInteractionAt: lastSeen.get(id)?.toISOString() ?? null,
+      };
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null);
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ partners });
 }

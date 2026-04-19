@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
+import { useRecentPartners, type RecentPartner } from '../hooks/useRecentPartners';
+import { apiGet } from '../services/apiClient';
 
 interface HandlePickerDialogProps {
   open: boolean;
@@ -12,16 +14,17 @@ interface HandlePickerDialogProps {
 /** Cap the suggestions list so it never crowds the panel on mobile —
  *  the free-form typing input handles the long-tail case. */
 const MAX_SUGGESTIONS = 8;
+const MAX_RECENT_CHIPS = 5;
 
 /**
- * Modal for the Home "Propose a trade" action. Two paths to the
- * composer:
+ * Modal for the "Propose a trade" action. Three paths to the composer:
  *
- *   1) type a handle directly (e.g. a friend who isn't in any of your
- *      enrolled Discord guilds yet — valid because handles are the
- *      canonical SWUTrade identity, not gated by community overlap).
- *   2) pick from the viewer's community directory — members of the
- *      mutual guilds they're already enrolled in.
+ *   1) Recent chips — up to five recent trade partners, one tap each.
+ *   2) Type a handle directly. Validated on submit against
+ *      `/api/user/:handle` so an unknown handle surfaces an inline
+ *      error instead of bouncing the user into a broken composer.
+ *   3) Pick from the viewer's community directory (members of the
+ *      mutual Discord guilds they're enrolled in).
  *
  * Deliberately mirrors NudgeDialog's plain-overlay look: fixed
  * inset-0 bg-black/70, centered `max-w-md` panel, Escape + click
@@ -30,19 +33,25 @@ const MAX_SUGGESTIONS = 8;
  */
 export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialogProps) {
   const [query, setQuery] = useState('');
+  const [validation, setValidation] = useState<
+    | { kind: 'idle' }
+    | { kind: 'checking'; handle: string }
+    | { kind: 'error'; handle: string; reason: 'not-found' | 'request-failed' }
+  >({ kind: 'idle' });
   const inputRef = useRef<HTMLInputElement>(null);
-  // Pull the community directory only while the dialog is mounted.
-  // `useCommunityMembers` runs fetch on mount — if we gated the hook
-  // call on `open`, React would violate rules-of-hooks. Instead the
-  // hook fires once the component mounts (we already early-return
-  // when `!open`, so it stays inert until the dialog actually opens).
+  // Pull the community directory + recent partners only while the
+  // dialog is mounted. Both hooks run fetch on mount — we already
+  // early-return when `!open`, so they stay inert until the dialog
+  // actually opens.
   const { members, status } = useCommunityMembers();
+  const { partners: recentPartners, status: recentStatus } = useRecentPartners();
 
   // Reset transient input every time the dialog opens so yesterday's
   // "@ja…" doesn't ghost in.
   useEffect(() => {
     if (open) {
       setQuery('');
+      setValidation({ kind: 'idle' });
       // Defer autofocus until after the panel paints — mobile
       // Safari otherwise ignores focus on a freshly-mounted input.
       const id = window.setTimeout(() => inputRef.current?.focus(), 0);
@@ -58,6 +67,13 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
+
+  // Clear validation error as the user keeps typing — the handle has
+  // changed, the stale "no such user" message shouldn't linger.
+  useEffect(() => {
+    if (validation.kind === 'error') setValidation({ kind: 'idle' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   // Normalise the typed handle: strip a leading `@` (users type them
   // reflexively) and trim whitespace. Everything downstream wants
@@ -76,13 +92,47 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
       .slice(0, MAX_SUGGESTIONS);
   }, [members, trimmedHandle]);
 
+  // Recent chips: only surface when the user hasn't started typing.
+  // Once they're searching, the in-community suggestions filter below
+  // does the work and stacking another list feels cluttered.
+  const showRecent = query.length === 0
+    && recentStatus === 'ready'
+    && recentPartners.length > 0;
+
   if (!open) return null;
 
-  const canSubmit = trimmedHandle.length > 0;
-  const handleSubmit = () => {
+  const canSubmit = trimmedHandle.length > 0 && validation.kind !== 'checking';
+
+  // Shortcut: if the typed handle exactly matches a member in the
+  // community directory (case-insensitive), skip validation and pick
+  // immediately — we already know it exists.
+  function isKnownHandle(handle: string): boolean {
+    const lower = handle.toLowerCase();
+    if (members.some(m => m.handle.toLowerCase() === lower)) return true;
+    if (recentPartners.some(p => p.handle.toLowerCase() === lower)) return true;
+    return false;
+  }
+
+  async function handleSubmit() {
     if (!canSubmit) return;
-    onPick(trimmedHandle);
-  };
+    if (isKnownHandle(trimmedHandle)) {
+      onPick(trimmedHandle);
+      return;
+    }
+    setValidation({ kind: 'checking', handle: trimmedHandle });
+    const result = await apiGet<{ user: { handle: string } }>(
+      `/api/user/${encodeURIComponent(trimmedHandle)}`,
+    );
+    if (!result.ok) {
+      setValidation({
+        kind: 'error',
+        handle: trimmedHandle,
+        reason: result.reason === 'not-found' ? 'not-found' : 'request-failed',
+      });
+      return;
+    }
+    onPick(result.data.user.handle);
+  }
 
   return (
     <div
@@ -102,6 +152,24 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
         <p className="text-[11px] text-gray-500 leading-relaxed mb-3">
           Pick someone from your communities or type their SWUTrade handle.
         </p>
+
+        {showRecent && (
+          <section aria-labelledby="handle-picker-recent" className="mb-3">
+            <h3
+              id="handle-picker-recent"
+              className="text-[10px] tracking-[0.18em] uppercase text-gray-500 font-semibold mb-1.5"
+            >
+              Recent
+            </h3>
+            <ul className="flex flex-wrap gap-1.5">
+              {recentPartners.slice(0, MAX_RECENT_CHIPS).map(p => (
+                <li key={p.userId}>
+                  <RecentChip partner={p} onPick={() => onPick(p.handle)} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <label htmlFor="handle-picker-input" className="sr-only">Handle</label>
         <div className="relative">
@@ -123,7 +191,7 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             onKeyDown={e => {
               if (e.key === 'Enter') {
                 e.preventDefault();
-                handleSubmit();
+                void handleSubmit();
               }
             }}
             autoComplete="off"
@@ -131,9 +199,19 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             autoCorrect="off"
             spellCheck={false}
             placeholder="handle"
+            aria-invalid={validation.kind === 'error'}
+            aria-describedby={validation.kind === 'error' ? 'handle-picker-error' : undefined}
             className="w-full bg-space-800/60 border border-space-700 rounded-md pl-7 pr-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-gold/50 focus:outline-none"
           />
         </div>
+
+        {validation.kind === 'error' && (
+          <p id="handle-picker-error" className="mt-2 text-[11px] text-red-300">
+            {validation.reason === 'not-found'
+              ? <>No SWUTrade user with the handle <span className="font-semibold">@{validation.handle}</span>. Double-check the spelling.</>
+              : <>Couldn't verify the handle. Try again in a moment.</>}
+          </p>
+        )}
 
         {/* Suggestions: three visual states — loading, empty (viewer has
             no mutual guilds or query filtered everything out), and a
@@ -151,9 +229,7 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             </div>
           )}
           {status === 'ready' && members.length === 0 && (
-            <div className="text-[11px] text-gray-500 px-1 py-2 leading-relaxed">
-              You're not in any shared Discord communities yet — type a handle above to send a proposal to anyone on SWUTrade.
-            </div>
+            <EmptyCommunityState hasRecent={recentPartners.length > 0} />
           )}
           {status === 'ready' && members.length > 0 && suggestions.length === 0 && (
             <div className="text-[11px] text-gray-500 px-1 py-2">
@@ -197,11 +273,11 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={() => void handleSubmit()}
             disabled={!canSubmit}
             className="px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Go
+            {validation.kind === 'checking' ? 'Checking…' : 'Go'}
           </button>
         </div>
       </div>
@@ -209,15 +285,65 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
   );
 }
 
-function SuggestionAvatar({ avatarUrl, name }: { avatarUrl: string | null; name: string }) {
+function RecentChip({
+  partner,
+  onPick,
+}: {
+  partner: RecentPartner;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-space-800/60 border border-space-700 hover:border-gold/50 hover:bg-space-800 text-[12px] text-gray-200 hover:text-gold transition-colors"
+      title={partner.username || partner.handle}
+    >
+      <SuggestionAvatar avatarUrl={partner.avatarUrl} name={partner.username || partner.handle} size="sm" />
+      <span className="font-medium truncate max-w-[10ch]">@{partner.handle}</span>
+    </button>
+  );
+}
+
+function EmptyCommunityState({ hasRecent }: { hasRecent: boolean }) {
+  return (
+    <div className="mt-1 rounded-lg bg-space-800/40 border border-space-700 px-3 py-3 text-[11px] text-gray-400 leading-relaxed">
+      <div className="text-gray-300 font-semibold mb-1">
+        {hasRecent
+          ? "No community suggestions — your recent partners are above."
+          : "You're not in any shared Discord communities yet."}
+      </div>
+      <div>
+        Type a handle above to send a proposal to anyone on SWUTrade.
+        To see suggestions here,{' '}
+        <a href="/?settings=1&tab=servers" className="text-gold hover:underline font-medium">
+          enroll in a Discord server
+        </a>
+        {' '}that has the bot installed.
+      </div>
+    </div>
+  );
+}
+
+function SuggestionAvatar({
+  avatarUrl,
+  name,
+  size = 'md',
+}: {
+  avatarUrl: string | null;
+  name: string;
+  size?: 'sm' | 'md';
+}) {
+  const cls = size === 'sm' ? 'w-5 h-5' : 'w-8 h-8';
+  const fontCls = size === 'sm' ? 'text-[10px]' : 'text-xs';
   if (avatarUrl) {
-    return <img src={avatarUrl} alt="" className="w-8 h-8 rounded-full shrink-0" />;
+    return <img src={avatarUrl} alt="" className={`${cls} rounded-full shrink-0`} />;
   }
   const initial = name.trim().slice(0, 1).toUpperCase() || '?';
   return (
     <span
       aria-hidden
-      className="w-8 h-8 rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0 text-xs"
+      className={`${cls} ${fontCls} rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0`}
     >
       {initial}
     </span>

@@ -102,10 +102,6 @@ Skipping any of 1-3 is a bug in the process.
 
 Items that didn't make the Foundation bundle cut but should land before Phase 4 v2 / Phase 5 work resumes.
 
-### Handle-picker dialog improvements
-
-Home 2.0's "Propose a trade" flow opens `HandlePickerDialog` today. Deferred improvements: (a) allow typing a handle that isn't in any shared community (just verify it exists + isn't private), (b) pull recent trade partners to surface as a "Recent" chips row above the typed-handle input, (c) empty-state hint pointing into Community when the user has no enrolled guilds.
-
 ### In-builder "Send as proposal" CTA
 
 When a signed-in user has cards on both sides of the trade builder (not via `?propose=` — just ad-hoc balance), surface a small "Send as a proposal to @…" CTA that opens HandlePickerDialog pre-seeded with the current cards. Closes the "I balanced it, now I want to send it" conversion loop. Small UI tweak plus a reuse of the handle-picker.
@@ -151,6 +147,9 @@ Separate-flow in-person collaborative trading. See ROADMAP.md Phase 5b for scope
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-19 — Handle-picker improvements
+Three upgrades to `HandlePickerDialog`: (1) new `GET /api/me/recent-partners` endpoint + `useRecentPartners` hook drive a "Recent" chips row above the typed-handle input (up to 5 distinct counterparties, newest proposal interaction first, hidden once the user starts typing to avoid clutter); (2) typed-handle validation on submit — unknown-in-community handles are verified against `/api/user/:handle` before navigating, so a 404 now surfaces as an inline "No SWUTrade user with the handle @…" error instead of bouncing into a broken composer; (3) richer empty state when the viewer has no mutual Discord guilds — a distinct panel with a deep link into `Settings → Discord servers`. 3 new integration tests cover distinct-counterpart dedupe, the 5-partner cap, and the empty case.
 
 ### 2026-04-19 — Community activity feed
 `community_events` append-only log keyed on `(guild_id, created_at)` with two event types (`trade_accepted`, `member_joined`). Write path: `recordTradeAcceptedAcrossGuilds` fires one event per guild where both parties are enrolled+queryable (from `proposalResolve.ts`); `member_joined` fires on first-enrollment in each of the three enroll surfaces (web PATCH, Discord auto-enroll, Discord invite button). New `shareActivityPublicly` user pref (default on, privacy section) suppresses an actor's events at read-time without deleting history. Read API: `GET /api/me/community-activity?guildId=…&limit=…` gated on the same enrolled+queryable axis as the members directory. `useCommunityActivity` hook + `ActivityFeed` component replace the Overview tab's "coming soon" placeholder. Relative timestamps, avatar/handle linking, states for loading/error/empty/populated. 4 new integration tests covering the gate + the actor-suppression filter.
