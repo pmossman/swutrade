@@ -231,7 +231,12 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
           {status === 'ready' && members.length === 0 && (
             <EmptyCommunityState hasRecent={recentPartners.length > 0} />
           )}
-          {status === 'ready' && members.length > 0 && suggestions.length === 0 && (
+          {/* Suppress the "send anyway" hint while a validation error is
+              showing — the two messages contradict each other (the red
+              error says "no such user", the hint says "press Go anyway").
+              Clearing the error fires as soon as the user edits the input,
+              so the hint reappears the moment the guidance is useful. */}
+          {status === 'ready' && members.length > 0 && suggestions.length === 0 && validation.kind !== 'error' && (
             <div className="text-[11px] text-gray-500 px-1 py-2">
               No matches in your communities. Press <span className="text-gray-300 font-medium">Go</span> to send to @{trimmedHandle || '…'} anyway.
             </div>
