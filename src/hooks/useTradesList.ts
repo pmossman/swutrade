@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { TradeStatus, UserStub } from './useTradeDetail';
 
 export interface TradeListEntry {
@@ -21,6 +21,10 @@ export interface TradeListEntry {
 export interface TradesListApi {
   proposals: TradeListEntry[];
   status: 'loading' | 'ready' | 'error';
+  /** Force a fresh fetch. Call after a mutation (cancel/accept/etc.)
+   *  so the row disappears or flips status without the user navigating
+   *  away and back. Updates both the hook's state and the shared cache. */
+  refresh: () => Promise<void>;
 }
 
 // Module-scoped cache: shared across all hook instances for the lifetime
@@ -50,26 +54,29 @@ export function useTradesList(): TradesListApi {
     () => (cachedProposals !== null ? 'ready' : 'loading'),
   );
 
+  const fetchOnce = useCallback(async () => {
+    try {
+      const res = await fetch('/api/trades/proposals');
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data: { proposals: TradeListEntry[] } = await res.json();
+      cachedProposals = data.proposals;
+      setProposals(data.proposals);
+      setStatus('ready');
+    } catch {
+      // If we have cached data, keep showing it rather than flipping
+      // to an error state — the user already saw something real.
+      if (cachedProposals === null) setStatus('error');
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await fetch('/api/trades/proposals');
-        if (!res.ok) throw new Error(`status ${res.status}`);
-        const data: { proposals: TradeListEntry[] } = await res.json();
-        if (cancelled) return;
-        cachedProposals = data.proposals;
-        setProposals(data.proposals);
-        setStatus('ready');
-      } catch {
-        if (cancelled) return;
-        // If we have cached data, keep showing it rather than flipping
-        // to an error state — the user already saw something real.
-        if (cachedProposals === null) setStatus('error');
-      }
+      if (cancelled) return;
+      await fetchOnce();
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [fetchOnce]);
 
-  return { proposals, status };
+  return { proposals, status, refresh: fetchOnce };
 }

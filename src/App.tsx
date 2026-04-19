@@ -43,10 +43,12 @@ import { CommunityView } from './components/CommunityView';
 import { HomeView } from './components/HomeView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
+import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
 import { useProposeHandle } from './hooks/useProposeHandle';
 import { useCounterId } from './hooks/useCounterId';
+import { useEditId } from './hooks/useEditId';
 
 type ViewMode = 'home' | 'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history';
 
@@ -75,11 +77,12 @@ function detectViewMode(isSignedIn: boolean): ViewMode {
   if (hasTradeParams) return 'trade';
   // Any URL that carries a trade-composer intent belongs in the trade
   // builder, not on Home — even for signed-in users. These come from
-  // profile CTAs (`?propose=`), trade replies (`?counter=`), matchmaker
-  // context (`?from=`, `?autoBalance=`), etc. Without this, clicking
-  // "Trade with @handle" from a profile would dump the user on Home
-  // with the propose intent silently dropped on the floor.
-  const tradeIntentKeys = ['propose', 'counter', 'from', 'autoBalance'];
+  // profile CTAs (`?propose=`), trade replies (`?counter=`), edit in
+  // place (`?edit=`), matchmaker context (`?from=`, `?autoBalance=`),
+  // etc. Without this, clicking "Trade with @handle" from a profile
+  // would dump the user on Home with the propose intent silently
+  // dropped on the floor.
+  const tradeIntentKeys = ['propose', 'counter', 'edit', 'from', 'autoBalance'];
   if (tradeIntentKeys.some(k => params.has(k))) return 'trade';
   // Bare URL: signed-in users land on Home (their trades + communities);
   // signed-out users land on the trade builder so the public share URL
@@ -166,6 +169,7 @@ function App() {
   const senderHandle = useSenderHandle();
   const proposeHandle = useProposeHandle();
   const counterId = useCounterId();
+  const editId = useEditId();
   // When proposing to a specific user, fetch their public lists here
   // so both ProposeBar (matchmaker + status hint) and TradeSide
   // (scoped picker source chips) read the same snapshot without
@@ -564,7 +568,20 @@ function App() {
           always-visible matchmaker input — "enter a random handle" is
           a thin use case that belongs to Phase 4 (guild-scoped
           discovery), not permanent chrome here. */}
-      {counterId ? (
+      {editId ? (
+        <EditBar
+          editingTradeId={editId}
+          byProductId={cardIndex.byProductId}
+          percentage={percentage}
+          priceMode={priceMode}
+          yourCards={yourCards}
+          theirCards={theirCards}
+          onApplyMatch={(yours, theirs) => {
+            setYourCards(yours);
+            setTheirCards(theirs);
+          }}
+        />
+      ) : counterId ? (
         <CounterBar
           originalTradeId={counterId}
           byProductId={cardIndex.byProductId}
