@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, count, eq, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import { users, userGuildMemberships, userPeerPrefs, botInstalledGuilds, wantsItems, availableItems } from '../lib/schema.js';
@@ -263,6 +263,27 @@ export async function handleGuildsList(req: VercelRequest, res: VercelResponse) 
       .map(r => r.guildId),
   );
 
+  // Counts how many SWUTrade users are enrolled in each of the
+  // viewer's guilds — surfaces "N members" stats in the Home
+  // Communities module + the Community 2.0 guild header. Only counts
+  // enrolled rows (not all memberships) because "enrolled" is the
+  // SWUTrade-side community view; a user who joined the Discord guild
+  // but didn't opt into the SWUTrade community shouldn't inflate the
+  // count. One aggregate query scoped to the viewer's guild ids.
+  const guildIds = memberships.map(m => m.guildId);
+  const countRows = guildIds.length === 0 ? [] : await db
+    .select({
+      guildId: userGuildMemberships.guildId,
+      count: count(),
+    })
+    .from(userGuildMemberships)
+    .where(and(
+      inArray(userGuildMemberships.guildId, guildIds),
+      eq(userGuildMemberships.enrolled, true),
+    ))
+    .groupBy(userGuildMemberships.guildId);
+  const memberCountByGuild = new Map(countRows.map(r => [r.guildId, Number(r.count)]));
+
   const enrollable: unknown[] = [];
   const other: unknown[] = [];
   for (const m of memberships) {
@@ -274,6 +295,7 @@ export async function handleGuildsList(req: VercelRequest, res: VercelResponse) 
       enrolled: m.enrolled,
       includeInRollups: m.includeInRollups,
       appearInQueries: m.appearInQueries,
+      memberCount: memberCountByGuild.get(m.guildId) ?? 0,
     };
     if (installedIds.has(m.guildId)) enrollable.push(shape);
     else other.push(shape);

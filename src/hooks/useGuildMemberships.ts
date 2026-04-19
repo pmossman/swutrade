@@ -8,6 +8,10 @@ export interface GuildMembershipSummary {
   enrolled: boolean;
   includeInRollups: boolean;
   appearInQueries: boolean;
+  /** Count of SWUTrade users enrolled in this guild (not total Discord
+   *  server members — that would require a live bot query). Zero when
+   *  no one has opted in yet. */
+  memberCount: number;
 }
 
 export type GuildPatch = Partial<Pick<
