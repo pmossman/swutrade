@@ -68,7 +68,7 @@ function timeAgo(iso: string): string {
 
 function App() {
   const auth = useAuthContext();
-  const { user } = auth;
+  const { user, isSignedIn } = auth;
 
   // Pricing knobs live in PricingContext — state + persistence are
   // owned there so every view that renders a price can read them
@@ -155,7 +155,11 @@ function App() {
   // (lists in URL but no trade). Users opt into the trade UI via the
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
-  const [viewMode, setViewMode] = useState<ViewMode>(() => detectViewMode(!!user));
+  // Seed from `isSignedIn` (not `!!user`) so the first render uses the
+  // localStorage signed-in hint. Without that, a returning user's URL
+  // briefly resolves to the trade-builder default before /api/auth/me
+  // lands and we flip to 'home' — a visible flash. See useAuth.ts.
+  const [viewMode, setViewMode] = useState<ViewMode>(() => detectViewMode(isSignedIn));
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
@@ -165,10 +169,10 @@ function App() {
   const [autoOpenOfferingFromShared, setAutoOpenOfferingFromShared] = useState(false);
   // Keep a live ref of the signed-in flag so popstate (which fires
   // well after mount) reads the current value, not a stale closure.
-  const isSignedInRef = useRef(!!user);
+  const isSignedInRef = useRef(isSignedIn);
   useEffect(() => {
-    isSignedInRef.current = !!user;
-  }, [user]);
+    isSignedInRef.current = isSignedIn;
+  }, [isSignedIn]);
   useEffect(() => {
     const handler = () => setViewMode(detectViewMode(isSignedInRef.current));
     window.addEventListener('popstate', handler);
@@ -178,14 +182,19 @@ function App() {
   // flip the implicit default from 'trade' to 'home'. We only rewrite
   // when the URL is bare — explicit ?view=trade / shared list / trade
   // detail are all honoured.
+  //
+  // Depends on `isSignedIn` (not `user`) so a stale hint that resolves
+  // to "actually signed out" still re-runs and flips us back to
+  // 'trade'. Without that extra beat, the false hint would strand us
+  // on 'home' even after the server confirms no session.
   useEffect(() => {
     setViewMode(prev => {
       // Only auto-switch between the two implicit defaults. Any
       // explicit view (settings, trade-detail, profile, etc.) stays.
       if (prev !== 'home' && prev !== 'trade') return prev;
-      return detectViewMode(!!user);
+      return detectViewMode(isSignedIn);
     });
-  }, [user]);
+  }, [isSignedIn]);
   const handleStartTrade = useCallback((fromHandle?: string, autoBalance?: boolean) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
@@ -309,7 +318,7 @@ function App() {
       const search = params.toString();
       const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
       window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
-      setViewMode(detectViewMode(!!user));
+      setViewMode(detectViewMode(isSignedIn));
     };
     return (
       <HomeView
@@ -365,7 +374,7 @@ function App() {
       params.delete('settings');
       const search = params.toString();
       window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode(!!user));
+      setViewMode(detectViewMode(isSignedIn));
     };
     return <SettingsView onClose={goHome} />;
   }
