@@ -8,6 +8,7 @@ import {
   type TradeUrlState,
   type PendingCards,
 } from '../urlCodec';
+import { isStandaloneView, TRADE_CODEC_KEYS } from '../routing/config';
 
 export function useTradeUrl(
   state: TradeUrlState,
@@ -70,16 +71,23 @@ export function useTradeUrl(
 
     // Don't rewrite the URL when we're on a stand-alone view that
     // owns params useTradeUrl doesn't understand. Each of these is
-    // a view mode detected by App.detectViewMode; stripping their
-    // query params would misroute on reload (and in fact has,
-    // previously — the ?autoBalance=1 trap + the ?trade=<id> trap
-    // both trace to this effect).
+    // a view mode detected by routing/config; stripping their query
+    // params would misroute on reload (and in fact has, previously —
+    // the ?autoBalance=1 trap + the ?trade=<id> trap both trace to
+    // this effect). Consulting VIEW_ROUTES via isStandaloneView()
+    // keeps detection + param-preservation in sync — add a new
+    // stand-alone view there, get the guard for free.
     const currentParams = new URLSearchParams(window.location.search);
-    if (currentParams.has('profile')) return;
-    if (currentParams.get('settings') === '1') return;
-    if (currentParams.get('community') === '1') return;
-    if (currentParams.get('trades') === '1') return;
-    if (currentParams.has('trade')) return;
+    if (isStandaloneView({
+      pathname: window.location.pathname,
+      params: currentParams,
+      // Trade-codec sync is identity-agnostic; the signed-in flag
+      // only matters for bare-URL routing (home vs trade fallback),
+      // neither of which is a stand-alone view.
+      isSignedIn: false,
+    })) {
+      return;
+    }
 
     // Build the trade-codec params and MERGE them into the existing
     // search string rather than replacing it wholesale. Without this
@@ -91,8 +99,7 @@ export function useTradeUrl(
     const tradeOnlySearch = buildTradeSearch(state);
     const tradeParams = new URLSearchParams(tradeOnlySearch);
     const merged = new URLSearchParams(window.location.search);
-    const TRADE_KEYS = ['y', 't', 'pct', 'pm'] as const;
-    for (const key of TRADE_KEYS) {
+    for (const key of TRADE_CODEC_KEYS) {
       const value = tradeParams.get(key);
       if (value) merged.set(key, value);
       else merged.delete(key);

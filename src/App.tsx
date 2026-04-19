@@ -48,46 +48,7 @@ import { TradesHistoryView } from './components/TradesHistoryView';
 import { useProposeHandle } from './hooks/useProposeHandle';
 import { useCounterId } from './hooks/useCounterId';
 import { useEditId } from './hooks/useEditId';
-
-type ViewMode = 'home' | 'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history';
-
-function detectViewMode(isSignedIn: boolean): ViewMode {
-  if (typeof window === 'undefined') return 'trade';
-  // `/u/<handle>` is our canonical shareable profile URL. Vercel
-  // rewrites it to `/?profile=<handle>` server-side, but the browser
-  // URL stays `/u/<handle>`, which means `window.location.search` is
-  // empty in the SPA. Detect on pathname too so the profile view
-  // renders whether the user got here via `/u/...` or `/?profile=...`.
-  if (/^\/u\//.test(window.location.pathname)) return 'profile';
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('settings') === '1') return 'settings';
-  if (params.get('community') === '1') return 'community';
-  if (params.get('trades') === '1') return 'trades-history';
-  if (params.has('trade')) return 'trade-detail';
-  if (params.has('profile')) return 'profile';
-  const explicit = params.get('view');
-  if (explicit === 'list') return 'list';
-  if (explicit === 'trade') return 'trade';
-  if (explicit === 'home') return 'home';
-  // Implicit: list view when there's a shared list and no active trade.
-  const hasListParams = params.has('w') || params.has('a');
-  const hasTradeParams = params.has('y') || params.has('t');
-  if (hasListParams && !hasTradeParams) return 'list';
-  if (hasTradeParams) return 'trade';
-  // Any URL that carries a trade-composer intent belongs in the trade
-  // builder, not on Home — even for signed-in users. These come from
-  // profile CTAs (`?propose=`), trade replies (`?counter=`), edit in
-  // place (`?edit=`), matchmaker context (`?from=`, `?autoBalance=`),
-  // etc. Without this, clicking "Trade with @handle" from a profile
-  // would dump the user on Home with the propose intent silently
-  // dropped on the floor.
-  const tradeIntentKeys = ['propose', 'counter', 'edit', 'from', 'autoBalance'];
-  if (tradeIntentKeys.some(k => params.has(k))) return 'trade';
-  // Bare URL: signed-in users land on Home (their trades + communities);
-  // signed-out users land on the trade builder so the public share URL
-  // experience is unchanged.
-  return isSignedIn ? 'home' : 'trade';
-}
+import { detectViewMode, type ViewMode } from './routing/config';
 
 /** Extract the handle from either `?profile=<handle>` or the
  *  `/u/<handle>` pathname — whichever the user navigated via. */
