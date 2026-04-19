@@ -169,14 +169,16 @@ export function ProfileView({
           { label: 'Home', href: '/' },
           { label: `@${profile.user.handle}` },
         ]}
-        actions={tradeCta}
       />
 
       <main className="flex-1 px-3 sm:px-6 pb-8 pt-4 max-w-5xl mx-auto w-full">
-        {/* Identity strip — avatar + display name now that the breadcrumb
-            carries the @handle. Kept in main so it scrolls with the
-            list rather than pinning to the header chrome. */}
-        <div className="flex items-center gap-3 mb-4">
+        {/* Profile hero — avatar + display name + primary CTA. The CTA
+            (Trade with @X / Start a trade / Open trade editor) sits
+            alongside the identity so it reads as the page's primary
+            action rather than getting squished next to breadcrumbs in
+            the chrome row. On narrow viewports the CTA wraps onto a
+            second row so it doesn't fight the handle text. */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
           {profile.user.avatarUrl && (
             <img
               src={profile.user.avatarUrl}
@@ -184,10 +186,11 @@ export function ProfileView({
               className="w-10 h-10 rounded-full border-2 border-space-700"
             />
           )}
-          <div>
-            <div className="text-sm font-bold text-gray-100">{profile.user.username}</div>
-            <div className="text-[11px] text-gray-500">@{profile.user.handle}</div>
+          <div className="min-w-0 mr-auto">
+            <div className="text-sm font-bold text-gray-100 truncate">{profile.user.username}</div>
+            <div className="text-[11px] text-gray-500 truncate">@{profile.user.handle}</div>
           </div>
+          {tradeCta}
         </div>
 
         <ProfileLists

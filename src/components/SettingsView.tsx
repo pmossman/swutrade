@@ -192,11 +192,18 @@ export function SettingsView({ onClose }: SettingsViewProps) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <AppHeader
-        auth={auth}
-        breadcrumbs={breadcrumbs}
-        actions={showDone ? <DoneButton onClick={onClose} /> : undefined}
-      />
+      <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
+
+      {/* Done button lives in a content-level strip, not the AppHeader
+          actions slot — that way a long breadcrumb trail doesn't crowd
+          against it on narrow viewports. Only surfaces once the user
+          has drilled in (hub has no "done, take me out of this"
+          meaning). */}
+      {showDone && (
+        <div className="px-3 sm:px-6 pt-2 pb-1 max-w-3xl mx-auto w-full flex justify-end">
+          <DoneButton onClick={onClose} />
+        </div>
+      )}
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         {content}

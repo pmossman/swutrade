@@ -205,25 +205,14 @@ export function ListView({
         auth={auth}
         slim={!auth.user}
         breadcrumbs={[{ label: 'Shared list' }]}
-        actions={
-          <button
-            type="button"
-            onClick={() => onStartTrade(senderHandle ?? undefined)}
-            className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
-          >
-            <span>Start a trade</span>
-            <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M3 8h10M9 4l4 4-4 4" />
-            </svg>
-          </button>
-        }
       />
 
-      {/* Content-level summary strip — keeps the "N wants · N available ·
-          from @handle" context below the chrome so the breadcrumb stays
-          clean. */}
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
-        <div className="flex items-baseline gap-2 flex-wrap text-[11px]">
+      {/* Content-level hero — summary + primary CTA ("Start a trade").
+          Pulled out of AppHeader so the breadcrumb row stays clean
+          and the CTA can sit alongside the list context. Wraps on
+          mobile so the CTA doesn't crowd the summary text. */}
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full flex flex-wrap items-center gap-3">
+        <div className="flex items-baseline gap-2 flex-wrap text-[11px] mr-auto min-w-0">
           <span className="text-gray-600">
             {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
             {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
@@ -244,6 +233,16 @@ export function ListView({
             </>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => onStartTrade(senderHandle ?? undefined)}
+          className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+        >
+          <span>Start a trade</span>
+          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 8h10M9 4l4 4-4 4" />
+          </svg>
+        </button>
       </div>
 
       {hasMissing && !isAnyLoading && (

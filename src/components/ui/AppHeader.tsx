@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { Logo } from '../Logo';
 import { BetaBadge } from '../BetaBadge';
 import { AccountMenu } from '../AccountMenu';
@@ -18,10 +17,6 @@ interface AppHeaderProps {
    *  the header doesn't own it — it just triggers. When omitted, the
    *  NavMenu's "My Lists" entry is hidden. */
   onOpenLists?: () => void;
-  /** Right-aligned action slot shown BEFORE the NavMenu / AccountMenu
-   *  cluster — used by views that have a primary in-header CTA (e.g.
-   *  "Done" on Settings, the split/tabbed toggle on the trade builder). */
-  actions?: ReactNode;
   /** When true, hide NavMenu + AccountMenu content-chrome and render
    *  a slim version — used on shared-link views where the viewer may
    *  be anonymous and we don't want to push them toward sign-up
@@ -30,29 +25,23 @@ interface AppHeaderProps {
 }
 
 /**
- * Always-on top chrome for every view. Provides the consistent
- * orientation the product was missing — the logo, breadcrumb trail,
- * content nav, and account menu all live here on every page.
+ * Always-on top chrome. Three roles only: identity (logo), orientation
+ * (breadcrumbs), global nav (NavMenu + AccountMenu). Deliberately has
+ * NO contextual-action slot — view-specific CTAs like "Trade with @X",
+ * "Done", or "Share" belong in the view's own content area so a long
+ * breadcrumb trail can't starve the CTA of width, and the CTA can be
+ * designed per-view (hero on profile, tight strip on settings, etc.).
  *
  * Layout:
- *   [Logo]  [breadcrumbs ·····]  [actions]  [NavMenu]  [AccountMenu]
+ *   [Logo]  [breadcrumbs ·····]  [NavMenu]  [AccountMenu]
  *
  * Mobile (≤md): breadcrumbs collapse to "‹ parent · current" to keep
  * the right-cluster visible at 375px.
- *
- * Views render this at the top of their return. The old PageHeader
- * component is now a content-level primitive (kicker + action slot
- * inside the main area); if you're touching a view that uses
- * PageHeader for the Logo/Back/AccountMenu slot, migrate to AppHeader
- * at the view's root and keep PageHeader for its content-header
- * duties (or drop it entirely — the breadcrumb often covers what
- * PageHeader's kicker used to).
  */
 export function AppHeader({
   auth,
   breadcrumbs,
   onOpenLists,
-  actions,
   slim = false,
 }: AppHeaderProps) {
   const signedIn = !!auth.user;
@@ -83,7 +72,6 @@ export function AppHeader({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 md:gap-2 shrink-0">
-        {actions}
         {showNavMenu && (
           <NavMenu signedIn={signedIn} onOpenLists={onOpenLists} />
         )}

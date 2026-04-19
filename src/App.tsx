@@ -435,29 +435,28 @@ function App() {
       <>
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
       {/* Trade builder is the "root" view — no breadcrumbs, logo alone
-          orients. AppHeader supplies consistent NavMenu + AccountMenu.
-          The `actions` slot carries the per-view CTAs: split/tabbed
-          toggle, and Share/Clear which only appear once there are cards. */}
-      <AppHeader
-        auth={auth}
-        onOpenLists={openLists}
-        actions={
+          orients. AppHeader supplies consistent NavMenu + AccountMenu. */}
+      <AppHeader auth={auth} onOpenLists={openLists} />
+
+      {/* View-level action strip — trade-builder CTAs (split/tabbed
+          toggle, Share, Clear) live here rather than in AppHeader so
+          they don't compete with breadcrumbs / NavMenu for width.
+          Right-aligned, tight, drops Share/Clear on mobile into a kebab. */}
+      <div className="px-3 sm:px-6 pt-2 pb-1 max-w-5xl mx-auto w-full shrink-0 flex items-center gap-2 justify-end">
+        <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
+        {hasCards && (
           <>
-            <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
-            {hasCards && (
-              <>
-                <div className="hidden md:flex items-center gap-2">
-                  <ShareButtons size="sm" />
-                  <ClearAllButton onConfirm={handleClear} />
-                </div>
-                <div className="md:hidden">
-                  <MobileActionsKebab onClear={handleClear} />
-                </div>
-              </>
-            )}
+            <div className="hidden md:flex items-center gap-2">
+              <ShareButtons size="sm" />
+              <ClearAllButton onConfirm={handleClear} />
+            </div>
+            <div className="md:hidden">
+              <MobileActionsKebab onClear={handleClear} />
+            </div>
           </>
-        }
-      />
+        )}
+      </div>
+
       {/* Error messages */}
       <div className="px-3 max-w-5xl mx-auto w-full shrink-0">
         {Object.entries(priceData.errors).map(([slug, error]) =>
