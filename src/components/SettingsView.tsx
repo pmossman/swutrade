@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, EmptyState } from './ui/states';
 import {
   useAccountSettings,
@@ -63,31 +63,26 @@ export function SettingsView({ onClose }: SettingsViewProps) {
     setRoute(next);
   }, []);
 
+  // `parent` drives "have we drilled in at all?" — used to decide
+  // whether to show the Done button in the header. With Option A
+  // migration, breadcrumb clicks handle the actual "go back" intent;
+  // browser back / popstate handles user-gesture navigation.
   const parent = useMemo(() => parentRoute(route), [route]);
-  const onBack = useCallback(() => {
-    if (parent == null) onClose();
-    else navigate(parent);
-  }, [parent, onClose, navigate]);
 
-  // Compute kicker + content per route. Each sub-view renders inside
-  // the same chrome; the only variable is which component + kicker.
-  let kicker = 'Settings';
+  // Compute content per route. Each sub-view renders inside the same
+  // chrome; AppHeader's breadcrumbs handle orientation.
   let content: React.ReactNode;
 
   if (route.tab == null) {
     content = <SettingsHub auth={auth} guilds={guilds} navigate={navigate} />;
   } else if (route.tab === 'profile') {
-    kicker = 'Profile';
     content = <ProfileSection account={account} handle={auth.user?.handle ?? null} />;
   } else if (route.tab === 'preferences') {
-    kicker = 'Preferences';
     content = <PreferencesSection account={account} />;
   } else if (route.tab === 'servers' && !route.guildId) {
-    kicker = 'Discord servers';
     content = <ServersHub guilds={guilds} botInstallUrl={auth.botInstallUrl} navigate={navigate} />;
   } else if (route.tab === 'servers' && route.guildId && !route.members) {
     const guild = guilds.enrollable.find(g => g.guildId === route.guildId);
-    kicker = guild?.guildName ?? 'Server';
     content = (
       <ServerDetail
         guild={guild ?? null}
@@ -96,8 +91,6 @@ export function SettingsView({ onClose }: SettingsViewProps) {
       />
     );
   } else if (route.tab === 'servers' && route.guildId && route.members && !route.userId) {
-    const guild = guilds.enrollable.find(g => g.guildId === route.guildId);
-    kicker = guild ? `${guild.guildName} · Members` : 'Members';
     content = (
       <GuildMembersList
         guildId={route.guildId}
@@ -107,7 +100,6 @@ export function SettingsView({ onClose }: SettingsViewProps) {
     );
   } else if (route.tab === 'servers' && route.guildId && route.members && route.userId) {
     const member = community.members.find(m => m.userId === route.userId);
-    kicker = member ? `@${member.handle}` : 'Member';
     content = (
       <MemberPrefsDetail
         member={member ?? null}
@@ -120,18 +112,91 @@ export function SettingsView({ onClose }: SettingsViewProps) {
     content = <SettingsHub auth={auth} guilds={guilds} navigate={navigate} />;
   }
 
-  // Once the user has drilled in at all, the back button only pops
-  // one level. Deep-nav escape — tap Done from any depth to exit the
-  // whole Settings view (same shape Slack mobile uses on its sheets).
+  // Breadcrumbs: ordered root -> current. Settings itself is root here;
+  // the last segment is the current page and has no `href`. On the hub,
+  // the single "Settings" segment IS current. Drilling in appends
+  // further segments, and we promote "Settings" to a link back to the
+  // hub. Unknown routes fall through to the hub (matches content), so
+  // the single-segment trail stays correct.
+  const currentGuild = route.guildId
+    ? guilds.enrollable.find(g => g.guildId === route.guildId)
+    : undefined;
+  const currentMember = route.userId
+    ? community.members.find(m => m.userId === route.userId)
+    : undefined;
+  const breadcrumbs = useMemo<BreadcrumbSegment[]>(() => {
+    const trail: BreadcrumbSegment[] = [];
+    const settingsSeg: BreadcrumbSegment = { label: 'Settings' };
+
+    if (route.tab == null) {
+      trail.push(settingsSeg);
+      return trail;
+    }
+
+    // Drilled in — Settings becomes a link back to the hub.
+    trail.push({ label: 'Settings', href: '/?settings=1' });
+
+    if (route.tab === 'profile') {
+      trail.push({ label: 'Profile' });
+      return trail;
+    }
+    if (route.tab === 'preferences') {
+      trail.push({ label: 'Preferences' });
+      return trail;
+    }
+    if (route.tab === 'servers') {
+      if (!route.guildId) {
+        trail.push({ label: 'Discord servers' });
+        return trail;
+      }
+
+      // Inside a specific guild — promote "Discord servers" to a link.
+      trail.push({ label: 'Discord servers', href: '/?settings=1&tab=servers' });
+      const guildLabel = currentGuild?.guildName ?? 'Server';
+
+      if (!route.members) {
+        trail.push({ label: guildLabel });
+        return trail;
+      }
+
+      // Members list or member detail — guild becomes a link back to
+      // the server detail view.
+      trail.push({
+        label: guildLabel,
+        href: `/?settings=1&tab=servers&guild=${encodeURIComponent(route.guildId)}`,
+      });
+
+      if (!route.userId) {
+        trail.push({ label: 'Members' });
+        return trail;
+      }
+
+      // Member detail — Members becomes a link back to the list.
+      trail.push({
+        label: 'Members',
+        href: `/?settings=1&tab=servers&guild=${encodeURIComponent(route.guildId)}&members=1`,
+      });
+      trail.push({ label: currentMember ? `@${currentMember.handle}` : 'Member' });
+      return trail;
+    }
+
+    // Unknown route — treat as hub (matches the content fallback above).
+    return [settingsSeg];
+  }, [route, currentGuild, currentMember]);
+
+  // Deep-nav escape — tap Done from any depth to exit the whole
+  // Settings view (same shape Slack mobile uses on its sheets). Only
+  // surface it once the user has drilled in at all, otherwise it
+  // overlaps with the breadcrumb's "Settings" current-page label.
   const showDone = parent != null;
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <PageHeader onBack={onBack} kicker={kicker}>
-          {showDone && <DoneButton onClick={onClose} />}
-        </PageHeader>
-      </div>
+      <AppHeader
+        auth={auth}
+        breadcrumbs={breadcrumbs}
+        actions={showDone ? <DoneButton onClick={onClose} /> : undefined}
+      />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         {content}
