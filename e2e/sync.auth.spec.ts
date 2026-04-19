@@ -17,7 +17,10 @@ test.describe('Server sync', () => {
   });
 
   test('wants survive localStorage wipe (restored from server)', async ({ page }) => {
-    await page.goto('/');
+    // Explicit ?view=trade — signed-in users now land on Home by
+    // default, but this spec drives the ListsDrawer card picker which
+    // needs the trade builder's loaded price data to surface tiles.
+    await page.goto('/?view=trade');
     await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Open the drawer and add a want via the picker.
@@ -71,7 +74,8 @@ test.describe('Server sync', () => {
   });
 
   test('available items sync to server and back', async ({ page }) => {
-    await page.goto('/');
+    // Explicit ?view=trade — see comment on the wants spec above.
+    await page.goto('/?view=trade');
     await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 10_000 });
 
     // Add an available item via the drawer.

@@ -67,7 +67,9 @@ test.describe('Community source chip', () => {
       available: [{ productId: '617180', qty: 1 }],
     }));
 
-    await page.goto('/');
+    // Signed-in users now land on Home by default; pin to the trade
+    // builder since that's where the Offering picker lives.
+    await page.goto('/?view=trade');
     // Header consolidated — username lives behind the account menu
     // now, but all we actually care about is "signed in" so assert
     // the account menu trigger exists.
@@ -104,7 +106,7 @@ test.describe('Community source chip', () => {
       available: [{ productId: '617180', qty: 1 }],
     }));
 
-    await page.goto('/');
+    await page.goto('/?view=trade');
     await expect(page.getByRole('button', { name: 'Account menu' }))
       .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);

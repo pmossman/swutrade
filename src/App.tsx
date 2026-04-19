@@ -73,6 +73,14 @@ function detectViewMode(isSignedIn: boolean): ViewMode {
   const hasTradeParams = params.has('y') || params.has('t');
   if (hasListParams && !hasTradeParams) return 'list';
   if (hasTradeParams) return 'trade';
+  // Any URL that carries a trade-composer intent belongs in the trade
+  // builder, not on Home — even for signed-in users. These come from
+  // profile CTAs (`?propose=`), trade replies (`?counter=`), matchmaker
+  // context (`?from=`, `?autoBalance=`), etc. Without this, clicking
+  // "Trade with @handle" from a profile would dump the user on Home
+  // with the propose intent silently dropped on the floor.
+  const tradeIntentKeys = ['propose', 'counter', 'from', 'autoBalance'];
+  if (tradeIntentKeys.some(k => params.has(k))) return 'trade';
   // Bare URL: signed-in users land on Home (their trades + communities);
   // signed-out users land on the trade builder so the public share URL
   // experience is unchanged.

@@ -27,7 +27,10 @@ test.describe('First sign-in migration flow', () => {
 
     // Now sign in — server is empty, local has items → migration prompt.
     await signIn(context, user);
-    await page.goto('/');
+    // Explicit ?view=trade — signed-in users land on Home by default
+    // now; migration tests assert the trade-builder empty state after
+    // importing/resetting, so pin to trade view.
+    await page.goto('/?view=trade');
 
     // Migration dialog should appear.
     await expect(page.getByText('Import your lists?')).toBeVisible({ timeout: 15_000 });
@@ -56,7 +59,7 @@ test.describe('First sign-in migration flow', () => {
     });
 
     await signIn(context, user);
-    await page.goto('/');
+    await page.goto('/?view=trade');
 
     await expect(page.getByText('Import your lists?')).toBeVisible({ timeout: 15_000 });
     await page.getByRole('button', { name: /Start fresh/i }).click();
@@ -94,7 +97,7 @@ test.describe('First sign-in migration flow', () => {
     });
 
     await signIn(context, user);
-    await page.goto('/');
+    await page.goto('/?view=trade');
 
     // Wait for auth to load — account menu button is the stable
     // signed-in signal now (username lives inside the popover).
