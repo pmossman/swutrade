@@ -84,3 +84,27 @@ export function nudgeProposal(
 ): Promise<ActionResult<{ id: string; nudgedAt: string }>> {
   return post('/api/trades?action=nudge', note ? { id, note } : { id });
 }
+
+export interface BulkResolveResult {
+  id: string;
+  outcome: 'ok' | 'already-resolved' | 'not-found' | 'forbidden';
+}
+
+export interface BulkResolveResponse {
+  results: BulkResolveResult[];
+  okCount: number;
+  notificationsSent: number;
+}
+
+/**
+ * Bulk decline or cancel. Server processes up to 50 ids in one request
+ * and coalesces proposer-notification DMs (decline only) — essential
+ * for side-stepping Discord's DM-channel-open rate limit (code 40003)
+ * when a recipient clears a backlog of proposals.
+ */
+export function bulkResolveProposals(
+  ids: string[],
+  action: 'decline' | 'cancel',
+): Promise<ActionResult<BulkResolveResponse>> {
+  return post('/api/trades?action=bulk-resolve', { ids, action });
+}
