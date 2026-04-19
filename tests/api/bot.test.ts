@@ -10,7 +10,8 @@ import {
 import handler, { dispatchBotPayload, resolveTestPublicKey } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
 import { botInstalledGuilds, tradeProposals, userGuildMemberships, users, type TradeCardSnapshot } from '../../lib/schema.js';
-import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type SendCall } from './discordFakes.js';
 
 function extractRawEd25519PublicKey(key: KeyObject): string {
   const der = key.export({ format: 'der', type: 'spki' }) as Buffer;
@@ -39,39 +40,41 @@ interface GetGuildBotMemberCall {
 }
 
 function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
-  sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
+  sendCalls: SendCall[];
   createChannelCalls: CreateChannelCall[];
   getGuildBotMemberCalls: GetGuildBotMemberCall[];
 } {
-  const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
+  const sendCalls: SendCall[] = [];
   const createChannelCalls: CreateChannelCall[] = [];
   const getGuildBotMemberCalls: GetGuildBotMemberCall[] = [];
-  return {
-    sendCalls,
-    createChannelCalls,
-    getGuildBotMemberCalls,
-    async postChannelMessage() { throw new Error('unused'); },
-    async editChannelMessage() { /* unused in type-7 path */ },
-    async createDmChannel() { return { id: 'dm-fake' }; },
-    async sendDirectMessage(userId, body) {
-      sendCalls.push({ userId, body });
-      return { id: 'notify-msg-1', channel_id: 'dm-fake' };
+  return Object.assign(
+    createBaseFakeBot({
+      // handleTradeProposalButton uses the type-7 UPDATE_MESSAGE path
+      // so editChannelMessage never fires — leave it as a no-op rather
+      // than the throwing default so any incidental call doesn't fail.
+      async editChannelMessage() { /* unused in type-7 path */ },
+      async createDmChannel() { return { id: 'dm-fake' }; },
+      async sendDirectMessage(userId, body) {
+        sendCalls.push({ userId, body });
+        return { id: 'notify-msg-1', channel_id: 'dm-fake' };
+      },
+      async createGuildChannel(guildId, opts) {
+        createChannelCalls.push({ guildId, opts });
+        if (options.createGuildChannel) return options.createGuildChannel(guildId, opts);
+        return { id: `channel-${guildId}`, name: opts.name };
+      },
+      async getGuildBotMember(guildId, botUserId) {
+        getGuildBotMemberCalls.push({ guildId, botUserId });
+        if (options.getGuildBotMember) return options.getGuildBotMember(guildId, botUserId);
+        return { roles: ['bot-role-1'], user: { id: botUserId } };
+      },
+    }),
+    {
+      sendCalls,
+      createChannelCalls,
+      getGuildBotMemberCalls,
     },
-    async getGuild() { throw new Error('unused'); },
-    async createPrivateThread() { throw new Error('unused'); },
-    async addThreadMember() { throw new Error('unused'); },
-    async deleteChannel() { throw new Error('unused'); },
-    async createGuildChannel(guildId, opts) {
-      createChannelCalls.push({ guildId, opts });
-      if (options.createGuildChannel) return options.createGuildChannel(guildId, opts);
-      return { id: `channel-${guildId}`, name: opts.name };
-    },
-    async getGuildBotMember(guildId, botUserId) {
-      getGuildBotMemberCalls.push({ guildId, botUserId });
-      if (options.getGuildBotMember) return options.getGuildBotMember(guildId, botUserId);
-      return { roles: ['bot-role-1'], user: { id: botUserId } };
-    },
-  };
+  );
 }
 
 function cardSnapshot(productId: string, qty = 1): TradeCardSnapshot {

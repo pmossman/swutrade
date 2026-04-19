@@ -10,30 +10,25 @@ import {
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
 import { tradeProposals, proposalEvents, type TradeCardSnapshot } from '../../lib/schema.js';
-import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type EditCall } from './discordFakes.js';
 
 function snapshot(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
-function makeFakeBot(editFails = false): DiscordBotClient & {
-  editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }>;
-} {
-  const editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }> = [];
-  return {
-    editCalls,
-    async postChannelMessage() { throw new Error('unused'); },
-    async editChannelMessage(channelId, messageId, body) {
-      if (editFails) throw new Error('simulated discord failure');
-      editCalls.push({ channelId, messageId, body });
-    },
-    async createDmChannel() { return { id: 'dm-edit' }; },
-    async sendDirectMessage() { throw new Error('unused'); },
-    async getGuild() { throw new Error('unused'); },
-    async createPrivateThread() { throw new Error('unused'); },
-    async addThreadMember() { throw new Error('unused'); },
-    async deleteChannel() { throw new Error('unused'); },
-  };
+function makeFakeBot(editFails = false): DiscordBotClient & { editCalls: EditCall[] } {
+  const editCalls: EditCall[] = [];
+  return Object.assign(
+    createBaseFakeBot({
+      async editChannelMessage(channelId, messageId, body) {
+        if (editFails) throw new Error('simulated discord failure');
+        editCalls.push({ channelId, messageId, body });
+      },
+      async createDmChannel() { return { id: 'dm-edit' }; },
+    }),
+    { editCalls },
+  );
 }
 
 async function insertProposal(overrides: {

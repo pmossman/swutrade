@@ -14,7 +14,8 @@ import {
   proposalEvents,
   type TradeCardSnapshot,
 } from '../../lib/schema.js';
-import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type EditCall, type SendCall } from './discordFakes.js';
 
 /**
  * POST /api/trades?action=bulk-resolve — decline/cancel many
@@ -31,33 +32,27 @@ function makeFakeBot(opts: {
   /** When set, `editChannelMessage` throws on its N-th call (1-indexed). */
   failEditOnNth?: number;
 } = {}): DiscordBotClient & {
-  editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }>;
-  sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
+  editCalls: EditCall[];
+  sendCalls: SendCall[];
 } {
-  const editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }> = [];
-  const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
-  return {
-    editCalls,
-    sendCalls,
-    async postChannelMessage() { throw new Error('unused'); },
-    async editChannelMessage(channelId, messageId, body) {
-      editCalls.push({ channelId, messageId, body });
-      if (opts.failEditOnNth !== undefined && editCalls.length === opts.failEditOnNth) {
-        throw new Error(`simulated edit failure #${opts.failEditOnNth}`);
-      }
-    },
-    async createDmChannel() { return { id: 'dm-bulk' }; },
-    async sendDirectMessage(userId, body) {
-      sendCalls.push({ userId, body });
-      return { id: `msg-${sendCalls.length}`, channel_id: 'dm-bulk' };
-    },
-    async getGuild() { throw new Error('unused'); },
-    async createPrivateThread() { throw new Error('unused'); },
-    async addThreadMember() { throw new Error('unused'); },
-    async deleteChannel() { throw new Error('unused'); },
-    async createGuildChannel() { throw new Error('unused'); },
-    async getGuildBotMember() { throw new Error('unused'); },
-  };
+  const editCalls: EditCall[] = [];
+  const sendCalls: SendCall[] = [];
+  return Object.assign(
+    createBaseFakeBot({
+      async editChannelMessage(channelId, messageId, body) {
+        editCalls.push({ channelId, messageId, body });
+        if (opts.failEditOnNth !== undefined && editCalls.length === opts.failEditOnNth) {
+          throw new Error(`simulated edit failure #${opts.failEditOnNth}`);
+        }
+      },
+      async createDmChannel() { return { id: 'dm-bulk' }; },
+      async sendDirectMessage(userId, body) {
+        sendCalls.push({ userId, body });
+        return { id: `msg-${sendCalls.length}`, channel_id: 'dm-bulk' };
+      },
+    }),
+    { editCalls, sendCalls },
+  );
 }
 
 async function seedProposal(overrides: {

@@ -14,7 +14,8 @@ import {
   proposalEvents,
   type TradeCardSnapshot,
 } from '../../lib/schema.js';
-import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type PostCall, type SendCall } from './discordFakes.js';
 
 /**
  * Covers POST /api/trades/nudge — the proposer-only "bump a pending
@@ -35,34 +36,30 @@ function snapshot(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
-interface FakeBot extends DiscordBotClient {
-  sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
-  postCalls: Array<{ channelId: string; body: DiscordMessageBody }>;
-}
+type FakeBot = DiscordBotClient & {
+  sendCalls: SendCall[];
+  postCalls: PostCall[];
+};
 
 function makeFakeBot(opts: { shouldFail?: boolean } = {}): FakeBot {
-  const sendCalls: FakeBot['sendCalls'] = [];
-  const postCalls: FakeBot['postCalls'] = [];
-  return {
-    sendCalls,
-    postCalls,
-    async postChannelMessage(channelId, body) {
-      postCalls.push({ channelId, body });
-      if (opts.shouldFail) throw new Error('simulated post failure');
-      return { id: 'thread-msg-nudge', channel_id: channelId };
-    },
-    async editChannelMessage() { throw new Error('unused'); },
-    async createDmChannel() { return { id: 'dm-nudge' }; },
-    async sendDirectMessage(userId, body) {
-      sendCalls.push({ userId, body });
-      if (opts.shouldFail) throw new Error('simulated send failure');
-      return { id: 'msg-nudge', channel_id: 'dm-nudge' };
-    },
-    async getGuild() { throw new Error('unused'); },
-    async createPrivateThread() { throw new Error('unused'); },
-    async addThreadMember() { throw new Error('unused'); },
-    async deleteChannel() { throw new Error('unused'); },
-  };
+  const sendCalls: SendCall[] = [];
+  const postCalls: PostCall[] = [];
+  return Object.assign(
+    createBaseFakeBot({
+      async postChannelMessage(channelId, body) {
+        postCalls.push({ channelId, body });
+        if (opts.shouldFail) throw new Error('simulated post failure');
+        return { id: 'thread-msg-nudge', channel_id: channelId };
+      },
+      async createDmChannel() { return { id: 'dm-nudge' }; },
+      async sendDirectMessage(userId, body) {
+        sendCalls.push({ userId, body });
+        if (opts.shouldFail) throw new Error('simulated send failure');
+        return { id: 'msg-nudge', channel_id: 'dm-nudge' };
+      },
+    }),
+    { sendCalls, postCalls },
+  );
 }
 
 async function insertProposal(overrides: {

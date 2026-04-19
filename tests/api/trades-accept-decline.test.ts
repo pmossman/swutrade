@@ -14,7 +14,8 @@ import {
   proposalEvents,
   type TradeCardSnapshot,
 } from '../../lib/schema.js';
-import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type EditCall, type SendCall } from './discordFakes.js';
 
 /**
  * Web-surface accept/decline — the JSON counterpart to the Discord
@@ -33,32 +34,26 @@ function snapshot(productId: string, qty = 1): TradeCardSnapshot {
 }
 
 function makeFakeBot(opts: { editFails?: boolean; sendFails?: boolean } = {}): DiscordBotClient & {
-  editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }>;
-  sendCalls: Array<{ userId: string; body: DiscordMessageBody }>;
+  editCalls: EditCall[];
+  sendCalls: SendCall[];
 } {
-  const editCalls: Array<{ channelId: string; messageId: string; body: DiscordMessageBody }> = [];
-  const sendCalls: Array<{ userId: string; body: DiscordMessageBody }> = [];
-  return {
-    editCalls,
-    sendCalls,
-    async postChannelMessage() { throw new Error('unused'); },
-    async editChannelMessage(channelId, messageId, body) {
-      editCalls.push({ channelId, messageId, body });
-      if (opts.editFails) throw new Error('simulated edit failure');
-    },
-    async createDmChannel() { return { id: 'dm-accept' }; },
-    async sendDirectMessage(userId, body) {
-      sendCalls.push({ userId, body });
-      if (opts.sendFails) throw new Error('simulated send failure');
-      return { id: 'notify-msg-1', channel_id: 'dm-accept' };
-    },
-    async getGuild() { throw new Error('unused'); },
-    async createPrivateThread() { throw new Error('unused'); },
-    async addThreadMember() { throw new Error('unused'); },
-    async deleteChannel() { throw new Error('unused'); },
-    async createGuildChannel() { throw new Error('unused'); },
-    async getGuildBotMember() { throw new Error('unused'); },
-  };
+  const editCalls: EditCall[] = [];
+  const sendCalls: SendCall[] = [];
+  return Object.assign(
+    createBaseFakeBot({
+      async editChannelMessage(channelId, messageId, body) {
+        editCalls.push({ channelId, messageId, body });
+        if (opts.editFails) throw new Error('simulated edit failure');
+      },
+      async createDmChannel() { return { id: 'dm-accept' }; },
+      async sendDirectMessage(userId, body) {
+        sendCalls.push({ userId, body });
+        if (opts.sendFails) throw new Error('simulated send failure');
+        return { id: 'notify-msg-1', channel_id: 'dm-accept' };
+      },
+    }),
+    { editCalls, sendCalls },
+  );
 }
 
 async function seedProposal(overrides: {

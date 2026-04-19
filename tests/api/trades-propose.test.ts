@@ -13,6 +13,7 @@ import { getDb } from '../../lib/db.js';
 import { tradeProposals, users, type TradeCardSnapshot } from '../../lib/schema.js';
 import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
 import type { CommunicationPref } from '../../lib/threadConsent.js';
+import { createBaseFakeBot } from './discordFakes.js';
 
 /** In-memory DiscordBotClient that records every call. Lets tests
  *  assert both the payload shape AND the delivery semantics
@@ -54,55 +55,58 @@ function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
   const threadPosts: FakeBot['threadPosts'] = [];
   const deleteCalls: string[] = [];
   let sendSeq = 0;
-  return {
-    sendCalls,
-    editCalls,
-    threadCalls,
-    addMemberCalls,
-    threadPosts,
-    deleteCalls,
-    async postChannelMessage(channelId, body) {
-      threadPosts.push({ channelId, body });
-      return { id: opts.messageId ?? 'thread-msg-1', channel_id: channelId };
-    },
-    async editChannelMessage(channelId, messageId, body) {
-      editCalls.push({ channelId, messageId, body });
-    },
-    async createDmChannel() { return { id: opts.channelId ?? 'dm-1' }; },
-    async sendDirectMessage(userId, body) {
-      sendCalls.push({ userId, body });
-      if (opts.shouldFailSend) throw new Error('simulated DM failure');
-      sendSeq += 1;
-      // The first send uses the configured ids (keeps existing
-      // test assertions stable). Subsequent sends in the same test
-      // — e.g. approval DMs on top of the proposal DM — get distinct
-      // suffixed ids so tests can tell them apart.
-      if (sendSeq === 1) {
+  return Object.assign(
+    createBaseFakeBot({
+      async postChannelMessage(channelId, body) {
+        threadPosts.push({ channelId, body });
+        return { id: opts.messageId ?? 'thread-msg-1', channel_id: channelId };
+      },
+      async editChannelMessage(channelId, messageId, body) {
+        editCalls.push({ channelId, messageId, body });
+      },
+      async createDmChannel() { return { id: opts.channelId ?? 'dm-1' }; },
+      async sendDirectMessage(userId, body) {
+        sendCalls.push({ userId, body });
+        if (opts.shouldFailSend) throw new Error('simulated DM failure');
+        sendSeq += 1;
+        // The first send uses the configured ids (keeps existing
+        // test assertions stable). Subsequent sends in the same test
+        // — e.g. approval DMs on top of the proposal DM — get distinct
+        // suffixed ids so tests can tell them apart.
+        if (sendSeq === 1) {
+          return {
+            id: opts.messageId ?? 'msg-1',
+            channel_id: opts.channelId ?? 'dm-1',
+          };
+        }
         return {
-          id: opts.messageId ?? 'msg-1',
-          channel_id: opts.channelId ?? 'dm-1',
+          id: `${opts.messageId ?? 'msg'}-${sendSeq}`,
+          channel_id: `${opts.channelId ?? 'dm'}-${sendSeq}`,
         };
-      }
-      return {
-        id: `${opts.messageId ?? 'msg'}-${sendSeq}`,
-        channel_id: `${opts.channelId ?? 'dm'}-${sendSeq}`,
-      };
+      },
+      async createPrivateThread(parentChannelId, threadOpts) {
+        threadCalls.push({ parentChannelId, name: threadOpts.name });
+        if (opts.thread?.failCreate) throw new Error('simulated thread create failure');
+        if (!opts.thread) throw new Error('thread flow not opted-in; set opts.thread');
+        return { id: opts.thread.id, parent_id: opts.thread.parentId };
+      },
+      async addThreadMember(threadId, userId) {
+        addMemberCalls.push({ threadId, userId });
+        if (opts.thread?.failAddMember) throw new Error('simulated add-member failure');
+      },
+      async deleteChannel(channelId) {
+        deleteCalls.push(channelId);
+      },
+    }),
+    {
+      sendCalls,
+      editCalls,
+      threadCalls,
+      addMemberCalls,
+      threadPosts,
+      deleteCalls,
     },
-    async getGuild() { throw new Error('unused in propose tests'); },
-    async createPrivateThread(parentChannelId, threadOpts) {
-      threadCalls.push({ parentChannelId, name: threadOpts.name });
-      if (opts.thread?.failCreate) throw new Error('simulated thread create failure');
-      if (!opts.thread) throw new Error('thread flow not opted-in; set opts.thread');
-      return { id: opts.thread.id, parent_id: opts.thread.parentId };
-    },
-    async addThreadMember(threadId, userId) {
-      addMemberCalls.push({ threadId, userId });
-      if (opts.thread?.failAddMember) throw new Error('simulated add-member failure');
-    },
-    async deleteChannel(channelId) {
-      deleteCalls.push(channelId);
-    },
-  };
+  );
 }
 
 /**
