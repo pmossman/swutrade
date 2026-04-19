@@ -12,7 +12,6 @@ import {
   buildProposalMessage,
   buildResolvedProposalMessage,
   buildCounteredProposalMessage,
-  buildProposerNotification,
   buildThreadRequestedProposalMessage,
   buildThreadApprovalRequestMessage,
   buildThreadMovedProposalMessage,
@@ -32,7 +31,7 @@ import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsen
 import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
-import { recordEvent } from '../lib/proposalEvents.js';
+import { resolveProposal } from '../lib/proposalResolve.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -564,40 +563,36 @@ export async function handleTradeProposalButton(
   }
   const newStatus: 'accepted' | 'declined' = action === 'accept' ? 'accepted' : 'declined';
 
-  await db
-    .update(tradeProposals)
-    .set({
-      status: newStatus,
-      respondedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(tradeProposals.id, trade.id));
-  await recordEvent(db, {
+  // Shared state transition + event log + proposer notification.
+  // Both the Discord button path (here) and the web endpoint
+  // (`api/trades.ts::handleAcceptDecline`) funnel through this so
+  // the recipient sees the same DM edit, the proposer sees the
+  // same notification, and the activity timeline records the same
+  // event regardless of which surface drove the action.
+  //
+  // `resolveProposal` may return `already-resolved` if a racing
+  // click or web call landed between our status check above and
+  // its optimistic UPDATE. Either way the final body we send is
+  // the resolved banner — idempotent from the clicker's POV.
+  const result = await resolveProposal({
     proposalId: trade.id,
     actorUserId: recipient.id,
-    type: newStatus,
+    newStatus,
+    deps: { db, bot: deps.bot },
   });
 
-  // Follow-up DM to the proposer. Awaited so Vercel doesn't kill
-  // the function before the request completes — Discord allows 3s
-  // for interaction responses and this usually lands in <500ms.
-  // Failures are logged but don't block the interaction response.
-  try {
-    const bot = deps.bot ?? createDiscordBotClient();
-    const notifyBody = buildProposerNotification({
-      tradeId: trade.id,
-      recipientHandle: recipient.handle,
-      outcome: newStatus,
-    });
-    await bot.sendDirectMessage(proposer.discordId, notifyBody);
-  } catch (err) {
-    console.error('handleTradeProposalButton: proposer notify failed', err);
-    await reportError({
-      source: 'bot.trade-button.proposer-notify',
-      tags: { tradeId: trade.id, proposerId: proposer.id, recipientId: recipient.id, outcome: newStatus },
-    }, err);
+  if (result.status === 'not-found') {
+    // Defensive — we already confirmed recipient + existence above.
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
   }
 
+  // Response protocol: UPDATE_MESSAGE (type 7) swaps the button row
+  // in place so the recipient's DM reflects the outcome immediately,
+  // even though `resolveProposal` also PATCHes the same message via
+  // its DM-edit side effect. The PATCH is idempotent (same body,
+  // empty components) and covers the web-initiated path where we
+  // can't respond with UPDATE_MESSAGE.
   const resolvedBody = buildResolvedProposalMessage(proposalCtx, newStatus, recipient.handle);
   res.status(200).json({
     type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,

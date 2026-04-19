@@ -15,6 +15,7 @@ import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { recordEvent, listEvents } from '../lib/proposalEvents.js';
+import { resolveProposal } from '../lib/proposalResolve.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -39,6 +40,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'get':        return handleGetProposal(req, res);
     case 'proposals':  return handleProposalsList(req, res);
     case 'cancel':     return handleCancel(req, res);
+    case 'accept':     return handleAcceptDecline(req, res, 'accepted');
+    case 'decline':    return handleAcceptDecline(req, res, 'declined');
     case 'edit':       return handleEdit(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
@@ -680,6 +683,66 @@ export async function handleCancel(
   }
 
   return res.json({ id, status: 'cancelled' });
+}
+
+// --- accept / decline (web surface) ----------------------------------------
+
+const AcceptDeclineBodySchema = z.object({
+  id: z.string().min(1),
+});
+
+/**
+ * Recipient-only. Transitions a pending proposal to `accepted` or
+ * `declined` from the web UI — the counterpart to the Discord button
+ * handler in `api/bot.ts::handleTradeProposalButton`. Both surfaces
+ * funnel through `resolveProposal` so the state transition, event
+ * log, DM edit, and proposer notification stay identical.
+ *
+ * Status mapping:
+ *   - `ok` → 200 `{ id, status }`
+ *   - `already-resolved` → 409 (recipient already resolved, or proposer
+ *     cancelled, or a counter landed)
+ *   - `not-found` → 404 (folds both missing and non-recipient — no
+ *     existence leak to non-parties)
+ */
+export async function handleAcceptDecline(
+  req: VercelRequest,
+  res: VercelResponse,
+  newStatus: 'accepted' | 'declined',
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = AcceptDeclineBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { id } = parsed.data;
+
+  const db = getDb();
+  const result = await resolveProposal({
+    proposalId: id,
+    actorUserId: session.userId,
+    newStatus,
+    deps: { db, bot: deps.bot },
+  });
+
+  if (result.status === 'not-found') {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  if (result.status === 'already-resolved') {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: `This proposal is no longer pending.`,
+    });
+  }
+  return res.json({ id: result.trade!.id, status: result.trade!.status });
 }
 
 // --- counter (Phase 4c slice 4) ---------------------------------------------
