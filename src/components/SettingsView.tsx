@@ -120,16 +120,36 @@ export function SettingsView({ onClose }: SettingsViewProps) {
     content = <SettingsHub auth={auth} guilds={guilds} navigate={navigate} />;
   }
 
+  // Once the user has drilled in at all, the back button only pops
+  // one level. Deep-nav escape — tap Done from any depth to exit the
+  // whole Settings view (same shape Slack mobile uses on its sheets).
+  const showDone = parent != null;
+
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
       <div className="px-3 sm:px-6 pt-3 pb-2 max-w-3xl mx-auto w-full">
-        <PageHeader onBack={onBack} kicker={kicker} />
+        <PageHeader onBack={onBack} kicker={kicker}>
+          {showDone && <DoneButton onClick={onClose} />}
+        </PageHeader>
       </div>
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-2 max-w-3xl mx-auto w-full">
         {content}
       </main>
     </div>
+  );
+}
+
+function DoneButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Close settings"
+      className="flex items-center gap-1 px-3 h-8 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 transition-colors text-xs font-semibold text-gold"
+    >
+      Done
+    </button>
   );
 }
 
