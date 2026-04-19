@@ -19,9 +19,7 @@ import { adjustPrice, getCardPrice } from './services/priceService';
 import { useSenderHandle } from './hooks/useSenderHandle';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
-import { cardFamilyId } from './variants';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
-import { usePriceData } from './hooks/usePriceData';
 import { useSelectionFilters } from './hooks/useSelectionFilters';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
@@ -33,6 +31,9 @@ import {
   DEFAULTS,
 } from './persistence';
 import { useAuthContext } from './contexts/AuthContext';
+import { usePriceDataContext } from './contexts/PriceDataContext';
+import { useCardIndexContext } from './contexts/CardIndexContext';
+import { useDrawerContext } from './contexts/DrawerContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
@@ -94,10 +95,10 @@ function App() {
   // not editing so the other gets more scroll room.
   const [offeringCollapsed, setOfferingCollapsed] = useState(false);
   const [receivingCollapsed, setReceivingCollapsed] = useState(false);
-  // ListsDrawer is controlled from here — the AccountMenu opens it
-  // instead of the drawer owning its own trigger button. Keeps the
-  // top bar uncluttered (account menu + view toggle only).
-  const [listsDrawerOpen, setListsDrawerOpen] = useState(false);
+  // ListsDrawer open-state lives on DrawerContext — one shared boolean
+  // across all views means the drawer renders once at App root instead
+  // of each view owning its own copy.
+  const { listsDrawerOpen, openLists, setListsDrawerOpen } = useDrawerContext();
   // Per-device trade layout: split (default, both panels visible) or
   // tabbed (single-panel focus with OFFERING/RECEIVING tab bar).
   // Active tab is ephemeral session state — no reason to persist
@@ -115,7 +116,8 @@ function App() {
     return window.matchMedia('(max-width: 767px)').matches;
   });
 
-  const priceData = usePriceData();
+  const priceData = usePriceDataContext();
+  const cardIndex = useCardIndexContext();
   // Single shared filter-state instance so both trade sides see the
   // same variant/set selection preferences in real time.
   const filters = useSelectionFilters({
@@ -223,11 +225,6 @@ function App() {
     setAutoOpenOfferingFromShared(false);
   }, []);
 
-  // Load all sets on mount (static files are fast from CDN)
-  useEffect(() => {
-    priceData.loadAllSets();
-  }, [priceData.loadAllSets]);
-
   // Re-render every minute so the footer's "X ago" labels (prices,
   // build age) advance even while the user is idle. Cheap — one
   // setState per minute at the root is imperceptible.
@@ -237,29 +234,9 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // Sync trade state to/from URL for sharing and back/forward navigation
-  const allLoadedCards = useMemo(() => Object.values(priceData.cards).flat(), [priceData.cards]);
-
-  // Build cross-printing card indexes once, share with both the trade
-  // side overlays (empty-state lists picker) and the Lists Drawer
-  // (rows + picker badges). Keys are family ids — every printing of a
-  // card shares the same key. byProductId is the exact-variant lookup
-  // used by available rows.
-  const cardIndex = useMemo(() => {
-    const byFamily = new Map<string, CardVariant>();
-    const byFamilyAll = new Map<string, CardVariant[]>();
-    const byProductId = new Map<string, CardVariant>();
-    for (const card of allLoadedCards) {
-      if (card.productId) byProductId.set(card.productId, card);
-      const fid = cardFamilyId(card);
-      const existing = byFamily.get(fid);
-      if (!existing || card.variant === 'Standard') byFamily.set(fid, card);
-      const bucket = byFamilyAll.get(fid);
-      if (bucket) bucket.push(card);
-      else byFamilyAll.set(fid, [card]);
-    }
-    return { byFamily, byFamilyAll, byProductId };
-  }, [allLoadedCards]);
+  // Card indexes + flat array come from CardIndexContext — derived
+  // once from the shared PriceData cache rather than recomputed per view.
+  const { allLoadedCards } = cardIndex;
   useTradeUrl(
     { yourCards, theirCards, percentage, priceMode },
     allLoadedCards,
@@ -320,6 +297,12 @@ function App() {
     setTheirCards([]);
   }, []);
 
+  // Each branch below returns the view body only — the global
+  // `<ListsDrawer>` (which every view can open via its header or the
+  // AccountMenu) renders once below the view switch so navigating
+  // between views doesn't remount its internal state (active tab,
+  // picker mode, editing-item id).
+  const renderBody = (): React.ReactNode => {
   // Home view — signed-in landing. Shows pending trades that need a
   // response, the user's enrolled communities, and a primary CTA into
   // the trade builder. Signed-out users never see it — detectViewMode
@@ -397,7 +380,6 @@ function App() {
     // no onClose prop needed — the link is a full navigation to `/`.
     return (
       <CommunityView
-        byProductId={cardIndex.byProductId}
         wants={wants}
         available={available}
       />
@@ -424,11 +406,8 @@ function App() {
     return (
       <ProfileView
         handle={profileHandle}
-        byFamilyAll={cardIndex.byFamilyAll}
-        byProductId={cardIndex.byProductId}
         percentage={percentage}
         priceMode={priceMode}
-        isAnyLoading={priceData.isAnyLoading}
         onStartTrade={handleStartTrade}
       />
     );
@@ -441,18 +420,19 @@ function App() {
       <ListView
         sharedLists={sharedLists}
         senderHandle={senderHandle}
-        byFamilyAll={cardIndex.byFamilyAll}
-        byProductId={cardIndex.byProductId}
         percentage={percentage}
         priceMode={priceMode}
-        isAnyLoading={priceData.isAnyLoading}
         onStartTrade={handleStartTrade}
       />
     );
   }
 
-  return (
-    <>
+  return renderTradeBuilder();
+  };
+
+  function renderTradeBuilder() {
+    return (
+      <>
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
       {/* Trade builder is the "root" view — no breadcrumbs, logo alone
           orients. AppHeader supplies consistent NavMenu + AccountMenu.
@@ -460,7 +440,7 @@ function App() {
           toggle, and Share/Clear which only appear once there are cards. */}
       <AppHeader
         auth={auth}
-        onOpenLists={() => setListsDrawerOpen(true)}
+        onOpenLists={openLists}
         actions={
           <>
             <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
@@ -478,16 +458,6 @@ function App() {
           </>
         }
       />
-      <ListsDrawer
-        wants={wants}
-        available={available}
-        allCards={allLoadedCards}
-        percentage={percentage}
-        priceMode={priceMode}
-        open={listsDrawerOpen}
-        onOpenChange={setListsDrawerOpen}
-      />
-
       {/* Error messages */}
       <div className="px-3 max-w-5xl mx-auto w-full shrink-0">
         {Object.entries(priceData.errors).map(([slug, error]) =>
@@ -516,7 +486,6 @@ function App() {
       {editId ? (
         <EditBar
           editingTradeId={editId}
-          byProductId={cardIndex.byProductId}
           percentage={percentage}
           priceMode={priceMode}
           yourCards={yourCards}
@@ -529,7 +498,6 @@ function App() {
       ) : counterId ? (
         <CounterBar
           originalTradeId={counterId}
-          byProductId={cardIndex.byProductId}
           percentage={percentage}
           priceMode={priceMode}
           yourCards={yourCards}
@@ -542,7 +510,6 @@ function App() {
       ) : proposeHandle ? (
         <ProposeBar
           recipientHandle={proposeHandle}
-          allCards={allLoadedCards}
           percentage={percentage}
           priceMode={priceMode}
           wants={wants}
@@ -608,8 +575,6 @@ function App() {
               wants={wants}
               available={available}
               sharedLists={effectiveSharedLists}
-              byFamilyAll={cardIndex.byFamilyAll}
-              byProductId={cardIndex.byProductId}
               collapsed={isMobile && offeringCollapsed}
               onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
               flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
@@ -642,8 +607,6 @@ function App() {
               wants={wants}
               available={available}
               sharedLists={effectiveSharedLists}
-              byFamilyAll={cardIndex.byFamilyAll}
-              byProductId={cardIndex.byProductId}
               collapsed={isMobile && receivingCollapsed}
               onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
               flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
@@ -673,8 +636,6 @@ function App() {
                 wants={wants}
                 available={available}
                 sharedLists={effectiveSharedLists}
-                byFamilyAll={cardIndex.byFamilyAll}
-                byProductId={cardIndex.byProductId}
                 collapsed={false}
                 headerless
                 autoOpenSharedLink={autoOpenOfferingFromShared}
@@ -702,8 +663,6 @@ function App() {
                 wants={wants}
                 available={available}
                 sharedLists={effectiveSharedLists}
-                byFamilyAll={cardIndex.byFamilyAll}
-                byProductId={cardIndex.byProductId}
                 collapsed={false}
                 headerless
                 communityWantFamilyIds={community.wantFamilyIds}
@@ -830,6 +789,26 @@ function App() {
       Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
       Card prices are estimates — see stores for final pricing.
     </div>
+    </>
+    );
+  }
+
+  // Shared app chrome. `<ListsDrawer>` renders once at the root so
+  // navigating between views doesn't remount its internal state
+  // (active tab, editing-item id, picker mode). Opened from any
+  // view's header via `openLists()` on DrawerContext.
+  return (
+    <>
+      <ListsDrawer
+        wants={wants}
+        available={available}
+        allCards={allLoadedCards}
+        percentage={percentage}
+        priceMode={priceMode}
+        open={listsDrawerOpen}
+        onOpenChange={setListsDrawerOpen}
+      />
+      {renderBody()}
     </>
   );
 }

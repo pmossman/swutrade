@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
@@ -9,12 +9,11 @@ import {
   type TradeActivityType,
 } from '../hooks/useTradesList';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
-import { ListsDrawer } from './ListsDrawer';
 import { HandlePickerDialog } from './HandlePickerDialog';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
-import { usePriceData } from '../hooks/usePriceData';
-import { cardFamilyId } from '../variants';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { useDrawerContext } from '../contexts/DrawerContext';
 import type { CardVariant } from '../types';
 import type { WantsItem } from '../persistence/schemas';
 
@@ -73,23 +72,13 @@ export function HomeView({
   const guilds = useGuildMemberships();
   const wants = useWants();
   const available = useAvailable();
-  const priceData = usePriceData();
-  const [listsDrawerOpen, setListsDrawerOpen] = useState(false);
+  // CardIndexContext keeps the byFamily index globally synced — no
+  // need for this view to re-trigger `loadAllSets`, the PriceData
+  // provider handles that once at app mount. DrawerContext gives us
+  // the shared open-state so the drawer at App root responds here.
+  const { byFamily } = useCardIndexContext();
+  const { openLists } = useDrawerContext();
   const [handlePickerOpen, setHandlePickerOpen] = useState(false);
-
-  // Load all sets on mount so the ListsDrawer + Priority wants preview
-  // can resolve familyId → card name. `usePriceData` is hook-state, not
-  // context — every view that needs card resolution has to trigger the
-  // load itself. Without this, wants rows fall back to their raw slug
-  // keys (e.g. "a-lawless-time::lieutenant-gorn-…") in the drawer.
-  useEffect(() => {
-    priceData.loadAllSets();
-  }, [priceData.loadAllSets]);
-
-  const allLoadedCards = useMemo(
-    () => Object.values(priceData.cards).flat(),
-    [priceData.cards],
-  );
 
   const { needsResponse, tradeCounts } = useMemo(() => {
     const needs: TradeListEntry[] = [];
@@ -119,34 +108,14 @@ export function HomeView({
     [guilds.enrollable],
   );
 
-  // Map family id → representative card (standard preferred) so the
-  // Lists preview can show names for wants (wants are keyed by
-  // familyId, not productId; the stored item doesn't carry a name).
-  const cardByFamily = useMemo(() => {
-    const map = new Map<string, CardVariant>();
-    for (const card of allLoadedCards) {
-      const fid = cardFamilyId(card);
-      const existing = map.get(fid);
-      if (!existing || card.variant === 'Standard') map.set(fid, card);
-    }
-    return map;
-  }, [allLoadedCards]);
-
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
       {/* Home is the root view for signed-in users — no breadcrumbs,
-          AppHeader's logo + NavMenu + AccountMenu anchor the page. */}
-      <AppHeader auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
-
-      <ListsDrawer
-        wants={wants}
-        available={available}
-        allCards={allLoadedCards}
-        percentage={100}
-        priceMode="market"
-        open={listsDrawerOpen}
-        onOpenChange={setListsDrawerOpen}
-      />
+          AppHeader's logo + NavMenu + AccountMenu anchor the page.
+          The Lists drawer lives at App root now, so we just toggle the
+          shared open-state via DrawerContext rather than rendering our
+          own <ListsDrawer> instance. */}
+      <AppHeader auth={auth} onOpenLists={openLists} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
         {user && (
@@ -189,8 +158,8 @@ export function HomeView({
             <ListsModule
               wants={wants.items}
               availableCount={available.items.length}
-              cardByFamily={cardByFamily}
-              onEditLists={() => setListsDrawerOpen(true)}
+              cardByFamily={byFamily}
+              onEditLists={openLists}
             />
           </div>
 

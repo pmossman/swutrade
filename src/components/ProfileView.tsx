@@ -14,6 +14,8 @@ import { bestMatchForWant } from '../listMatching';
 import type { VariantRestriction } from '../persistence';
 import { AppHeader } from './ui/AppHeader';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { usePriceDataContext } from '../contexts/PriceDataContext';
 
 interface ProfileUser {
   username: string;
@@ -41,27 +43,23 @@ interface ProfileData {
 
 interface ProfileViewProps {
   handle: string;
-  byFamilyAll: Map<string, CardVariant[]>;
-  byProductId: Map<string, CardVariant>;
   percentage: number;
   priceMode: PriceMode;
-  isAnyLoading: boolean;
   onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
 }
 
 export function ProfileView({
   handle,
-  byFamilyAll,
-  byProductId,
   percentage,
   priceMode,
-  isAnyLoading,
   onStartTrade,
 }: ProfileViewProps) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const auth = useAuthContext();
+  const { byFamilyAll, byProductId } = useCardIndexContext();
+  const { isAnyLoading } = usePriceDataContext();
 
   useEffect(() => {
     setLoading(true);

@@ -17,6 +17,7 @@ import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { SharedLists } from '../hooks/useSharedLists';
 import { cardFamilyId } from '../variants';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
 
 interface TradeSideProps {
   label: string;
@@ -35,13 +36,12 @@ interface TradeSideProps {
   filters: SelectionFilters;
   // Personal-source pickers in the search overlay's empty state pull
   // from these. Offering side surfaces Available; Receiving surfaces
-  // Wants. byFamilyAll / byProductId are the same indexes the Lists
-  // Drawer uses; lifted to App so both surfaces stay in sync.
+  // Wants. Card indexes (byFamilyAll / byProductId) come from
+  // CardIndexContext now, so they don't need to be prop-drilled
+  // alongside the personal-list APIs.
   wants: WantsApi;
   available: AvailableApi;
   sharedLists: SharedLists | null;
-  byFamilyAll: Map<string, CardVariant[]>;
-  byProductId: Map<string, CardVariant>;
   /** When true, the card list collapses and the header shrinks to show
    *  just the label + count + total, with a chevron to re-expand. */
   collapsed: boolean;
@@ -131,8 +131,6 @@ export function TradeSide({
   wants,
   available,
   sharedLists,
-  byFamilyAll,
-  byProductId,
   filters,
   collapsed,
   onToggleCollapse,
@@ -145,6 +143,7 @@ export function TradeSide({
   counterpartHandle,
   headerless,
 }: TradeSideProps) {
+  const { byFamilyAll, byProductId } = useCardIndexContext();
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';
   const [overlayOpen, setOverlayOpen] = useState(false);

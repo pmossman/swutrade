@@ -25,6 +25,8 @@ import { VariantChipGroup, SetChipGroup } from './SelectionFilterBar';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
 import { AppHeader } from './ui/AppHeader';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
+import { usePriceDataContext } from '../contexts/PriceDataContext';
 
 const MAIN_SET_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
 const SPECIAL_SET_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
@@ -47,11 +49,8 @@ interface ListViewProps {
    *  their public profile. Plumbed through to the matchmaker too, so
    *  "Start a trade" lands the recipient on a pre-filled handle. */
   senderHandle: string | null;
-  byFamilyAll: Map<string, CardVariant[]>;
-  byProductId: Map<string, CardVariant>;
   percentage: number;
   priceMode: PriceMode;
-  isAnyLoading: boolean;
   onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
 }
 
@@ -73,13 +72,12 @@ interface ListViewProps {
 export function ListView({
   sharedLists,
   senderHandle,
-  byFamilyAll,
-  byProductId,
   percentage,
   priceMode,
-  isAnyLoading,
   onStartTrade,
 }: ListViewProps) {
+  const { byFamilyAll, byProductId } = useCardIndexContext();
+  const { isAnyLoading } = usePriceDataContext();
   const [query, setQuery] = useState('');
   const [selectedVariants, setSelectedVariants] = useState<CanonicalVariant[]>([]);
   const [selectedSets, setSelectedSets] = useState<string[]>([]);

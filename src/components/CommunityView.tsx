@@ -14,9 +14,9 @@ import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
 
 interface CommunityViewProps {
-  byProductId: Map<string, CardVariant>;
   wants: WantsApi;
   available: AvailableApi;
 }
@@ -60,7 +60,8 @@ interface MemberWithOverlap extends CommunityMember {
  * directory already has the data we need with the consent gates the
  * rollup enforces.
  */
-export function CommunityView({ byProductId, wants, available }: CommunityViewProps) {
+export function CommunityView({ wants, available }: CommunityViewProps) {
+  const { byProductId } = useCardIndexContext();
   const auth = useAuthContext();
   const community = useCommunityMembers();
   const guilds = useGuildMemberships();

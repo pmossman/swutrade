@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CardVariant, PriceMode, TradeCard } from '../types';
+import type { PriceMode, TradeCard } from '../types';
 import {
   adjustPrice,
   getCardPrice,
 } from '../services/priceService';
 import { extractVariantLabel } from '../variants';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
 
 interface CardSnapshot {
   productId: string;
@@ -16,7 +17,6 @@ interface CardSnapshot {
 
 interface EditBarProps {
   editingTradeId: string;
-  byProductId: Map<string, CardVariant>;
   percentage: number;
   priceMode: PriceMode;
   yourCards: TradeCard[];
@@ -54,13 +54,13 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'already-resolved' | 'error';
  */
 export function EditBar({
   editingTradeId,
-  byProductId,
   percentage,
   priceMode,
   yourCards,
   theirCards,
   onApplyMatch,
 }: EditBarProps) {
+  const { byProductId } = useCardIndexContext();
   const [original, setOriginal] = useState<EditingTradeResponse | null>(null);
   const [loadState, setLoadState] = useState<
     'loading' | 'ready' | 'forbidden' | 'not-found' | 'error' | 'not-proposer' | 'not-pending'

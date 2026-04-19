@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CardVariant, PriceMode, TradeCard } from '../types';
+import type { PriceMode, TradeCard } from '../types';
 import {
   adjustPrice,
   getCardPrice,
 } from '../services/priceService';
 import { extractVariantLabel } from '../variants';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
 
 interface CardSnapshot {
   productId: string;
@@ -16,7 +17,6 @@ interface CardSnapshot {
 
 interface CounterBarProps {
   originalTradeId: string;
-  byProductId: Map<string, CardVariant>;
   percentage: number;
   priceMode: PriceMode;
   yourCards: TradeCard[];
@@ -57,13 +57,13 @@ type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'already-res
  */
 export function CounterBar({
   originalTradeId,
-  byProductId,
   percentage,
   priceMode,
   yourCards,
   theirCards,
   onApplyMatch,
 }: CounterBarProps) {
+  const { byProductId } = useCardIndexContext();
   const [original, setOriginal] = useState<OriginalTradeResponse | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'forbidden' | 'not-found' | 'error' | 'not-recipient' | 'not-pending'>('loading');
   const [sendState, setSendState] = useState<SendState>('idle');

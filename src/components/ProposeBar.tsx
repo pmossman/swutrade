@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import type { CardVariant, PriceMode, TradeCard } from '../types';
+import type { PriceMode, TradeCard } from '../types';
 import { computeMatch, type MatchMode, type MatchResult } from '../utils/matchmaker';
 import {
   adjustPrice,
@@ -10,10 +10,10 @@ import { extractVariantLabel } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile';
+import { useCardIndexContext } from '../contexts/CardIndexContext';
 
 interface ProposeBarProps {
   recipientHandle: string;
-  allCards: CardVariant[];
   percentage: number;
   priceMode: PriceMode;
   wants: WantsApi;
@@ -58,7 +58,6 @@ type SendState = 'idle' | 'sending' | 'sent' | 'sent-undelivered' | 'error';
  */
 export function ProposeBar({
   recipientHandle,
-  allCards,
   percentage,
   priceMode,
   wants,
@@ -69,6 +68,7 @@ export function ProposeBar({
   recipientFetchState: fetchState,
   onApplyMatch,
 }: ProposeBarProps) {
+  const { allLoadedCards: allCards } = useCardIndexContext();
   const [sendState, setSendState] = useState<SendState>('idle');
   const [sentTradeId, setSentTradeId] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
