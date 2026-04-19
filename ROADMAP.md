@@ -149,6 +149,8 @@ A second trade modality that sits alongside proposals: two users share a single 
 
 **Conflict model:** each participant only edits their OWN half (offering = my cards, receiving = your cards). Per-side ownership → no concurrent writes to the same field → no CRDT needed.
 
+**One active session per pair:** enforce at most one non-terminal (`active`) session per participant pair. Settled and expired sessions don't count against the cap — a pair who completes a trade can start a new session later. Attempting to open a session with a counterpart you already have an active session with silently redirects into the existing session instead of creating a parallel one. Implementation: a partial unique index on the sorted participant pair `(least(user_a, user_b), greatest(user_a, user_b))` WHERE `status = 'active'`.
+
 **Debounced Discord pings:**
 - On every edit, record `last_edited_at` + `last_edited_by`.
 - A background job (or post-edit check) DMs the OTHER participant if:
