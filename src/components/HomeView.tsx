@@ -10,6 +10,7 @@ import {
 } from '../hooks/useTradesList';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { ListsDrawer } from './ListsDrawer';
+import { HandlePickerDialog } from './HandlePickerDialog';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { usePriceData } from '../hooks/usePriceData';
@@ -29,6 +30,11 @@ interface HomeViewProps {
   onOpenCommunity: () => void;
   onBuildTrade: () => void;
   onOpenProfile: (handle: string) => void;
+  /** Jump straight into the proposal composer against the given
+   *  handle. Drives the "Propose a trade →" action on My Communities
+   *  via HandlePickerDialog — caller is responsible for navigating to
+   *  `/?propose=<handle>`. */
+  onProposeTo: (handle: string) => void;
 }
 
 /**
@@ -60,6 +66,7 @@ export function HomeView({
   onOpenCommunity,
   onBuildTrade,
   onOpenProfile,
+  onProposeTo,
 }: HomeViewProps) {
   const { user } = auth;
   const trades = useTradesList();
@@ -68,6 +75,7 @@ export function HomeView({
   const available = useAvailable();
   const priceData = usePriceData();
   const [listsDrawerOpen, setListsDrawerOpen] = useState(false);
+  const [handlePickerOpen, setHandlePickerOpen] = useState(false);
 
   const allLoadedCards = useMemo(
     () => Object.values(priceData.cards).flat(),
@@ -184,12 +192,22 @@ export function HomeView({
               onOpenSettings={onOpenSettings}
               onManageCommunities={onManageCommunities}
               onOpenCommunity={onOpenCommunity}
+              onOpenHandlePicker={() => setHandlePickerOpen(true)}
             />
           </div>
         </div>
 
         <StoresModule />
       </main>
+
+      <HandlePickerDialog
+        open={handlePickerOpen}
+        onClose={() => setHandlePickerOpen(false)}
+        onPick={handle => {
+          setHandlePickerOpen(false);
+          onProposeTo(handle);
+        }}
+      />
     </div>
   );
 }
@@ -543,12 +561,14 @@ function CommunitiesModule({
   onOpenSettings,
   onManageCommunities,
   onOpenCommunity,
+  onOpenHandlePicker,
 }: {
   guilds: GuildMembershipSummary[];
   status: 'loading' | 'ready' | 'saving' | 'error';
   onOpenSettings: () => void;
   onManageCommunities: () => void;
   onOpenCommunity: () => void;
+  onOpenHandlePicker: () => void;
 }) {
   return (
     <ModuleSection
@@ -573,7 +593,7 @@ function CommunitiesModule({
         {guilds.length > 0 && (
           <button
             type="button"
-            onClick={onOpenCommunity}
+            onClick={onOpenHandlePicker}
             className="text-[11px] text-gold hover:text-gold-bright font-medium transition-colors"
           >
             Propose a trade →

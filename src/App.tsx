@@ -404,6 +404,14 @@ function App() {
           for (const key of ['view', 'settings', 'community', 'trade', 'trades'] ) p.delete(key);
           p.set('profile', handle);
         })}
+        onProposeTo={handle => navigateParams(p => {
+          // Drop every non-trade view param before flipping into the
+          // proposal composer — detectViewMode sees `?propose=…` and
+          // routes to the trade builder. Leaving `community=1` or
+          // `profile=…` on the URL would win the routing coin flip.
+          for (const key of ['view', 'settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
+          p.set('propose', handle);
+        })}
       />
     );
   }
