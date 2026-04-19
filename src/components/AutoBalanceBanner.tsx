@@ -8,12 +8,24 @@ import { usePricing } from '../contexts/PricingContext';
 
 interface AutoBalanceBannerProps {
   senderHandle: string | null;
+  /** Set by ProfileView's "Balanced trade with @X" CTA — `?autoBalance=1`
+   *  after an in-app navigation. Read by this component to auto-apply
+   *  the computed match the moment the preview is ready. Owned by the
+   *  `useTradeIntent` store at the App root (seeded from URL on mount,
+   *  mirrored by navigation helpers) so pushState and reload paths
+   *  produce the same behaviour. */
+  autoBalanceRequested: boolean;
   isSignedIn: boolean;
   hasCards: boolean;
   allCards: CardVariant[];
   wants: WantsApi;
   available: AvailableApi;
   onApplyMatch: (yours: TradeCard[], theirs: TradeCard[]) => void;
+  /** Called exactly once after the banner auto-applies a match. App
+   *  uses this to flip `intent.autoBalance` back to false so repeat
+   *  re-mounts of this banner (e.g. nav away and back) don't fire the
+   *  apply again from stale state. */
+  onAutoBalanceConsumed?: () => void;
 }
 
 interface RemoteProfile {
@@ -42,12 +54,14 @@ interface RemoteProfile {
  */
 export function AutoBalanceBanner({
   senderHandle,
+  autoBalanceRequested,
   isSignedIn,
   hasCards,
   allCards,
   wants,
   available,
   onApplyMatch,
+  onAutoBalanceConsumed,
 }: AutoBalanceBannerProps) {
   const { percentage, priceMode } = usePricing();
   const [dismissed, setDismissed] = useState(false);
@@ -55,14 +69,6 @@ export function AutoBalanceBanner({
   const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [appliedCounts, setAppliedCounts] = useState<{ off: number; rec: number } | null>(null);
   const autoAppliedRef = useRef(false);
-  // Capture ?autoBalance=1 in the initial render via useState lazy
-  // init — useTradeUrl's sync effect strips the param from the URL
-  // shortly after mount, so reading `window.location.href` from a
-  // post-mount useEffect would always see autoBalance as absent.
-  const [autoBalanceRequested] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return new URLSearchParams(window.location.search).get('autoBalance') === '1';
-  });
   // Guards against the "state-in-deps" useEffect trap: we set
   // fetchState inside the effect that previously had fetchState
   // in its dep array, so the cleanup fired (setting cancelled=true)
@@ -158,8 +164,12 @@ export function AutoBalanceBanner({
         window.history.replaceState(null, '', url.toString());
       }
     }
+    // Notify App to clear the intent store in lockstep with the URL
+    // strip — otherwise a later re-mount of this banner with the same
+    // state would auto-apply a second time.
+    onAutoBalanceConsumed?.();
     applyResult(preview);
-  }, [autoBalanceRequested, preview, applyResult]);
+  }, [autoBalanceRequested, preview, applyResult, onAutoBalanceConsumed]);
 
   if (!isSignedIn) return null;
   if (!senderHandle) return null;

@@ -16,7 +16,7 @@ import { useSharedLists } from './hooks/useSharedLists';
 import { useRecipientProfile } from './hooks/useRecipientProfile';
 import { useTradeViewMode } from './hooks/useTradeViewMode';
 import { adjustPrice, getCardPrice } from './services/priceService';
-import { useSenderHandle } from './hooks/useSenderHandle';
+import { useTradeIntent } from './hooks/useTradeIntent';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
 import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
@@ -41,9 +41,6 @@ import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
-import { useProposeHandle } from './hooks/useProposeHandle';
-import { useCounterId } from './hooks/useCounterId';
-import { useEditId } from './hooks/useEditId';
 import { detectViewMode, type ViewMode } from './routing/config';
 
 /** Extract the handle from either `?profile=<handle>` or the
@@ -123,10 +120,13 @@ function App() {
   const available = useAvailable();
   const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
-  const senderHandle = useSenderHandle();
-  const proposeHandle = useProposeHandle();
-  const counterId = useCounterId();
-  const editId = useEditId();
+  // Unified intent store: owns ?propose / ?from / ?counter / ?edit /
+  // ?autoBalance. Seeded from URL on mount + re-syncs on popstate;
+  // in-app navigation helpers below call `intent.setIntent({...})`
+  // alongside their pushState write so state and URL stay aligned
+  // even when React doesn't remount.
+  const intent = useTradeIntent();
+  const { propose: proposeHandle, from: senderHandle, counter: counterId, edit: editId } = intent;
   // When proposing to a specific user, fetch their public lists here
   // so both ProposeBar (matchmaker + status hint) and TradeSide
   // (scoped picker source chips) read the same snapshot without
@@ -218,13 +218,27 @@ function App() {
     // the trade view wouldn't actually flip on reload.
     const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
     window.history.pushState(null, '', `${nextPath}?${params.toString()}`);
+    // Mirror the URL write into the intent store. Without this, the
+    // useTradeIntent state would stay at whatever was captured on
+    // mount, and an in-session click to "Trade with @X" (pushState,
+    // no reload) wouldn't populate senderHandle / autoBalance.
+    intent.setIntent({
+      from: fromHandle ?? null,
+      autoBalance: !!autoBalance,
+      // Starting a trade from a profile is a distinct intent from
+      // propose/counter/edit — clear those so stale state can't leak
+      // in from a previous in-session navigation.
+      propose: null,
+      counter: null,
+      edit: null,
+    });
     // Clear any persisted filter state so the sender's wants don't
     // land in an accidental "no matches" view if the user had a
     // narrow filter saved from an earlier session.
     filters.clearAll();
     setAutoOpenOfferingFromShared(true);
     setViewMode('trade');
-  }, [filters]);
+  }, [filters, intent]);
   const consumeAutoOpenOffering = useCallback(() => {
     setAutoOpenOfferingFromShared(false);
   }, []);
@@ -352,14 +366,22 @@ function App() {
           for (const key of ['view', 'settings', 'community', 'trade', 'trades'] ) p.delete(key);
           p.set('profile', handle);
         })}
-        onProposeTo={handle => navigateParams(p => {
-          // Drop every non-trade view param before flipping into the
-          // proposal composer — detectViewMode sees `?propose=…` and
-          // routes to the trade builder. Leaving `community=1` or
-          // `profile=…` on the URL would win the routing coin flip.
-          for (const key of ['view', 'settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
-          p.set('propose', handle);
-        })}
+        onProposeTo={handle => {
+          navigateParams(p => {
+            // Drop every non-trade view param before flipping into the
+            // proposal composer — detectViewMode sees `?propose=…` and
+            // routes to the trade builder. Leaving `community=1` or
+            // `profile=…` on the URL would win the routing coin flip.
+            for (const key of ['view', 'settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
+            p.set('propose', handle);
+          });
+          // Mirror the URL write into the intent store so ProposeBar
+          // actually renders. Without this, the pushState would update
+          // the URL but the state captured at initial mount would keep
+          // proposeHandle=null and ProposeBar would never render — the
+          // bug that motivated this hook's introduction.
+          intent.setIntent({ propose: handle, counter: null, edit: null });
+        }}
       />
     );
   }
@@ -523,6 +545,7 @@ function App() {
       ) : (
         <AutoBalanceBanner
           senderHandle={senderHandle}
+          autoBalanceRequested={intent.autoBalance}
           isSignedIn={!!user}
           hasCards={hasCards}
           allCards={allLoadedCards}
@@ -532,6 +555,7 @@ function App() {
             setYourCards(yours);
             setTheirCards(theirs);
           }}
+          onAutoBalanceConsumed={() => intent.setIntent({ autoBalance: false })}
         />
       )}
 
