@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldSkip, buildPayload, reportError } from '../../lib/errorReporter.js';
+import { shouldSkip, isTestTraffic, buildPayload, reportError } from '../../lib/errorReporter.js';
 import {
   DiscordRateLimitError,
   DiscordNotFoundError,
@@ -71,6 +71,35 @@ describe('shouldSkip — filter expected-noise errors', () => {
     expect(shouldSkip('string thrown directly')).toBe(false);
     expect(shouldSkip(null)).toBe(false);
     expect(shouldSkip(undefined)).toBe(false);
+  });
+});
+
+describe('isTestTraffic — filters auth-e2e + dev-seed traffic', () => {
+  it('matches tag values with test-iso- / e2e-sender- / dev-seed- prefixes', () => {
+    expect(isTestTraffic({ source: 's', tags: { recipientId: 'test-iso-8-ea940e55' } }, new Error())).toBe(true);
+    expect(isTestTraffic({ source: 's', tags: { recipientId: 'e2e-sender-mo51rwye-c5ec' } }, new Error())).toBe(true);
+    expect(isTestTraffic({ source: 's', tags: { peerId: 'dev-seed-testbot-bb' } }, new Error())).toBe(true);
+  });
+
+  it('does NOT match real Discord snowflake ids', () => {
+    expect(isTestTraffic({ source: 's', tags: { recipientId: '161720131645472768' } }, new Error())).toBe(false);
+    expect(isTestTraffic({ source: 's' }, new Error())).toBe(false);
+  });
+
+  it('matches DiscordApiError body snippets that coerce recipient_id to non-snowflake', () => {
+    const err = makeErr(DiscordValidationError, {
+      status: 400,
+      bodySnippet: '{"errors":{"recipient_id":{"_errors":[{"code":"NUMBER_TYPE_COERCE","message":"..."}]}}}',
+    });
+    expect(isTestTraffic({ source: 's' }, err)).toBe(true);
+  });
+
+  it('does NOT match unrelated NUMBER_TYPE_COERCE errors (different field)', () => {
+    const err = makeErr(DiscordValidationError, {
+      status: 400,
+      bodySnippet: '{"errors":{"channel_id":{"_errors":[{"code":"NUMBER_TYPE_COERCE"}]}}}',
+    });
+    expect(isTestTraffic({ source: 's' }, err)).toBe(false);
   });
 });
 

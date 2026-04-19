@@ -54,7 +54,7 @@ export async function reportError(ctx: ErrorReportContext, err: unknown): Promis
   if (!url) return;
 
   try {
-    if (!ctx.force && shouldSkip(err)) return;
+    if (!ctx.force && (shouldSkip(err) || isTestTraffic(ctx, err))) return;
     const payload = buildPayload(ctx, err);
     await fetch(url, {
       method: 'POST',
@@ -64,6 +64,38 @@ export async function reportError(ctx: ErrorReportContext, err: unknown): Promis
   } catch {
     // Eat. The reporter's #1 rule: never cause an error itself.
   }
+}
+
+/**
+ * Exposed for tests. Recognizes alerts triggered by our own test
+ * harness — auth e2e specs seed users with synthetic IDs (`test-iso-…`,
+ * `e2e-sender-…`) that Discord rejects as non-snowflake, and that
+ * rejection IS the expected path for those tests. Filtering here
+ * keeps the channel signal-heavy for real production traffic.
+ *
+ * Two complementary checks:
+ *   1. Tag-prefix — any tag value starting with a known test prefix.
+ *      Fast, precise when callers set tags (we always do for Discord
+ *      flows).
+ *   2. Error body — "NUMBER_TYPE_COERCE" on `recipient_id` is Discord's
+ *      exact signature for "you passed a non-snowflake user id."
+ *      Catches cases where a new test helper misses the tag convention.
+ */
+export function isTestTraffic(ctx: ErrorReportContext, err: unknown): boolean {
+  const TEST_ID_PREFIXES = ['test-iso-', 'e2e-sender-', 'dev-seed-'];
+  if (ctx.tags) {
+    for (const v of Object.values(ctx.tags)) {
+      if (typeof v === 'string' && TEST_ID_PREFIXES.some(p => v.startsWith(p))) {
+        return true;
+      }
+    }
+  }
+  if (err instanceof DiscordApiError && err.bodySnippet) {
+    if (err.bodySnippet.includes('NUMBER_TYPE_COERCE') && err.bodySnippet.includes('recipient_id')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
