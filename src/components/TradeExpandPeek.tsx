@@ -8,7 +8,16 @@ import { VariantBadge } from './VariantBadge';
  * Inline expand-peek rendered beneath a trade row in My Trades lists.
  * Shows both sides' card images + any message + a link into the full
  * detail view. Click-to-expand on the parent list tracks a single
- * `expandedId`; this component is rendered below the toggled row.
+ * `expandedId`; this component is rendered inside the SAME bordered
+ * container as the row header so the expand reads as one taller row
+ * instead of two stacked cards.
+ *
+ * The peek intentionally carries NO border / background / outer
+ * margin of its own. The row container above owns the chrome; this
+ * component just renders a top divider + inner padding so the peek
+ * reads as a continuation of the row. That's the fix for the v1
+ * design, which wrapped the peek in its own rounded-lg bordered box
+ * and visually orphaned it from the row above.
  *
  * Viewer-centric labels: for a sent proposal the viewer offers the
  * `offeringCards`; for a received proposal they'd give the
@@ -30,14 +39,14 @@ export function TradeExpandPeek({
 
   if (status === 'loading' && !trade) {
     return (
-      <div className="mt-2 rounded-lg border border-space-700 bg-space-900/40 px-3 py-3 text-[11px] text-gray-500">
+      <div className="border-t border-space-700/60 px-3 py-3 text-[11px] text-gray-500">
         Loading trade…
       </div>
     );
   }
   if (status === 'not-found' || status === 'error' || !trade) {
     return (
-      <div className="mt-2 rounded-lg border border-red-800/60 bg-red-950/20 px-3 py-3 text-[11px] text-red-300">
+      <div className="border-t border-red-800/60 bg-red-950/20 px-3 py-3 text-[11px] text-red-300">
         Couldn't load this trade.{' '}
         <button
           type="button"
@@ -61,7 +70,7 @@ export function TradeExpandPeek({
   const rightLabel = viewerIsSender ? 'You receive' : "You'd give";
 
   return (
-    <div className="mt-2 rounded-lg border border-space-700 bg-space-900/40 p-3">
+    <div className="border-t border-space-700/60 px-3 py-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <PeekSide label={leftLabel} cards={leftCards} accent="emerald" />
         <PeekSide label={rightLabel} cards={rightCards} accent="blue" />

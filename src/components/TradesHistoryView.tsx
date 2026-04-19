@@ -253,15 +253,15 @@ export function TradesHistoryView() {
                       onAccept={() => handleRowAction('accept', p)}
                       onDecline={() => handleRowAction('decline', p)}
                       onNudge={() => setNudgeTarget(p)}
+                      peek={
+                        <TradeExpandPeek
+                          proposalId={p.id}
+                          onOpenDetail={() => {
+                            window.location.href = `/?trade=${encodeURIComponent(p.id)}`;
+                          }}
+                        />
+                      }
                     />
-                    {expanded && (
-                      <TradeExpandPeek
-                        proposalId={p.id}
-                        onOpenDetail={() => {
-                          window.location.href = `/?trade=${encodeURIComponent(p.id)}`;
-                        }}
-                      />
-                    )}
                   </li>
                 );
               })}
@@ -378,6 +378,7 @@ function TradeRow({
   onAccept,
   onDecline,
   onNudge,
+  peek,
 }: {
   proposal: TradeListEntry;
   tab: Tab;
@@ -392,6 +393,11 @@ function TradeRow({
   onAccept: () => void;
   onDecline: () => void;
   onNudge: () => void;
+  /** Rendered INSIDE the row's bordered container when `expanded` is
+   *  true, below the actions strip. Keeping the peek inside the
+   *  container (instead of a sibling card below it) makes the
+   *  expanded state read as one taller row. */
+  peek?: React.ReactNode;
 }) {
   const isSent = proposal.direction === 'sent';
   // Row-level action cluster is role-aware:
@@ -400,96 +406,103 @@ function TradeRow({
   //   history           → no actions, row just opens the detail
   const showIncomingActions = tab === 'incoming' && proposal.status === 'pending';
   const showOutgoingActions = tab === 'outgoing' && proposal.status === 'pending';
+  // Outer container owns the border + container-level hover state.
+  // Inner wrapper carries the p-3 padding so the peek (which renders
+  // below the inner wrapper and lives inside this container) can sit
+  // flush to the container's edges with its own padding.
   return (
-    <div className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors ${
+    <div className={`flex flex-col rounded-lg border transition-colors ${
       selected
         ? 'border-gold/60 bg-gold/10'
         : expanded
           ? 'border-gold/40 bg-space-800'
           : 'border-space-700 bg-space-800/40 hover:border-gold/30 hover:bg-space-800'
     }`}>
-      <div className="flex items-center gap-3 min-w-0">
-        {selectable && (
+      <div className="flex flex-col gap-2 p-3">
+        <div className="flex items-center gap-3 min-w-0">
+          {selectable && (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={selected}
+              aria-label={selected ? 'Deselect this proposal' : 'Select this proposal for bulk actions'}
+              onClick={onToggleSelected}
+              className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${
+                selected
+                  ? 'bg-gold border-gold text-space-900'
+                  : 'border-space-600 hover:border-gold/60 text-transparent'
+              }`}
+            >
+              <CheckIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
-            role="checkbox"
-            aria-checked={selected}
-            aria-label={selected ? 'Deselect this proposal' : 'Select this proposal for bulk actions'}
-            onClick={onToggleSelected}
-            className={`shrink-0 w-5 h-5 rounded border flex items-center justify-center transition-colors ${
-              selected
-                ? 'bg-gold border-gold text-space-900'
-                : 'border-space-600 hover:border-gold/60 text-transparent'
-            }`}
+            onClick={onToggleExpanded}
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Collapse trade preview' : 'Expand trade preview'}
+            className="flex items-center gap-3 min-w-0 flex-1 text-left"
           >
-            <CheckIcon className="w-3.5 h-3.5" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onToggleExpanded}
-          aria-expanded={expanded}
-          aria-label={expanded ? 'Collapse trade preview' : 'Expand trade preview'}
-          className="flex items-center gap-3 min-w-0 flex-1 text-left"
-        >
-          <DirectionIcon sent={isSent} />
-          <CounterpartAvatar user={proposal.counterpart} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-[11px] tracking-wider uppercase text-gray-500 font-bold">
-                {isSent ? 'Sent to' : 'From'}
-              </span>
-              <span className="text-sm font-semibold text-gray-100 truncate">
-                @{proposal.counterpart?.handle ?? 'unknown'}
-              </span>
-              {proposal.counterOfId && (
-                <span className="text-[10px] text-purple-300 tracking-wider uppercase font-bold">
-                  Counter
+            <DirectionIcon sent={isSent} />
+            <CounterpartAvatar user={proposal.counterpart} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-[11px] tracking-wider uppercase text-gray-500 font-bold">
+                  {isSent ? 'Sent to' : 'From'}
                 </span>
-              )}
+                <span className="text-sm font-semibold text-gray-100 truncate">
+                  @{proposal.counterpart?.handle ?? 'unknown'}
+                </span>
+                {proposal.counterOfId && (
+                  <span className="text-[10px] text-purple-300 tracking-wider uppercase font-bold">
+                    Counter
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                <span>
+                  Offer <strong className="text-emerald-300">{proposal.offeringCount}</strong>
+                  <span className="mx-1">↔</span>
+                  Receive <strong className="text-blue-300">{proposal.receivingCount}</strong>
+                </span>
+                <span>·</span>
+                <span>{relativeTime(proposal.updatedAt)}</span>
+                {proposal.topCard && (
+                  <>
+                    <span>·</span>
+                    <span className="truncate">{proposal.topCard.name}</span>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
-              <span>
-                Offer <strong className="text-emerald-300">{proposal.offeringCount}</strong>
-                <span className="mx-1">↔</span>
-                Receive <strong className="text-blue-300">{proposal.receivingCount}</strong>
-              </span>
-              <span>·</span>
-              <span>{relativeTime(proposal.updatedAt)}</span>
-              {proposal.topCard && (
-                <>
-                  <span>·</span>
-                  <span className="truncate">{proposal.topCard.name}</span>
-                </>
-              )}
-            </div>
-          </div>
-          <StatusBadge status={proposal.status} />
-        </button>
-      </div>
-
-      {(showIncomingActions || showOutgoingActions) && (
-        <div className="flex items-center gap-2 pl-10 sm:pl-[3.75rem]">
-          {showIncomingActions && (
-            <>
-              <RowAction intent="primary" onClick={onAccept}>Accept</RowAction>
-              <RowAction intent="secondary" asLink href={`/?counter=${encodeURIComponent(proposal.id)}`}>
-                Counter
-              </RowAction>
-              <RowAction intent="danger" onClick={onDecline}>Decline</RowAction>
-            </>
-          )}
-          {showOutgoingActions && (
-            <>
-              <RowAction intent="secondary" asLink href={`/?edit=${encodeURIComponent(proposal.id)}`}>
-                Edit
-              </RowAction>
-              <RowAction intent="secondary" onClick={onNudge}>Nudge</RowAction>
-              <RowAction intent="danger" onClick={onCancel}>Cancel</RowAction>
-            </>
-          )}
+            <StatusBadge status={proposal.status} />
+          </button>
         </div>
-      )}
+
+        {(showIncomingActions || showOutgoingActions) && (
+          <div className="flex items-center gap-2 pl-10 sm:pl-[3.75rem]">
+            {showIncomingActions && (
+              <>
+                <RowAction intent="primary" onClick={onAccept}>Accept</RowAction>
+                <RowAction intent="secondary" asLink href={`/?counter=${encodeURIComponent(proposal.id)}`}>
+                  Counter
+                </RowAction>
+                <RowAction intent="danger" onClick={onDecline}>Decline</RowAction>
+              </>
+            )}
+            {showOutgoingActions && (
+              <>
+                <RowAction intent="secondary" asLink href={`/?edit=${encodeURIComponent(proposal.id)}`}>
+                  Edit
+                </RowAction>
+                <RowAction intent="secondary" onClick={onNudge}>Nudge</RowAction>
+                <RowAction intent="danger" onClick={onCancel}>Cancel</RowAction>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      {expanded && peek}
     </div>
   );
 }

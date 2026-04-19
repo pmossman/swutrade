@@ -291,13 +291,13 @@ function NeedsResponseCallout({
                 onClick={() => setExpandedId(expanded ? null : p.id)}
                 highlight
                 expanded={expanded}
+                peek={
+                  <TradeExpandPeek
+                    proposalId={p.id}
+                    onOpenDetail={() => onOpenTrade(p.id)}
+                  />
+                }
               />
-              {expanded && (
-                <TradeExpandPeek
-                  proposalId={p.id}
-                  onOpenDetail={() => onOpenTrade(p.id)}
-                />
-              )}
             </li>
           );
         })}
@@ -402,13 +402,13 @@ function TradesModule({
                   viewerHandle={viewerHandle}
                   expanded={expanded}
                   onClick={() => setExpandedId(expanded ? null : peekKey)}
+                  peek={
+                    <TradeExpandPeek
+                      proposalId={a.proposalId}
+                      onOpenDetail={() => onOpenTrade(a.proposalId)}
+                    />
+                  }
                 />
-                {expanded && (
-                  <TradeExpandPeek
-                    proposalId={a.proposalId}
-                    onOpenDetail={() => onOpenTrade(a.proposalId)}
-                  />
-                )}
               </li>
             );
           })}
@@ -423,11 +423,16 @@ function ActivityRow({
   viewerHandle,
   onClick,
   expanded,
+  peek,
 }: {
   activity: TradeActivityEntry;
   viewerHandle: string | undefined;
   onClick: () => void;
   expanded?: boolean;
+  /** Rendered inside the same bordered container under the header when
+   *  `expanded` is true. Same pattern as TradeRow — keeps the peek
+   *  visually continuous with the row it belongs to. */
+  peek?: React.ReactNode;
 }) {
   const actorLabel = activity.actor
     ? (activity.actor.handle === viewerHandle ? 'You' : `@${activity.actor.handle}`)
@@ -445,27 +450,31 @@ function ActivityRow({
     return 'a proposal';
   })();
   const when = timeAgoShort(activity.createdAt);
+  const containerClass = expanded
+    ? 'bg-space-800/70 border-gold/40'
+    : 'bg-space-800/30 border-space-700 hover:border-gold/30';
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-expanded={expanded}
-      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors text-left ${
-        expanded
-          ? 'bg-space-800/70 border-gold/40'
-          : 'bg-space-800/30 border-space-700 hover:border-gold/30 hover:bg-space-800/50'
-      }`}
-    >
-      <span aria-hidden className="shrink-0 flex items-center justify-center">{glyphForActivityType(activity.type)}</span>
-      <div className="flex-1 min-w-0">
-        <div className="text-[12px] text-gray-200 truncate">
-          <span className="font-medium">{actorLabel}</span>{' '}
-          <span className="text-gray-400">{verb}</span>{' '}
-          <span className="text-gray-400">{subject}</span>
+    <div className={`rounded-lg border transition-colors ${containerClass}`}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-expanded={expanded}
+        className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
+          expanded ? 'hover:bg-space-800/90' : 'hover:bg-space-800/50'
+        }`}
+      >
+        <span aria-hidden className="shrink-0 flex items-center justify-center">{glyphForActivityType(activity.type)}</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] text-gray-200 truncate">
+            <span className="font-medium">{actorLabel}</span>{' '}
+            <span className="text-gray-400">{verb}</span>{' '}
+            <span className="text-gray-400">{subject}</span>
+          </div>
         </div>
-      </div>
-      <span className="text-[11px] text-gray-500 tabular-nums shrink-0">{when}</span>
-    </button>
+        <span className="text-[11px] text-gray-500 tabular-nums shrink-0">{when}</span>
+      </button>
+      {expanded && peek}
+    </div>
   );
 }
 
@@ -759,14 +768,22 @@ function TradeRow({
   onClick,
   highlight,
   expanded,
+  peek,
 }: {
   trade: TradeListEntry;
   onClick: () => void;
   highlight?: boolean;
-  /** When true the chevron rotates to match the open peek below. The
-   *  row itself doesn't visually grow — the peek renders as a sibling
-   *  block below it in the list. */
+  /** When true the chevron rotates downward AND the `peek` slot is
+   *  rendered inside the same container below the header. Keeping the
+   *  peek inside the row's bordered box (rather than a sibling below)
+   *  is what makes the expanded state read as "one taller row" instead
+   *  of "two stacked cards". */
   expanded?: boolean;
+  /** Rendered inside the bordered container under the row header when
+   *  `expanded` is true. Typically <TradeExpandPeek ... /> — but the
+   *  slot is just a ReactNode so callers could render anything (e.g.
+   *  future alternate details surfaces) without this component knowing. */
+  peek?: React.ReactNode;
 }) {
   const counterpart = trade.counterpart;
   const label = counterpart ? `@${counterpart.handle}` : 'Unknown trader';
@@ -788,37 +805,46 @@ function TradeRow({
   if (trade.hasMessage) previewBits.push('has message');
   const preview = previewBits.join(' · ');
 
+  const containerClass = highlight
+    ? 'bg-gold/8 border-gold/40 hover:border-gold/60'
+    : 'bg-space-800/40 border-space-700 hover:border-gold/30';
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left ${
-        highlight
-          ? 'bg-gold/8 border-gold/40 hover:border-gold/60 hover:bg-gold/12'
-          : 'bg-space-800/40 border-space-700 hover:border-gold/30'
-      }`}
-    >
-      <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 min-w-0">
-          <span className="text-sm font-medium text-gray-100 truncate">
-            {label}
-          </span>
-          <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
-            {when}
-          </span>
-        </div>
-        <div className="text-[11px] text-gray-500 mt-0.5 truncate">
-          {detail}
-          {preview && ` · ${preview}`}
-        </div>
-      </div>
-      <ChevronIcon
-        className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${
-          expanded ? 'rotate-0' : '-rotate-90'
+    <div className={`rounded-lg border transition-colors ${containerClass}`}>
+      <button
+        type="button"
+        onClick={onClick}
+        aria-expanded={expanded}
+        // Button has no border of its own — the outer div owns the
+        // container chrome. Hover/active state is a subtle background
+        // overlay so the whole header still reads as tappable.
+        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${
+          highlight ? 'hover:bg-gold/12 active:bg-gold/16' : 'hover:bg-white/[0.02] active:bg-white/[0.04]'
         }`}
-      />
-    </button>
+      >
+        <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-sm font-medium text-gray-100 truncate">
+              {label}
+            </span>
+            <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
+              {when}
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+            {detail}
+            {preview && ` · ${preview}`}
+          </div>
+        </div>
+        <ChevronIcon
+          className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${
+            expanded ? 'rotate-0' : '-rotate-90'
+          }`}
+        />
+      </button>
+      {expanded && peek}
+    </div>
   );
 }
 
