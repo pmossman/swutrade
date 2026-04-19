@@ -339,3 +339,60 @@ export const tradeProposals = pgTable(
     index('trade_proposals_recipient_updated_idx').on(t.recipientUserId, t.updatedAt.desc()),
   ],
 );
+
+/**
+ * Append-only activity log for a proposal. Powers the timeline on the
+ * trade detail view + lets product surface things like "Alice edited
+ * this 2h ago" or "You nudged @bob yesterday".
+ *
+ * Event types map 1:1 to user-visible lifecycle beats plus a couple of
+ * delivery-transport beats so we can diagnose silent failures:
+ *   created         — proposer sends the initial proposal
+ *   delivered_ok    — Discord DM/thread post landed
+ *   delivered_failed — Discord post failed (recipient has DMs disabled, bot missing perms, etc.)
+ *   edited          — proposer revised the pending proposal (cards or note)
+ *   nudged          — proposer re-sent the DM with an optional note
+ *   accepted | declined | cancelled | countered | expired — lifecycle terminals
+ *
+ * `actor_user_id` is the person who triggered the event. Null for
+ * system events (delivery transport, expiry cron). Payload is a
+ * free-form JSON bag — per-type shapes:
+ *   edited:   { cardsChanged: boolean, messageChanged: boolean }
+ *   nudged:   { note: string | null }
+ *   delivered_failed: { error: string }  — for debugging
+ *   Other events typically have no payload.
+ *
+ * No partial order beyond `created_at`; the index covers the hot
+ * path (list events for a given proposal, oldest-first).
+ */
+export const proposalEventTypes = [
+  'created',
+  'delivered_ok',
+  'delivered_failed',
+  'edited',
+  'nudged',
+  'accepted',
+  'declined',
+  'cancelled',
+  'countered',
+  'expired',
+] as const;
+export type ProposalEventType = typeof proposalEventTypes[number];
+
+export const proposalEvents = pgTable(
+  'proposal_events',
+  {
+    id: text('id').primaryKey(),
+    proposalId: text('proposal_id')
+      .references(() => tradeProposals.id, { onDelete: 'cascade' })
+      .notNull(),
+    actorUserId: text('actor_user_id')
+      .references(() => users.id, { onDelete: 'set null' }),
+    type: text('type', { enum: proposalEventTypes }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('proposal_events_proposal_created_idx').on(t.proposalId, t.createdAt),
+  ],
+);

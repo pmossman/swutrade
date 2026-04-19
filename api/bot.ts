@@ -32,6 +32,7 @@ import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsen
 import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
+import { recordEvent } from '../lib/proposalEvents.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -571,6 +572,11 @@ export async function handleTradeProposalButton(
       updatedAt: new Date(),
     })
     .where(eq(tradeProposals.id, trade.id));
+  await recordEvent(db, {
+    proposalId: trade.id,
+    actorUserId: recipient.id,
+    type: newStatus,
+  });
 
   // Follow-up DM to the proposer. Awaited so Vercel doesn't kill
   // the function before the request completes — Discord allows 3s

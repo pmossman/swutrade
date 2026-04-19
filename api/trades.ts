@@ -14,6 +14,7 @@ import {
 import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
+import { recordEvent, listEvents } from '../lib/proposalEvents.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -210,6 +211,11 @@ export async function handlePropose(
     message: message ?? null,
     deliveryStatus: 'pending',
   });
+  await recordEvent(db, {
+    proposalId: id,
+    actorUserId: session.userId,
+    type: 'created',
+  });
 
   // Get proposer's discordId too — thread flow adds both users as
   // members, not just the recipient.
@@ -351,6 +357,14 @@ export async function handlePropose(
       updatedAt: new Date(),
     })
     .where(eq(tradeProposals.id, id));
+  await recordEvent(db, {
+    proposalId: id,
+    actorUserId: null,
+    type: deliveryStatus === 'delivered' ? 'delivered_ok' : 'delivered_failed',
+    payload: deliveryStatus === 'delivered'
+      ? { channel: threadId ? 'thread' : 'dm' }
+      : undefined,
+  });
 
   return res.status(201).json({ id, deliveryStatus });
 }
@@ -452,10 +466,18 @@ export async function handleGetProposal(req: VercelRequest, res: VercelResponse)
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     respondedAt: row.respondedAt ? row.respondedAt.toISOString() : null,
+    // Thread metadata for the "Open in Discord" affordance on the
+    // detail view. Null when the proposal went the DM-fallback path.
+    discordThreadId: row.discordThreadId,
+    discordThreadParentChannelId: row.discordThreadParentChannelId,
     proposer: proposer ?? null,
     recipient: recipient ?? null,
     viewerIsProposer: row.proposerUserId === session.userId,
     viewerIsRecipient: row.recipientUserId === session.userId,
+    // Activity timeline — oldest-first, each event carries the actor
+    // stub + free-form payload. Empty for proposals that predate the
+    // proposal_events table (no backfill).
+    events: await listEvents(db, row.id),
   });
 }
 
@@ -616,6 +638,11 @@ export async function handleCancel(
       detail: 'The proposal was resolved before your cancel landed.',
     });
   }
+  await recordEvent(db, {
+    proposalId: id,
+    actorUserId: session.userId,
+    type: 'cancelled',
+  });
 
   // Edit recipient's DM — best effort.
   if (row.discordDmChannelId && row.discordDmMessageId) {
@@ -766,6 +793,12 @@ export async function handleCounter(
     message: message ?? null,
     deliveryStatus: 'pending',
   });
+  await recordEvent(db, {
+    proposalId: counterId,
+    actorUserId: session.userId,
+    type: 'created',
+    payload: { counterOfId: original.id },
+  });
 
   // Optimistic concurrency: transition only if original is STILL
   // pending. If another concurrent action beat us (accept, decline,
@@ -796,6 +829,12 @@ export async function handleCounter(
       detail: 'The original proposal was resolved before your counter landed.',
     });
   }
+  await recordEvent(db, {
+    proposalId: original.id,
+    actorUserId: session.userId,
+    type: 'countered',
+    payload: { counterId },
+  });
 
   // DM side-effects (best effort, never 5xx this call)
   const bot = deps.bot ?? createDiscordBotClient();
@@ -861,6 +900,11 @@ export async function handleCounter(
       updatedAt: new Date(),
     })
     .where(eq(tradeProposals.id, counterId));
+  await recordEvent(db, {
+    proposalId: counterId,
+    actorUserId: null,
+    type: counterDeliveryStatus === 'delivered' ? 'delivered_ok' : 'delivered_failed',
+  });
 
   return res.status(201).json({ id: counterId, deliveryStatus: counterDeliveryStatus });
 }
