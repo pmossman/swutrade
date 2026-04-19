@@ -9,7 +9,7 @@ import {
 } from './helpers.js';
 import handler, { dispatchBotPayload, resolveTestPublicKey } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
-import { botInstalledGuilds, tradeProposals, users, type TradeCardSnapshot } from '../../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, userGuildMemberships, users, type TradeCardSnapshot } from '../../lib/schema.js';
 import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
 
 function extractRawEd25519PublicKey(key: KeyObject): string {
@@ -1349,6 +1349,277 @@ describeWithDb('/api/bot dispatcher', () => {
       } finally {
         consoleSpy.mockRestore();
       }
+    });
+
+    describe('member outreach on fresh install', () => {
+      it('DMs every existing member of the guild (except the installer) with an invite embed + enroll button', async () => {
+        const guildId = `e2e-outreach-${Date.now()}`;
+        cleanupGuildIds.push(guildId);
+
+        // Seed three users + their memberships in the guild being
+        // installed. One is the installer (skipped), one is a regular
+        // member (gets the invite), one has autoEnrollOnBotInstall set
+        // (gets the confirmation variant + enrolment flip).
+        const installer = await createTestUser({ handle: `installer-${guildId}` });
+        const regular = await createTestUser({ handle: `regular-${guildId}` });
+        const autoOptIn = await createTestUser({ handle: `auto-${guildId}` });
+
+        const db = getDb();
+        await db.update(users).set({ autoEnrollOnBotInstall: true }).where(eq(users.id, autoOptIn.id));
+        for (const u of [installer, regular, autoOptIn]) {
+          await db.insert(userGuildMemberships).values({
+            id: `ugm-${u.id}-${guildId}`,
+            userId: u.id,
+            guildId,
+            guildName: 'Outreach Test',
+            guildIcon: null,
+            canManage: false,
+            enrolled: false,
+            includeInRollups: false,
+            appearInQueries: false,
+          });
+        }
+
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        await dispatchBotPayload('events', {
+          type: 1,
+          event: {
+            type: 'APPLICATION_AUTHORIZED',
+            data: {
+              integration_type: 0,
+              scopes: ['bot', 'applications.commands'],
+              user: { id: installer.id, username: 'Installer' },
+              guild: { id: guildId, name: 'Outreach Test', icon: null },
+            },
+          },
+        }, res, { bot });
+
+        expect(res._status).toBe(204);
+
+        // Welcome DM went to the installer; outreach DMs went to the
+        // OTHER two (not the installer). Both the regular + auto-opt-in
+        // users get a DM but with different embed shapes.
+        const regularDm = bot.sendCalls.find(c => c.userId === regular.id);
+        const autoDm = bot.sendCalls.find(c => c.userId === autoOptIn.id);
+        const installerDm = bot.sendCalls.find(c => c.userId === installer.id);
+
+        expect(installerDm, 'installer got the welcome DM').toBeTruthy();
+        expect(regularDm, 'regular member got an invite DM').toBeTruthy();
+        expect(autoDm, 'auto-enroll user got a confirmation DM').toBeTruthy();
+
+        // Invite embed has an Enroll button with the server-invite custom_id.
+        const inviteButton = regularDm?.body.components?.[0]?.components?.[0];
+        expect(inviteButton?.custom_id).toBe(`server-invite:${guildId}:enroll`);
+        expect(regularDm?.body.embeds?.[0].title).toContain('Outreach Test');
+
+        // Auto-enroll variant has no action buttons (just the embed).
+        expect(autoDm?.body.components ?? []).toHaveLength(0);
+        expect(autoDm?.body.embeds?.[0].title).toContain("You're enrolled");
+
+        // DB confirms the auto-opt-in user was flipped to enrolled.
+        const [autoMembership] = await db
+          .select()
+          .from(userGuildMemberships)
+          .where(and(
+            eq(userGuildMemberships.userId, autoOptIn.id),
+            eq(userGuildMemberships.guildId, guildId),
+          ))
+          .limit(1);
+        expect(autoMembership.enrolled).toBe(true);
+        expect(autoMembership.includeInRollups).toBe(true);
+        expect(autoMembership.appearInQueries).toBe(true);
+
+        // DB confirms the regular member is NOT enrolled (invite is opt-in).
+        const [regularMembership] = await db
+          .select()
+          .from(userGuildMemberships)
+          .where(and(
+            eq(userGuildMemberships.userId, regular.id),
+            eq(userGuildMemberships.guildId, guildId),
+          ))
+          .limit(1);
+        expect(regularMembership.enrolled).toBe(false);
+
+        await installer.cleanup();
+        await regular.cleanup();
+        await autoOptIn.cleanup();
+      });
+
+      it('skips the outreach DM when a user opted out via dmServerNewInstall=false', async () => {
+        const guildId = `e2e-optout-${Date.now()}`;
+        cleanupGuildIds.push(guildId);
+
+        const installer = await createTestUser({ handle: `installer-${guildId}` });
+        const optedOut = await createTestUser({ handle: `opted-out-${guildId}` });
+
+        const db = getDb();
+        await db.update(users).set({ dmServerNewInstall: false }).where(eq(users.id, optedOut.id));
+        await db.insert(userGuildMemberships).values({
+          id: `ugm-${optedOut.id}-${guildId}`,
+          userId: optedOut.id,
+          guildId,
+          guildName: 'Opt Out Test',
+          guildIcon: null,
+          canManage: false,
+          enrolled: false,
+          includeInRollups: false,
+          appearInQueries: false,
+        });
+
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        await dispatchBotPayload('events', {
+          type: 1,
+          event: {
+            type: 'APPLICATION_AUTHORIZED',
+            data: {
+              integration_type: 0,
+              scopes: ['bot', 'applications.commands'],
+              user: { id: installer.id, username: 'Installer' },
+              guild: { id: guildId, name: 'Opt Out Test', icon: null },
+            },
+          },
+        }, res, { bot });
+
+        const outreachDm = bot.sendCalls.find(c => c.userId === optedOut.id);
+        expect(outreachDm, 'user with dmServerNewInstall=false gets no DM').toBeUndefined();
+
+        await installer.cleanup();
+        await optedOut.cleanup();
+      });
+
+      it('does NOT re-DM members on re-authorization (only fires on fresh install)', async () => {
+        const guildId = `e2e-reauth-outreach-${Date.now()}`;
+        cleanupGuildIds.push(guildId);
+
+        // Pre-seed the guild row — simulates a guild already installed.
+        const db = getDb();
+        await db.insert(botInstalledGuilds).values({
+          guildId,
+          guildName: 'Pre-existing',
+          guildIcon: null,
+        });
+
+        const member = await createTestUser({ handle: `member-${guildId}` });
+        await db.insert(userGuildMemberships).values({
+          id: `ugm-${member.id}-${guildId}`,
+          userId: member.id,
+          guildId,
+          guildName: 'Pre-existing',
+          guildIcon: null,
+          canManage: false,
+          enrolled: false,
+          includeInRollups: false,
+          appearInQueries: false,
+        });
+
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        await dispatchBotPayload('events', {
+          type: 1,
+          event: {
+            type: 'APPLICATION_AUTHORIZED',
+            data: {
+              integration_type: 0,
+              scopes: ['bot', 'applications.commands'],
+              user: { id: `installer-${guildId}`, username: 'Installer' },
+              guild: { id: guildId, name: 'Pre-existing', icon: null },
+            },
+          },
+        }, res, { bot });
+
+        const outreachDm = bot.sendCalls.find(c => c.userId === member.id);
+        expect(outreachDm, 'no outreach on re-auth of an existing install').toBeUndefined();
+
+        await member.cleanup();
+      });
+    });
+
+    describe('server-invite Enroll button (interaction)', () => {
+      it('click flips the viewer\'s enrollment row + responds with UPDATE_MESSAGE confirmation', async () => {
+        const guildId = `e2e-enroll-click-${Date.now()}`;
+        cleanupGuildIds.push(guildId);
+        const user = await createTestUser();
+
+        const db = getDb();
+        await db.insert(botInstalledGuilds).values({
+          guildId, guildName: 'Click Test', guildIcon: null,
+        });
+        await db.insert(userGuildMemberships).values({
+          id: `ugm-${user.id}-${guildId}`,
+          userId: user.id,
+          guildId,
+          guildName: 'Click Test',
+          guildIcon: null,
+          canManage: false,
+          enrolled: false,
+          includeInRollups: false,
+          appearInQueries: false,
+        });
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3, // MESSAGE_COMPONENT
+            data: { custom_id: `server-invite:${guildId}:enroll` },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { embeds?: Array<{ title?: string }> } };
+        expect(body.type).toBe(7); // UPDATE_MESSAGE
+        expect(body.data?.embeds?.[0].title).toMatch(/Enrolled in Click Test/);
+
+        const [row] = await db
+          .select()
+          .from(userGuildMemberships)
+          .where(and(
+            eq(userGuildMemberships.userId, user.id),
+            eq(userGuildMemberships.guildId, guildId),
+          ))
+          .limit(1);
+        expect(row.enrolled).toBe(true);
+        expect(row.includeInRollups).toBe(true);
+        expect(row.appearInQueries).toBe(true);
+
+        await user.cleanup();
+      });
+
+      it('clicking the button when not a member of the guild returns a helpful ephemeral (no state change)', async () => {
+        const guildId = `e2e-non-member-${Date.now()}`;
+        cleanupGuildIds.push(guildId);
+        const user = await createTestUser();
+
+        // Seed only the guild row, NOT a membership. Triggers the
+        // "you're not a member — sync your Discord memberships again"
+        // path.
+        const db = getDb();
+        await db.insert(botInstalledGuilds).values({
+          guildId, guildName: 'Ghost Server', guildIcon: null,
+        });
+
+        const res = mockResponse();
+        await dispatchBotPayload(
+          'interactions',
+          {
+            type: 3,
+            data: { custom_id: `server-invite:${guildId}:enroll` },
+            user: { id: user.id },
+          },
+          res,
+        );
+
+        expect(res._status).toBe(200);
+        const body = res._json as { type: number; data?: { content?: string } };
+        expect(body.type).toBe(4); // CHANNEL_MESSAGE_WITH_SOURCE (ephemeral)
+        expect(body.data?.content).toMatch(/not a member/i);
+
+        await user.cleanup();
+      });
     });
 
     it('APPLICATION_AUTHORIZED without a guild (user-install) is a no-op', async () => {

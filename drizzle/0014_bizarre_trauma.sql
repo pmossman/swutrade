@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "dm_server_new_install" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD COLUMN "auto_enroll_on_bot_install" boolean DEFAULT false NOT NULL;

@@ -25,6 +25,9 @@ export interface DiscordEmbed {
   fields?: Array<{ name: string; value: string; inline?: boolean }>;
   footer?: { text: string };
   timestamp?: string;
+  thumbnail?: { url: string };
+  image?: { url: string };
+  author?: { name: string; icon_url?: string; url?: string };
 }
 
 export interface DiscordComponent {

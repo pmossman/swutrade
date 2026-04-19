@@ -403,7 +403,7 @@ function PreferencesSection({ account }: { account: AccountSettingsApi }) {
     bySection.set(key, list);
   }
 
-  const sections: Array<{ id: 'communication' | 'notifications'; label: string; description?: string }> = [
+  const sections: Array<{ id: 'communication' | 'notifications' | 'membership'; label: string; description?: string }> = [
     {
       id: 'communication',
       label: 'Communication',
@@ -413,6 +413,11 @@ function PreferencesSection({ account }: { account: AccountSettingsApi }) {
       id: 'notifications',
       label: 'Bot notifications',
       description: "Discord DMs SWUTrade's bot will send you. Trade proposals sent directly to you are separate from broadcast alerts.",
+    },
+    {
+      id: 'membership',
+      label: 'Server membership',
+      description: 'How SWUTrade handles new enrollment opportunities when the bot lands in servers you\'re already in.',
     },
   ];
 

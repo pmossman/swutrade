@@ -32,6 +32,18 @@ export const users = pgTable('users', {
   dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
   dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),
   dmMeetupReminders: boolean('dm_meetup_reminders').default(false).notNull(),
+  // Fires once per APPLICATION_AUTHORIZED event for an existing user
+  // already in that guild. Opt-out surface for "SWUTrade just landed
+  // in your server, want to join?" DMs. Default on — this is how we
+  // invite existing community members into a newly-bot-installed
+  // server; the feature doesn't work without the DM.
+  dmServerNewInstall: boolean('dm_server_new_install').default(true).notNull(),
+  // Aggressive auto-enrollment: when the bot lands in a guild the user
+  // is ALREADY in, flip all three consent axes (enrolled, rollups,
+  // queries) to true automatically. Default OFF — existing
+  // memberships should not silently gain visibility from a server-
+  // admin decision the user didn't make. Users opt in via Settings.
+  autoEnrollOnBotInstall: boolean('auto_enroll_on_bot_install').default(false).notNull(),
   // Trade-thread consent model. Four states driving the decision of
   // whether a proposal's chat happens in a private thread (with both
   // traders inside) or stays in per-user DMs:

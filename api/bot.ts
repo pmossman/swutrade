@@ -1,13 +1,14 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
-import { botInstalledGuilds, tradeProposals, userPeerPrefs, users } from '../lib/schema.js';
+import { botInstalledGuilds, tradeProposals, userGuildMemberships, userPeerPrefs, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
   BUTTON_CUSTOM_ID_PREFIX,
   COMM_PREF_CUSTOM_ID_PREFIX,
   PREF_CUSTOM_ID_PREFIX,
+  SERVER_INVITE_CUSTOM_ID_PREFIX,
   buildProposalMessage,
   buildResolvedProposalMessage,
   buildCounteredProposalMessage,
@@ -23,6 +24,9 @@ import {
   buildSelfPrefsIndexMessage,
   buildPeerPrefsIndexMessage,
   buildCombinedPrefsMessage,
+  buildServerInviteMessage,
+  buildServerAutoEnrolledMessage,
+  buildServerEnrollConfirmationMessage,
 } from '../lib/proposalMessages.js';
 import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
 import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
@@ -224,6 +228,9 @@ async function handleInteraction(
       || customId.startsWith(`${COMM_PREF_CUSTOM_ID_PREFIX}:`)
     ) {
       return handlePrefsButton(payload, res);
+    }
+    if (customId.startsWith(`${SERVER_INVITE_CUSTOM_ID_PREFIX}:`)) {
+      return handleServerInviteButton(payload, res);
     }
   }
 
@@ -1668,5 +1675,228 @@ async function handleApplicationAuthorized(
       }, err);
     }
   }
+
+  // Member outreach — invite existing SWUTrade users who are already
+  // in this guild to enroll. Only fires on fresh install (re-auths
+  // don't notify the same members twice). Respects the user's prefs:
+  //   - autoEnrollOnBotInstall=true: flip their enrollment row + send
+  //     a confirmation-shaped DM instead of an invitation.
+  //   - dmServerNewInstall=false: skip the DM entirely.
+  if (isFreshInstall) {
+    await outreachToMembers({
+      guildId,
+      guildName,
+      guildIcon,
+      excludeUserId: installedByUserId,
+      deps,
+    });
+  }
+}
+
+/**
+ * Enumerate every SWUTrade user who's a member of the newly-installed
+ * guild and invite them in. Runs with a concurrency cap so a huge
+ * guild doesn't fan out thousands of DMs into a thundering herd —
+ * the 429 retry in the bot client handles transient throttling, but
+ * we'd rather not manufacture a rate-limit storm in the first place.
+ *
+ * Failures on any individual member are logged but don't abort the
+ * batch — one user with DMs disabled shouldn't block the other 499.
+ */
+async function outreachToMembers(args: {
+  guildId: string;
+  guildName: string;
+  guildIcon: string | null;
+  excludeUserId: string | null;
+  deps: BotDeps;
+}): Promise<void> {
+  const { guildId, guildName, guildIcon, excludeUserId, deps } = args;
+  const db = getDb();
+
+  // One query joins memberships + users so we get prefs + Discord id
+  // in a single round trip.
+  const rows = await db
+    .select({
+      userId: users.id,
+      discordId: users.discordId,
+      dmServerNewInstall: users.dmServerNewInstall,
+      autoEnrollOnBotInstall: users.autoEnrollOnBotInstall,
+      membershipId: userGuildMemberships.id,
+      enrolled: userGuildMemberships.enrolled,
+    })
+    .from(userGuildMemberships)
+    .innerJoin(users, eq(users.id, userGuildMemberships.userId))
+    .where(eq(userGuildMemberships.guildId, guildId));
+
+  const guildIconUrl = guildIcon
+    ? `https://cdn.discordapp.com/icons/${guildId}/${guildIcon}.png?size=128`
+    : null;
+
+  // Batches of 5 concurrent DMs — fast enough for realistic guild
+  // sizes, small enough to keep rate-limit bursts tame. Promise.allSettled
+  // so one failure doesn't kill the batch.
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const chunk = rows.slice(i, i + BATCH_SIZE);
+    await Promise.allSettled(
+      chunk.map(row => outreachToSingleMember({
+        row,
+        guildId,
+        guildName,
+        guildIconUrl,
+        excludeUserId,
+        deps,
+      })),
+    );
+  }
+}
+
+async function outreachToSingleMember(args: {
+  row: {
+    userId: string;
+    discordId: string;
+    dmServerNewInstall: boolean;
+    autoEnrollOnBotInstall: boolean;
+    membershipId: string;
+    enrolled: boolean;
+  };
+  guildId: string;
+  guildName: string;
+  guildIconUrl: string | null;
+  excludeUserId: string | null;
+  deps: BotDeps;
+}): Promise<void> {
+  const { row, guildId, guildName, guildIconUrl, excludeUserId, deps } = args;
+  // Skip the installing admin — they already got the "bot installed"
+  // welcome DM with the same info.
+  if (excludeUserId && row.discordId === excludeUserId) return;
+
+  try {
+    const bot = deps.bot ?? createDiscordBotClient();
+    const ctx = { guildId, guildName, guildIconUrl };
+
+    if (row.autoEnrollOnBotInstall && !row.enrolled) {
+      // Flip all three consent axes. Matches the sync-path auto-
+      // enroll behaviour for new memberships; the user opted into
+      // this by setting the pref.
+      const db = getDb();
+      await db
+        .update(userGuildMemberships)
+        .set({ enrolled: true, includeInRollups: true, appearInQueries: true })
+        .where(eq(userGuildMemberships.id, row.membershipId));
+      // Still DM them so they know it happened (unless they've
+      // opted out of these DMs entirely).
+      if (row.dmServerNewInstall) {
+        await bot.sendDirectMessage(row.discordId, buildServerAutoEnrolledMessage(ctx));
+      }
+      return;
+    }
+
+    // Standard invite path — user hasn't opted into auto-enroll; send
+    // them the one-tap enroll DM unless they've muted these invites.
+    if (row.dmServerNewInstall) {
+      await bot.sendDirectMessage(row.discordId, buildServerInviteMessage(ctx));
+    }
+  } catch (err) {
+    console.error('discord-bot: member outreach DM failed', err);
+    await reportError({
+      source: 'bot.install.member-outreach',
+      tags: {
+        guildId,
+        userId: row.userId,
+        discordId: row.discordId,
+        autoEnroll: String(row.autoEnrollOnBotInstall),
+      },
+    }, err);
+  }
+}
+
+/**
+ * Handler for the "Enroll in {server}" button that ships on the
+ * invite DM. One tap: look up the viewer's membership row for the
+ * specific guild, flip the three consent axes to true, and PATCH the
+ * DM in place with a confirmation embed. The original invite is
+ * self-contained (no auxiliary state), so there's no teardown.
+ */
+export async function handleServerInviteButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+): Promise<void> {
+  const data = payload.data as { custom_id?: string } | undefined;
+  const parts = (data?.custom_id ?? '').split(':');
+  // ['server-invite', guildId, action]
+  const guildId = parts[1] ?? '';
+  const action = parts[2] ?? '';
+  if (!guildId || action !== 'enroll') {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+  const [viewer] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!viewer) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "Sign into SWUTrade on the web first, then retry this button.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  // Resolve the guild's display name + icon from our own cache — the
+  // button custom_id only carries the id; we don't want to round-trip
+  // to Discord for the name on every click.
+  const [guildRow] = await db
+    .select({ guildName: botInstalledGuilds.guildName, guildIcon: botInstalledGuilds.guildIcon })
+    .from(botInstalledGuilds)
+    .where(eq(botInstalledGuilds.guildId, guildId))
+    .limit(1);
+  const guildName = guildRow?.guildName ?? 'this server';
+  const guildIconUrl = guildRow?.guildIcon
+    ? `https://cdn.discordapp.com/icons/${guildId}/${guildRow.guildIcon}.png?size=128`
+    : null;
+
+  // Flip all three consent axes on the membership row. Scoped to
+  // (viewer, guild) — won't match anything if the viewer isn't a
+  // member of the guild, in which case we surface a clear message
+  // instead of silently succeeding.
+  const result = await db
+    .update(userGuildMemberships)
+    .set({ enrolled: true, includeInRollups: true, appearInQueries: true })
+    .where(and(
+      eq(userGuildMemberships.userId, viewer.id),
+      eq(userGuildMemberships.guildId, guildId),
+    ))
+    .returning({ id: userGuildMemberships.id });
+
+  if (result.length === 0) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: {
+        content: "You're not a member of this server — try signing in again to sync your Discord memberships.",
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
+    });
+    return;
+  }
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: buildServerEnrollConfirmationMessage({ guildId, guildName, guildIconUrl }),
+  });
 }
 

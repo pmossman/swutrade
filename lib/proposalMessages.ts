@@ -27,6 +27,10 @@ export const BUTTON_CUSTOM_ID_PREFIX = 'trade-proposal';
  *  resolves against `PREF_DEFINITIONS` (self-scope, discord-surfaced).
  *  See api/bot.ts handlePrefsButton. */
 export const PREF_CUSTOM_ID_PREFIX = 'pref';
+/** Namespace for the "SWUTrade just landed in {server}" invite DM's
+ *  action buttons. Format: `server-invite:{guildId}:{action}`. Handler
+ *  dispatch in api/bot.ts (`handleServerInviteButton`). */
+export const SERVER_INVITE_CUSTOM_ID_PREFIX = 'server-invite';
 /** Legacy prefix for the comm-pref button shipped before the registry
  *  existed. The dispatcher accepts this during the transition and
  *  infers the key as `communicationPref`; new DMs emit the `pref:*`
@@ -842,4 +846,143 @@ export function buildProposerNotification(opts: {
       footer: { text: `Trade ${opts.tradeId.slice(0, 8)}` },
     }],
   };
+}
+
+// --- Server invite DM (bot-install outreach to existing members) -----------
+
+export interface ServerInviteContext {
+  guildId: string;
+  guildName: string;
+  /** Full Discord CDN URL for the guild icon, if any. Used as the
+   *  embed's thumbnail — the "who is this server" signal matters
+   *  more than any SWUTrade chrome for this message. */
+  guildIconUrl?: string | null;
+  /** Where the "Open SWUTrade" link takes the user. Falls back to
+   *  the beta preview when not supplied (e.g. local testing). */
+  webAppUrl?: string;
+}
+
+const SERVER_INVITE_GOLD = 0xD4AF37;
+const SERVER_INVITE_GREEN = 0x34D399;
+const DEFAULT_WEB_APP_URL = 'https://beta.swutrade.com';
+
+/**
+ * Invitational DM sent when the bot lands in a guild the user is
+ * already in. Sized to be both useful to someone who's never seen
+ * SWUTrade AND skimmable for someone who's already using it in three
+ * other servers. The "Enroll in …" button completes the decision in
+ * one tap — no web detour, no multi-step flow — while the link
+ * button preserves the "I want to poke around first" path.
+ */
+export function buildServerInviteMessage(ctx: ServerInviteContext): DiscordMessageBody {
+  const webApp = ctx.webAppUrl ?? DEFAULT_WEB_APP_URL;
+  return {
+    embeds: [{
+      title: `SWUTrade just landed in ${ctx.guildName}`,
+      description: "The bot's here. If you're ready to start trading with other members, one tap below gets you in.",
+      color: SERVER_INVITE_GOLD,
+      thumbnail: ctx.guildIconUrl ? { url: ctx.guildIconUrl } : undefined,
+      fields: [
+        {
+          name: '🔍  Match with traders',
+          value: "See who in this server wants cards you'd trade — and who has cards you're hunting for.",
+        },
+        {
+          name: '💬  One-tap proposals',
+          value: "Compose a trade in the web app; SWUTrade DMs it to the recipient with Accept / Counter / Decline buttons right here in Discord.",
+        },
+        {
+          name: '🧭  You stay in control',
+          value: `Your wants and available lists stay private until you enroll. Change this any time in [Settings](<${webApp}/?settings=1>) → Server membership.`,
+        },
+      ],
+      footer: {
+        text: "Opt out of these DMs in Settings → Preferences → Bot notifications.",
+      },
+    }],
+    components: [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: [
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: BUTTON_STYLE_SUCCESS,
+          label: `Enroll in ${truncateForButton(ctx.guildName)}`,
+          custom_id: `${SERVER_INVITE_CUSTOM_ID_PREFIX}:${ctx.guildId}:enroll`,
+        },
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: 5, // LINK
+          label: 'Open SWUTrade',
+          url: webApp,
+        },
+      ],
+    }],
+  };
+}
+
+/**
+ * Variant DM for users who had `autoEnrollOnBotInstall = true` — they
+ * explicitly asked for the aggressive flow, so this message confirms
+ * enrollment instead of prompting for it. "Manage" button deep-links
+ * into the Settings server-detail in case they want to tune consent
+ * axes individually or back out.
+ */
+export function buildServerAutoEnrolledMessage(ctx: ServerInviteContext): DiscordMessageBody {
+  const webApp = ctx.webAppUrl ?? DEFAULT_WEB_APP_URL;
+  const manageUrl = `${webApp}/?settings=1&tab=servers&guild=${encodeURIComponent(ctx.guildId)}`;
+  return {
+    embeds: [{
+      title: `You're enrolled in ${ctx.guildName}`,
+      description: "SWUTrade just landed in this server — and because you had auto-enroll on, you're in the community already. Your wants + available lists are now visible to other enrolled members here.",
+      color: SERVER_INVITE_GREEN,
+      thumbnail: ctx.guildIconUrl ? { url: ctx.guildIconUrl } : undefined,
+      fields: [
+        {
+          name: 'Manage this server',
+          value: `Turn off individual consent axes (rollups, who-has queries) or leave the community entirely in [Settings](<${manageUrl}>).`,
+        },
+      ],
+      footer: {
+        text: "You can disable auto-enroll in Settings → Preferences → Server membership.",
+      },
+    }],
+  };
+}
+
+/**
+ * Replacement body for the invite DM after the user taps "Enroll".
+ * The original message gets PATCHed (via INTERACTION_RESPONSE_TYPE 7)
+ * so the button disappears and the state of the DM matches the
+ * state of the world — no "does it know I clicked?" confusion.
+ */
+export function buildServerEnrollConfirmationMessage(ctx: ServerInviteContext): DiscordMessageBody {
+  const webApp = ctx.webAppUrl ?? DEFAULT_WEB_APP_URL;
+  const manageUrl = `${webApp}/?settings=1&tab=servers&guild=${encodeURIComponent(ctx.guildId)}`;
+  return {
+    embeds: [{
+      title: `✅ Enrolled in ${ctx.guildName}`,
+      description: "You're in. Your wants + available lists are now visible to other enrolled members of this server, and you'll show up in their trade matches.",
+      color: SERVER_INVITE_GREEN,
+      thumbnail: ctx.guildIconUrl ? { url: ctx.guildIconUrl } : undefined,
+      fields: [
+        {
+          name: 'Next steps',
+          value: [
+            `• [Manage your lists](<${webApp}/>) if you haven't yet — your visibility depends on what's on them.`,
+            `• [Tune this server's settings](<${manageUrl}>) — individual rollup / who-has toggles.`,
+            `• Run \`/swutrade settings\` in this server to tweak global preferences.`,
+          ].join('\n'),
+        },
+      ],
+      footer: { text: "You can leave the community any time in Settings → Discord servers." },
+    }],
+    components: [],
+  };
+}
+
+/** Discord button labels cap at 80 chars; some guild names blow past
+ *  that. Preserve the prefix ("Enroll in …") and truncate the name. */
+function truncateForButton(name: string): string {
+  const MAX = 70; // leaves room for "Enroll in " prefix
+  return name.length > MAX ? `${name.slice(0, MAX - 1)}…` : name;
 }

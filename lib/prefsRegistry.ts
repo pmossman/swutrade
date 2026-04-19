@@ -67,7 +67,7 @@ export interface PrefDefinition {
    *  cleanly inside Discord's component limits. */
   surfaces: ReadonlyArray<PrefSurface>;
   /** Web grouping. Settings page renders one section per value. */
-  section?: 'privacy' | 'notifications' | 'communication';
+  section?: 'privacy' | 'notifications' | 'communication' | 'membership';
   discord?: {
     /** Optional header override on the ephemeral selector. */
     prompt?: string;
@@ -217,6 +217,30 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     surfaces: ['web', 'discord'],
     section: 'notifications',
     discord: { order: 12 },
+  }),
+  definePref({
+    key: 'dmServerNewInstall',
+    scope: { kind: 'self' },
+    column: 'dmServerNewInstall',
+    type: { kind: 'boolean' },
+    label: 'New server invitations',
+    description: 'DM me once when SWUTrade lands in a server I\'m already in, with a one-tap enroll button.',
+    default: true,
+    surfaces: ['web', 'discord'],
+    section: 'notifications',
+    discord: { order: 13 },
+  }),
+  definePref({
+    key: 'autoEnrollOnBotInstall',
+    scope: { kind: 'self' },
+    column: 'autoEnrollOnBotInstall',
+    type: { kind: 'boolean' },
+    label: 'Auto-enroll in new bot-installed servers',
+    description: "When SWUTrade lands in a server you're already in, enroll you automatically. Off by default — you stay opt-in.",
+    default: false,
+    surfaces: ['web', 'discord'],
+    section: 'membership',
+    discord: { order: 20 },
   }),
 ];
 
