@@ -40,6 +40,7 @@ import { AccountMenu } from './components/AccountMenu';
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
+import { HomeView } from './components/HomeView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
 import { TradeDetailView } from './components/TradeDetailView';
@@ -47,7 +48,9 @@ import { TradesHistoryView } from './components/TradesHistoryView';
 import { useProposeHandle } from './hooks/useProposeHandle';
 import { useCounterId } from './hooks/useCounterId';
 
-function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history' {
+type ViewMode = 'home' | 'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history';
+
+function detectViewMode(isSignedIn: boolean): ViewMode {
   if (typeof window === 'undefined') return 'trade';
   // `/u/<handle>` is our canonical shareable profile URL. Vercel
   // rewrites it to `/?profile=<handle>` server-side, but the browser
@@ -64,10 +67,16 @@ function detectViewMode(): 'list' | 'trade' | 'profile' | 'settings' | 'communit
   const explicit = params.get('view');
   if (explicit === 'list') return 'list';
   if (explicit === 'trade') return 'trade';
+  if (explicit === 'home') return 'home';
   // Implicit: list view when there's a shared list and no active trade.
   const hasListParams = params.has('w') || params.has('a');
   const hasTradeParams = params.has('y') || params.has('t');
-  return hasListParams && !hasTradeParams ? 'list' : 'trade';
+  if (hasListParams && !hasTradeParams) return 'list';
+  if (hasTradeParams) return 'trade';
+  // Bare URL: signed-in users land on Home (their trades + communities);
+  // signed-out users land on the trade builder so the public share URL
+  // experience is unchanged.
+  return isSignedIn ? 'home' : 'trade';
 }
 
 /** Extract the handle from either `?profile=<handle>` or the
@@ -177,7 +186,7 @@ function App() {
   // (lists in URL but no trade). Users opt into the trade UI via the
   // "Start a trade" CTA on the list view, which appends ?view=trade.
   // ?view=list / ?view=trade explicitly overrides the heuristic.
-  const [viewMode, setViewMode] = useState<'list' | 'trade' | 'profile' | 'settings' | 'community' | 'trade-detail' | 'trades-history'>(() => detectViewMode());
+  const [viewMode, setViewMode] = useState<ViewMode>(() => detectViewMode(!!user));
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
@@ -185,11 +194,29 @@ function App() {
   // from the sender's wants. One-shot — cleared after the TradeSide
   // consumes it.
   const [autoOpenOfferingFromShared, setAutoOpenOfferingFromShared] = useState(false);
+  // Keep a live ref of the signed-in flag so popstate (which fires
+  // well after mount) reads the current value, not a stale closure.
+  const isSignedInRef = useRef(!!user);
   useEffect(() => {
-    const handler = () => setViewMode(detectViewMode());
+    isSignedInRef.current = !!user;
+  }, [user]);
+  useEffect(() => {
+    const handler = () => setViewMode(detectViewMode(isSignedInRef.current));
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
+  // When auth resolves after first paint (signed-in user, bare URL),
+  // flip the implicit default from 'trade' to 'home'. We only rewrite
+  // when the URL is bare — explicit ?view=trade / shared list / trade
+  // detail are all honoured.
+  useEffect(() => {
+    setViewMode(prev => {
+      // Only auto-switch between the two implicit defaults. Any
+      // explicit view (settings, trade-detail, profile, etc.) stays.
+      if (prev !== 'home' && prev !== 'trade') return prev;
+      return detectViewMode(!!user);
+    });
+  }, [user]);
   const handleStartTrade = useCallback((fromHandle?: string, autoBalance?: boolean) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
@@ -321,6 +348,50 @@ function App() {
     setTheirCards([]);
   }, []);
 
+  // Home view — signed-in landing. Shows pending trades that need a
+  // response, the user's enrolled communities, and a primary CTA into
+  // the trade builder. Signed-out users never see it — detectViewMode
+  // falls back to 'trade' when no user is present.
+  if (viewMode === 'home') {
+    const navigateParams = (mutate: (params: URLSearchParams) => void) => {
+      const params = new URLSearchParams(window.location.search);
+      mutate(params);
+      const search = params.toString();
+      const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
+      window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
+      setViewMode(detectViewMode(!!user));
+    };
+    return (
+      <HomeView
+        auth={auth}
+        onOpenTrade={tradeId => navigateParams(p => {
+          for (const key of ['view', 'settings', 'community', 'trades', 'profile']) p.delete(key);
+          p.set('trade', tradeId);
+        })}
+        onOpenTradesHistory={() => navigateParams(p => {
+          for (const key of ['view', 'settings', 'community', 'trade', 'profile']) p.delete(key);
+          p.set('trades', '1');
+        })}
+        onOpenSettings={() => navigateParams(p => {
+          for (const key of ['view', 'community', 'trade', 'trades', 'profile']) p.delete(key);
+          p.set('settings', '1');
+        })}
+        onOpenCommunity={() => navigateParams(p => {
+          for (const key of ['view', 'settings', 'trade', 'trades', 'profile']) p.delete(key);
+          p.set('community', '1');
+        })}
+        onBuildTrade={() => navigateParams(p => {
+          for (const key of ['settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
+          p.set('view', 'trade');
+        })}
+        onOpenProfile={handle => navigateParams(p => {
+          for (const key of ['view', 'settings', 'community', 'trade', 'trades'] ) p.delete(key);
+          p.set('profile', handle);
+        })}
+      />
+    );
+  }
+
   // Settings view — /?settings=1 for account + per-guild preferences.
   // Signed-out users can't reach it (menu item doesn't render), but if
   // someone hand-types the URL we still route here; the hooks will
@@ -331,7 +402,7 @@ function App() {
       params.delete('settings');
       const search = params.toString();
       window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode());
+      setViewMode(detectViewMode(!!user));
     };
     return <SettingsView onClose={goHome} />;
   }
@@ -342,7 +413,7 @@ function App() {
       params.delete('community');
       const search = params.toString();
       window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode());
+      setViewMode(detectViewMode(!!user));
     };
     return (
       <CommunityView
@@ -360,7 +431,7 @@ function App() {
       params.delete('trades');
       const search = params.toString();
       window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode());
+      setViewMode(detectViewMode(!!user));
     };
     return <TradesHistoryView onClose={goHome} />;
   }
@@ -374,7 +445,7 @@ function App() {
       const params = new URLSearchParams();
       params.set('trades', '1');
       window.history.pushState(null, '', `?${params.toString()}`);
-      setViewMode(detectViewMode());
+      setViewMode(detectViewMode(!!user));
     };
     return <TradeDetailView tradeId={tradeId} onClose={goBack} />;
   }
