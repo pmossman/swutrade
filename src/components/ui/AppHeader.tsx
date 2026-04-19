@@ -60,7 +60,7 @@ export function AppHeader({
   const showAccountMenu = !slim;
 
   return (
-    <header className="flex items-center gap-3 px-3 sm:px-6 py-3 border-b border-space-800/70 bg-space-900/80 backdrop-blur">
+    <header className="relative z-40 flex items-center gap-3 px-3 sm:px-6 py-3 border-b border-space-800/70 bg-space-900/80 backdrop-blur">
       <h1 className="shrink-0">
         <a
           href="/"

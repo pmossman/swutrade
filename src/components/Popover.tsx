@@ -46,7 +46,7 @@ export function Popover({ trigger, children, align = 'right', panelClassName = '
       {trigger({ open, toggle })}
       {open && (
         <div
-          className={`absolute top-full mt-1 z-30 bg-space-800 border border-space-600 rounded-lg shadow-xl ${align === 'right' ? 'right-0' : 'left-0'} ${panelClassName}`}
+          className={`absolute top-full mt-1 z-50 bg-space-800 border border-space-600 rounded-lg shadow-xl ${align === 'right' ? 'right-0' : 'left-0'} ${panelClassName}`}
           onClick={e => e.stopPropagation()}
         >
           {children({ close })}
