@@ -9,7 +9,7 @@ import { ClearAllButton } from './components/ClearAllButton';
 import { MobileActionsKebab } from './components/MobileActionsKebab';
 import { PanelDivider } from './components/PanelDivider';
 import { ListsDrawer } from './components/ListsDrawer';
-import { PageHeader } from './components/ui/PageHeader';
+import { AppHeader } from './components/ui/AppHeader';
 import { useWants } from './hooks/useWants';
 import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
@@ -36,7 +36,6 @@ import { useAuthContext } from './contexts/AuthContext';
 import { useServerSync } from './hooks/useServerSync';
 import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
-import { AccountMenu } from './components/AccountMenu';
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
@@ -508,40 +507,39 @@ function App() {
   return (
     <>
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
-      {/* Top bar — logo | pricing pill | actions. All on one row.
-          Mobile hides the wordmark and collapses Share/Clear into a
-          single kebab so everything fits in a single 390px viewport. */}
-      <div className="px-3 pt-3 pb-2 max-w-5xl mx-auto w-full shrink-0">
-        <PageHeader>
-          <AccountMenu auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
-          <ListsDrawer
-            wants={wants}
-            available={available}
-            allCards={allLoadedCards}
-            percentage={percentage}
-            priceMode={priceMode}
-            open={listsDrawerOpen}
-            onOpenChange={setListsDrawerOpen}
-          />
-          <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
-          {/* Pricing controls (% + Market/Low) used to sit here. They
-              moved into TradeBalance body so they live next to the
-              totals they modify — mobile header is uncluttered and
-              the controls are semantically adjacent to their output. */}
-          {hasCards && (
-            <>
-              {/* Desktop: inline pills. Mobile: single kebab. */}
-              <div className="hidden md:flex items-center gap-2">
-                <ShareButtons size="sm" />
-                <ClearAllButton onConfirm={handleClear} />
-              </div>
-              <div className="md:hidden">
-                <MobileActionsKebab onClear={handleClear} />
-              </div>
-            </>
-          )}
-        </PageHeader>
-      </div>
+      {/* Trade builder is the "root" view — no breadcrumbs, logo alone
+          orients. AppHeader supplies consistent NavMenu + AccountMenu.
+          The `actions` slot carries the per-view CTAs: split/tabbed
+          toggle, and Share/Clear which only appear once there are cards. */}
+      <AppHeader
+        auth={auth}
+        onOpenLists={() => setListsDrawerOpen(true)}
+        actions={
+          <>
+            <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
+            {hasCards && (
+              <>
+                <div className="hidden md:flex items-center gap-2">
+                  <ShareButtons size="sm" />
+                  <ClearAllButton onConfirm={handleClear} />
+                </div>
+                <div className="md:hidden">
+                  <MobileActionsKebab onClear={handleClear} />
+                </div>
+              </>
+            )}
+          </>
+        }
+      />
+      <ListsDrawer
+        wants={wants}
+        available={available}
+        allCards={allLoadedCards}
+        percentage={percentage}
+        priceMode={priceMode}
+        open={listsDrawerOpen}
+        onOpenChange={setListsDrawerOpen}
+      />
 
       {/* Error messages */}
       <div className="px-3 max-w-5xl mx-auto w-full shrink-0">

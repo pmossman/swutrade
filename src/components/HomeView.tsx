@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { AuthApi } from '../hooks/useAuth';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
 import { useTradesList, type TradeListEntry } from '../hooks/useTradesList';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
-import { AccountMenu } from './AccountMenu';
 import { ListsDrawer } from './ListsDrawer';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
@@ -77,11 +76,9 @@ export function HomeView({
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
-        <PageHeader>
-          <AccountMenu auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
-        </PageHeader>
-      </div>
+      {/* Home is the root view for signed-in users — no breadcrumbs,
+          AppHeader's logo + NavMenu + AccountMenu anchor the page. */}
+      <AppHeader auth={auth} onOpenLists={() => setListsDrawerOpen(true)} />
 
       <ListsDrawer
         wants={wants}

@@ -1,40 +1,30 @@
 import type { AuthApi } from '../hooks/useAuth';
 import { Popover } from './Popover';
-import { ListsIcon } from './ListsDrawer';
 
 interface AccountMenuProps {
   auth: AuthApi;
-  /** Opens the ListsDrawer. Moving "My Lists" into this menu keeps
-   *  the top bar to a single identity affordance rather than splitting
-   *  identity + lists across two buttons. */
-  onOpenLists: () => void;
 }
 
 /**
- * Header-level account affordance. Mobile-first: collapses to a pure
- * icon at narrow widths and surfaces the username inline on desktop.
+ * Header-level identity affordance — strictly account-scoped:
+ *   Signed in: profile · settings · sign out
+ *   Signed out: short explainer + Discord sign-in CTA
  *
- * Both signed-in and signed-out states open a popover rather than
- * firing their primary action on tap:
- *   - Signed-in: previous inline "tap = immediate logout" was a
- *     papercut trap; popover surfaces profile + sign out deliberately.
- *   - Signed-out: tapping the Discord icon used to yank the user
- *     straight to OAuth. Now a short popover introduces what signing
- *     in unlocks before the commit, and the CTA is a plain <a> tag
- *     — anchor navigation is more reliable for cross-origin redirects
- *     on mobile Safari than window.location.href from an onClick.
+ * Content navigation (My Lists / My Trades / My Communities) lives in
+ * the separate NavMenu. This split was beta feedback — users read "My
+ * Lists" under the account menu as account data rather than content,
+ * and the duplicate affordances made the header feel muddled.
  */
-export function AccountMenu({ auth, onOpenLists }: AccountMenuProps) {
+export function AccountMenu({ auth }: AccountMenuProps) {
   const { user, isLoading, logout } = auth;
 
   if (isLoading) return null;
 
   if (!user) {
-    // Signed-out: anonymous-silhouette avatar (visually parallels the
-    // signed-in avatar shape) that opens the same popover surface.
-    // Gives anonymous users the same "this is where your account
-    // lives" mental model, with a sign-in CTA + My Lists access that
-    // matches the signed-in menu's first item.
+    // Signed-out: anonymous-silhouette avatar that opens a short
+    // popover introducing what signing in unlocks. Keeps the trigger
+    // visually parallel to the signed-in avatar so the "this is your
+    // account" mental model holds even when there's no account yet.
     return (
       <Popover
         align="right"
@@ -57,11 +47,8 @@ export function AccountMenu({ auth, onOpenLists }: AccountMenuProps) {
           </button>
         )}
       >
-        {({ close }) => (
+        {() => (
           <div className="flex flex-col gap-1">
-            {/* Identity header — signed-out variant. Same shape as the
-                signed-in version so the menu feels consistent across
-                auth states. */}
             <div className="px-2 py-1.5 border-b border-space-700 mb-1">
               <div className="text-sm font-semibold text-gray-100">Not signed in</div>
               <div className="text-[11px] text-gray-500 leading-relaxed">
@@ -69,20 +56,9 @@ export function AccountMenu({ auth, onOpenLists }: AccountMenuProps) {
               </div>
             </div>
 
-            {/* My Lists works signed-out too — lists are stored in
-                localStorage until the user opts into cloud sync. */}
-            <button
-              type="button"
-              onClick={() => { onOpenLists(); close(); }}
-              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors text-left"
-            >
-              <ListsIcon className="w-3.5 h-3.5 text-gray-400" />
-              My Lists
-            </button>
-
             <a
               href="/api/auth/discord"
-              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold bg-[#5865F2]/20 border border-[#5865F2]/40 text-white hover:bg-[#5865F2]/30 hover:border-[#5865F2]/60 transition-colors mt-1"
+              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold bg-[#5865F2]/20 border border-[#5865F2]/40 text-white hover:bg-[#5865F2]/30 hover:border-[#5865F2]/60 transition-colors"
             >
               <DiscordIcon className="w-3.5 h-3.5" />
               Sign in with Discord
@@ -126,38 +102,18 @@ export function AccountMenu({ auth, onOpenLists }: AccountMenuProps) {
     >
       {({ close }) => (
         <div className="flex flex-col gap-1">
-          {/* Identity header — username + handle, not interactive. Gives
-              the menu a clear "this is you" anchor before the actions. */}
           <div className="px-2 py-1.5 border-b border-space-700 mb-1">
             <div className="text-sm font-semibold text-gray-100 truncate">{user.username}</div>
             <div className="text-[11px] text-gray-500 truncate">@{user.handle}</div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => { onOpenLists(); close(); }}
-            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors text-left"
-          >
-            <ListsIcon className="w-3.5 h-3.5 text-gray-400" />
-            My Lists
-          </button>
-
           <a
-            href="/?community=1"
+            href={`/u/${encodeURIComponent(user.handle)}`}
             onClick={close}
             className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
           >
-            <CommunityIcon className="w-3.5 h-3.5 text-gray-400" />
-            Community
-          </a>
-
-          <a
-            href="/?trades=1"
-            onClick={close}
-            className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-200 hover:text-gold hover:bg-gold/10 transition-colors"
-          >
-            <TradesIcon className="w-3.5 h-3.5 text-gray-400" />
-            My trades
+            <ProfileIcon className="w-3.5 h-3.5 text-gray-400" />
+            Public profile
           </a>
 
           <a
@@ -183,9 +139,6 @@ export function AccountMenu({ auth, onOpenLists }: AccountMenuProps) {
   );
 }
 
-// Generic "person" silhouette — used as the signed-out avatar so the
-// trigger looks parallel in shape to a signed-in avatar and reads as
-// "this is your account area, not just a sign-in prompt."
 function AnonAvatarIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 20 20" className={className} fill="currentColor" aria-hidden>
@@ -211,28 +164,11 @@ function ChevronDown({ className }: { className?: string }) {
   );
 }
 
-// Two stylized silhouettes: reads unambiguously as "community of
-// people" at 14px without needing detail that would turn muddy.
-function CommunityIcon({ className }: { className?: string }) {
+function ProfileIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="6" cy="5.5" r="2.2" />
-      <path d="M1.75 13.25a4.25 4.25 0 0 1 8.5 0" />
-      <circle cx="11.25" cy="6.25" r="1.75" />
-      <path d="M10 11a3.25 3.25 0 0 1 4.5 1.75" />
-    </svg>
-  );
-}
-
-// Stylized envelope/inbox — the menu already has a filled cog for
-// Settings and a two-silhouette icon for Community; a simple
-// horizontal-lines "list" glyph reads as "trade history" at 14px
-// without competing visually.
-function TradesIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
-      <path d="M5 7h6M5 9.5h4" />
+      <circle cx="8" cy="5.5" r="2.5" />
+      <path d="M2.5 13.5a5.5 5.5 0 0 1 11 0" />
     </svg>
   );
 }
@@ -245,9 +181,6 @@ function SignOutIcon({ className }: { className?: string }) {
   );
 }
 
-// Filled 8-tooth cog (Heroicons "cog-8-tooth" mini). The previous
-// stroke-only radial-spokes rendering read as a sun — this solid
-// version is unambiguously a gear at 14px.
 function SettingsIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 20 20" className={className} fill="currentColor" aria-hidden>
