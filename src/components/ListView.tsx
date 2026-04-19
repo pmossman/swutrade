@@ -23,7 +23,8 @@ import {
 } from '../hooks/useSelectionFilters';
 import { VariantChipGroup, SetChipGroup } from './SelectionFilterBar';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
-import { PageHeader } from './ui/PageHeader';
+import { AppHeader } from './ui/AppHeader';
+import { useAuthContext } from '../contexts/AuthContext';
 
 const MAIN_SET_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
 const SPECIAL_SET_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
@@ -193,35 +194,20 @@ export function ListView({
     [selectedSets],
   );
 
+  const auth = useAuthContext();
+
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <header className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
-        <PageHeader
-          kicker={
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">Shared list</span>
-              <span className="text-[11px] text-gray-600">
-                {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
-                {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
-                {availableRows.length > 0 && `${availableRows.length} available`}
-              </span>
-              {senderHandle && (
-                <>
-                  <span className="text-gray-700" aria-hidden>·</span>
-                  <span className="text-[11px] text-gray-600">
-                    from{' '}
-                    <a
-                      href={`/?profile=${encodeURIComponent(senderHandle)}`}
-                      className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
-                    >
-                      @{senderHandle}
-                    </a>
-                  </span>
-                </>
-              )}
-            </div>
-          }
-        >
+      {/* Shared-list landings often receive anonymous viewers (someone
+          clicked a /?w=…&a=… link). Use the slim header variant when
+          signed out to avoid pushing sign-up chrome before they've
+          seen the list they came for. Signed-in viewers get full
+          nav. */}
+      <AppHeader
+        auth={auth}
+        slim={!auth.user}
+        breadcrumbs={[{ label: 'Shared list' }]}
+        actions={
           <button
             type="button"
             onClick={() => onStartTrade(senderHandle ?? undefined)}
@@ -232,8 +218,35 @@ export function ListView({
               <path d="M3 8h10M9 4l4 4-4 4" />
             </svg>
           </button>
-        </PageHeader>
-      </header>
+        }
+      />
+
+      {/* Content-level summary strip — keeps the "N wants · N available ·
+          from @handle" context below the chrome so the breadcrumb stays
+          clean. */}
+      <div className="px-3 sm:px-6 pt-3 pb-2 max-w-5xl mx-auto w-full">
+        <div className="flex items-baseline gap-2 flex-wrap text-[11px]">
+          <span className="text-gray-600">
+            {wantsRows.length > 0 && `${wantsRows.length} want${wantsRows.length === 1 ? '' : 's'}`}
+            {wantsRows.length > 0 && availableRows.length > 0 && ' · '}
+            {availableRows.length > 0 && `${availableRows.length} available`}
+          </span>
+          {senderHandle && (
+            <>
+              <span className="text-gray-700" aria-hidden>·</span>
+              <span className="text-gray-600">
+                from{' '}
+                <a
+                  href={`/?profile=${encodeURIComponent(senderHandle)}`}
+                  className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
+                >
+                  @{senderHandle}
+                </a>
+              </span>
+            </>
+          )}
+        </div>
+      </div>
 
       {hasMissing && !isAnyLoading && (
         <div className="px-3 sm:px-6 max-w-5xl mx-auto w-full">
