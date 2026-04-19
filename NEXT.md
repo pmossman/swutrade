@@ -102,14 +102,6 @@ Skipping any of 1-3 is a bug in the process.
 
 Items that didn't make the Foundation bundle cut but should land before Phase 4 v2 / Phase 5 work resumes.
 
-### In-builder "Send as proposal" CTA
-
-When a signed-in user has cards on both sides of the trade builder (not via `?propose=` — just ad-hoc balance), surface a small "Send as a proposal to @…" CTA that opens HandlePickerDialog pre-seeded with the current cards. Closes the "I balanced it, now I want to send it" conversion loop. Small UI tweak plus a reuse of the handle-picker.
-
-### `percentage` / `priceMode` prop drilling → context *(audit action item)*
-
-`percentage` + `priceMode` are persisted via `usePersistedState` in App.tsx then drilled through ~8 components (TradeSide×2, ProfileView, ListView, CounterBar, ProposeBar, EditBar, TradeBalance, TradeTabBar). Extract a `PricingContext` sibling to the R1 contexts. ~2 hours. Wait until there's a third symptom — the audit flagged this as medium priority, so no rush.
-
 ### Client-side error reporter *(audit action item)*
 
 Server has `lib/errorReporter.ts` posting to `#bot-errors`. Client has no equivalent — view-layer failures silently console.warn (e.g., `TradeImageModal`). Add a `src/lib/clientErrorReporter.ts` that POSTs to a `/api/errors/client` endpoint (new) which funnels to the same Discord webhook tagged `client`. Hook it to a React `ErrorBoundary` at App root + expose as a `reportClientError()` helper for explicit catches. Low urgency until real users start hitting runtime errors we can't see.
@@ -134,13 +126,17 @@ Trade detail view currently shows one-hop chain context (↑ counter to / ↓ co
 
 Dashboard-app pattern: `G T` → trades, `G L` → lists (opens drawer), `G C` → community, `N` → new balance. Nice-to-have polish; low priority until beta users explicitly ask.
 
-### Phase 4 v2 proper
+### Phase 5a tail — Trading-network lifecycle
 
-LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See ROADMAP.md Phase 4 v2 for scope.
+Trader reputation / preferred traders, auto-prune on accept, notifications inbox, trade-completion (met-in-person) state, chain timeline. See ROADMAP.md Phase 5a for scope. Proposal-expiry cron sits above.
 
-### Phase 5b — Live trade sessions
+### Phase 5b — Shared trade sessions
 
-Separate-flow in-person collaborative trading. See ROADMAP.md Phase 5b for scope + data-model sketch.
+Collaborative single-mutable-trade primitive that serves both live (phones side-by-side at the LGS) and async (edit-and-come-back with Discord pings on counterpart changes). See ROADMAP.md Phase 5b for scope + data-model sketch + debounce semantics.
+
+### Phase 4 v2 — Community depth (LGS integration)
+
+LGS directory, visit announcements, meetup-aware matching, match-alert DMs. Moved below Phase 5 per the ROADMAP reorder — sessions come first. See ROADMAP.md Phase 4 v2 for scope.
 
 ---
 

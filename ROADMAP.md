@@ -111,18 +111,9 @@ The drop-into-a-server demo: compose + send + receive + respond to trade proposa
 - [ ] **"Share my list to Discord" channel-post action** — originally planned as a v1 feature. Deferred after user discussion: channel posts ("here's my whole list") lack a strong use case on their own; proposals to specific users carry more signal. Revisit if the community asks for a lightweight "what I brought today" channel post.
 - [ ] **Slash commands** — none in v1 deliberately. Wait for demonstrated need before building `/whohas`.
 
-**Phase 4 v2** *(not yet started — most of the community-depth features)*
+### Phase 5a — Trading network lifecycle *(partially pulled forward; rest in flight)*
 
-- [ ] **LGS directory** as server-admin-managed web object at `/guilds/<id>/admin`, gated on Discord `MANAGE_GUILD`.
-- [ ] **LGS presence** — "usually at" profile tag + per-visit announcements (web-authored → bot-broadcast to the guild's configured channel). Visits expire post-event so stale intent doesn't accumulate.
-- [ ] **Meetup-aware matching** — "4 traders going to Game Empire Sat: Alice (wants your Vader), Bob (has your Luke)…" scoped to the visit window.
-- [ ] **Match-alert DMs** — the spammiest category. Gate behind the three-axis consent toggle.
-- [ ] **Read-only slash commands** (`/whohas <card>`, `/whowants <card>`) if users in the live server reach for them.
-- [ ] **Tier 2 nightly Discord contract probe** — real-Discord API health check (see `PHASE4_TESTING.md`). Stand up once the bot has real user traffic; probe nothing pre-launch.
-
-### Phase 5 — Trading network *(partially pulled forward; rest post-Phase-4-v2)*
-
-The full **Discover → Match → Propose → Negotiate → Complete → Remember** lifecycle on top of the Phase 4 primitives. Proposal, counter, cancel, and history shipped in Phase 4 v1 (ahead of schedule because they were load-bearing for dogfooding).
+Previously called just "Phase 5" — now explicitly "5a" to pair with the sibling sessions modality below. The full **Discover → Match → Propose → Negotiate → Complete → Remember** lifecycle on top of the Phase 4 primitives. Proposal, counter, cancel, and history shipped in Phase 4 v1 (ahead of schedule because they were load-bearing for dogfooding).
 
 **Still to ship:**
 
@@ -133,33 +124,58 @@ The full **Discover → Match → Propose → Negotiate → Complete → Remembe
 - [ ] **Trade completion flow** — currently Accept is terminal but doesn't model the "we actually met up and exchanged cards" step. Needs a distinct confirmed/cancelled-IRL state.
 - [ ] **Chain visualization in the detail view** — currently the detail view shows one-hop stubs (↑ counter to / ↓ countered by). Long chains deserve a timeline.
 
-### Phase 5b — Live trade sessions *(not started — dedicated phase)*
+### Phase 5b — Shared trade sessions *(not started — next big slice)*
 
-A second trade modality distinct from the async proposal flow: two users sitting next to each other (at the LGS, at a game night) open a shared trade session on their phones and watch each other's side update in real time.
+A second trade modality that sits alongside proposals: two users share a single mutable trade object they both edit over time. Same underlying primitive serves both the live case (both connected, phones side-by-side at the LGS) and the async case (edit-and-come-back over days, with Discord pings on the other side's changes).
 
 **Why distinct from proposals:**
-- Proposals are **ping-pong, convergent via counter chain**, async, record-of-what-each-party-said. Right for remote trading.
-- Sessions are **collaborative, convergent via a single mutable object**, live, confirm-at-the-end. Right for in-person trading.
-- They serve different modalities and should coexist, not replace. Users pick the flow that matches the situation.
+- Proposals are **ping-pong, convergent via counter chain**, record-of-what-each-party-said. Right for remote formal offers.
+- Sessions are **collaborative, convergent via a single mutable object**, confirm-at-the-end. Right for messy, iterative negotiations — whether you're at the same table or emailing back and forth.
+
+**Modalities (one primitive, different consumption):**
+- **Live** — both parties actively viewing. Client polls every 2–3 s so the counterpart's edits land within a heartbeat. "Live trade at the LGS" use case.
+- **Async** — one party edits while the other is offline. Bot DMs the counterpart: "Alice updated your session — check it when you're back." Debounced to avoid DM spam on flurries of edits.
+- **Mixed** — session opens live, someone drops off, the other keeps editing, they reconnect later. Same record, same shape, no mode switching in the schema.
 
 **Data model (sketch):**
-- New `trade_sessions` table (separate from `trade_proposals`): `id` short-code, `offering_cards` / `receiving_cards` JSONB (current live state), `participant_user_ids[]`, `confirmed_by_user_ids[]`, `expires_at`, `updated_at`.
-- Short-code URL like `/live/abc123` for easy in-person handoff (also works via QR code).
-- `expires_at` enforced by the existing proposal-expiry cron with a shorter TTL (a few hours, not days) so session detritus auto-GCs.
+- New `trade_sessions` table (separate from `trade_proposals`):
+  - `id` short-code (for `/s/<code>` URL + QR handoff)
+  - `offering_cards` / `receiving_cards` JSONB — current state, not snapshot (mutated in place)
+  - `participant_user_ids[]`
+  - `confirmed_by_user_ids[]` — both must be in this set for the session to settle
+  - `last_edited_at`, `last_edited_by_user_id`
+  - `last_notified_at_by_user_id` jsonb map — per-counterpart "last time we DM'd them about changes" so debounce is per-recipient, not global
+  - `expires_at` — days, not hours, to accommodate async pace. Existing cron auto-GCs.
 
-**Conflict model:** each participant only edits their OWN half of the trade (offering = my cards from my viewer, receiving = your cards). Per-side ownership → no concurrent writes to the same field → no OT/CRDT required for v1.
+**Conflict model:** each participant only edits their OWN half (offering = my cards, receiving = your cards). Per-side ownership → no concurrent writes to the same field → no CRDT needed.
 
-**Transport v1:** client polls `/api/trade-sessions/:id` every 2-3s for the current state. Cheap, works on existing infra, "magic enough" for the in-person-at-the-table case. WebSockets/SSE is a v2 optimization.
+**Debounced Discord pings:**
+- On every edit, record `last_edited_at` + `last_edited_by`.
+- A background job (or post-edit check) DMs the OTHER participant if:
+  - They haven't been pinged in the last ~10 min (`last_notified_at[them] + 10m < now`), AND
+  - They haven't viewed the session since the edit (optional v2 refinement; v1 can skip view-tracking and rely purely on time debounce).
+- DM says "Alice made changes to your trade session — open it here." One link, ephemeral if possible, never with a card preview (too much churn).
 
-**Confirm flow:** both parties tap Confirm → the session freezes into a "settled" record. Option to post a completed-trade event to the community activity feed (Phase 4 v2) + subtract the cards from both parties' lists (links up with "auto-update on trade completion" above).
+**Confirm flow:** both parties tap Confirm → the session freezes into a `settled` state. Any subsequent edit from either side invalidates all confirms (both have to re-confirm). Settle optionally posts to the community activity feed and prunes both lists (pairs with "auto-update on trade completion" in Phase 5a).
 
 **UX distinction in the app:**
-- Proposal: "Send a proposal to @handle" — Discord DM trail, status chips, counter/decline actions.
-- Session: "Start a live trade" — generates a QR + short URL, renders a two-column live-updating view, connected-indicator + confirm buttons.
+- Proposal: "Send a proposal to @handle" — Discord DM trail, status chips, counter/decline actions, terminal on first accept.
+- Session: "Start a session with @handle" or "Scan this QR" — two-column live-updating view, per-side last-edited timestamps, connected-dot indicator, both-sides-confirm settle button, Discord pings for async resumption.
 
-**Pairs well with LGS integration.** Once LGS visits are a thing ("4 traders going to Game Empire Sat"), a live session attached to "Game Empire Saturday" is the natural handoff from scheduling into the actual in-person exchange.
+**Home + My Trades surfaces gain a new section:** *"Active sessions — 2, one has changes you haven't seen."* Inline peek pattern (today's design) carries over.
 
-**Realistic scope:** 3-5 days of work — schema, polling endpoints, session UI, confirm flow, expiry TTL. Not a same-day slice. Defer until the core Phase 4 community loop is settled and we've seen whether beta users actually reach for the in-person modality. If they do, this phase pays off massively.
+**Realistic scope:** 5–7 days. Schema + migration, CRUD endpoints, polling loop, session UI, confirm flow, debounced DM job, expiry integration. Larger than a same-day slice; probably a focused week.
+
+### Phase 4 v2 — Community depth *(LGS integration; moved after Phase 5)*
+
+Deferred below Phase 5 because async/live sessions are more interesting product territory to explore first. LGS integration slots in nicely once sessions exist — "start a session from this LGS visit" is an obvious combo.
+
+- [ ] **LGS directory** as server-admin-managed web object at `/guilds/<id>/admin`, gated on Discord `MANAGE_GUILD`.
+- [ ] **LGS presence** — "usually at" profile tag + per-visit announcements (web-authored → bot-broadcast to the guild's configured channel). Visits expire post-event so stale intent doesn't accumulate.
+- [ ] **Meetup-aware matching** — "4 traders going to Game Empire Sat: Alice (wants your Vader), Bob (has your Luke)…" scoped to the visit window.
+- [ ] **Match-alert DMs** — the spammiest category. Gate behind the three-axis consent toggle.
+- [ ] **Read-only slash commands** (`/whohas <card>`, `/whowants <card>`) if users in the live server reach for them.
+- [ ] **Tier 2 nightly Discord contract probe** — real-Discord API health check (see `PHASE4_TESTING.md`). Stand up once the bot has real user traffic; probe nothing pre-launch.
 
 ---
 
