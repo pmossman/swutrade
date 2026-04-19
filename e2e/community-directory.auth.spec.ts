@@ -76,7 +76,10 @@ test.describe('Community directory view', () => {
 
   test('empty state renders when viewer has no queryable enrollment', async ({ page }) => {
     await page.goto('/?community=1');
-    await expect(page.getByText(/No one to trade with yet/i))
+    // Community 2.0 surfaces a guild-selector-first empty state when
+    // the viewer has no enrolled servers at all — the old "no
+    // overlapping members" copy now only shows inside a guild space.
+    await expect(page.getByText(/haven't enrolled in any Discord servers/i))
       .toBeVisible({ timeout: 10_000 });
   });
 });
