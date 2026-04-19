@@ -98,6 +98,21 @@ export interface TradeDetailApi {
 }
 
 /**
+ * Module-scoped cache for fetched proposals. Same shape as
+ * `useTradesList`'s cache — stays for the lifetime of the SPA session,
+ * cleared on full reload. Lets the inline expand-peek on the My Trades
+ * lists flip open instantly on repeat expansions instead of re-fetching
+ * every time. Successful mutations invalidate the affected entry via
+ * the reload tick, which forces a fresh fetch.
+ */
+const detailCache = new Map<string, TradeDetail>();
+
+/** Testing-only: reset the module-scoped cache between test cases. */
+export function __resetTradeDetailCache() {
+  detailCache.clear();
+}
+
+/**
  * Loads a single proposal by id. Powers /?trade=<id>. Exposes mutation
  * helpers for every action the viewer might take from the detail view
  * or a row — cancel, accept, decline, nudge — and reloads the trade
@@ -105,8 +120,15 @@ export interface TradeDetailApi {
  * fresh event on the timeline.
  */
 export function useTradeDetail(id: string | null): TradeDetailApi {
-  const [trade, setTrade] = useState<TradeDetail | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'not-found' | 'error'>('loading');
+  // Seed from cache so cache hits render synchronously — the expand
+  // peek opens instantly on repeat expansions. Background fetch still
+  // fires to reconcile against the server.
+  const [trade, setTrade] = useState<TradeDetail | null>(
+    () => (id ? detailCache.get(id) ?? null : null),
+  );
+  const [status, setStatus] = useState<'loading' | 'ready' | 'not-found' | 'error'>(
+    () => (id && detailCache.has(id) ? 'ready' : 'loading'),
+  );
   const [mutating, setMutating] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
@@ -115,17 +137,31 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
       setStatus('not-found');
       return;
     }
+    // Re-seed when id changes (cached-different or not-yet-cached).
+    const cached = detailCache.get(id);
+    if (cached) {
+      setTrade(cached);
+      setStatus('ready');
+    } else {
+      setTrade(null);
+      setStatus('loading');
+    }
     let cancelled = false;
-    setStatus('loading');
     (async () => {
       const result = await apiGet<TradeDetail>(
         `/api/trades/${encodeURIComponent(id)}`,
       );
       if (cancelled) return;
       if (!result.ok) {
-        setStatus(result.reason === 'not-found' ? 'not-found' : 'error');
+        // On a failed revalidation, keep any cached body visible but
+        // surface the error status so the caller can decide. New fetches
+        // (no cache) go straight to the error branch.
+        if (!detailCache.has(id)) {
+          setStatus(result.reason === 'not-found' ? 'not-found' : 'error');
+        }
         return;
       }
+      detailCache.set(id, result.data);
       setTrade(result.data);
       setStatus('ready');
     })();
@@ -139,7 +175,13 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
     setMutating(true);
     try {
       const result = await fn();
-      if (result.ok) setReloadTick(t => t + 1);
+      if (result.ok) {
+        // Drop the cache entry first so concurrent consumers don't
+        // serve the pre-mutation body. The reload tick triggers a
+        // re-fetch that repopulates with the post-mutation state.
+        detailCache.delete(id);
+        setReloadTick(t => t + 1);
+      }
       return result;
     } finally {
       setMutating(false);
@@ -157,7 +199,10 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
   const nudge = useCallback(async (note?: string) => {
     if (!id) return { ok: false as const, reason: 'error' as const };
     const result = await nudgeProposal(id, note);
-    if (result.ok) setReloadTick(t => t + 1);
+    if (result.ok) {
+      detailCache.delete(id);
+      setReloadTick(t => t + 1);
+    }
     return result;
   }, [id]);
 

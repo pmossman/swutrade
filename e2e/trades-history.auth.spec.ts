@@ -93,8 +93,13 @@ test.describe('Trade history + detail + cancel', () => {
     const handleText = page.getByText(`@${recipient.handle}`).first();
     await expect(handleText).toBeVisible();
 
-    // Click into the row — should take us to /?trade=<id>.
+    // Click into the row — expands an inline peek; the full-details
+    // link inside the peek is what navigates to /?trade=<id>.
     await handleText.click();
+    await page
+      .getByRole('button', { name: /Open full details/i })
+      .first()
+      .click();
     await expect(page).toHaveURL(new RegExp(`[?&]trade=${tradeId}`));
     const detail = page.getByTestId('trade-detail');
     await expect(detail).toBeVisible({ timeout: 10_000 });

@@ -14,6 +14,7 @@ import {
   nudgeProposal,
   type ActionResult,
 } from '../services/tradeActions';
+import { TradeExpandPeek } from './TradeExpandPeek';
 
 type Tab = 'incoming' | 'outgoing' | 'history';
 
@@ -49,6 +50,11 @@ export function TradesHistoryView() {
   // carry that selection over to Outgoing and fire the wrong bulk action.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkState, setBulkState] = useState<'idle' | 'running'>('idle');
+  // One row expanded at a time. Tab-switch and list-shape changes
+  // collapse it, same way selection is cleared — the expanded row
+  // may not even exist in the new list, and leaving a phantom peek
+  // open would confuse.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { incoming, outgoing, history } = useMemo(() => {
     const inc: TradeListEntry[] = [];
@@ -82,7 +88,8 @@ export function TradesHistoryView() {
       : history;
 
   // Clear selection when switching tabs or when the underlying list
-  // changes shape (e.g. a refresh dropped a resolved proposal).
+  // changes shape (e.g. a refresh dropped a resolved proposal). Same
+  // collapse policy applies to the expanded peek id.
   useEffect(() => {
     setSelectedIds(prev => {
       if (prev.size === 0) return prev;
@@ -92,6 +99,7 @@ export function TradesHistoryView() {
       }
       return stillValid.size === prev.size ? prev : stillValid;
     });
+    setExpandedId(prev => (prev && activeList.some(p => p.id === prev) ? prev : null));
   }, [activeTab, activeList]);
 
   const bulkable = activeTab === 'incoming' || activeTab === 'outgoing';
@@ -229,21 +237,34 @@ export function TradesHistoryView() {
               />
             )}
             <ul className="flex flex-col gap-2 mt-3">
-              {activeList.map(p => (
-                <li key={p.id}>
-                  <TradeRow
-                    proposal={p}
-                    tab={activeTab}
-                    selectable={bulkable && p.status === 'pending'}
-                    selected={selectedIds.has(p.id)}
-                    onToggleSelected={() => toggleSelected(p.id)}
-                    onCancel={() => handleRowAction('cancel', p)}
-                    onAccept={() => handleRowAction('accept', p)}
-                    onDecline={() => handleRowAction('decline', p)}
-                    onNudge={() => setNudgeTarget(p)}
-                  />
-                </li>
-              ))}
+              {activeList.map(p => {
+                const expanded = expandedId === p.id;
+                return (
+                  <li key={p.id}>
+                    <TradeRow
+                      proposal={p}
+                      tab={activeTab}
+                      selectable={bulkable && p.status === 'pending'}
+                      selected={selectedIds.has(p.id)}
+                      expanded={expanded}
+                      onToggleExpanded={() => setExpandedId(expanded ? null : p.id)}
+                      onToggleSelected={() => toggleSelected(p.id)}
+                      onCancel={() => handleRowAction('cancel', p)}
+                      onAccept={() => handleRowAction('accept', p)}
+                      onDecline={() => handleRowAction('decline', p)}
+                      onNudge={() => setNudgeTarget(p)}
+                    />
+                    {expanded && (
+                      <TradeExpandPeek
+                        proposalId={p.id}
+                        onOpenDetail={() => {
+                          window.location.href = `/?trade=${encodeURIComponent(p.id)}`;
+                        }}
+                      />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </>
         )}
@@ -350,6 +371,8 @@ function TradeRow({
   tab,
   selectable,
   selected,
+  expanded,
+  onToggleExpanded,
   onToggleSelected,
   onCancel,
   onAccept,
@@ -360,6 +383,10 @@ function TradeRow({
   tab: Tab;
   selectable: boolean;
   selected: boolean;
+  expanded: boolean;
+  /** Toggle the inline peek. Navigation to the full detail view moved
+   *  into the peek itself (Open full details →). */
+  onToggleExpanded: () => void;
   onToggleSelected: () => void;
   onCancel: () => void;
   onAccept: () => void;
@@ -377,7 +404,9 @@ function TradeRow({
     <div className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors ${
       selected
         ? 'border-gold/60 bg-gold/10'
-        : 'border-space-700 bg-space-800/40 hover:border-gold/30 hover:bg-space-800'
+        : expanded
+          ? 'border-gold/40 bg-space-800'
+          : 'border-space-700 bg-space-800/40 hover:border-gold/30 hover:bg-space-800'
     }`}>
       <div className="flex items-center gap-3 min-w-0">
         {selectable && (
@@ -396,9 +425,12 @@ function TradeRow({
             <CheckIcon className="w-3.5 h-3.5" />
           </button>
         )}
-        <a
-          href={`/?trade=${encodeURIComponent(proposal.id)}`}
-          className="flex items-center gap-3 min-w-0 flex-1"
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Collapse trade preview' : 'Expand trade preview'}
+          className="flex items-center gap-3 min-w-0 flex-1 text-left"
         >
           <DirectionIcon sent={isSent} />
           <CounterpartAvatar user={proposal.counterpart} />
@@ -433,7 +465,7 @@ function TradeRow({
             </div>
           </div>
           <StatusBadge status={proposal.status} />
-        </a>
+        </button>
       </div>
 
       {(showIncomingActions || showOutgoingActions) && (

@@ -10,6 +10,7 @@ import {
 } from '../hooks/useTradesList';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { HandlePickerDialog } from './HandlePickerDialog';
+import { TradeExpandPeek } from './TradeExpandPeek';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -259,6 +260,10 @@ function NeedsResponseCallout({
 }) {
   const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
   const overflow = proposals.length - visible.length;
+  // Single row expanded at a time — collapses the previous peek when a
+  // new one is clicked, avoiding multiple card grids competing for the
+  // viewport at once.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <section
       aria-labelledby="needs-response-heading"
@@ -274,9 +279,25 @@ function NeedsResponseCallout({
         </h2>
       </div>
       <ul className="flex flex-col gap-1.5">
-        {visible.map(p => (
-          <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} highlight />
-        ))}
+        {visible.map(p => {
+          const expanded = expandedId === p.id;
+          return (
+            <li key={p.id}>
+              <TradeRow
+                trade={p}
+                onClick={() => setExpandedId(expanded ? null : p.id)}
+                highlight
+                expanded={expanded}
+              />
+              {expanded && (
+                <TradeExpandPeek
+                  proposalId={p.id}
+                  onOpenDetail={() => onOpenTrade(p.id)}
+                />
+              )}
+            </li>
+          );
+        })}
       </ul>
       {overflow > 0 && (
         <button
@@ -311,6 +332,11 @@ function TradesModule({
   viewerHandle: string | undefined;
 }) {
   const hasAny = counts.incoming + counts.outgoing + counts.resolved > 0;
+  // A single expanded proposalId across the activity feed so opening
+  // one row collapses any other. Separate from the callout's state —
+  // the two lists show different proposals and we don't try to keep
+  // a selection in sync.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
     <ModuleSection
@@ -360,18 +386,29 @@ function TradesModule({
           {/* Mobile shows 3, desktop 5 — matches the module-pattern
               spec ("richer on desktop"). Items past the desktop cap
               stay hidden; the overflow link in the header covers them. */}
-          {activity.map((a, idx) => (
-            <li
-              key={`${a.proposalId}-${a.createdAt}-${idx}`}
-              className={idx >= 3 ? 'hidden lg:list-item' : undefined}
-            >
-              <ActivityRow
-                activity={a}
-                viewerHandle={viewerHandle}
-                onClick={() => onOpenTrade(a.proposalId)}
-              />
-            </li>
-          ))}
+          {activity.map((a, idx) => {
+            const peekKey = `${a.proposalId}-${a.createdAt}-${idx}`;
+            const expanded = expandedId === peekKey;
+            return (
+              <li
+                key={peekKey}
+                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
+              >
+                <ActivityRow
+                  activity={a}
+                  viewerHandle={viewerHandle}
+                  expanded={expanded}
+                  onClick={() => setExpandedId(expanded ? null : peekKey)}
+                />
+                {expanded && (
+                  <TradeExpandPeek
+                    proposalId={a.proposalId}
+                    onOpenDetail={() => onOpenTrade(a.proposalId)}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </ModuleSection>
@@ -382,10 +419,12 @@ function ActivityRow({
   activity,
   viewerHandle,
   onClick,
+  expanded,
 }: {
   activity: TradeActivityEntry;
   viewerHandle: string | undefined;
   onClick: () => void;
+  expanded?: boolean;
 }) {
   const actorLabel = activity.actor
     ? (activity.actor.handle === viewerHandle ? 'You' : `@${activity.actor.handle}`)
@@ -407,7 +446,12 @@ function ActivityRow({
     <button
       type="button"
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
+      aria-expanded={expanded}
+      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg border transition-colors text-left ${
+        expanded
+          ? 'bg-space-800/70 border-gold/40'
+          : 'bg-space-800/30 border-space-700 hover:border-gold/30 hover:bg-space-800/50'
+      }`}
     >
       <span aria-hidden className="text-base leading-none shrink-0">{glyphForActivityType(activity.type)}</span>
       <div className="flex-1 min-w-0">
@@ -706,10 +750,15 @@ function TradeRow({
   trade,
   onClick,
   highlight,
+  expanded,
 }: {
   trade: TradeListEntry;
   onClick: () => void;
   highlight?: boolean;
+  /** When true the chevron rotates to match the open peek below. The
+   *  row itself doesn't visually grow — the peek renders as a sibling
+   *  block below it in the list. */
+  expanded?: boolean;
 }) {
   const counterpart = trade.counterpart;
   const label = counterpart ? `@${counterpart.handle}` : 'Unknown trader';
@@ -756,7 +805,11 @@ function TradeRow({
           {preview && ` · ${preview}`}
         </div>
       </div>
-      <ChevronIcon className="w-4 h-4 text-gray-500 shrink-0 -rotate-90" />
+      <ChevronIcon
+        className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${
+          expanded ? 'rotate-0' : '-rotate-90'
+        }`}
+      />
     </button>
   );
 }
