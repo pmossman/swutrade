@@ -99,12 +99,14 @@ export function HomeView({
           community/context on the right — so horizontal space isn't
           wasted. Bump max-w from 3xl → 5xl here to give the grid room. */}
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {user && <GreetingRow user={user} onOpenProfile={onOpenProfile} />}
-
-        <PrimaryActions
-          onBuildTrade={onBuildTrade}
-          onOpenTradesHistory={onOpenTradesHistory}
-        />
+        {user && (
+          <GreetingRow
+            user={user}
+            onOpenProfile={onOpenProfile}
+            onBuildTrade={onBuildTrade}
+            onOpenTradesHistory={onOpenTradesHistory}
+          />
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="flex flex-col gap-6">
@@ -144,13 +146,20 @@ export function HomeView({
 function GreetingRow({
   user,
   onOpenProfile,
+  onBuildTrade,
+  onOpenTradesHistory,
 }: {
   user: { handle: string; username: string; avatarUrl: string | null };
   onOpenProfile: (handle: string) => void;
+  onBuildTrade: () => void;
+  onOpenTradesHistory: () => void;
 }) {
   const displayName = user.username && user.username !== user.handle ? user.username : `@${user.handle}`;
+  // Mobile: identity line on top, actions wrap to a second row.
+  // Desktop: identity on the left, actions pinned to the right — keeps
+  // primary CTA visible without letting it dominate the page width.
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3">
       <button
         type="button"
         onClick={() => onOpenProfile(user.handle)}
@@ -159,42 +168,29 @@ function GreetingRow({
       >
         <Avatar avatarUrl={user.avatarUrl} name={user.username || user.handle} />
       </button>
-      <div className="min-w-0">
+      <div className="min-w-0 mr-auto">
         <div className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">
           Welcome back
         </div>
         <div className="text-lg font-semibold text-gray-100 truncate">{displayName}</div>
       </div>
-    </div>
-  );
-}
-
-// --- Primary actions -------------------------------------------------------
-
-function PrimaryActions({
-  onBuildTrade,
-  onOpenTradesHistory,
-}: {
-  onBuildTrade: () => void;
-  onOpenTradesHistory: () => void;
-}) {
-  return (
-    <div className="flex flex-col sm:flex-row gap-2">
-      <button
-        type="button"
-        onClick={onBuildTrade}
-        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
-      >
-        <PlusIcon className="w-4 h-4" />
-        Build a trade
-      </button>
-      <button
-        type="button"
-        onClick={onOpenTradesHistory}
-        className="flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors"
-      >
-        Trade history
-      </button>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onOpenTradesHistory}
+          className="flex items-center justify-center gap-1.5 px-3 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors"
+        >
+          History
+        </button>
+        <button
+          type="button"
+          onClick={onBuildTrade}
+          className="flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
+        >
+          <PlusIcon className="w-4 h-4" />
+          New trade
+        </button>
+      </div>
     </div>
   );
 }
