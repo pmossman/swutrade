@@ -327,6 +327,34 @@ Signed-in users with a bare URL land on a Home page surfacing pending trades + e
 
 Settings grew beyond a single scrollable page (profile + global prefs + per-server + per-server-member prefs). Rebuilt as a drill-down hub with query-param routing: `/?settings=1&tab=servers&guild=X&members&user=Y`. A persistent gold "Done" button in the header exits to the main app from any depth — direct response to beta feedback ("tapping back 5 times is bad UX"). Native popstate handles back/forward navigation.
 
+### 2026-04-19 — Four IA surfaces: My Trades / My Lists / My Communities / My Stores
+
+App organizes user-facing content around four parallel "my" surfaces, each getting its own hub + NavMenu entry + Home module. "My Stores" is the Phase 4 v2 LGS slot; it renders as a dim "coming soon" placeholder today so the layout is stable when LGS data lights up. Rationale: users ask different questions of each surface ("what do I have?", "who's around me?", "what's happening in my area?") — they deserve distinct first-class destinations, not tabs inside one catch-all. Drives Home 2.0's dashboard layout + NavMenu contents.
+
+### 2026-04-19 — Home is a dashboard, not a content stream
+
+Home 2.0 became four stacked modules + a pinned "Needs your response" callout, replacing the earlier "pending proposals + communities" two-column layout. Each module has the same shape: icon + name + secondary action + summary stats + 2-3 preview items + link-through. Desktop: 2-column pairing (action-surfaces left, resource-surfaces right) + full-width Stores footer. Mobile: single-column stack in priority order. Module pattern stays predictable even as modules grow — Phase 4 v2's LGS events slot into the Stores module without a layout rewrite.
+
+### 2026-04-19 — "+ Balance a trade" vs. "Propose a trade" semantic split
+
+Previously one "+ New trade" CTA led to the ad-hoc balance builder, and sending a Discord proposal was discovered only through profile CTAs. Renamed the primary CTA to "+ Balance a trade" (signals local/in-person/ad-hoc) and surfaced "Propose a trade →" as a secondary action inside My Communities. Rationale: balance-a-trade is the foundational flow (no recipient required, no Discord) + matches the product mission ("local/in-person is the goal; Discord augments"). Propose lives inside Communities because you can only propose to someone in your community. Future: in-builder "Send as proposal" CTA will close the conversion loop when a user balances cards first, then decides to send.
+
+### 2026-04-19 — Community 2.0: guild is the unit, not a flat directory
+
+CommunityView shifted from a flat cross-guild member directory (with sort tabs) to per-guild spaces with their own tabs (Overview · Members · Popular wants · Upcoming). Multi-guild selector when enrolled in >1; auto-redirects when exactly 1. Rationale: users visit Communities to do more than find trade partners — they want to see what's happening in their guild, who's new, what's popular. A flat list collapses those intents. Per-guild pages also let each guild grow its own identity over time (future custom LGS tag, pinned events, etc.).
+
+### 2026-04-19 — AppHeader is chrome-only; view-specific CTAs live in content
+
+Initial design-system work folded view-specific action slots (`actions={...}`) into the AppHeader's right cluster alongside NavMenu + AccountMenu. This created width competition when a long breadcrumb ("Home › Community › SWU SD") met a wide primary CTA ("Trade with @somehandle") on mobile. Separated the roles: AppHeader does logo + breadcrumbs + nav + account only. View CTAs render in content-level strips that each view can design freely (hero on Profile, tight right-align on Settings, inline toolbar on Trade builder, summary+CTA strip on ListView). Predictable chrome, flexible per-view actions.
+
+### 2026-04-19 — React contexts for shared state, not prop drilling
+
+Three new contexts replace the prop-drilling + per-view-hook-duplication that had accumulated: `PriceDataContext` (wraps `usePriceData`, auto-calls `loadAllSets` on mount — the motivating bug case), `CardIndexContext` (derives `byProductId` / `byFamilyAll` indexes so views don't thread them), `DrawerContext` (single shared ListsDrawer state + `openLists()` hook). Providers nest in `main.tsx` above `<App/>`. The ListsDrawer now lives at App root — no more "every view renders its own drawer" duplication. `percentage` / `priceMode` still prop-drilled (deferred to its own slice — low urgency, moderate-value extraction).
+
+### 2026-04-19 — API shape: discriminated ActionResult across all hooks
+
+`src/services/apiClient.ts` exposes `apiGet` / `apiPost` / `apiPut` / `apiDelete`, each returning `ActionResult<T> = { ok: true; data: T } | { ok: false; reason: '...'; detail?: string }`. Status → reason mapping is centralized: 409 → `already-resolved`, 429 → `rate-limited` with `nextAvailableAt`, 404 → `not-found`, 403 → `forbidden`, 401 → `unauthorized`, else → `error`. 11 hooks migrated off inline `fetch + res.ok + JSON.parse + setState` to this pattern. Rationale: each new endpoint was reinventing the error branches; callers couldn't tell a 429 from a 404 from a 500 without parsing error messages. Pattern originated in `tradeActions.ts`; now shared.
+
 ---
 
 ## Parked technical improvements

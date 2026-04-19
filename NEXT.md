@@ -37,21 +37,21 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Queue
 
-### 1. Home view polish from real dogfooding
+### 1. Dogfood pass on the refactored stack
 
-**Why:** Home landed on 2026-04-18. A beta user immediately surfaced a cap-needed papercut (~20 pending proposals flooding the page, fixed same day in `09c9c94`). That's one surface-level finding on day one — there are almost certainly more latent issues from a real user's session. Best to pressure-test with agent-browser + a real beta account before moving on to other work.
+**Why:** Today's foundation refactor (R1 contexts + R2 routing config + R3 API client + R4 composer hook + header separation) is a deep-structure change. Unit tests + auth e2e pass, but subtle visual / interaction regressions are the kind that only surface under a real human click-through. Catch them while the architecture is fresh in memory.
 
 **What to look for:**
-- Loading order (is the initial paint empty? does the greeting flash?)
-- Empty states at every section (no guilds, no pending, no trades history ever)
-- What the Home looks like for a user with 0 enrolled communities but SWUTrade in their servers — does it point them into the enrollment flow clearly?
-- The "Manage" link on Your Communities — does it land where they expect?
-- Mobile viewport at 375×667 specifically (the tightest real iPhone we target)
-- What happens when a proposal gets accepted/declined while the Home page is open — does the count go stale?
+- AppHeader's new chrome-only shape: does it feel right on every view?
+- View-level action strips: do Profile hero, Settings Done, Trade-builder toolbar, ListView summary all feel balanced?
+- Card name resolution: wants/available drawer rows must show real names (the bug that motivated R1)
+- NavMenu popover opens/closes cleanly on every view
+- Breadcrumbs truncate correctly at 375px viewport
+- Home 2.0 module density on desktop — any awkward empty sections
 
 **Done when:**
-- [ ] Ran through the Home view with a real seeded account in agent-browser
-- [ ] Fixed any discovered papercuts OR explicitly tagged them as parked (with rationale)
+- [ ] Ran through Home, Community, Settings, Profile, ListView, TradeDetail with a real signed-in account
+- [ ] Caught papercuts logged as their own tasks or fixed same-slice
 - [ ] Between-slice ritual passes
 
 ---
@@ -102,6 +102,30 @@ Skipping any of 1-3 is a bug in the process.
 
 Items that didn't make the Foundation bundle cut but should land before Phase 4 v2 / Phase 5 work resumes.
 
+### Community activity feed *(Community 2.0 follow-up)*
+
+C1 shipped the guild-scoped shell with an Overview tab containing a "Community activity coming soon" placeholder. Real activity feed: `community_events` table keyed on `guild_id + created_at` with event types (trade-accepted, member-joined, list-updated). Read via `GET /api/community/:guildId/activity`. Privacy: add a new consent axis (`shareActivityPublicly`) parallel to the existing three — opt-out default, visible toggle in Settings > Discord servers > Guild. Per-user can hide their own events from the feed. Pairs naturally with the existing `proposal_events` table since trade-accepted data is already logged there.
+
+### Handle-picker dialog improvements
+
+Home 2.0's "Propose a trade" flow opens `HandlePickerDialog` today. Deferred improvements: (a) allow typing a handle that isn't in any shared community (just verify it exists + isn't private), (b) pull recent trade partners to surface as a "Recent" chips row above the typed-handle input, (c) empty-state hint pointing into Community when the user has no enrolled guilds.
+
+### In-builder "Send as proposal" CTA
+
+When a signed-in user has cards on both sides of the trade builder (not via `?propose=` — just ad-hoc balance), surface a small "Send as a proposal to @…" CTA that opens HandlePickerDialog pre-seeded with the current cards. Closes the "I balanced it, now I want to send it" conversion loop. Small UI tweak plus a reuse of the handle-picker.
+
+### `percentage` / `priceMode` prop drilling → context *(audit action item)*
+
+`percentage` + `priceMode` are persisted via `usePersistedState` in App.tsx then drilled through ~8 components (TradeSide×2, ProfileView, ListView, CounterBar, ProposeBar, EditBar, TradeBalance, TradeTabBar). Extract a `PricingContext` sibling to the R1 contexts. ~2 hours. Wait until there's a third symptom — the audit flagged this as medium priority, so no rush.
+
+### Client-side error reporter *(audit action item)*
+
+Server has `lib/errorReporter.ts` posting to `#bot-errors`. Client has no equivalent — view-layer failures silently console.warn (e.g., `TradeImageModal`). Add a `src/lib/clientErrorReporter.ts` that POSTs to a `/api/errors/client` endpoint (new) which funnels to the same Discord webhook tagged `client`. Hook it to a React `ErrorBoundary` at App root + expose as a `reportClientError()` helper for explicit catches. Low urgency until real users start hitting runtime errors we can't see.
+
+### Proposal transition pattern extraction
+
+`handlePropose`, `handleCounter`, `handleCancel`, `handleEdit`, `handleNudge`, and `resolveProposal` (accept/decline) now share a well-established pattern: "load proposal → auth check → precondition check → optimistic-concurrency update → edit source DM → send outbound DM." Extract `executeProposalTransition(opts)`. High ROI once a 7th transition shows up (expiry cron counts as one — tackle this alongside).
+
 ### Proposal expiry cron
 
 Proposals sit `pending` indefinitely today. A Vercel Cron Job at `/api/jobs/expire-proposals` runs daily, transitions rows older than N days (30 to start) to `expired`, edits their DMs to show the expired banner. Needs a new cron entry + a handler that matches the propose/cancel state-transition pattern. Small, self-contained, completes Phase 5's terminal-state list.
@@ -110,39 +134,84 @@ Proposals sit `pending` indefinitely today. A Vercel Cron Job at `/api/jobs/expi
 
 Real-Discord API health check on a nightly schedule. Hits a narrow set of endpoints (`/users/@me` with the bot token, `/gateway`) + a canonical `POST /channels/{id}/messages` to a dedicated test channel. Diagnostic only — issue-opens on failure, doesn't block merges. Stand up once the bot has real user traffic so we're not monitoring a pipeline that isn't carrying cargo.
 
-### Frontend API client extraction
-
-Every hook inline-implements fetch + error handling. `src/services/apiClient.ts` exposing `apiGet/apiPost/apiPut` that returns a discriminated `{ ok: true, data } | { ok: false, status, code, message }`. Single place for session-expired handling, retry policy, error mapping. Roughly 3 hours of migration work across ~10 call sites. Foundational — pairs well with the ProposeBar/CounterBar dedup below.
-
-### ProposeBar + CounterBar dedup via `useComposerBar`
-
-The two bars share ~80% of their logic: fetch-with-dedupe-ref, auto-apply match/seed on mount, message input disclosure, send state machine, snapshot building. Extract a `useComposerBar` hook and keep the two components as thin render wrappers. Defer until a third variant (e.g., proposer-withdraws-and-replaces flow) justifies the extraction.
-
-### Proposal transition pattern extraction
-
-`handlePropose`, `handleCounter`, `handleCancel`, and `handleTradeProposalButton` share ~250 lines of "load proposal → auth check → precondition check → optimistic-concurrency update → edit source DM → send outbound DM." Extract `executeProposalTransition(opts)`. High ROI once a 5th transition shows up (expiry counts as one — tackle this alongside the expiry cron).
-
-### Discord error classification + retry
-
-Rate limits (429), server errors (5xx), and permanent client errors (4xx) all throw identically from `DiscordBotClient`. Callers can't differentiate. Typed error classes + one retry on 429 with a 1s backoff before marking `delivery_status=failed`. Worth doing alongside the expiry-cron slice since that's where retry starts mattering.
-
-### View-mode config centralization
-
-`detectViewMode` + `useTradeUrl` strip-guards drift every time a new view mode ships. We've eaten two silent bugs from this (`?autoBalance=1`, `?trade=<id>`). A single config object listing every mode + its preserve-params would make "new view mode" a one-place change. 3-4 hours. High ROI but no immediate pain; do before the next view mode ships.
-
 ### Chain visualization timeline
 
 Trade detail view currently shows one-hop chain context (↑ counter to / ↓ countered by). A proper timeline walking the FK chain back to the root. Defer until chain depth > 2 actually happens in the wild — right now a timeline would only show two nodes.
 
+### Keyboard shortcuts on Home
+
+Dashboard-app pattern: `G T` → trades, `G L` → lists (opens drawer), `G C` → community, `N` → new balance. Nice-to-have polish; low priority until beta users explicitly ask.
+
 ### Phase 4 v2 proper
 
 LGS directory, visit announcements, meetup-aware matching, match-alert DMs. See ROADMAP.md Phase 4 v2 for scope.
+
+### Phase 5b — Live trade sessions
+
+Separate-flow in-person collaborative trading. See ROADMAP.md Phase 5b for scope + data-model sketch.
 
 ---
 
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-19 — Header chrome / action separation
+Commit: `e1efcab` + `b0583c2`. Removed the `actions` prop from AppHeader; view-specific CTAs (Trade with @X, Done, split/tabbed toggle, Share/Clear, Start a trade) moved to content-level strips per view. Biggest UX win: ProfileView's "Trade with @X" now renders alongside the avatar + handle as a hero, not as a squished header button fighting breadcrumbs for width. Settings drill-down gets a tight right-aligned Done strip. Trade builder gets its own action row. ListView merges summary + primary CTA into one strip. AppHeader is now *chrome only*: logo, breadcrumbs, NavMenu, AccountMenu.
+
+### 2026-04-19 — Foundation refactor (R1 + R2 + R3 + R4 in one day)
+Four parallel slices landing the architectural audit's top findings in under 24 hours.
+
+**R1 — contexts (`a0c0e6d`):** `PriceDataContext` + `CardIndexContext` + `DrawerContext` replace the per-view `usePriceData()` instances + prop-drilled `byProductId`/`byFamilyAll` + each view's own `listsDrawerOpen` state. Providers wrap App in `src/main.tsx`. Single `<ListsDrawer>` lives at App root. **Net −56 LOC across 9 files**, and the entire class of "view forgot to call `loadAllSets()`" bugs goes away (the motivating case: yesterday's ListsDrawer-rendered-raw-familyId-slugs bug on HomeView).
+
+**R2 — route config (`ff79c13`):** New `src/routing/config.ts` with a `VIEW_ROUTES` array. Each entry declares its `matches()` predicate + owned `paramKeys`. `detectViewMode(isSignedIn)` loops the array. `useTradeUrl`'s strip-guard chain now consults the config's `STANDALONE` view list instead of hand-maintained `if (currentParams.has('profile')) return` branches. Drill-down helper for Settings/Community was evaluated but skipped — the two shapes differ enough that shared abstraction would save 15 lines while complicating CommunityView's single-guild auto-redirect effect. Shared `TRADE_CODEC_KEYS` + `TRADE_INTENT_KEYS` exports.
+
+**R3 — API client (`9645170`):** New `src/services/apiClient.ts` with `apiGet<T>` / `apiPost<T>` / `apiPut<T>` / `apiDelete<T>` returning `ActionResult<T>` — same discriminated-union pattern `tradeActions.ts` already pioneered, now shared. Status→reason mapping (409 `already-resolved`, 429 `rate-limited` with `nextAvailableAt`, 404 `not-found`, 403 `forbidden`, 401 `unauthorized`, else `error`). Migrated 11 hooks: useTradesList, useGuildMemberships, useTradeDetail, useAccountSettings, useCommunityMembers, useRecipientProfile, useCommunityCards, useTrending, usePopularWants, useAuth, useServerSync. Tricky cases: needs-reauth 409 branch in useGuildMemberships (maps to `already-resolved` → custom banner); useServerSync wraps apiClient in a thin helper that re-throws `auth-expired` for the surrounding try/catch.
+
+**R4 — `useComposerBar` hook (`c141e2c`):** ProposeBar / CounterBar / EditBar shared ~70% of logic (send state machine, card snapshot builder, message input disclosure, error mapping). Extracted to `src/hooks/useComposerBar.ts`. Each bar keeps its own mount-fetch + seed-once pattern (fetch shapes differ too much to share), but the tail end is one hook. Net: CounterBar −28 LOC, EditBar −30 LOC, ProposeBar −59 LOC across the three components. Discriminated `ComposerSendState` carries optional `deliveryStatus` so the "saved but DM failed" branch still works for Propose + Counter. Uses R3's `apiClient.apiPost` internally.
+
+### 2026-04-19 — Community 2.0 guild-scoped spaces
+Commit: `548198d`. CommunityView restructured from a flat member directory into per-guild pages with tabs (Overview · Members · Popular wants · Upcoming). Multi-guild selector when enrolled in >1 (auto-redirects when enrolled in exactly 1). Breadcrumb: `Home › Community › <guildName>`. URL routing: `?community=1&guild=<id>&tab=<slug>`. Overview tab has activity-feed placeholder + "Your matches here" top-3 preview with a link into Members. Popular wants tab renders aggregated wants from the existing community-cards endpoint. Upcoming tab is LGS placeholder. Pairs with `memberCount` now on `/api/me/guilds` (`db6b164`).
+
+### 2026-04-19 — Home 2.0 four-module dashboard
+Commit: `01cf623`. Restructured HomeView from a two-column pending-mailbox + communities layout into a four-module dashboard:
+- ⏰ Needs your response (pinned callout, only when count > 0)
+- 💱 My Trades with recent activity from `proposal_events`
+- 📋 My Lists with top priority wants preview
+- 👥 My Communities with enrolled guild cards
+- 🏪 My Stores (Phase 4 v2 placeholder)
+
+Desktop: 2-column grid pairing action-surfaces (left) with resource-surfaces (right) + full-width Stores footer. Mobile: stacks single-column. `/api/trades/proposals` extended with a `recentActivity` field (joins `proposal_events` → `users`, filters noisy delivery-only events, limit 5). CTA renamed "+ New trade" → "+ Balance a trade" to disambiguate from the Discord propose flow (propose-to-someone lives in Communities module). Companion `HandlePickerDialog` (`591d03e`) opens from the Communities module's "Propose a trade" action.
+
+### 2026-04-19 — Bulk-resolve endpoint + UI + Discord 40003 classification
+Commits: `5630a84`, `7543a9a`, `d16f1be`. Beta user rapidly declined ~10 pending proposals and hit Discord's `40003` ("opening DMs too fast") rate limit. Three-part fix:
+- **UI** — multi-select checkboxes on Incoming + Outgoing pending rows, select-all toggle, fixed bottom `BulkActionBar` with two-tap-confirm destructive button. 50-cap honored client-side with a "Showing N of M · bulk cap is N" hint.
+- **Backend** — `POST /api/trades?action=bulk-resolve` with `{ ids, action: 'decline' | 'cancel' }` capped at 50. Coalesces proposer-notification DMs into ONE summary DM per unique proposer ("Parker declined 7 of your trades") using a new `buildBulkDeclineNotification` builder. 200ms spacing between summary DMs as defense-in-depth. Cancels skip the summary (edit-in-place uses known channel ids).
+- **Error classification** — Discord code `40003` (HTTP 400) now classifies as `DiscordRateLimitError` in `lib/discordErrors.ts`. Existing `errorReporter.shouldSkip` filter auto-silences it + bot client's 429-retry backoff applies automatically.
+
+### 2026-04-19 — Edit + Nudge + web Accept/Decline endpoints + activity timeline
+Shipped across several commits: Foundation event log (`f3f7b61`), edit (`e454b35`), accept/decline (`0dba7d9`), nudge (`45b384c`), My Trades tabs + timeline UI (`b605c0c`).
+
+**`proposal_events` append-only log** with event types (created, delivered_ok/failed, edited, nudged, accepted, declined, cancelled, countered, expired), actor+payload+created_at. `lib/proposalEvents.ts` helper for `recordEvent` + `listEvents` + `lastNudgedAt` (rate-limit check). Threaded into every existing lifecycle handler.
+
+**Edit** — `POST /api/trades?action=edit` mutates a still-pending proposal's cards/message, re-delivers the Discord message in place. Proposer-only, pending-only. `/?edit=<id>` EditBar composer on the web. 8 tests.
+
+**Web Accept/Decline** — `POST /api/trades?action=accept` + `?action=decline` share logic with the Discord button handler via a new `lib/proposalResolve.ts` module. Recipients who prefer the web can resolve from the My Trades list without bouncing to Discord. 12 tests.
+
+**Nudge** — `POST /api/trades?action=nudge` re-posts the DM (or thread message) to bump it in the recipient's inbox. 24h cooldown via `lastNudgedAt`. Optional 280-char note appended as a gold-bordered prefix embed via new `buildProposalMessage(ctx, { nudgeNote })` param. 7 tests.
+
+**My Trades UI** — TradesHistoryView rebuilt as 3 tabs (Incoming / Outgoing / History) with role-appropriate row-level quick actions. TradeDetailView gets an activity timeline (reads events) + "Open thread in Discord" link when `discordThreadId` is set.
+
+### 2026-04-18 — AppHeader design system + view migrations
+Commits: `505a346`, `93d762f`, `2e1fcc6`, `ab3e7ce`, `57d62ec`, `d099816`, `4bc792f`. Three primitives in `src/components/ui/`:
+- **AppHeader** — single top-chrome with logo + breadcrumbs + right-cluster (actions slot that would later be removed in the 2026-04-19 separation, NavMenu, AccountMenu). Always-on across every view.
+- **Breadcrumbs** — view-registered path rendered in the header. Desktop shows full trail; mobile collapses to `‹ parent · current`. Single-DOM-tree after a strict-mode-collision fix.
+- **NavMenu** — hamburger popover owning content nav (Home / My Lists / My Trades / My Communities). Separate from AccountMenu (identity-only: profile / settings / sign out) — beta feedback was that mixing identity + content actions in one popover was confusing.
+
+All eight signed-in views migrated (Settings, Trades history + detail, Community, Profile, Home, ListView). Popover stacking-context fix (`relative z-40` on header, popover bumped to z-50) + e2e helper update for the new NavMenu location.
+
+### 2026-04-18 — Home view v1 + beta feedback pass
+Commits: `f120765`, `09c9c94`, `ff3330c`, `ce47f03`, `73a76f1`, `f36402e`. Shipped the signed-in landing page that surfaced "needs your response" + communities + build-a-trade CTA. Series of same-day polish landings from beta user clicks: pending-cap (with "see all N" overflow), rich trade rows with viewer-centric grammar + timeAgo + top-card preview, 2-column desktop layout, Manage deep-link into settings > servers > guild, TradeDetail Back returns to referrer, SWR-cache on useTradesList/useGuildMemberships to kill loading flashes on return-nav. Compact New trade + History buttons in the greeting row instead of a full-width gold CTA.
 
 ### 2026-04-18 — Home view (signed-in landing page)
 Commits: `f120765`, `09c9c94`. Signed-in users with a bare URL now land on a Home page (`src/components/HomeView.tsx`) instead of an empty trade builder. Surfaces pending proposals that need their response (capped at 5 with "See all N pending →" overflow), waiting-on-others (collapsed, also capped), enrolled Discord communities, an LGS placeholder, and a primary "Build a trade" CTA. `detectViewMode` grew an `isSignedIn` parameter; auth-resolution + popstate both call it through a ref. Signed-out users still land on the trade builder so the public share-URL experience is unchanged.
