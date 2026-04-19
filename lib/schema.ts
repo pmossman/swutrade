@@ -44,6 +44,14 @@ export const users = pgTable('users', {
   // memberships should not silently gain visibility from a server-
   // admin decision the user didn't make. Users opt in via Settings.
   autoEnrollOnBotInstall: boolean('auto_enroll_on_bot_install').default(false).notNull(),
+  // Community activity feed opt-out. When true, the user's
+  // lifecycle events (trade_accepted, member_joined) render in each
+  // mutual guild's Community Overview feed. Default on — the feed is
+  // a guild-scoped surface only visible to other enrolled members, so
+  // the baseline expectation is presence. Toggling off hides future
+  // AND historical events; events are still recorded so flipping back
+  // on restores the trail.
+  shareActivityPublicly: boolean('share_activity_publicly').default(true).notNull(),
   // Trade-thread consent model. Four states driving the decision of
   // whether a proposal's chat happens in a private thread (with both
   // traders inside) or stays in per-user DMs:
@@ -394,5 +402,41 @@ export const proposalEvents = pgTable(
   },
   (t) => [
     index('proposal_events_proposal_created_idx').on(t.proposalId, t.createdAt),
+  ],
+);
+
+/**
+ * Append-only activity log scoped to a Discord guild. Powers the
+ * Community 2.0 Overview tab's activity feed.
+ *
+ * Event types (per-type payload shape):
+ *   trade_accepted — { proposalId, counterpartUserId }
+ *   member_joined  — { } (actor_user_id carries the identity)
+ *
+ * Privacy: an actor's `users.share_activity_publicly` flag gates
+ * whether their events render in the feed. Events are always recorded
+ * (we don't delete an actor's history when they toggle off) — the
+ * read-side query filters. Turning the pref back on restores
+ * visibility of the historical events.
+ */
+export const communityEventTypes = [
+  'trade_accepted',
+  'member_joined',
+] as const;
+export type CommunityEventType = typeof communityEventTypes[number];
+
+export const communityEvents = pgTable(
+  'community_events',
+  {
+    id: text('id').primaryKey(),
+    guildId: text('guild_id').notNull(),
+    actorUserId: text('actor_user_id')
+      .references(() => users.id, { onDelete: 'set null' }),
+    type: text('type', { enum: communityEventTypes }).notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('community_events_guild_created_idx').on(t.guildId, t.createdAt),
   ],
 );

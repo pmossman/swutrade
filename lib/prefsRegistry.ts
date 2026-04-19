@@ -242,6 +242,18 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     section: 'membership',
     discord: { order: 20 },
   }),
+  definePref({
+    key: 'shareActivityPublicly',
+    scope: { kind: 'self' },
+    column: 'shareActivityPublicly',
+    type: { kind: 'boolean' },
+    label: 'Appear in community activity feeds',
+    description: "Your trade-accepted and new-member events show up in each mutual server's activity feed. Turning this off hides past and future events from the feed without deleting them.",
+    default: true,
+    surfaces: ['web', 'discord'],
+    section: 'privacy',
+    discord: { order: 21 },
+  }),
 ];
 
 // -- lookup + validation -----------------------------------------------------

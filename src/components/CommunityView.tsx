@@ -9,6 +9,10 @@ import {
   useGuildMemberships,
   type GuildMembershipSummary,
 } from '../hooks/useGuildMemberships';
+import {
+  useCommunityActivity,
+  type CommunityEvent,
+} from '../hooks/useCommunityActivity';
 import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
@@ -440,6 +444,7 @@ function OverviewPanel({
     () => sortMembers(guildMembers, 'overlap').slice(0, 3),
     [guildMembers],
   );
+  const activity = useCommunityActivity(guild.guildId);
 
   return (
     <div className="flex flex-col gap-5">
@@ -450,10 +455,11 @@ function OverviewPanel({
         >
           Activity
         </h3>
-        <div className="rounded-lg bg-space-800/40 border border-space-700 px-4 py-5 text-xs text-gray-500 leading-relaxed">
-          Community activity coming soon — we'll surface new enrollments,
-          fresh wants, and notable trades from {guild.guildName} here.
-        </div>
+        <ActivityFeed
+          status={activity.status}
+          events={activity.events}
+          guildName={guild.guildName}
+        />
       </section>
 
       <section aria-labelledby="overview-matches-heading">
@@ -494,6 +500,80 @@ function OverviewPanel({
       </section>
     </div>
   );
+}
+
+// --- Activity feed ---------------------------------------------------------
+
+function ActivityFeed({
+  status,
+  events,
+  guildName,
+}: {
+  status: ReturnType<typeof useCommunityActivity>['status'];
+  events: CommunityEvent[];
+  guildName: string;
+}) {
+  if (status === 'loading' || status === 'idle') {
+    return <LoadingState label="Loading activity…" />;
+  }
+  if (status === 'error') {
+    return <ErrorState>Couldn't load activity for {guildName}. Try refreshing.</ErrorState>;
+  }
+  if (events.length === 0) {
+    return (
+      <div className="rounded-lg bg-space-800/40 border border-space-700 px-4 py-5 text-xs text-gray-500 leading-relaxed">
+        No activity yet in {guildName}. Trade acceptances and new
+        enrollments from members who share activity will appear here.
+      </div>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {events.map(e => (
+        <ActivityRow key={e.id} event={e} />
+      ))}
+    </ul>
+  );
+}
+
+function ActivityRow({ event }: { event: CommunityEvent }) {
+  const actorLabel = event.actor
+    ? <a href={`/u/${event.actor.handle}`} className="text-gold hover:underline font-semibold">@{event.actor.handle}</a>
+    : <span className="text-gray-400">Someone</span>;
+  const body = event.type === 'member_joined'
+    ? <>{actorLabel} joined the community</>
+    : <>{actorLabel} completed a trade</>;
+  return (
+    <li className="flex items-start gap-2.5 px-3 py-2 rounded-md bg-space-800/40 border border-space-700">
+      {event.actor?.avatarUrl ? (
+        <img
+          src={event.actor.avatarUrl}
+          alt=""
+          className="w-7 h-7 rounded-full shrink-0 mt-0.5"
+        />
+      ) : (
+        <div className="w-7 h-7 rounded-full bg-space-700 shrink-0 mt-0.5" aria-hidden />
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="text-[12px] text-gray-200">{body}</div>
+        <div className="text-[10px] text-gray-500 mt-0.5">{formatRelative(event.createdAt)}</div>
+      </div>
+    </li>
+  );
+}
+
+function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return '';
+  const diff = Date.now() - then;
+  const min = 60_000;
+  const hr = 60 * min;
+  const day = 24 * hr;
+  if (diff < min) return 'just now';
+  if (diff < hr) return `${Math.floor(diff / min)}m ago`;
+  if (diff < day) return `${Math.floor(diff / hr)}h ago`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 // --- Members ---------------------------------------------------------------

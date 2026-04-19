@@ -12,6 +12,10 @@ import {
   validatePrefValue,
 } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
+import {
+  recordEvent as recordCommunityEvent,
+  listEvents as listCommunityEvents,
+} from '../lib/communityEvents.js';
 
 /**
  * Single dispatcher for every `/api/me/*` endpoint.
@@ -46,6 +50,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleCommunity(req, res);
     case 'community-members':
       return handleCommunityMembers(req, res);
+    case 'community-activity':
+      return handleCommunityActivity(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -441,6 +447,19 @@ export async function handleGuildPut(req: VercelRequest, res: VercelResponse) {
       eq(userGuildMemberships.guildId, guildId),
     ));
 
+  // Community feed: one `member_joined` per first-enrollment. The
+  // enrollment patch is the explicit consent moment, so it's the
+  // semantic analog of "joined the community." Subsequent toggles
+  // (enrolled off, then back on) are deliberately NOT re-logged —
+  // feed noise reduction.
+  if (patch.enrolled === true && membership.enrolled === false) {
+    await recordCommunityEvent(db, {
+      guildId,
+      actorUserId: session.userId,
+      type: 'member_joined',
+    });
+  }
+
   return res.json({ ok: true, ...next });
 }
 
@@ -807,4 +826,57 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ members });
+}
+
+// --- community activity feed -----------------------------------------------
+
+/**
+ * Recent guild-scoped lifecycle events for the Community Overview tab.
+ *
+ * Query: `?guildId=<id>&limit=<n>` (guildId required; limit defaults to
+ * 20, clamped server-side). Access gate mirrors the directory/members
+ * surfaces — the viewer must be enrolled + appearInQueries in the
+ * guild. Non-enrolled viewers get a 403 rather than an empty array so
+ * the client doesn't silently render an empty feed for wall-hit users.
+ *
+ * Actor privacy (`users.share_activity_publicly=false`) is enforced
+ * inside `communityEvents.listEvents`, not here.
+ */
+export async function handleCommunityActivity(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const guildId = typeof req.query.guildId === 'string' ? req.query.guildId : '';
+  if (!guildId) {
+    return res.status(400).json({ error: 'guildId is required' });
+  }
+
+  const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
+  const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
+
+  const db = getDb();
+
+  const [viewerMembership] = await db
+    .select({ id: userGuildMemberships.id })
+    .from(userGuildMemberships)
+    .where(and(
+      eq(userGuildMemberships.userId, session.userId),
+      eq(userGuildMemberships.guildId, guildId),
+      eq(userGuildMemberships.enrolled, true),
+      eq(userGuildMemberships.appearInQueries, true),
+    ))
+    .limit(1);
+  if (!viewerMembership) {
+    return res.status(403).json({ error: 'Not enrolled in this guild' });
+  }
+
+  const events = await listCommunityEvents(db, guildId, { limit });
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({ events });
 }

@@ -21,6 +21,7 @@ import {
   buildProposerNotification,
 } from './proposalMessages.js';
 import { recordEvent } from './proposalEvents.js';
+import { recordTradeAcceptedAcrossGuilds } from './communityEvents.js';
 import { reportError } from './errorReporter.js';
 
 type Db = ReturnType<typeof getDb>;
@@ -106,6 +107,16 @@ export async function resolveProposal(opts: {
     actorUserId,
     type: newStatus,
   });
+
+  // Community activity feed: only the accept terminal generates a
+  // guild-visible event. Declines are private by design.
+  if (newStatus === 'accepted') {
+    await recordTradeAcceptedAcrossGuilds(db, {
+      proposalId,
+      accepterUserId: actorUserId,
+      proposerUserId: trade.proposerUserId,
+    });
+  }
 
   // Discord side effects from here on are best-effort. The DB state
   // change has committed; at worst Discord stays stale until someone

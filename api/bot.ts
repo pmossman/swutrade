@@ -32,6 +32,7 @@ import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/p
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
+import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -1785,6 +1786,11 @@ async function outreachToSingleMember(args: {
         .update(userGuildMemberships)
         .set({ enrolled: true, includeInRollups: true, appearInQueries: true })
         .where(eq(userGuildMemberships.id, row.membershipId));
+      await recordCommunityEvent(db, {
+        guildId,
+        actorUserId: row.userId,
+        type: 'member_joined',
+      });
       // Still DM them so they know it happened (unless they've
       // opted out of these DMs entirely).
       if (row.dmServerNewInstall) {
@@ -1874,7 +1880,18 @@ export async function handleServerInviteButton(
   // Flip all three consent axes on the membership row. Scoped to
   // (viewer, guild) — won't match anything if the viewer isn't a
   // member of the guild, in which case we surface a clear message
-  // instead of silently succeeding.
+  // instead of silently succeeding. Pre-read prior state so we can
+  // tell first-enroll (fire community event) from "already enrolled,
+  // button re-click" (no-op on the feed).
+  const [priorMembership] = await db
+    .select({ enrolled: userGuildMemberships.enrolled })
+    .from(userGuildMemberships)
+    .where(and(
+      eq(userGuildMemberships.userId, viewer.id),
+      eq(userGuildMemberships.guildId, guildId),
+    ))
+    .limit(1);
+
   const result = await db
     .update(userGuildMemberships)
     .set({ enrolled: true, includeInRollups: true, appearInQueries: true })
@@ -1883,6 +1900,14 @@ export async function handleServerInviteButton(
       eq(userGuildMemberships.guildId, guildId),
     ))
     .returning({ id: userGuildMemberships.id });
+
+  if (result.length > 0 && priorMembership && !priorMembership.enrolled) {
+    await recordCommunityEvent(db, {
+      guildId,
+      actorUserId: viewer.id,
+      type: 'member_joined',
+    });
+  }
 
   if (result.length === 0) {
     res.status(200).json({

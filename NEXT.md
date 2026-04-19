@@ -102,10 +102,6 @@ Skipping any of 1-3 is a bug in the process.
 
 Items that didn't make the Foundation bundle cut but should land before Phase 4 v2 / Phase 5 work resumes.
 
-### Community activity feed *(Community 2.0 follow-up)*
-
-C1 shipped the guild-scoped shell with an Overview tab containing a "Community activity coming soon" placeholder. Real activity feed: `community_events` table keyed on `guild_id + created_at` with event types (trade-accepted, member-joined, list-updated). Read via `GET /api/community/:guildId/activity`. Privacy: add a new consent axis (`shareActivityPublicly`) parallel to the existing three — opt-out default, visible toggle in Settings > Discord servers > Guild. Per-user can hide their own events from the feed. Pairs naturally with the existing `proposal_events` table since trade-accepted data is already logged there.
-
 ### Handle-picker dialog improvements
 
 Home 2.0's "Propose a trade" flow opens `HandlePickerDialog` today. Deferred improvements: (a) allow typing a handle that isn't in any shared community (just verify it exists + isn't private), (b) pull recent trade partners to surface as a "Recent" chips row above the typed-handle input, (c) empty-state hint pointing into Community when the user has no enrolled guilds.
@@ -155,6 +151,9 @@ Separate-flow in-person collaborative trading. See ROADMAP.md Phase 5b for scope
 ## Done
 
 *(append here as slices ship)*
+
+### 2026-04-19 — Community activity feed
+`community_events` append-only log keyed on `(guild_id, created_at)` with two event types (`trade_accepted`, `member_joined`). Write path: `recordTradeAcceptedAcrossGuilds` fires one event per guild where both parties are enrolled+queryable (from `proposalResolve.ts`); `member_joined` fires on first-enrollment in each of the three enroll surfaces (web PATCH, Discord auto-enroll, Discord invite button). New `shareActivityPublicly` user pref (default on, privacy section) suppresses an actor's events at read-time without deleting history. Read API: `GET /api/me/community-activity?guildId=…&limit=…` gated on the same enrolled+queryable axis as the members directory. `useCommunityActivity` hook + `ActivityFeed` component replace the Overview tab's "coming soon" placeholder. Relative timestamps, avatar/handle linking, states for loading/error/empty/populated. 4 new integration tests covering the gate + the actor-suppression filter.
 
 ### 2026-04-19 — Header chrome / action separation
 Commit: `e1efcab` + `b0583c2`. Removed the `actions` prop from AppHeader; view-specific CTAs (Trade with @X, Done, split/tabbed toggle, Share/Clear, Start a trade) moved to content-level strips per view. Biggest UX win: ProfileView's "Trade with @X" now renders alongside the avatar + handle as a hero, not as a squished header button fighting breadcrumbs for width. Settings drill-down gets a tight right-aligned Done strip. Trade builder gets its own action row. ListView merges summary + primary CTA into one strip. AppHeader is now *chrome only*: logo, breadcrumbs, NavMenu, AccountMenu.
