@@ -11,6 +11,8 @@ import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 import { useAuthContext } from '../contexts/AuthContext';
 import { usePricing } from '../contexts/PricingContext';
+import { HandlePickerDialog } from './HandlePickerDialog';
+import { buildTradeSearch } from '../urlCodec';
 
 interface TradeSummaryProps {
   yourCards: TradeCard[];
@@ -144,6 +146,22 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
   const { user } = useAuthContext();
   const { percentage, setPercentage, priceMode, setPriceMode } = usePricing();
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const hasAnyCards = yourCards.length > 0 || theirCards.length > 0;
+
+  /**
+   * Navigate into the proposal composer carrying the current cards via
+   * the URL's trade codec. ProposeBar's one-shot auto-apply effect only
+   * fires when both sides are empty at mount (see ProposeBar.tsx
+   * autoAppliedRef), so cards already in the URL survive unchanged and
+   * the recipient just sees what the sender composed locally.
+   */
+  const handleProposeTo = useCallback((handle: string) => {
+    const search = buildTradeSearch({ yourCards, theirCards, percentage, priceMode });
+    const params = new URLSearchParams(search);
+    params.set('propose', handle);
+    window.location.href = `/?${params.toString()}`;
+  }, [yourCards, theirCards, percentage, priceMode]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -268,9 +286,13 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
             </div>
           </div>
 
-          {/* Save trade button — only for signed-in users */}
-          {user && (
-            <div className="mb-4 flex justify-center">
+          {/* Signed-in action row — Save + Send-as-proposal, side by side.
+              Both act on the current in-builder trade. Save persists it
+              to the viewer's own trades history; Send-as-proposal opens
+              the handle picker, then navigates to the compose flow with
+              the current cards preserved via URL state. */}
+          {user && hasAnyCards && (
+            <div className="mb-4 flex justify-center flex-wrap gap-2">
               <button
                 type="button"
                 onClick={handleSave}
@@ -280,7 +302,7 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
                     ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300'
                     : saveState === 'error'
                       ? 'bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25'
-                      : 'bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60'
+                      : 'bg-space-800/60 border border-space-700 text-gray-300 hover:border-gold/40 hover:text-gold'
                 }`}
               >
                 {saveState === 'saved' ? (
@@ -298,6 +320,16 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
                     Save this trade
                   </>
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60 transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
+                Send as proposal
               </button>
             </div>
           )}
@@ -322,6 +354,15 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
 
         </div>
       </div>
+
+      <HandlePickerDialog
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={handle => {
+          setPickerOpen(false);
+          handleProposeTo(handle);
+        }}
+      />
     </div>
   );
 }
