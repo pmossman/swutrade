@@ -41,7 +41,8 @@ import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
-import { detectViewMode, type ViewMode } from './routing/config';
+import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
+import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
 
 /** Extract the handle from either `?profile=<handle>` or the
  *  `/u/<handle>` pathname — whichever the user navigated via. */
@@ -243,6 +244,93 @@ function App() {
     setAutoOpenOfferingFromShared(false);
   }, []);
 
+  // Central navigation primitive. Every in-app navigation should flow
+  // through one of these methods so URL + intent state + viewMode stay
+  // in lockstep by construction — the class of bug that hit us on the
+  // Home → Propose path (see aeb0aa2) can't recur through this seam.
+  //
+  // Each method uses the same three-step shape:
+  //   1. Compute the next URLSearchParams (drop view-specific keys,
+  //      set this view's keys).
+  //   2. pushState the new URL.
+  //   3. Update any React state that needs to track the destination:
+  //      intent.setIntent for propose/from/counter/edit/autoBalance,
+  //      setViewMode for the view flip, filters.clearAll where a
+  //      trade builder needs to reset.
+  // Views that don't touch trade intent (Home, Settings, Community,
+  // Profile, trade-detail, trades-history) don't call setIntent —
+  // those intents persist across view nav, which matches the "user
+  // has an in-progress propose, peeks at Community" mental model.
+  const nav = useMemo<NavigationApi>(() => {
+    const pushTo = (next: URLSearchParams) => {
+      const search = next.toString();
+      const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
+      window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
+      setViewMode(detectViewMode(isSignedIn));
+    };
+    const reset = (keep: readonly string[], extras: Record<string, string> = {}) => {
+      // Preserve any non-view param already in the URL (e.g. a trade
+      // codec) that isn't explicitly dropped by this destination. Each
+      // method lists the view params it "OWNS" and we drop everything
+      // else in the view-param family. Trade-codec keys (y/t/pct/pm)
+      // ride along untouched because useTradeUrl will rewrite them.
+      const params = new URLSearchParams(window.location.search);
+      // Always drop the full view-param family, then re-add what this
+      // destination needs. Avoids stale `settings=1` surviving a
+      // toHome() call.
+      for (const key of VIEW_PARAM_KEYS) params.delete(key);
+      for (const key of keep) {
+        const current = new URLSearchParams(window.location.search).get(key);
+        if (current !== null) params.set(key, current);
+      }
+      for (const [k, v] of Object.entries(extras)) params.set(k, v);
+      return params;
+    };
+    return {
+      toHome: () => {
+        pushTo(reset([]));
+        intent.clearIntent();
+      },
+      toBuildTrade: () => {
+        // Clear propose/counter/edit so the composer opens clean. Keep
+        // from+autoBalance if they're set — they represent the user's
+        // current sender context (e.g. they were on "Trade with @X" and
+        // clicked Balance a trade from the same page).
+        pushTo(reset([], { view: 'trade' }));
+        intent.setIntent({ propose: null, counter: null, edit: null });
+      },
+      toProposeWith: handle => {
+        pushTo(reset([], { propose: handle }));
+        intent.setIntent({ propose: handle, counter: null, edit: null });
+      },
+      toStartTradeFrom: (fromHandle, autoBalance) => {
+        handleStartTrade(fromHandle, autoBalance);
+      },
+      toTradeDetail: tradeId => {
+        pushTo(reset([], { trade: tradeId }));
+      },
+      toTradesHistory: () => {
+        pushTo(reset([], { trades: '1' }));
+      },
+      toSettings: (opts = {}) => {
+        const extras: Record<string, string> = { settings: '1' };
+        if (opts.tab) extras.tab = opts.tab;
+        if (opts.guildId) extras.guild = opts.guildId;
+        if (opts.memberHandle) extras.user = opts.memberHandle;
+        pushTo(reset([], extras));
+      },
+      toCommunity: (opts = {}) => {
+        const extras: Record<string, string> = { community: '1' };
+        if (opts.guildId) extras.guild = opts.guildId;
+        if (opts.tab) extras.tab = opts.tab;
+        pushTo(reset([], extras));
+      },
+      toProfile: handle => {
+        pushTo(reset([], { profile: handle }));
+      },
+    };
+  }, [isSignedIn, intent, handleStartTrade]);
+
   // Re-render every minute so the footer's "X ago" labels (prices,
   // build age) advance even while the user is idle. Cheap — one
   // setState per minute at the root is imperceptible.
@@ -326,64 +414,11 @@ function App() {
   // the trade builder. Signed-out users never see it — detectViewMode
   // falls back to 'trade' when no user is present.
   if (viewMode === 'home') {
-    const navigateParams = (mutate: (params: URLSearchParams) => void) => {
-      const params = new URLSearchParams(window.location.search);
-      mutate(params);
-      const search = params.toString();
-      const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
-      window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
-      setViewMode(detectViewMode(isSignedIn));
-    };
-    return (
-      <HomeView
-        auth={auth}
-        onOpenTrade={tradeId => navigateParams(p => {
-          for (const key of ['view', 'settings', 'community', 'trades', 'profile']) p.delete(key);
-          p.set('trade', tradeId);
-        })}
-        onOpenTradesHistory={() => navigateParams(p => {
-          for (const key of ['view', 'settings', 'community', 'trade', 'profile']) p.delete(key);
-          p.set('trades', '1');
-        })}
-        onOpenSettings={() => navigateParams(p => {
-          for (const key of ['view', 'community', 'trade', 'trades', 'profile']) p.delete(key);
-          p.set('settings', '1');
-        })}
-        onManageCommunities={() => navigateParams(p => {
-          for (const key of ['view', 'community', 'trade', 'trades', 'profile']) p.delete(key);
-          p.set('settings', '1');
-          p.set('tab', 'servers');
-        })}
-        onOpenCommunity={() => navigateParams(p => {
-          for (const key of ['view', 'settings', 'trade', 'trades', 'profile']) p.delete(key);
-          p.set('community', '1');
-        })}
-        onBuildTrade={() => navigateParams(p => {
-          for (const key of ['settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
-          p.set('view', 'trade');
-        })}
-        onOpenProfile={handle => navigateParams(p => {
-          for (const key of ['view', 'settings', 'community', 'trade', 'trades'] ) p.delete(key);
-          p.set('profile', handle);
-        })}
-        onProposeTo={handle => {
-          navigateParams(p => {
-            // Drop every non-trade view param before flipping into the
-            // proposal composer — detectViewMode sees `?propose=…` and
-            // routes to the trade builder. Leaving `community=1` or
-            // `profile=…` on the URL would win the routing coin flip.
-            for (const key of ['view', 'settings', 'community', 'trade', 'trades', 'profile']) p.delete(key);
-            p.set('propose', handle);
-          });
-          // Mirror the URL write into the intent store so ProposeBar
-          // actually renders. Without this, the pushState would update
-          // the URL but the state captured at initial mount would keep
-          // proposeHandle=null and ProposeBar would never render — the
-          // bug that motivated this hook's introduction.
-          intent.setIntent({ propose: handle, counter: null, edit: null });
-        }}
-      />
-    );
+    // HomeView pulls its navigation from `useNavigation()`; no more
+    // per-callback prop drilling. A single `nav` object enforces URL
+    // + intent + viewMode lockstep so the intent-drift bug class is
+    // closed at the construction site.
+    return <HomeView auth={auth} />;
   }
 
   // Settings view — /?settings=1 for account + per-guild preferences.
@@ -391,14 +426,11 @@ function App() {
   // someone hand-types the URL we still route here; the hooks will
   // 401 and show an error, which is acceptable.
   if (viewMode === 'settings') {
-    const goHome = () => {
-      const params = new URLSearchParams(window.location.search);
-      params.delete('settings');
-      const search = params.toString();
-      window.history.pushState(null, '', search ? `?${search}` : window.location.pathname);
-      setViewMode(detectViewMode(isSignedIn));
-    };
-    return <SettingsView onClose={goHome} />;
+    // Close returns to the signed-in landing page. `nav.toHome()`
+    // clears intent too, which matches the "you're done with settings,
+    // drop back to the dashboard with no composer state lingering"
+    // mental model.
+    return <SettingsView onClose={nav.toHome} />;
   }
 
   if (viewMode === 'community') {
@@ -819,7 +851,9 @@ function App() {
         open={listsDrawerOpen}
         onOpenChange={setListsDrawerOpen}
       />
-      {renderBody()}
+      <NavigationProvider value={nav}>
+        {renderBody()}
+      </NavigationProvider>
     </>
   );
 }

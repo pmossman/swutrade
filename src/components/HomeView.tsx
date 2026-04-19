@@ -29,26 +29,12 @@ import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useDrawerContext } from '../contexts/DrawerContext';
+import { useNavigation } from '../contexts/NavigationContext';
 import type { CardVariant } from '../types';
 import type { WantsItem } from '../persistence/schemas';
 
 interface HomeViewProps {
   auth: AuthApi;
-  onOpenTrade: (tradeId: string) => void;
-  onOpenTradesHistory: () => void;
-  onOpenSettings: () => void;
-  /** Deep-link into Settings > Discord servers (list view). Used by the
-   *  "Manage" action on My Communities so the user lands next to the
-   *  guild-level toggles, not at the Settings hub root. */
-  onManageCommunities: () => void;
-  onOpenCommunity: () => void;
-  onBuildTrade: () => void;
-  onOpenProfile: (handle: string) => void;
-  /** Jump straight into the proposal composer against the given
-   *  handle. Drives the "Propose a trade →" action on My Communities
-   *  via HandlePickerDialog — caller is responsible for navigating to
-   *  `/?propose=<handle>`. */
-  onProposeTo: (handle: string) => void;
 }
 
 /**
@@ -71,18 +57,21 @@ interface HomeViewProps {
  * from resource surfaces (right: lists + communities) with the
  * Stores placeholder spanning the full width as a footer.
  */
-export function HomeView({
-  auth,
-  onOpenTrade,
-  onOpenTradesHistory,
-  onOpenSettings,
-  onManageCommunities,
-  onOpenCommunity,
-  onBuildTrade,
-  onOpenProfile,
-  onProposeTo,
-}: HomeViewProps) {
+export function HomeView({ auth }: HomeViewProps) {
   const { user } = auth;
+  const nav = useNavigation();
+  // Local shorthands for readability — these wrap the `nav` primitive
+  // into the method-per-action shape the view body already expects.
+  // The underlying `nav.toX()` calls handle pushState + intent sync +
+  // viewMode flip in one place.
+  const onOpenTrade = nav.toTradeDetail;
+  const onOpenTradesHistory = nav.toTradesHistory;
+  const onOpenSettings = () => nav.toSettings();
+  const onManageCommunities = () => nav.toSettings({ tab: 'servers' });
+  const onOpenCommunity = () => nav.toCommunity();
+  const onBuildTrade = nav.toBuildTrade;
+  const onOpenProfile = nav.toProfile;
+  const onProposeTo = nav.toProposeWith;
   const trades = useTradesList();
   const guilds = useGuildMemberships();
   const wants = useWants();

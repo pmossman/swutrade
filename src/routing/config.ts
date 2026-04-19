@@ -38,6 +38,39 @@ const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance'] 
 /** Trade-codec keys — owned by useTradeUrl's merge-write, NOT by a view's `paramKeys`. */
 const TRADE_CODEC_KEYS = ['y', 't', 'pct', 'pm'] as const;
 
+/**
+ * Superset of keys that identify WHICH VIEW the URL is on, used by
+ * the central `useNavigation()` primitive to blow away stale view-
+ * param before writing the new destination's keys. Deliberately
+ * excludes trade-codec keys (y/t/pct/pm) because those are owned by
+ * useTradeUrl's merge-write, not a view's routing choice — and also
+ * excludes trade-intent keys (propose/counter/edit/from/autoBalance)
+ * because those are managed by useTradeIntent and would double-write
+ * if the reset also touched them.
+ */
+export const VIEW_PARAM_KEYS = [
+  'view',
+  'settings',
+  'community',
+  'trade',
+  'trades',
+  'profile',
+  // Drill-down params owned by settings + community — listed here so
+  // toHome() / toTradesHistory() / toProfile() etc. clear them on the
+  // way out.
+  'tab',
+  'guild',
+  'members',
+  'user',
+  // Shared-list URL params. Stripping these is the correct behaviour
+  // for every view-level nav — shared-list URLs are entered fresh
+  // (reload-mounted) and never re-written in-session. If we ever want
+  // to "keep the shared lists across a nav", the nav helper will grow
+  // an explicit opt-in for it.
+  'w',
+  'a',
+] as const;
+
 export interface RouteParts {
   pathname: string;
   params: URLSearchParams;
