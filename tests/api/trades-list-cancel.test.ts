@@ -13,7 +13,8 @@ import {
   sealTestCookie,
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
-import { tradeProposals, type TradeCardSnapshot } from '../../lib/schema.js';
+import { tradeProposals, proposalEvents, type TradeCardSnapshot } from '../../lib/schema.js';
+import { recordEvent } from '../../lib/proposalEvents.js';
 import type { DiscordBotClient, DiscordMessageBody } from '../../lib/discordBot.js';
 
 function snapshot(productId: string, qty = 1): TradeCardSnapshot {
@@ -73,7 +74,11 @@ describeWithDb('GET /api/trades/proposals', () => {
 
   afterEach(async () => {
     const db = getDb();
+    // Event rows FK-cascade from proposals, but delete them first
+    // explicitly so failed inserts don't linger if a proposal row
+    // delete hits an error path above.
     for (const id of createdIds) {
+      await db.delete(proposalEvents).where(eq(proposalEvents.proposalId, id)).catch(() => {});
       await db.delete(tradeProposals).where(eq(tradeProposals.id, id)).catch(() => {});
     }
     createdIds.length = 0;
@@ -161,6 +166,101 @@ describeWithDb('GET /api/trades/proposals', () => {
     const ids = (res._json as { proposals: Array<{ id: string }> }).proposals.map(p => p.id);
     expect(ids).toContain(mine);
     expect(ids).not.toContain(hidden);
+  });
+
+  it('recentActivity surfaces user-action events, skips creation + delivery noise, and includes counterpart handle', async () => {
+    const viewer = await createTestUser();
+    const alice = await createTestUser();
+    fixtures.push(viewer, alice);
+
+    const db = getDb();
+    const mine = await insertProposal({ proposerUserId: viewer.id, recipientUserId: alice.id });
+    createdIds.push(mine);
+
+    // Mix of noisy + interesting events. Only the latter should
+    // appear in recentActivity. All belong to a proposal the viewer
+    // is party to, so they're all in scope for the query.
+    await recordEvent(db, { proposalId: mine, actorUserId: viewer.id, type: 'created' });
+    await recordEvent(db, { proposalId: mine, actorUserId: null, type: 'delivered_ok' });
+    await recordEvent(db, { proposalId: mine, actorUserId: alice.id, type: 'accepted' });
+
+    const cookie = await sealTestCookie(viewer.id);
+    const req = mockRequest({ method: 'GET', cookies: { swu_session: cookie } });
+    const res = mockResponse();
+    await handleProposalsList(req, res);
+
+    expect(res._status).toBe(200);
+    const body = res._json as {
+      recentActivity: Array<{
+        type: string;
+        actor: { handle: string } | null;
+        proposalId: string;
+        counterpartHandle: string | null;
+      }>;
+    };
+    const types = body.recentActivity.map(e => e.type);
+    expect(types).toContain('accepted');
+    expect(types).not.toContain('created');
+    expect(types).not.toContain('delivered_ok');
+
+    const accepted = body.recentActivity.find(e => e.type === 'accepted');
+    expect(accepted?.actor?.handle).toBe(alice.handle);
+    expect(accepted?.proposalId).toBe(mine);
+    // Counterpart from the viewer's perspective is alice (since
+    // viewer is the proposer, recipient = alice).
+    expect(accepted?.counterpartHandle).toBe(alice.handle);
+  });
+
+  it('recentActivity is scoped to proposals the viewer is party to (no leak)', async () => {
+    const viewer = await createTestUser();
+    const alice = await createTestUser();
+    const bob = await createTestUser();
+    fixtures.push(viewer, alice, bob);
+
+    const db = getDb();
+    const mine = await insertProposal({ proposerUserId: viewer.id, recipientUserId: alice.id });
+    // Proposal between two other users — viewer should never see its events.
+    const unrelated = await insertProposal({ proposerUserId: alice.id, recipientUserId: bob.id });
+    createdIds.push(mine, unrelated);
+
+    await recordEvent(db, { proposalId: mine, actorUserId: alice.id, type: 'nudged' });
+    await recordEvent(db, { proposalId: unrelated, actorUserId: alice.id, type: 'accepted' });
+
+    const cookie = await sealTestCookie(viewer.id);
+    const req = mockRequest({ method: 'GET', cookies: { swu_session: cookie } });
+    const res = mockResponse();
+    await handleProposalsList(req, res);
+
+    const body = res._json as {
+      recentActivity: Array<{ proposalId: string }>;
+    };
+    const proposalIds = body.recentActivity.map(e => e.proposalId);
+    expect(proposalIds).toContain(mine);
+    expect(proposalIds).not.toContain(unrelated);
+  });
+
+  it('recentActivity is capped at 5 entries, newest first', async () => {
+    const viewer = await createTestUser();
+    const alice = await createTestUser();
+    fixtures.push(viewer, alice);
+
+    const db = getDb();
+    const p = await insertProposal({ proposerUserId: viewer.id, recipientUserId: alice.id });
+    createdIds.push(p);
+
+    // 7 events — cap at 5. Drizzle's default insert creates its own
+    // timestamps in-order, so the last-inserted event is freshest.
+    for (let i = 0; i < 7; i += 1) {
+      await recordEvent(db, { proposalId: p, actorUserId: alice.id, type: 'nudged' });
+    }
+
+    const cookie = await sealTestCookie(viewer.id);
+    const req = mockRequest({ method: 'GET', cookies: { swu_session: cookie } });
+    const res = mockResponse();
+    await handleProposalsList(req, res);
+
+    const body = res._json as { recentActivity: unknown[] };
+    expect(body.recentActivity).toHaveLength(5);
   });
 });
 

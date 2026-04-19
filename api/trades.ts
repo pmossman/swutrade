@@ -1,9 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { eq, and, or, desc, inArray } from 'drizzle-orm';
+import { eq, and, or, desc, inArray, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
-import { trades, tradeProposals, users, type TradeCardSnapshot } from '../lib/schema.js';
+import {
+  trades,
+  tradeProposals,
+  proposalEvents,
+  users,
+  type TradeCardSnapshot,
+} from '../lib/schema.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
   buildProposalMessage,
@@ -572,8 +578,71 @@ export async function handleProposalsList(req: VercelRequest, res: VercelRespons
     };
   });
 
+  // Recent activity feed for the Home "My Trades" module. One query
+  // joining proposal_events → trade_proposals → users that returns
+  // the 5 most recent human-interesting events across every proposal
+  // the viewer is party to. Delivery/creation events are skipped
+  // (too noisy — the row itself already signals that). Counterpart
+  // handle is derived from whichever side of the proposal isn't the
+  // viewer so the UI can render "@alice accepted your proposal".
+  const proposalIds = rows.map(r => r.id);
+  let recentActivity: Array<{
+    type: string;
+    actor: { id: string; handle: string; username: string; avatarUrl: string | null } | null;
+    proposalId: string;
+    createdAt: string;
+    counterpartHandle: string | null;
+  }> = [];
+  if (proposalIds.length > 0) {
+    const noisyTypes = ['created', 'delivered_ok', 'delivered_failed'] as const;
+    const eventRows = await db
+      .select({
+        id: proposalEvents.id,
+        type: proposalEvents.type,
+        createdAt: proposalEvents.createdAt,
+        proposalId: proposalEvents.proposalId,
+        actorId: users.id,
+        actorHandle: users.handle,
+        actorUsername: users.username,
+        actorAvatarUrl: users.avatarUrl,
+      })
+      .from(proposalEvents)
+      .leftJoin(users, eq(users.id, proposalEvents.actorUserId))
+      .where(and(
+        inArray(proposalEvents.proposalId, proposalIds),
+        notInArray(proposalEvents.type, [...noisyTypes]),
+      ))
+      .orderBy(desc(proposalEvents.createdAt))
+      .limit(5);
+
+    // Build a quick lookup from proposalId → counterpart handle so each
+    // activity row can render the "@handle <verb>ed your proposal" line
+    // without a second fetch.
+    const proposalCounterpartById = new Map<string, string | null>();
+    for (const r of rows) {
+      const counterpartId = r.proposerUserId === session.userId ? r.recipientUserId : r.proposerUserId;
+      const cp = counterpartsById.get(counterpartId);
+      proposalCounterpartById.set(r.id, cp?.handle ?? null);
+    }
+
+    recentActivity = eventRows.map(e => ({
+      type: e.type,
+      actor: e.actorId
+        ? {
+            id: e.actorId,
+            handle: e.actorHandle ?? '',
+            username: e.actorUsername ?? '',
+            avatarUrl: e.actorAvatarUrl,
+          }
+        : null,
+      proposalId: e.proposalId,
+      createdAt: e.createdAt.toISOString(),
+      counterpartHandle: proposalCounterpartById.get(e.proposalId) ?? null,
+    }));
+  }
+
   res.setHeader('Cache-Control', 'private, no-store');
-  return res.json({ proposals });
+  return res.json({ proposals, recentActivity });
 }
 
 // --- cancel (slice 5 — proposer retracts a pending proposal) ---------------

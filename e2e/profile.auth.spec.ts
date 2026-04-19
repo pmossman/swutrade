@@ -5,9 +5,12 @@ test.describe('Profile view', () => {
     // Use the e2e-test user seeded by globalSetup (has public wants).
     await page.goto('/?profile=e2e-test');
 
-    // Profile header.
+    // Profile header. Scope the handle match to <main> — the AppHeader
+    // breadcrumb also renders `@e2e-test` as the current-page crumb
+    // when viewing your own profile, so an un-scoped locator matches
+    // both and trips Playwright's strict-mode check.
     await expect(page.getByText('E2E Test User')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('@e2e-test', { exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByText('@e2e-test', { exact: true })).toBeVisible();
 
     // Start a trade CTA.
     await expect(page.getByRole('banner').getByRole('button', { name: 'Start a trade' })).toBeVisible();

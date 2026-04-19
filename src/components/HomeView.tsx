@@ -2,12 +2,20 @@ import { useMemo, useState } from 'react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
-import { useTradesList, type TradeListEntry } from '../hooks/useTradesList';
+import {
+  useTradesList,
+  type TradeListEntry,
+  type TradeActivityEntry,
+  type TradeActivityType,
+} from '../hooks/useTradesList';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { ListsDrawer } from './ListsDrawer';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { usePriceData } from '../hooks/usePriceData';
+import { cardFamilyId } from '../variants';
+import type { CardVariant } from '../types';
+import type { WantsItem } from '../persistence/schemas';
 
 interface HomeViewProps {
   auth: AuthApi;
@@ -15,7 +23,7 @@ interface HomeViewProps {
   onOpenTradesHistory: () => void;
   onOpenSettings: () => void;
   /** Deep-link into Settings > Discord servers (list view). Used by the
-   *  "Manage" action on Your Communities so the user lands next to the
+   *  "Manage" action on My Communities so the user lands next to the
    *  guild-level toggles, not at the Settings hub root. */
   onManageCommunities: () => void;
   onOpenCommunity: () => void;
@@ -24,16 +32,24 @@ interface HomeViewProps {
 }
 
 /**
- * Signed-in landing page. Surfaces the three things a returning user
- * cares about the most:
- *   1. Trades that need their response right now.
- *   2. Trades they've sent that are waiting on someone else.
- *   3. The communities they're part of (Discord guilds) — entry point
- *      to the broader social layer.
+ * Home 2.0 — dashboard layout.
  *
- * The trade balancer itself ("Build a trade") is a deliberate primary
- * CTA rather than the default view — we don't want signed-in users to
- * see an empty card picker every time they open the app.
+ * Four parallel "my" modules each own a surface in the IA:
+ *
+ *   💱 My Trades       → trades history + recent activity
+ *   📋 My Lists        → wants + available (ListsDrawer)
+ *   👥 My Communities  → enrolled Discord servers
+ *   🏪 My Stores       → LGS placeholder (Phase 4 v2+)
+ *
+ * Plus a pinned ⏰ "Needs your response" callout at the top whenever
+ * the viewer has open received proposals. The four-module pattern
+ * replaces the earlier two-column mailbox layout — beta feedback
+ * was that 📥/📤 read as "same mailbox thing" and that a flat
+ * two-column split felt arbitrary.
+ *
+ * Desktop grid splits action surfaces (left: response + trades)
+ * from resource surfaces (right: lists + communities) with the
+ * Stores placeholder spanning the full width as a footer.
  */
 export function HomeView({
   auth,
@@ -58,21 +74,46 @@ export function HomeView({
     [priceData.cards],
   );
 
-  const { needsResponse, waitingOnOthers } = useMemo(() => {
+  const { needsResponse, tradeCounts } = useMemo(() => {
     const needs: TradeListEntry[] = [];
-    const waiting: TradeListEntry[] = [];
+    let incoming = 0;
+    let outgoing = 0;
+    let resolved = 0;
     for (const t of trades.proposals) {
-      if (t.status !== 'pending') continue;
-      if (t.direction === 'received') needs.push(t);
-      else waiting.push(t);
+      if (t.status === 'pending') {
+        if (t.direction === 'received') {
+          needs.push(t);
+          incoming += 1;
+        } else {
+          outgoing += 1;
+        }
+      } else {
+        resolved += 1;
+      }
     }
-    return { needsResponse: needs, waitingOnOthers: waiting };
+    return {
+      needsResponse: needs,
+      tradeCounts: { incoming, outgoing, resolved },
+    };
   }, [trades.proposals]);
 
   const enrolledGuilds = useMemo(
     () => guilds.enrollable.filter(g => g.enrolled),
     [guilds.enrollable],
   );
+
+  // Map family id → representative card (standard preferred) so the
+  // Lists preview can show names for wants (wants are keyed by
+  // familyId, not productId; the stored item doesn't carry a name).
+  const cardByFamily = useMemo(() => {
+    const map = new Map<string, CardVariant>();
+    for (const card of allLoadedCards) {
+      const fid = cardFamilyId(card);
+      const existing = map.get(fid);
+      if (!existing || card.variant === 'Standard') map.set(fid, card);
+    }
+    return map;
+  }, [allLoadedCards]);
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
@@ -90,11 +131,6 @@ export function HomeView({
         onOpenChange={setListsDrawerOpen}
       />
 
-      {/* Layout: mobile stacks everything single-column in priority
-          order. Desktop (`lg+`) splits into two columns after the
-          greeting + primary actions — actionable trades on the left,
-          community/context on the right — so horizontal space isn't
-          wasted. Bump max-w from 3xl → 5xl here to give the grid room. */}
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
         {user && (
           <GreetingRow
@@ -105,34 +141,54 @@ export function HomeView({
           />
         )}
 
+        {/* Needs-response callout is full-width above the grid so it
+            reads as "everything else waits — deal with this first." */}
+        {needsResponse.length > 0 && (
+          <NeedsResponseCallout
+            proposals={needsResponse}
+            onOpenTrade={onOpenTrade}
+            onOpenTradesHistory={onOpenTradesHistory}
+          />
+        )}
+
+        {/* Desktop: CSS grid with explicit column tracks pairs action
+            surfaces (Trades, Response) on the left with resource
+            surfaces (Lists, Communities) on the right. Mobile: flows
+            to a single column in priority order (trades, lists,
+            communities, stores). gap-6 for mobile breathing room;
+            lg:gap-8 for the tighter-pair desktop split. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="flex flex-col gap-6">
-            <NeedsResponseSection
+            <TradesModule
               status={trades.status}
-              proposals={needsResponse}
+              counts={tradeCounts}
+              activity={trades.recentActivity}
               onOpenTrade={onOpenTrade}
               onOpenTradesHistory={onOpenTradesHistory}
+              onBuildTrade={onBuildTrade}
+              viewerHandle={user?.handle}
             />
 
-            <WaitingOnOthersSection
-              proposals={waitingOnOthers}
-              onOpenTrade={onOpenTrade}
-              onOpenTradesHistory={onOpenTradesHistory}
+            <ListsModule
+              wants={wants.items}
+              availableCount={available.items.length}
+              cardByFamily={cardByFamily}
+              onEditLists={() => setListsDrawerOpen(true)}
             />
           </div>
 
           <div className="flex flex-col gap-6">
-            <CommunitiesSection
+            <CommunitiesModule
               guilds={enrolledGuilds}
               status={guilds.status}
               onOpenSettings={onOpenSettings}
               onManageCommunities={onManageCommunities}
               onOpenCommunity={onOpenCommunity}
             />
-
-            <UpcomingSection />
           </div>
         </div>
+
+        <StoresModule />
       </main>
     </div>
   );
@@ -152,9 +208,6 @@ function GreetingRow({
   onOpenTradesHistory: () => void;
 }) {
   const displayName = user.username && user.username !== user.handle ? user.username : `@${user.handle}`;
-  // Mobile: identity line on top, actions wrap to a second row.
-  // Desktop: identity on the left, actions pinned to the right — keeps
-  // primary CTA visible without letting it dominate the page width.
   return (
     <div className="flex flex-wrap items-center gap-3">
       <button
@@ -185,27 +238,25 @@ function GreetingRow({
           className="flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
         >
           <PlusIcon className="w-4 h-4" />
-          New trade
+          Balance a trade
         </button>
       </div>
     </div>
   );
 }
 
-// --- Needs your response ---------------------------------------------------
+// --- ⏰ Needs your response callout ----------------------------------------
 
 // Cap on the Home screen so a user with dozens of pending proposals
 // doesn't get an endless wall — they see the N freshest and drop into
 // the full Trades history for the rest.
 const HOME_PROPOSAL_CAP = 5;
 
-function NeedsResponseSection({
-  status,
+function NeedsResponseCallout({
   proposals,
   onOpenTrade,
   onOpenTradesHistory,
 }: {
-  status: 'loading' | 'ready' | 'error';
   proposals: TradeListEntry[];
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
@@ -213,27 +264,24 @@ function NeedsResponseSection({
   const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
   const overflow = proposals.length - visible.length;
   return (
-    <section aria-labelledby="needs-response-heading">
-      <SectionHeader
-        id="needs-response-heading"
-        icon="📥"
-        label="Needs your response"
-        count={proposals.length}
-        emphasise
-      />
-      {status === 'loading' && <LoadingState label="Checking for new proposals…" />}
-      {status === 'ready' && proposals.length === 0 && (
-        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500">
-          You're all caught up.
-        </div>
-      )}
-      {visible.length > 0 && (
-        <ul className="flex flex-col gap-1.5">
-          {visible.map(p => (
-            <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} highlight />
-          ))}
-        </ul>
-      )}
+    <section
+      aria-labelledby="needs-response-heading"
+      // Slight gold wash + gold left border so the callout reads as
+      // "attention required" without being alarming.
+      className="rounded-xl border border-gold/40 bg-gold/8 p-4"
+    >
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <h2 id="needs-response-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
+          <span aria-hidden>⏰</span>
+          <span>Needs your response</span>
+          <span className="text-xs tabular-nums text-gold font-bold">{proposals.length}</span>
+        </h2>
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {visible.map(p => (
+          <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} highlight />
+        ))}
+      </ul>
       {overflow > 0 && (
         <button
           type="button"
@@ -247,67 +295,249 @@ function NeedsResponseSection({
   );
 }
 
-// --- Waiting on others -----------------------------------------------------
+// --- 💱 My Trades module ---------------------------------------------------
 
-function WaitingOnOthersSection({
-  proposals,
+function TradesModule({
+  status,
+  counts,
+  activity,
   onOpenTrade,
   onOpenTradesHistory,
+  onBuildTrade,
+  viewerHandle,
 }: {
-  proposals: TradeListEntry[];
+  status: 'loading' | 'ready' | 'error';
+  counts: { incoming: number; outgoing: number; resolved: number };
+  activity: TradeActivityEntry[];
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
+  onBuildTrade: () => void;
+  viewerHandle: string | undefined;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  if (proposals.length === 0) return null;
-
-  const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
-  const overflow = proposals.length - visible.length;
+  const hasAny = counts.incoming + counts.outgoing + counts.resolved > 0;
 
   return (
-    <section aria-labelledby="waiting-heading">
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        aria-expanded={expanded}
-        className="w-full flex items-center justify-between gap-3 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 px-4 py-3 transition-colors text-left"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <span aria-hidden>📤</span>
-          <span id="waiting-heading" className="text-sm font-medium text-gray-200">
-            Waiting on others
-          </span>
-          <span className="text-[11px] text-gray-500">
-            {proposals.length}
-          </span>
+    <ModuleSection
+      icon="💱"
+      label="My Trades"
+      headingId="my-trades-heading"
+      action={
+        <button
+          type="button"
+          onClick={onOpenTradesHistory}
+          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+        >
+          View history →
+        </button>
+      }
+    >
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{counts.incoming}</span>
+        {' incoming · '}
+        <span className="text-gray-200 font-semibold">{counts.outgoing}</span>
+        {' outgoing · '}
+        <span className="text-gray-200 font-semibold">{counts.resolved}</span>
+        {' resolved'}
+      </div>
+
+      {status === 'loading' && <LoadingState label="Loading trades…" />}
+      {status !== 'loading' && !hasAny && (
+        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+          No trades yet.{' '}
+          <button
+            type="button"
+            onClick={onBuildTrade}
+            className="text-gold hover:text-gold-bright underline font-semibold"
+          >
+            Balance a trade
+          </button>
+          {' to get started — share it with a friend or send it in-app.'}
         </div>
-        <ChevronIcon className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-      </button>
-      {expanded && (
-        <>
-          <ul className="flex flex-col gap-1.5 mt-2">
-            {visible.map(p => (
-              <TradeRow key={p.id} trade={p} onClick={() => onOpenTrade(p.id)} />
-            ))}
-          </ul>
-          {overflow > 0 && (
-            <button
-              type="button"
-              onClick={onOpenTradesHistory}
-              className="mt-2 w-full flex items-center justify-center gap-1 px-4 py-2 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 text-xs font-medium text-gray-400 hover:text-gold transition-colors"
-            >
-              See all {proposals.length} pending →
-            </button>
-          )}
-        </>
       )}
-    </section>
+      {status !== 'loading' && hasAny && activity.length === 0 && (
+        <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-500">
+          No recent activity yet. Accepts, counters, and nudges will show up here.
+        </div>
+      )}
+      {activity.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {/* Mobile shows 3, desktop 5 — matches the module-pattern
+              spec ("richer on desktop"). Items past the desktop cap
+              stay hidden; the overflow link in the header covers them. */}
+          {activity.map((a, idx) => (
+            <li
+              key={`${a.proposalId}-${a.createdAt}-${idx}`}
+              className={idx >= 3 ? 'hidden lg:list-item' : undefined}
+            >
+              <ActivityRow
+                activity={a}
+                viewerHandle={viewerHandle}
+                onClick={() => onOpenTrade(a.proposalId)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </ModuleSection>
   );
 }
 
-// --- Communities -----------------------------------------------------------
+function ActivityRow({
+  activity,
+  viewerHandle,
+  onClick,
+}: {
+  activity: TradeActivityEntry;
+  viewerHandle: string | undefined;
+  onClick: () => void;
+}) {
+  const actorLabel = activity.actor
+    ? (activity.actor.handle === viewerHandle ? 'You' : `@${activity.actor.handle}`)
+    : 'System';
+  const verb = verbForActivityType(activity.type);
+  // Subject: for actions taken *on* the viewer's proposal by someone
+  // else, read "your proposal"; for actions the viewer took, read
+  // "your proposal to @X"; for system-generated (expired) it's just
+  // "the proposal".
+  const subject = (() => {
+    if (actorLabel === 'You') {
+      return activity.counterpartHandle ? `your proposal to @${activity.counterpartHandle}` : 'your proposal';
+    }
+    if (activity.actor) return 'your proposal';
+    return 'a proposal';
+  })();
+  const when = timeAgoShort(activity.createdAt);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
+    >
+      <span aria-hidden className="text-base leading-none shrink-0">{glyphForActivityType(activity.type)}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] text-gray-200 truncate">
+          <span className="font-medium">{actorLabel}</span>{' '}
+          <span className="text-gray-400">{verb}</span>{' '}
+          <span className="text-gray-400">{subject}</span>
+        </div>
+      </div>
+      <span className="text-[11px] text-gray-500 tabular-nums shrink-0">{when}</span>
+    </button>
+  );
+}
 
-function CommunitiesSection({
+function verbForActivityType(t: TradeActivityType): string {
+  switch (t) {
+    case 'accepted':  return 'accepted';
+    case 'declined':  return 'declined';
+    case 'cancelled': return 'cancelled';
+    case 'countered': return 'countered';
+    case 'edited':    return 'edited';
+    case 'nudged':    return 'nudged';
+    case 'expired':   return 'expired on';
+  }
+}
+
+function glyphForActivityType(t: TradeActivityType): string {
+  switch (t) {
+    case 'accepted':  return '✅';
+    case 'declined':  return '🛑';
+    case 'cancelled': return '↩️';
+    case 'countered': return '🔁';
+    case 'edited':    return '✏️';
+    case 'nudged':    return '👋';
+    case 'expired':   return '⌛';
+  }
+}
+
+// --- 📋 My Lists module ----------------------------------------------------
+
+function ListsModule({
+  wants,
+  availableCount,
+  cardByFamily,
+  onEditLists,
+}: {
+  wants: WantsItem[];
+  availableCount: number;
+  cardByFamily: Map<string, CardVariant>;
+  onEditLists: () => void;
+}) {
+  const priorityWants = useMemo(() => {
+    return wants.filter(w => w.isPriority).slice(0, 5);
+  }, [wants]);
+
+  return (
+    <ModuleSection
+      icon="📋"
+      label="My Lists"
+      headingId="my-lists-heading"
+      action={
+        <button
+          type="button"
+          onClick={onEditLists}
+          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+        >
+          Edit lists →
+        </button>
+      }
+    >
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{wants.length}</span>
+        {' wants · '}
+        <span className="text-gray-200 font-semibold">{availableCount}</span>
+        {' available'}
+      </div>
+
+      {wants.length === 0 && availableCount === 0 && (
+        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+          No lists yet.{' '}
+          <button
+            type="button"
+            onClick={onEditLists}
+            className="text-gold hover:text-gold-bright underline font-semibold"
+          >
+            Add cards you want or have
+          </button>
+          {' — others with matching lists can find you.'}
+        </div>
+      )}
+      {wants.length > 0 && priorityWants.length === 0 && (
+        <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-500 leading-relaxed">
+          Star a want to mark it a priority — priorities show up first here and in matchmaking.
+        </div>
+      )}
+      {priorityWants.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {priorityWants.map((w, idx) => {
+            const card = cardByFamily.get(w.familyId);
+            const name = card?.name ?? 'Priority card';
+            return (
+              <li
+                key={w.id}
+                className={idx >= 2 ? 'hidden lg:list-item' : undefined}
+              >
+                <button
+                  type="button"
+                  onClick={onEditLists}
+                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
+                >
+                  <span aria-hidden className="text-gold text-sm leading-none shrink-0">★</span>
+                  <span className="flex-1 text-[12px] text-gray-200 truncate">{name}</span>
+                  <span className="text-[11px] text-gray-500 tabular-nums shrink-0">×{w.qty}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </ModuleSection>
+  );
+}
+
+// --- 👥 My Communities module ----------------------------------------------
+
+function CommunitiesModule({
   guilds,
   status,
   onOpenSettings,
@@ -321,23 +551,39 @@ function CommunitiesSection({
   onOpenCommunity: () => void;
 }) {
   return (
-    <section aria-labelledby="communities-heading">
-      <SectionHeader
-        id="communities-heading"
-        label="Your communities"
-        action={
+    <ModuleSection
+      icon="👥"
+      label="My Communities"
+      headingId="my-communities-heading"
+      action={
+        <button
+          type="button"
+          onClick={onManageCommunities}
+          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+        >
+          Manage →
+        </button>
+      }
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        <div className="text-[12px] text-gray-400 tabular-nums">
+          <span className="text-gray-200 font-semibold">{guilds.length}</span>
+          {guilds.length === 1 ? ' community' : ' communities'}
+        </div>
+        {guilds.length > 0 && (
           <button
             type="button"
-            onClick={onManageCommunities}
-            className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+            onClick={onOpenCommunity}
+            className="text-[11px] text-gold hover:text-gold-bright font-medium transition-colors"
           >
-            Manage
+            Propose a trade →
           </button>
-        }
-      />
+        )}
+      </div>
+
       {status === 'loading' && <LoadingState label="Loading your communities…" />}
       {status !== 'loading' && guilds.length === 0 && (
-        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-4 text-xs text-gray-500 leading-relaxed">
+        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
           You haven't enrolled in any Discord communities yet.{' '}
           <button
             type="button"
@@ -350,13 +596,20 @@ function CommunitiesSection({
         </div>
       )}
       {guilds.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {guilds.map(g => (
-            <GuildCard key={g.guildId} guild={g} onClick={onOpenCommunity} />
+        <ul className="flex flex-col gap-1">
+          {guilds.map((g, idx) => (
+            <li
+              key={g.guildId}
+              // Mobile shows 2; desktop widens to 4. Keeps the right
+              // column from dominating the fold on a phone.
+              className={idx >= 2 ? 'hidden lg:list-item' : undefined}
+            >
+              <GuildCard guild={g} onClick={onOpenCommunity} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-    </section>
+    </ModuleSection>
   );
 }
 
@@ -371,11 +624,11 @@ function GuildCard({
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-3 px-4 py-3 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 transition-colors text-left"
+      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
     >
       <GuildAvatar guild={guild} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-100 truncate">{guild.guildName}</div>
+        <div className="text-[13px] font-medium text-gray-100 truncate">{guild.guildName}</div>
         <div className="text-[11px] text-gray-500 mt-0.5">
           Enrolled
           {guild.canManage && ' · You manage this server'}
@@ -386,18 +639,65 @@ function GuildCard({
   );
 }
 
-// --- Upcoming / LGS placeholder --------------------------------------------
+// --- 🏪 My Stores module (placeholder, Phase 4 v2+) -----------------------
 
-function UpcomingSection() {
-  // Reserved for Phase 5 LGS integration (meetup times, event reminders).
-  // Lives as a dimmed placeholder so the layout stays stable when it
-  // lights up — and so users get a hint that more is coming.
+function StoresModule() {
+  // Full-width footer module. Dimmed + dashed border so it reads as
+  // "reserved real estate" — layout stays stable when LGS ships.
   return (
-    <section aria-labelledby="upcoming-heading">
-      <SectionHeader id="upcoming-heading" icon="📅" label="Upcoming" />
-      <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-600 leading-relaxed">
-        Local game store meetups and scheduled trade nights will show up here.
+    <section aria-labelledby="my-stores-heading">
+      <div className="flex items-baseline justify-between gap-3 mb-2">
+        <h2
+          id="my-stores-heading"
+          className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold"
+        >
+          <span aria-hidden>🏪</span>
+          <span>My Stores</span>
+        </h2>
+        <span className="text-[11px] text-gray-600 font-medium">Coming soon</span>
       </div>
+      <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-600 leading-relaxed">
+        Local game store integration, meetup announcements, and in-person trade-night signals will live here.
+      </div>
+    </section>
+  );
+}
+
+// --- Shared module chrome --------------------------------------------------
+
+function ModuleSection({
+  icon,
+  label,
+  headingId,
+  action,
+  children,
+}: {
+  icon: string;
+  label: string;
+  headingId: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      aria-labelledby={headingId}
+      // Each module sits in its own subtle panel. Gives the dashboard
+      // a consistent "these are four parallel things" visual rhythm
+      // without heavy chrome — the space-800/20 wash is darker than
+      // the page ground but lighter than the interactive rows within.
+      className="rounded-xl border border-space-700 bg-space-800/20 p-4"
+    >
+      <div className="flex items-baseline justify-between gap-3 mb-1">
+        <h2
+          id={headingId}
+          className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold"
+        >
+          <span aria-hidden className="text-base leading-none">{icon}</span>
+          <span>{label}</span>
+        </h2>
+        {action}
+      </div>
+      {children}
     </section>
   );
 }
@@ -418,15 +718,10 @@ function TradeRow({
   // Viewer-centric grammar. For a received proposal, the counterpart is
   // offering `offeringCount` to me and asking for `receivingCount` from
   // me — so "Receive X · Give Y" reads directly. Sent is the mirror.
-  // Consistent with trades-history's `Offer ↔ Receive` vocab so the two
-  // surfaces don't teach conflicting phrasing.
   const detail = trade.direction === 'received'
     ? `Receive ${trade.receivingCount} · Give ${trade.offeringCount}`
     : `Offer ${trade.offeringCount} · Want ${trade.receivingCount}`;
   const when = timeAgoShort(trade.updatedAt);
-  // Preview line: top-card hint + message flag, truncated so the row
-  // stays two lines on mobile. Variant appended only when non-standard
-  // ("Luke · Standard" would read as noise).
   const previewBits: string[] = [];
   if (trade.topCard) {
     const variant = trade.topCard.variant;
@@ -439,34 +734,32 @@ function TradeRow({
   const preview = previewBits.join(' · ');
 
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left ${
-          highlight
-            ? 'bg-gold/8 border-gold/40 hover:border-gold/60 hover:bg-gold/12'
-            : 'bg-space-800/40 border-space-700 hover:border-gold/30'
-        }`}
-      >
-        <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-sm font-medium text-gray-100 truncate">
-              {label}
-            </span>
-            <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
-              {when}
-            </span>
-          </div>
-          <div className="text-[11px] text-gray-500 mt-0.5 truncate">
-            {detail}
-            {preview && ` · ${preview}`}
-          </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors text-left ${
+        highlight
+          ? 'bg-gold/8 border-gold/40 hover:border-gold/60 hover:bg-gold/12'
+          : 'bg-space-800/40 border-space-700 hover:border-gold/30'
+      }`}
+    >
+      <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="text-sm font-medium text-gray-100 truncate">
+            {label}
+          </span>
+          <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
+            {when}
+          </span>
         </div>
-        <ChevronIcon className="w-4 h-4 text-gray-500 shrink-0 -rotate-90" />
-      </button>
-    </li>
+        <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+          {detail}
+          {preview && ` · ${preview}`}
+        </div>
+      </div>
+      <ChevronIcon className="w-4 h-4 text-gray-500 shrink-0 -rotate-90" />
+    </button>
   );
 }
 
@@ -483,48 +776,8 @@ function timeAgoShort(iso: string): string {
 }
 
 function formatVariant(variant: string): string {
-  // Variants arrive uppercase ("HYPERSPACE FOIL"). Title-case the whole
-  // string for inline reading — `(Hyperspace foil)`.
   const lower = variant.toLowerCase();
   return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
-
-function SectionHeader({
-  id,
-  icon,
-  label,
-  count,
-  emphasise,
-  action,
-}: {
-  id?: string;
-  icon?: string;
-  label: string;
-  count?: number;
-  emphasise?: boolean;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 mb-2">
-      <h2
-        id={id}
-        className={`flex items-center gap-2 ${
-          emphasise
-            ? 'text-sm font-bold text-gray-100'
-            : 'text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold'
-        }`}
-      >
-        {icon && <span aria-hidden>{icon}</span>}
-        <span>{label}</span>
-        {typeof count === 'number' && count > 0 && (
-          <span className="text-xs tabular-nums text-gold font-bold">
-            {count}
-          </span>
-        )}
-      </h2>
-      {action}
-    </div>
-  );
 }
 
 function Avatar({ avatarUrl, name }: { avatarUrl: string | null; name: string }) {
@@ -546,12 +799,12 @@ function GuildAvatar({ guild }: { guild: GuildMembershipSummary }) {
   const initial = guild.guildName.trim().slice(0, 1).toUpperCase() || '?';
   if (guild.guildIcon) {
     const url = `https://cdn.discordapp.com/icons/${guild.guildId}/${guild.guildIcon}.png?size=64`;
-    return <img src={url} alt="" className="w-10 h-10 rounded-full shrink-0" />;
+    return <img src={url} alt="" className="w-9 h-9 rounded-full shrink-0" />;
   }
   return (
     <span
       aria-hidden
-      className="w-10 h-10 rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0 text-sm"
+      className="w-9 h-9 rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0 text-sm"
     >
       {initial}
     </span>
