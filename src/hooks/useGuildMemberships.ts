@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
+import { createSingletonCache } from './sharedCache';
 
 export interface GuildMembershipSummary {
   guildId: string;
@@ -55,22 +56,22 @@ interface GuildsCache {
   enrollable: GuildMembershipSummary[];
   other: GuildMembershipSummary[];
 }
-let cachedGuilds: GuildsCache | null = null;
+const cache = createSingletonCache<GuildsCache>();
 
 /** Testing-only: reset the module-scoped cache between test cases. */
 export function __resetGuildMembershipsCache() {
-  cachedGuilds = null;
+  cache.clear();
 }
 
 export function useGuildMemberships(): GuildMembershipsApi {
   const [enrollable, setEnrollable] = useState<GuildMembershipSummary[]>(
-    () => cachedGuilds?.enrollable ?? [],
+    () => cache.get()?.enrollable ?? [],
   );
   const [other, setOther] = useState<GuildMembershipSummary[]>(
-    () => cachedGuilds?.other ?? [],
+    () => cache.get()?.other ?? [],
   );
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'error'>(
-    () => (cachedGuilds !== null ? 'ready' : 'loading'),
+    () => (cache.has() ? 'ready' : 'loading'),
   );
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>('idle');
 
@@ -78,7 +79,7 @@ export function useGuildMemberships(): GuildMembershipsApi {
     enrollable: GuildMembershipSummary[];
     other: GuildMembershipSummary[];
   }) => {
-    cachedGuilds = { enrollable: data.enrollable, other: data.other };
+    cache.set({ enrollable: data.enrollable, other: data.other });
     setEnrollable(data.enrollable);
     setOther(data.other);
   }, []);
@@ -91,7 +92,7 @@ export function useGuildMemberships(): GuildMembershipsApi {
     if (!result.ok) {
       // If we already have cached data, keep showing it rather than
       // flipping to an error state — the user already saw something real.
-      if (cachedGuilds === null) setStatus('error');
+      if (!cache.has()) setStatus('error');
       return;
     }
     applyPayload(result.data);
@@ -154,7 +155,8 @@ export function useGuildMemberships(): GuildMembershipsApi {
     // mount of this hook doesn't see stale pre-patch data.
     setEnrollable(prev => {
       const next = prev.map(g => g.guildId === guildId ? { ...g, ...patch } : g);
-      if (cachedGuilds) cachedGuilds = { ...cachedGuilds, enrollable: next };
+      const current = cache.get();
+      if (current) cache.set({ ...current, enrollable: next });
       return next;
     });
     setStatus('saving');
@@ -171,7 +173,8 @@ export function useGuildMemberships(): GuildMembershipsApi {
     const canonical = result.data;
     setEnrollable(prev => {
       const next = prev.map(g => g.guildId === guildId ? { ...g, ...canonical } : g);
-      if (cachedGuilds) cachedGuilds = { ...cachedGuilds, enrollable: next };
+      const current = cache.get();
+      if (current) cache.set({ ...current, enrollable: next });
       return next;
     });
     setStatus('ready');

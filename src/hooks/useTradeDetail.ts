@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '../services/apiClient';
+import { createKeyedCache } from './sharedCache';
 import {
   acceptProposal,
   cancelProposal,
@@ -105,7 +106,7 @@ export interface TradeDetailApi {
  * every time. Successful mutations invalidate the affected entry via
  * the reload tick, which forces a fresh fetch.
  */
-const detailCache = new Map<string, TradeDetail>();
+const detailCache = createKeyedCache<string, TradeDetail>();
 
 /** Testing-only: reset the module-scoped cache between test cases. */
 export function __resetTradeDetailCache() {

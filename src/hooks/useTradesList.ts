@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '../services/apiClient';
+import { createSingletonCache } from './sharedCache';
 import type { TradeStatus, UserStub } from './useTradeDetail';
 
 export interface TradeListEntry {
@@ -66,11 +67,11 @@ interface TradesCache {
   proposals: TradeListEntry[];
   recentActivity: TradeActivityEntry[];
 }
-let cachedTrades: TradesCache | null = null;
+const cache = createSingletonCache<TradesCache>();
 
 /** Testing-only: reset the module-scoped cache between test cases. */
 export function __resetTradesListCache() {
-  cachedTrades = null;
+  cache.clear();
 }
 
 /**
@@ -81,13 +82,13 @@ export function __resetTradesListCache() {
  */
 export function useTradesList(): TradesListApi {
   const [proposals, setProposals] = useState<TradeListEntry[]>(
-    () => cachedTrades?.proposals ?? [],
+    () => cache.get()?.proposals ?? [],
   );
   const [recentActivity, setRecentActivity] = useState<TradeActivityEntry[]>(
-    () => cachedTrades?.recentActivity ?? [],
+    () => cache.get()?.recentActivity ?? [],
   );
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
-    () => (cachedTrades !== null ? 'ready' : 'loading'),
+    () => (cache.has() ? 'ready' : 'loading'),
   );
 
   const fetchOnce = useCallback(async () => {
@@ -101,11 +102,11 @@ export function useTradesList(): TradesListApi {
     if (!result.ok) {
       // If we have cached data, keep showing it rather than flipping
       // to an error state — the user already saw something real.
-      if (cachedTrades === null) setStatus('error');
+      if (!cache.has()) setStatus('error');
       return;
     }
     const activity = result.data.recentActivity ?? [];
-    cachedTrades = { proposals: result.data.proposals, recentActivity: activity };
+    cache.set({ proposals: result.data.proposals, recentActivity: activity });
     setProposals(result.data.proposals);
     setRecentActivity(activity);
     setStatus('ready');
