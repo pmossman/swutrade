@@ -14,7 +14,7 @@ import {
 import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
-import { recordEvent, listEvents } from '../lib/proposalEvents.js';
+import { recordEvent, listEvents, lastNudgedAt } from '../lib/proposalEvents.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 
 /**
@@ -43,6 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'accept':     return handleAcceptDecline(req, res, 'accepted');
     case 'decline':    return handleAcceptDecline(req, res, 'declined');
     case 'edit':       return handleEdit(req, res);
+    case 'nudge':      return handleNudge(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -1098,4 +1099,159 @@ export async function handleEdit(
   }
 
   return res.json({ id, status: 'pending' });
+}
+
+// --- nudge (Phase 4c — proposer bumps a still-pending proposal) -------------
+
+const NUDGE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+const NudgeBodySchema = z.object({
+  id: z.string().min(1),
+  // The composer sends a free-form note; empty/whitespace collapses
+  // to undefined so we don't store an empty-quote "" in the event
+  // payload. 280 matches the composer's character counter ceiling.
+  note: z
+    .string()
+    .max(280)
+    .transform(s => s.trim())
+    .transform(s => (s.length === 0 ? undefined : s))
+    .optional(),
+});
+
+/**
+ * Proposer-only. Re-pings the recipient on a still-pending proposal
+ * by posting a FRESH Discord message (new DM or new thread message —
+ * Discord edits don't trigger push notifications, and the whole
+ * point of a nudge is to re-surface the trade). The proposal row
+ * itself is untouched: status, delivery_status, and the original
+ * DM/thread ids all stay put, because the original message is still
+ * the decision surface (Accept/Counter/Decline buttons live on the
+ * nudge message too, so the recipient can act from either).
+ *
+ * Rate limit: 24h cooldown enforced against the last `nudged` event
+ * for this proposal. The event log IS the source of truth — we
+ * record the event even when Discord delivery fails, so the cooldown
+ * fires regardless of transport outcome (otherwise a failing bot
+ * could let proposers spam-nudge indefinitely).
+ */
+export async function handleNudge(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = NudgeBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { id, note } = parsed.data;
+
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, id))
+    .limit(1);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (row.proposerUserId !== session.userId) {
+    return res.status(403).json({ error: 'Only the proposer can nudge' });
+  }
+  if (row.status !== 'pending') {
+    return res.status(409).json({
+      error: 'already-resolved',
+      detail: `This proposal is ${row.status} and can no longer be nudged.`,
+    });
+  }
+
+  // 24h rate-limit check — `lastNudgedAt` returns the most recent
+  // event timestamp, or null if this proposal has never been nudged.
+  const lastAt = await lastNudgedAt(db, id);
+  if (lastAt) {
+    const nextAvailable = new Date(lastAt.getTime() + NUDGE_COOLDOWN_MS);
+    if (nextAvailable.getTime() > Date.now()) {
+      const hoursAgo = Math.max(1, Math.floor((Date.now() - lastAt.getTime()) / (60 * 60 * 1000)));
+      return res.status(429).json({
+        error: 'rate-limited',
+        nextAvailableAt: nextAvailable.toISOString(),
+        detail: `You nudged this trade ${hoursAgo}h ago; try again after ${nextAvailable.toISOString()}.`,
+      });
+    }
+  }
+
+  const [proposer] = await db
+    .select({
+      discordId: users.discordId,
+      handle: users.handle,
+      username: users.username,
+    })
+    .from(users)
+    .where(eq(users.id, row.proposerUserId))
+    .limit(1);
+  const [recipient] = await db
+    .select({ discordId: users.discordId })
+    .from(users)
+    .where(eq(users.id, row.recipientUserId))
+    .limit(1);
+
+  // Best-effort re-post. If it fails we still record the event and
+  // still respond 200 — the event log is the cooldown's source of
+  // truth, and the proposer should know their nudge was accepted
+  // (transport hiccup is a separate concern from "did my intent
+  // register").
+  if (proposer && recipient) {
+    try {
+      const bot = deps.bot ?? createDiscordBotClient();
+      const payload = buildProposalMessage(
+        {
+          tradeId: row.id,
+          proposerUserId: row.proposerUserId,
+          proposerHandle: proposer.handle,
+          proposerUsername: proposer.username,
+          offeringCards: row.offeringCards,
+          receivingCards: row.receivingCards,
+          message: row.message,
+        },
+        {
+          includePrefsButton: true,
+          // Pass the empty string when there's no note so the builder
+          // still prepends a "Nudge from …" banner — without it the
+          // re-post would look identical to the original and the
+          // recipient wouldn't realise it's a bump.
+          nudgeNote: note ?? '',
+        },
+      );
+      if (row.discordThreadId) {
+        // Thread path: a new message in the thread pings every
+        // member. Editing won't — editing is silent.
+        await bot.postChannelMessage(row.discordThreadId, payload);
+      } else {
+        // DM path: a fresh DM triggers the same push notification
+        // the original proposal did.
+        await bot.sendDirectMessage(recipient.discordId, payload);
+      }
+    } catch (err) {
+      console.error('handleNudge: Discord re-post failed', err);
+      await reportError({
+        source: 'trades.nudge.repost',
+        tags: { tradeId: id, proposerId: session.userId },
+      }, err);
+    }
+  }
+
+  const nudgedAt = new Date();
+  await recordEvent(db, {
+    proposalId: id,
+    actorUserId: session.userId,
+    type: 'nudged',
+    payload: { note: note ?? null },
+  });
+
+  return res.json({ id, nudgedAt: nudgedAt.toISOString() });
 }

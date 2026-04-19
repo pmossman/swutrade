@@ -146,10 +146,17 @@ export interface ProposalMessageContext {
  *  When `includePrefsButton` is true, a second action row carrying a
  *  single `⚙ Prefs` button is appended so users who prefer to tweak
  *  their thread preferences from inside Discord never have to leave.
+ *  When `nudgeNote` is set, a "Nudge from @proposer" prefix embed is
+ *  prepended so the recipient sees the optional note and realises
+ *  the re-post is a bump rather than a fresh proposal.
  */
 export function buildProposalMessage(
   ctx: ProposalMessageContext,
-  opts: { includeRequestThreadButton?: boolean; includePrefsButton?: boolean } = {},
+  opts: {
+    includeRequestThreadButton?: boolean;
+    includePrefsButton?: boolean;
+    nudgeNote?: string;
+  } = {},
 ): DiscordMessageBody {
   const imbalance = imbalanceNote(ctx.offeringCards, ctx.receivingCards, ctx.proposerHandle);
   const embed: DiscordEmbed = {
@@ -169,6 +176,18 @@ export function buildProposalMessage(
     ],
     footer: { text: `SWUTrade proposal · ${ctx.tradeId.slice(0, 8)}` },
   };
+
+  // Nudge prefix embed — small, gold-bordered callout that anchors
+  // the re-post as a bump rather than a new proposal. Sits ABOVE the
+  // main embed so the user scanning Discord sees "@alice bumped this"
+  // before the two-column card list they already skimmed once.
+  const nudgeEmbed: DiscordEmbed | null = opts.nudgeNote !== undefined
+    ? {
+        title: `👋 Nudge from @${ctx.proposerHandle}`,
+        description: opts.nudgeNote ? `> ${opts.nudgeNote}` : 'Still open on their end — circling back.',
+        color: COLORS.gold,
+      }
+    : null;
 
   const baseButtons = [
     {
@@ -229,7 +248,7 @@ export function buildProposalMessage(
   }
 
   return {
-    embeds: [embed],
+    embeds: nudgeEmbed ? [nudgeEmbed, embed] : [embed],
     components: rows,
   };
 }
