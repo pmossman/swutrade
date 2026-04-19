@@ -27,6 +27,7 @@ import {
 import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
 import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
+import { reportError } from '../lib/errorReporter.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -578,6 +579,10 @@ export async function handleTradeProposalButton(
     await bot.sendDirectMessage(proposer.discordId, notifyBody);
   } catch (err) {
     console.error('handleTradeProposalButton: proposer notify failed', err);
+    await reportError({
+      source: 'bot.trade-button.proposer-notify',
+      tags: { tradeId: trade.id, proposerId: proposer.id, recipientId: recipient.id, outcome: newStatus },
+    }, err);
   }
 
   const resolvedBody = buildResolvedProposalMessage(proposalCtx, newStatus, recipient.handle);
@@ -738,6 +743,10 @@ async function handleThreadFlowButton(args: {
         await bot.postChannelMessage(thread.id, buildProposalMessage(proposalCtx));
       } catch (err) {
         console.error('handleThreadFlowButton: auto-approve thread create failed', err);
+        await reportError({
+          source: 'bot.thread-flow.auto-approve-create',
+          tags: { tradeId: trade.id, requesterId: requester.id, counterpartId: counterpart.id },
+        }, err);
         if (createdThreadId) {
           bot.deleteChannel(createdThreadId).catch(cleanupErr => {
             console.error('handleThreadFlowButton: orphan thread cleanup failed', cleanupErr);
@@ -776,6 +785,10 @@ async function handleThreadFlowButton(args: {
       approvalMessageId = sent.id;
     } catch (err) {
       console.error('handleThreadFlowButton: approval DM send failed', err);
+      await reportError({
+        source: 'bot.thread-flow.approval-dm',
+        tags: { tradeId: trade.id, requesterId: requester.id, counterpartId: counterpart.id },
+      }, err);
       res.status(200).json({
         type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
         data: {
@@ -870,6 +883,10 @@ async function handleThreadFlowButton(args: {
         await bot.postChannelMessage(thread.id, buildProposalMessage(proposalCtx));
       } catch (err) {
         console.error('handleThreadFlowButton: approve-thread create failed', err);
+        await reportError({
+          source: 'bot.thread-flow.approve-create',
+          tags: { tradeId: trade.id, proposerId: proposer.id, recipientId: recipient.id },
+        }, err);
         if (createdThreadId) {
           bot.deleteChannel(createdThreadId).catch(cleanupErr => {
             console.error('handleThreadFlowButton: orphan thread cleanup failed', cleanupErr);
@@ -1610,6 +1627,10 @@ async function handleApplicationAuthorized(
       .where(eq(botInstalledGuilds.guildId, guildId));
   } catch (err) {
     console.error('discord-bot: auto-create channel failed', err);
+    await reportError({
+      source: 'bot.install.auto-create-channel',
+      tags: { guildId, installedByUserId },
+    }, err);
   }
 
   // Welcome DM — fresh installs only. The admin who actually added
@@ -1637,7 +1658,14 @@ async function handleApplicationAuthorized(
       });
     } catch (err) {
       // Installing admin might have DMs disabled. Log + move on.
+      // Filter in reportError treats 50007 (DMs disabled) as noise,
+      // so this only alerts on the surprising cases (50001 missing
+      // access, 5xx, validation bugs).
       console.error('discord-bot: welcome DM to installer failed', err);
+      await reportError({
+        source: 'bot.install.welcome-dm',
+        tags: { guildId, installedByUserId },
+      }, err);
     }
   }
 }

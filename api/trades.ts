@@ -13,6 +13,7 @@ import {
 } from '../lib/proposalMessages.js';
 import { deliveryForPair, type CommunicationPref } from '../lib/threadConsent.js';
 import { resolvePref } from '../lib/prefsResolver.js';
+import { reportError } from '../lib/errorReporter.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -289,6 +290,10 @@ export async function handlePropose(
       deliveryStatus = 'delivered';
     } catch (err) {
       console.error('handlePropose: thread flow failed, falling back to DM', err);
+      await reportError({
+        source: 'trades.propose.thread-create',
+        tags: { tradeId: id, proposerId: session.userId, recipientId: recipient.id },
+      }, err);
       // Clean up the orphan thread so the parent channel doesn't
       // accumulate empty "proposer only" threads. Best-effort —
       // if the delete itself fails, we've already logged the
@@ -329,6 +334,10 @@ export async function handlePropose(
       deliveryStatus = 'delivered';
     } catch (err) {
       console.error('handlePropose: DM send failed', err);
+      await reportError({
+        source: 'trades.propose.dm-send',
+        tags: { tradeId: id, proposerId: session.userId, recipientId: recipient.id },
+      }, err);
     }
   }
 
@@ -623,6 +632,10 @@ export async function handleCancel(
       }
     } catch (err) {
       console.error('handleCancel: DM edit failed', err);
+      await reportError({
+        source: 'trades.cancel.dm-edit',
+        tags: { tradeId: id, proposerId: session.userId },
+      }, err);
     }
   }
 
@@ -794,6 +807,10 @@ export async function handleCounter(
       await bot.editChannelMessage(original.discordDmChannelId, original.discordDmMessageId, patched);
     } catch (err) {
       console.error('handleCounter: edit original DM failed', err);
+      await reportError({
+        source: 'trades.counter.edit-original',
+        tags: { originalTradeId: original.id, counterTradeId: counterId },
+      }, err);
     }
   }
 
@@ -818,6 +835,10 @@ export async function handleCounter(
     counterDeliveryStatus = 'delivered';
   } catch (err) {
     console.error('handleCounter: counter DM send failed', err);
+    await reportError({
+      source: 'trades.counter.dm-send',
+      tags: { counterTradeId: counterId, originalTradeId: original.id },
+    }, err);
   }
 
   await db.update(tradeProposals)

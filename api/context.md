@@ -30,6 +30,10 @@ See `canonicalRequestBody` in `api/bot.ts` for the canonical pattern.
 
 `console.error('<handlerName>: <what failed>', err)` — the prefix tags the log line with its origin when we grep Vercel logs. No structured logger yet.
 
+### Error reporting to Discord
+
+Operationally-meaningful catch sites ALSO call `reportError({ source, tags }, err)` from `lib/errorReporter.ts` after their `console.error`. This posts to the `#bot-errors` Discord channel (via `DISCORD_ERROR_WEBHOOK_URL`, Preview + Production only). The reporter filters expected noise (429s, 404s for gone resources, 50007 DMs-disabled); what lands in the channel is stuff a human should look at. It's best-effort — never throws, no-ops when the env var is unset — so local `npm run dev` stays silent.
+
 ## Dispatch patterns
 
 Two recurring shapes:
