@@ -133,6 +133,34 @@ The full **Discover → Match → Propose → Negotiate → Complete → Remembe
 - [ ] **Trade completion flow** — currently Accept is terminal but doesn't model the "we actually met up and exchanged cards" step. Needs a distinct confirmed/cancelled-IRL state.
 - [ ] **Chain visualization in the detail view** — currently the detail view shows one-hop stubs (↑ counter to / ↓ countered by). Long chains deserve a timeline.
 
+### Phase 5b — Live trade sessions *(not started — dedicated phase)*
+
+A second trade modality distinct from the async proposal flow: two users sitting next to each other (at the LGS, at a game night) open a shared trade session on their phones and watch each other's side update in real time.
+
+**Why distinct from proposals:**
+- Proposals are **ping-pong, convergent via counter chain**, async, record-of-what-each-party-said. Right for remote trading.
+- Sessions are **collaborative, convergent via a single mutable object**, live, confirm-at-the-end. Right for in-person trading.
+- They serve different modalities and should coexist, not replace. Users pick the flow that matches the situation.
+
+**Data model (sketch):**
+- New `trade_sessions` table (separate from `trade_proposals`): `id` short-code, `offering_cards` / `receiving_cards` JSONB (current live state), `participant_user_ids[]`, `confirmed_by_user_ids[]`, `expires_at`, `updated_at`.
+- Short-code URL like `/live/abc123` for easy in-person handoff (also works via QR code).
+- `expires_at` enforced by the existing proposal-expiry cron with a shorter TTL (a few hours, not days) so session detritus auto-GCs.
+
+**Conflict model:** each participant only edits their OWN half of the trade (offering = my cards from my viewer, receiving = your cards). Per-side ownership → no concurrent writes to the same field → no OT/CRDT required for v1.
+
+**Transport v1:** client polls `/api/trade-sessions/:id` every 2-3s for the current state. Cheap, works on existing infra, "magic enough" for the in-person-at-the-table case. WebSockets/SSE is a v2 optimization.
+
+**Confirm flow:** both parties tap Confirm → the session freezes into a "settled" record. Option to post a completed-trade event to the community activity feed (Phase 4 v2) + subtract the cards from both parties' lists (links up with "auto-update on trade completion" above).
+
+**UX distinction in the app:**
+- Proposal: "Send a proposal to @handle" — Discord DM trail, status chips, counter/decline actions.
+- Session: "Start a live trade" — generates a QR + short URL, renders a two-column live-updating view, connected-indicator + confirm buttons.
+
+**Pairs well with LGS integration.** Once LGS visits are a thing ("4 traders going to Game Empire Sat"), a live session attached to "Game Empire Saturday" is the natural handoff from scheduling into the actual in-person exchange.
+
+**Realistic scope:** 3-5 days of work — schema, polling endpoints, session UI, confirm flow, expiry TTL. Not a same-day slice. Defer until the core Phase 4 community loop is settled and we've seen whether beta users actually reach for the in-person modality. If they do, this phase pays off massively.
+
 ---
 
 ## Next focus: foundation + polish investment
