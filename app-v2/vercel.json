@@ -1,0 +1,15 @@
+{
+  "rewrites": [
+    { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
+    { "source": "/api/auth/discord", "destination": "/api/auth?action=discord" },
+    { "source": "/api/auth/callback", "destination": "/api/auth?action=callback" },
+    { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
+
+    { "source": "/s/:id", "destination": "/" },
+    { "source": "/u/:handle", "destination": "/" },
+    { "source": "/u/:handle/:tab", "destination": "/" },
+    { "source": "/list", "destination": "/" },
+
+    { "source": "/((?!api|assets|data|favicon\\.ico).*)", "destination": "/" }
+  ]
+}

@@ -1,0 +1,57 @@
+/*
+ * Palette tokens from design.md §6.1. Named by role, not hue — a
+ * future tone adjustment doesn't rename the variable. Consumed by
+ * Tailwind via @theme in globals.css.
+ *
+ * Two groups:
+ *   - Action tones: chrome, CTAs, destructive, muted text, surfaces
+ *   - State tones: trade-state badges (carry information, not decoration)
+ *   - Side-identity tones: muted tint behind "You offer" / "They offer"
+ */
+
+:root {
+  /* action tones — light */
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --border: #E5E5E0;
+  --fg: #0A0B0F;
+  --fg-muted: #60636B;
+  --accent: #D4A85A;
+  --accent-fg: #0A0B0F;
+  --danger: #C04A3A;
+  --danger-fg: #FFFFFF;
+
+  /* state tones — light */
+  --state-shared: #4A8FA8;
+  --state-attention: #E29F35;
+  --state-settled: #4A8C5A;
+  --state-declined: #C04A3A;
+  --state-countered: #8A5CB4;
+  --state-neutral: #8A8D95;
+
+  /* side-identity tints — light */
+  --side-yours: #E6F2EA;
+  --side-theirs: #E0ECF4;
+}
+
+.dark {
+  --bg: #0A0B0F;
+  --surface: #15171C;
+  --border: #26282F;
+  --fg: #F2F2ED;
+  --fg-muted: #8A8D95;
+  --accent: #D4A85A;
+  --accent-fg: #0A0B0F;
+  --danger: #D86255;
+  --danger-fg: #FFFFFF;
+
+  --state-shared: #6AB5CF;
+  --state-attention: #F5B447;
+  --state-settled: #6AAD7B;
+  --state-declined: #D86255;
+  --state-countered: #A87ED0;
+  --state-neutral: #60636B;
+
+  --side-yours: #193326;
+  --side-theirs: #17283A;
+}

@@ -1,0 +1,76 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/*
+ * Bind CSS custom properties into Tailwind's theme so utility classes
+ * like `bg-bg`, `text-fg-muted`, `border-border` resolve against
+ * tokens.css. Dark-mode swaps happen in CSS; Tailwind doesn't see the
+ * difference.
+ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-danger-fg: var(--danger-fg);
+
+  --color-state-shared: var(--state-shared);
+  --color-state-attention: var(--state-attention);
+  --color-state-settled: var(--state-settled);
+  --color-state-declined: var(--state-declined);
+  --color-state-countered: var(--state-countered);
+  --color-state-neutral: var(--state-neutral);
+
+  --color-side-yours: var(--side-yours);
+  --color-side-theirs: var(--side-theirs);
+
+  /* type scale — design §6.2 */
+  --text-display: 28px;
+  --text-display--line-height: 34px;
+  --text-title: 22px;
+  --text-title--line-height: 27px;
+  --text-body: 16px;
+  --text-body--line-height: 22px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-caption: 11px;
+  --text-caption--line-height: 14px;
+
+  /* motion — design §6.5 */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", system-ui, sans-serif;
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reduced-motion: collapse all app-level transitions to instant.
+   Framer Motion respects prefers-reduced-motion via useReducedMotion;
+   this covers everything else. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
