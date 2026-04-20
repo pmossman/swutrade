@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
 import { useRecentPartners, type RecentPartner } from '../hooks/useRecentPartners';
-import { apiGet } from '../services/apiClient';
+import { apiGet, apiPost } from '../services/apiClient';
+import { useNavigation } from '../contexts/NavigationContext';
 
 interface HandlePickerDialogProps {
   open: boolean;
   onClose: () => void;
   /** Called with the picked handle (no `@`). Caller navigates to the
-   *  composer using this handle. */
+   *  `/?propose=<handle>` composer. Legacy proposal flow. */
   onPick: (handle: string) => void;
 }
 
@@ -32,12 +33,14 @@ const MAX_RECENT_CHIPS = 5;
  * cheap and the dependency surface unchanged.
  */
 export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialogProps) {
+  const nav = useNavigation();
   const [query, setQuery] = useState('');
   const [validation, setValidation] = useState<
     | { kind: 'idle' }
     | { kind: 'checking'; handle: string }
     | { kind: 'error'; handle: string; reason: 'not-found' | 'request-failed' }
   >({ kind: 'idle' });
+  const [startingSession, setStartingSession] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   // Pull the community directory + recent partners only while the
   // dialog is mounted. Both hooks run fetch on mount — we already
@@ -134,6 +137,54 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
     onPick(result.data.user.handle);
   }
 
+  /**
+   * Start-shared-trade path — POSTs /api/sessions/create and
+   * navigates to `/s/<id>`. If an active session already exists
+   * between this pair, the server returns the existing id and we
+   * jump into it (the pair-uniqueness redirect). Uses the handle
+   * from the input; validation + known-handle shortcut mirror the
+   * propose path so the UX feels symmetric.
+   */
+  async function handleStartSession() {
+    if (!canSubmit || startingSession) return;
+    setStartingSession(true);
+    try {
+      // Validate first when the handle isn't already in a source we
+      // trust — same policy as Propose.
+      let handleToUse = trimmedHandle;
+      if (!isKnownHandle(handleToUse)) {
+        setValidation({ kind: 'checking', handle: handleToUse });
+        const check = await apiGet<{ user: { handle: string } }>(
+          `/api/user/${encodeURIComponent(handleToUse)}`,
+        );
+        if (!check.ok) {
+          setValidation({
+            kind: 'error',
+            handle: handleToUse,
+            reason: check.reason === 'not-found' ? 'not-found' : 'request-failed',
+          });
+          return;
+        }
+        handleToUse = check.data.user.handle;
+      }
+      const result = await apiPost<{ id: string; created: boolean }>(
+        '/api/sessions/create',
+        { counterpartHandle: handleToUse, initialCards: [] },
+      );
+      if (!result.ok) {
+        setValidation({
+          kind: 'error',
+          handle: handleToUse,
+          reason: 'request-failed',
+        });
+        return;
+      }
+      nav.toSession(result.data.id);
+    } finally {
+      setStartingSession(false);
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
@@ -147,10 +198,10 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
         tabIndex={-1}
       >
         <h2 id="handle-picker-title" className="text-sm font-bold text-gray-100 mb-1">
-          Propose a trade to…
+          Trade with…
         </h2>
         <p className="text-[11px] text-gray-500 leading-relaxed mb-3">
-          Pick someone from your communities or type their SWUTrade handle.
+          Pick someone, then choose to send a formal proposal or start a shared trade you can edit together.
         </p>
 
         {showRecent && (
@@ -268,7 +319,7 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
           )}
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
@@ -278,11 +329,21 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
           </button>
           <button
             type="button"
-            onClick={() => void handleSubmit()}
-            disabled={!canSubmit}
-            className="px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={() => void handleStartSession()}
+            disabled={!canSubmit || startingSession}
+            className="px-4 h-9 rounded-lg border border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Open a shared trade with this person — you can both edit, live or async"
           >
-            {validation.kind === 'checking' ? 'Checking…' : 'Go'}
+            {startingSession ? 'Starting…' : 'Start shared trade'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={!canSubmit || startingSession}
+            className="px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Send a formal trade proposal via Discord DM"
+          >
+            {validation.kind === 'checking' ? 'Checking…' : 'Send proposal'}
           </button>
         </div>
       </div>

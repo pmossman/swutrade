@@ -41,6 +41,7 @@ import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
+import { SessionView } from './components/SessionView';
 import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
 import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
 
@@ -328,6 +329,13 @@ function App() {
       toProfile: handle => {
         pushTo(reset([], { profile: handle }));
       },
+      toSession: sessionId => {
+        // Session id lives in the pathname, not the querystring —
+        // full navigation so App remounts and SessionView reads the
+        // pathname cleanly. No intent state to mirror; sessions are
+        // server-authoritative.
+        window.location.href = `/s/${encodeURIComponent(sessionId)}`;
+      },
     };
   }, [isSignedIn, intent, handleStartTrade]);
 
@@ -456,6 +464,16 @@ function App() {
     // the return path — deep-linked users get "/?trades=1", in-SPA
     // users get the native back via the header's Home link.
     return <TradeDetailView tradeId={tradeId} />;
+  }
+
+  if (viewMode === 'session') {
+    // `/s/<code>` — shared-state trade canvas. The code is the
+    // session short-id. SessionView handles loading + terminal-state
+    // rendering; bad codes get the in-view "not found" message
+    // rather than a bare 404 route.
+    const match = window.location.pathname.match(/^\/s\/([^/]+)/);
+    const sessionId = match ? decodeURIComponent(match[1]) : '';
+    return <SessionView sessionId={sessionId} />;
   }
 
   // Profile view — /u/<handle> shows a user's public lists.

@@ -30,7 +30,8 @@ export type ViewMode =
   | 'settings'
   | 'community'
   | 'trade-detail'
-  | 'trades-history';
+  | 'trades-history'
+  | 'session';
 
 /** Params that a trade-composer URL carries. Any of them → trade view. */
 const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance'] as const;
@@ -110,6 +111,14 @@ export interface ViewRoute {
  *  13. fallback                   → home (signed-in) | trade (signed-out)
  */
 export const VIEW_ROUTES: readonly ViewRoute[] = [
+  {
+    mode: 'session',
+    // `/s/<code>` pathname — highest-priority session signal. The
+    // code is the session short-id; SessionView reads it from the
+    // pathname directly.
+    matches: ({ pathname }) => /^\/s\//.test(pathname),
+    paramKeys: [],
+  },
   {
     mode: 'profile',
     // `/u/<handle>` pathname — highest-priority profile signal. The
@@ -234,6 +243,7 @@ export function isStandaloneView(parts: RouteParts): boolean {
     'community',
     'trade-detail',
     'trades-history',
+    'session',
   ]);
   for (const route of VIEW_ROUTES) {
     if (!STANDALONE.has(route.mode)) continue;

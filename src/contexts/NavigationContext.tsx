@@ -59,6 +59,11 @@ export interface NavigationApi {
 
   /** Another user's public profile. */
   toProfile(handle: string): void;
+
+  /** Shared-trade canvas by short-code. Full navigation via
+   *  window.location so the App remounts — session state lives on
+   *  the server, so there's no SPA state to preserve. */
+  toSession(sessionId: string): void;
 }
 
 const NavigationContext = createContext<NavigationApi | null>(null);
