@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import QRCode from 'react-qr-code';
+import { QRCodeSVG } from 'qrcode.react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState } from './ui/states';
 import { TradeSide } from './TradeSide';
@@ -617,7 +617,7 @@ function OpenSlotInvite({
         </div>
       </div>
       <div className="p-3 bg-white rounded-lg">
-        <QRCode value={shareUrl} size={192} />
+        <QRCodeSVG value={shareUrl} size={192} />
       </div>
       <div className="w-full flex items-center gap-2">
         <input
