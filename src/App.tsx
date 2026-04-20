@@ -297,7 +297,7 @@ function App() {
         // Clear propose/counter/edit so the composer opens clean. Keep
         // from+autoBalance if they're set — they represent the user's
         // current sender context (e.g. they were on "Trade with @X" and
-        // clicked Balance a trade from the same page).
+        // clicked New trade from the same page).
         pushTo(reset([], { view: 'trade' }));
         intent.setIntent({ propose: null, counter: null, edit: null });
       },

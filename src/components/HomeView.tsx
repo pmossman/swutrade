@@ -231,7 +231,7 @@ function GreetingRow({
           className="flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
         >
           <PlusIcon className="w-4 h-4" />
-          Balance a trade
+          New trade
         </button>
       </div>
     </div>
