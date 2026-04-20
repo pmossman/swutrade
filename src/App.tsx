@@ -650,7 +650,6 @@ function App() {
               onRemove={handleRemoveYour}
               onChangeQty={handleQtyYour}
               accentColor="emerald"
-              borderColor="border-emerald-500/20"
               setCards={priceData.cards}
               isLoading={priceData.isAnyLoading}
               onLoadAllSets={handleLoadAllSets}
@@ -682,7 +681,6 @@ function App() {
               onRemove={handleRemoveTheir}
               onChangeQty={handleQtyTheir}
               accentColor="blue"
-              borderColor="border-blue-500/20"
               setCards={priceData.cards}
               isLoading={priceData.isAnyLoading}
               onLoadAllSets={handleLoadAllSets}
@@ -711,8 +709,7 @@ function App() {
                 onRemove={handleRemoveYour}
                 onChangeQty={handleQtyYour}
                 accentColor="emerald"
-                borderColor="border-emerald-500/20"
-                setCards={priceData.cards}
+                  setCards={priceData.cards}
                 isLoading={priceData.isAnyLoading}
                 onLoadAllSets={handleLoadAllSets}
                 filters={filters}
@@ -738,8 +735,7 @@ function App() {
                 onRemove={handleRemoveTheir}
                 onChangeQty={handleQtyTheir}
                 accentColor="blue"
-                borderColor="border-blue-500/20"
-                setCards={priceData.cards}
+                  setCards={priceData.cards}
                 isLoading={priceData.isAnyLoading}
                 onLoadAllSets={handleLoadAllSets}
                 filters={filters}

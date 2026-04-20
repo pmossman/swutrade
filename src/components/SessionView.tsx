@@ -236,7 +236,6 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   onRemove={handleRemove}
                   onChangeQty={handleChangeQty}
                   accentColor="emerald"
-                  borderColor="border-emerald-500/20"
                   setCards={priceData.cards}
                   isLoading={priceData.isAnyLoading}
                   onLoadAllSets={handleLoadAllSets}
@@ -260,7 +259,6 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   onRemove={noop}
                   onChangeQty={noop}
                   accentColor="blue"
-                  borderColor="border-blue-500/20"
                   setCards={priceData.cards}
                   isLoading={priceData.isAnyLoading}
                   onLoadAllSets={handleLoadAllSets}

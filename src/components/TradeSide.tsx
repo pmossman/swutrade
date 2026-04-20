@@ -28,7 +28,6 @@ interface TradeSideProps {
   onRemove: (key: string) => void;
   onChangeQty: (key: string, delta: number) => void;
   accentColor: 'emerald' | 'blue';
-  borderColor: string;
   setCards: Record<string, CardVariant[]>;
   isLoading: boolean;
   onLoadAllSets: () => void;
@@ -96,6 +95,15 @@ const headerColors: Record<string, string> = {
   blue: 'border-blue-500/30 text-blue-300',
 };
 
+// Side-identity tint — a small pale background behind the label chip
+// only. Used alongside the colored header text + saber-bar accent; the
+// outer panel itself stays neutral so gold CTAs and state badges keep
+// visual primacy.
+const labelChipBg: Record<string, string> = {
+  emerald: 'bg-emerald-500/10',
+  blue: 'bg-blue-500/10',
+};
+
 // Vertical "saber bar" on the left edge of each panel — identifies the side
 // at a glance. Colored from bright core → muted tail with a soft glow,
 // mimicking a lightsaber blade.
@@ -135,7 +143,6 @@ export function TradeSide({
   onRemove,
   onChangeQty,
   accentColor,
-  borderColor,
   setCards,
   isLoading,
   onLoadAllSets,
@@ -431,7 +438,12 @@ export function TradeSide({
         />
       )}
       <div
-        className={`relative bg-space-800 rounded-xl border ${borderColor} overflow-hidden flex flex-col ${collapsed ? 'flex-none' : 'min-h-0'} ${collapsed || flexBasis !== undefined ? '' : 'flex-auto'}`}
+        // Neutral outer border. Side identity reads through the saber-bar
+        // accent (left edge) + the colored header label + the small
+        // tinted chip behind the label. Full-panel emerald/blue borders
+        // competed with primary CTAs (gold) and state badges; muting the
+        // chrome lets the action layer do its job.
+        className={`relative bg-space-800 rounded-xl border border-space-700 overflow-hidden flex flex-col ${collapsed ? 'flex-none' : 'min-h-0'} ${collapsed || flexBasis !== undefined ? '' : 'flex-auto'}`}
         style={!collapsed && flexBasis !== undefined ? { flex: `0 1 ${flexBasis * 100}%` } : undefined}
       >
         {/* Saber-bar side accent */}
@@ -457,7 +469,7 @@ export function TradeSide({
                   </svg>
                 </span>
               )}
-              <span className="swu-display text-xs sm:text-sm">{label}</span>
+              <span className={`swu-display text-xs sm:text-sm px-2 py-0.5 rounded-full ${labelChipBg[accentColor]}`}>{label}</span>
               {cards.length > 0 && (
                 <span className="text-[11px] tabular-nums text-gray-400 font-medium">
                   · {cards.length} card{cards.length === 1 ? '' : 's'}
