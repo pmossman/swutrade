@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resvg } from '@resvg/resvg-js';
+import { inflateSync } from 'fflate';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -60,17 +61,52 @@ function maskToVariants(mask: number): CanonicalVariant[] {
   return out;
 }
 
-interface WantsRef {
+// Share URLs for Wants + Available params are deflate+base64url
+// compressed by `src/urlCodec.ts::compressParam` (added 2026-04-15 in
+// `43b7fec` to shrink big lists under URL length limits). Compressed
+// payloads carry a `~` prefix so legacy uncompressed URLs still decode.
+// This file used to duplicate the decoders without the decompression
+// step, silently returning [] for every modern share link → empty
+// image. Keep this helper + both decoders' first lines in sync with
+// the client codec until they're unified (see queue item).
+const COMPRESS_PREFIX = '~';
+
+function fromBase64Url(str: string): Uint8Array {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = Buffer.from(padded, 'base64').toString('binary');
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function decompressParam(param: string): string {
+  if (!param.startsWith(COMPRESS_PREFIX)) return param;
+  try {
+    const deflated = fromBase64Url(param.slice(COMPRESS_PREFIX.length));
+    return new TextDecoder().decode(inflateSync(deflated));
+  } catch {
+    // Malformed compressed payload — return empty so downstream
+    // split('') produces []. Rendering an empty image beats crashing
+    // the handler and serving a 500 for a bad share URL.
+    return '';
+  }
+}
+
+export interface WantsRef {
   familyId: string;
   qty: number;
   acceptedVariants: string[] | null;  // null = any
   isPriority: boolean;
 }
 
-function decodeWants(param: string): WantsRef[] {
+// Exported for `tests/api/og-codec.test.ts` — the cross-boundary
+// round-trip (client encode → server decode) is the coverage that was
+// missing when `43b7fec` added compression to the client but not here.
+export function decodeWants(param: string): WantsRef[] {
   if (!param) return [];
+  const raw = decompressParam(param);
   const out: WantsRef[] = [];
-  for (const entry of param.split(',').filter(Boolean)) {
+  for (const entry of raw.split(',').filter(Boolean)) {
     const fields = entry.split('.');
     if (fields.length < 2) continue;
     const [encId, qtyStr, ...flags] = fields;
@@ -99,12 +135,13 @@ function decodeWants(param: string): WantsRef[] {
   return out;
 }
 
-interface AvailableRef { productId: string; qty: number }
+export interface AvailableRef { productId: string; qty: number }
 
-function decodeAvailableRefs(param: string): AvailableRef[] {
+export function decodeAvailableRefs(param: string): AvailableRef[] {
   if (!param) return [];
+  const raw = decompressParam(param);
   const out: AvailableRef[] = [];
-  for (const entry of param.split(',').filter(Boolean)) {
+  for (const entry of raw.split(',').filter(Boolean)) {
     const [productId, qtyStr] = entry.split('.');
     if (!productId) continue;
     out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
