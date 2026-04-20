@@ -124,9 +124,36 @@ Previously called just "Phase 5" — now explicitly "5a" to pair with the siblin
 - [ ] **Trade completion flow** — currently Accept is terminal but doesn't model the "we actually met up and exchanged cards" step. Needs a distinct confirmed/cancelled-IRL state.
 - [ ] **Chain visualization in the detail view** — currently the detail view shows one-hop stubs (↑ counter to / ↓ countered by). Long chains deserve a timeline.
 
-### Phase 5b — Shared trade sessions *(not started — next big slice)*
+### Phase 5b — Unified trade primitive *(in progress — biggest slice)*
 
-A second trade modality that sits alongside proposals: two users share a single mutable trade object they both edit over time. Same underlying primitive serves both the live case (both connected, phones side-by-side at the LGS) and the async case (edit-and-come-back over days, with Discord pings on the other side's changes).
+**Reframed 2026-04-19** — originally planned as a sibling "sessions" modality alongside proposals. New direction: collapse calculator, session, and proposal into a single user-facing object, **the trade**, with state-driven UI.
+
+**One first-class object. Three states.**
+- **Solo** — one person, private canvas. What today's "calculator" is.
+- **Shared** — two people editing together (live polling or async with Discord pings).
+- **Pitched** — one person committed a snapshot, counterpart hasn't joined. What today's "proposal" is.
+
+Plus terminal states: Settled, Cancelled, Expired, Declined (carried over from proposals).
+
+**State transitions are actions users take ON a trade, not separate flows:**
+- Solo → Shared: `Invite @handle`, `Share QR`
+- Solo → Pitched: `Send as proposal`
+- Shared → Settled: both confirm
+- Shared → Pitched: one side can "lock this as a proposal" when the other's gone quiet
+- Pitched → Shared: recipient clicks "Edit together" in-app
+
+**Why one primitive, not three:**
+- Users don't pre-pick modality. They just start a trade with someone; how it proceeds emerges from what both parties do.
+- Modality collision (session vs proposal choice before cards are even in) disappears.
+- Proposals stop being a dead-end — recipients who want to iterate can promote into Shared.
+- In-person QR handoff reads as "share this trade," not as a separate product.
+
+**Vocabulary:**
+- User-facing: **trade**, **invite**, **pitch** (or **propose**), **confirm**, **settled**.
+- Internal state names: `solo` / `shared` / `pitched` / `settled` / etc.
+- Retire "calculator" and "session" from copy. "Balance a trade" → "+ New trade."
+
+**Storage:** keep `trade_sessions` + `trade_proposals` as-is (both shipped). A new `lib/trades.ts` view layer unifies them into a single `TradeView` stream for lists + dashboards. Physical merge into one table is a later migration if the separation proves unnecessary.
 
 **Why distinct from proposals:**
 - Proposals are **ping-pong, convergent via counter chain**, record-of-what-each-party-said. Right for remote formal offers.
@@ -166,7 +193,17 @@ A second trade modality that sits alongside proposals: two users share a single 
 
 **Home + My Trades surfaces gain a new section:** *"Active sessions — 2, one has changes you haven't seen."* Inline peek pattern (today's design) carries over.
 
-**Realistic scope:** 5–7 days. Schema + migration, CRUD endpoints, polling loop, session UI, confirm flow, debounced DM job, expiry integration. Larger than a same-day slice; probably a focused week.
+**Realistic scope:** 5–7 days base + a couple more for the unified-UI rework:
+- [x] **Sliver 1** — `trade_sessions` + `session_events` schema, read endpoints (`75fcc44`).
+- [ ] **Sliver 2** — Shared-state write endpoints: create / edit / confirm / cancel. Pair-uniqueness redirect on create.
+- [ ] **Sliver 3** — Shared trade canvas at `/s/<code>` reusing the existing trade-builder chrome with state-aware action strip + polling.
+- [ ] **Sliver 4** — Solo → Shared transition: `Invite @handle` action from inside the trade builder.
+- [ ] **Sliver 5** — `lib/trades.ts` unified view layer, Home "My Trades" merges proposals + sessions with state badges.
+- [ ] **Sliver 6** — "+ New trade" copy rework everywhere.
+- [ ] **Sliver 7** — Debounced Discord pings for async resumption.
+- [ ] **Sliver 8** — Anonymous participants: `users.is_anonymous` flag, nullable `discord_id`, ghost-user model, QR handoff, sign-in-to-save CTA.
+- [ ] **Sliver 9** — Pitched → Shared promotion ("Edit together" on the recipient proposal view).
+- [ ] **Sliver 10** — Expiry integration, per-status TTLs (tight for anonymous, 14d for both-signed-in).
 
 ### Phase 4 v2 — Community depth *(LGS integration; moved after Phase 5)*
 
