@@ -1047,3 +1047,34 @@ function truncateForButton(name: string): string {
   const MAX = 70; // leaves room for "Enroll in " prefix
   return name.length > MAX ? `${name.slice(0, MAX - 1)}…` : name;
 }
+
+// --- Shared-trade handle invite DM ----------------------------------------
+
+/**
+ * DM body sent to a user when someone invites them by handle to an
+ * open shared trade (Phase 5b invite-by-handle flow). Intentionally
+ * minimal — the session itself carries the trade detail; this DM just
+ * points the recipient at the URL so a single tap lands them on the
+ * join screen.
+ *
+ * Uses a link embedded in the description rather than a LINK button
+ * so the message stays readable in clients (mobile, watch previews)
+ * that don't render interactive components consistently.
+ */
+export function buildSessionInviteMessage(opts: {
+  inviterHandle: string;
+  sessionUrl: string;
+}): DiscordMessageBody {
+  return {
+    embeds: [{
+      title: 'Shared trade invite',
+      description: [
+        `@${opts.inviterHandle} invited you to join a shared trade on SWUTrade.`,
+        '',
+        `[Open shared trade](<${opts.sessionUrl}>)`,
+      ].join('\n'),
+      color: COLORS.gold,
+      footer: { text: 'SWUTrade shared trade' },
+    }],
+  };
+}
