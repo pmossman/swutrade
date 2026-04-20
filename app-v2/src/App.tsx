@@ -5,14 +5,24 @@ import { CardsRoute } from './routes/cards';
 import { CommunityRoute } from './routes/community';
 import { MeRoute } from './routes/me';
 import { TradeCanvasRoute } from './routes/trade-canvas';
+import { TradeDetailRoute } from './routes/trade-detail';
+import { ComposeRoute } from './routes/compose';
 import { ProfileRoute } from './routes/profile';
 import { NotFoundRoute } from './routes/not-found';
 
 /*
- * Trade canvas + profile + settings render "standalone" — no tab bar,
- * full-focus. Four primary tabs share the tab-bar chrome.
+ * Trade canvas + profile + settings + compose + trade detail render
+ * "standalone" — no tab bar, full-focus. Four primary tabs share the
+ * tab-bar chrome.
  */
-const STANDALONE_PATTERNS = [/^\/s\//, /^\/u\//, /^\/settings/, /^\/list/];
+const STANDALONE_PATTERNS = [
+  /^\/s\//,
+  /^\/u\//,
+  /^\/t\//,
+  /^\/compose/,
+  /^\/settings/,
+  /^\/list/,
+];
 
 function Shell() {
   const location = useLocation();
@@ -25,6 +35,8 @@ function Shell() {
         <Route path="/community" element={<CommunityRoute />} />
         <Route path="/me" element={<MeRoute />} />
         <Route path="/s/:code" element={<TradeCanvasRoute />} />
+        <Route path="/t/:id" element={<TradeDetailRoute />} />
+        <Route path="/compose" element={<ComposeRoute />} />
         <Route path="/u/:handle" element={<ProfileRoute />} />
         <Route path="*" element={<NotFoundRoute />} />
       </Routes>

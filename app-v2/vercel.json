@@ -18,9 +18,22 @@
     { "source": "/api/sessions/:id/invite-handle", "destination": "/api/sessions?action=invite-handle&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
 
+    { "source": "/api/trades/propose", "destination": "/api/trades?action=propose" },
+    { "source": "/api/trades/proposals", "destination": "/api/trades?action=proposals" },
+    { "source": "/api/trades/:id/cancel", "destination": "/api/trades?action=cancel&id=:id" },
+    { "source": "/api/trades/:id/accept", "destination": "/api/trades?action=accept&id=:id" },
+    { "source": "/api/trades/:id/decline", "destination": "/api/trades?action=decline&id=:id" },
+    { "source": "/api/trades/:id/counter", "destination": "/api/trades?action=counter&id=:id" },
+    { "source": "/api/trades/:id/edit", "destination": "/api/trades?action=edit&id=:id" },
+    { "source": "/api/trades/:id/nudge", "destination": "/api/trades?action=nudge&id=:id" },
+    { "source": "/api/trades/:id/promote-to-shared", "destination": "/api/trades?action=promote-to-shared&id=:id" },
+    { "source": "/api/trades/:id", "destination": "/api/trades?action=get&id=:id" },
+
     { "source": "/s/:id", "destination": "/" },
+    { "source": "/t/:id", "destination": "/" },
     { "source": "/u/:handle", "destination": "/" },
     { "source": "/u/:handle/:tab", "destination": "/" },
+    { "source": "/compose", "destination": "/" },
     { "source": "/list", "destination": "/" },
 
     { "source": "/((?!api|assets|data|favicon\\.ico).*)", "destination": "/" }

@@ -79,3 +79,29 @@ test.describe('Cards tab (ghost state)', () => {
     await expect(page.getByRole('button', { name: /continue with discord/i })).toBeVisible();
   });
 });
+
+test.describe('Async pitch routes (1f)', () => {
+  test('/u/<unknown> renders profile-not-found state', async ({ page }) => {
+    await page.goto('/u/nobody-xyz');
+    await expect(
+      page.getByRole('heading', { name: /profile not found/i }),
+    ).toBeVisible();
+  });
+
+  test('/t/<bogus> renders trade-not-found state', async ({ page }) => {
+    await page.goto('/t/bogus-id-123');
+    await expect(
+      page.getByRole('heading', { name: /trade not found/i }),
+    ).toBeVisible();
+  });
+
+  test('/compose without auth shows sign-in CTA', async ({ page }) => {
+    await page.goto('/compose?to=someone');
+    await expect(
+      page.getByRole('heading', { name: /sign in to pitch/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /continue with discord/i }),
+    ).toBeVisible();
+  });
+});
