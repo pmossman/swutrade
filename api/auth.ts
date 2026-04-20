@@ -5,6 +5,7 @@ import { eq } from 'drizzle-orm';
 import { createSession, destroySession, getSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
 import { users } from '../lib/schema.js';
+import { mergeGhostIntoRealUser } from '../lib/sessions.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 
 /**
@@ -41,6 +42,7 @@ export async function handleMe(req: VercelRequest, res: VercelResponse) {
       username: session.username,
       handle: session.handle,
       avatarUrl: session.avatarUrl,
+      isAnonymous: session.isAnonymous ?? false,
     },
     botInstallUrl: buildBotInstallUrl(),
   });
@@ -226,6 +228,14 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
 
   const db = getDb();
 
+  // Ghost-to-real merge: if the caller has an existing session cookie
+  // AND that session points at an anonymous user, we'll migrate the
+  // ghost's trade_sessions over to the real user row below (after
+  // we've resolved or created the real user). Capture the ghost id
+  // now — the session cookie gets overwritten on createSession.
+  const priorSession = await getSession(req, res);
+  const ghostIdToMerge = priorSession?.isAnonymous ? priorSession.userId : null;
+
   const existing = await db.select().from(users).where(eq(users.discordId, discordUser.id)).limit(1);
 
   let handle: string;
@@ -269,6 +279,20 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
   // to sign-in so OAuth isn't coupled to Discord's guilds endpoint
   // availability.
   await syncGuildMemberships(discordUser.id, tokens.accessToken());
+
+  // Phase 5b ghost migration: if the caller was signed in as a ghost
+  // (e.g. they scanned a QR, claimed anonymously, now they're
+  // signing in to save the trade), move the ghost's sessions over
+  // to this real user row before we swap the cookie. Swallow errors
+  // — at worst the ghost's sessions stay under the ghost id until
+  // TTL, which degrades gracefully.
+  if (ghostIdToMerge && ghostIdToMerge !== discordUser.id) {
+    try {
+      await mergeGhostIntoRealUser(db, ghostIdToMerge, discordUser.id);
+    } catch (err) {
+      console.error('auth callback: ghost merge failed', ghostIdToMerge, err);
+    }
+  }
 
   await createSession(req, res, {
     userId: discordUser.id,

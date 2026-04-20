@@ -347,6 +347,7 @@ export async function handleClaimSession(req: VercelRequest, res: VercelResponse
       username: ghost.username,
       handle: ghost.handle,
       avatarUrl: null,
+      isAnonymous: true,
     });
     mintedGhost = ghost;
     viewerId = ghost.id;

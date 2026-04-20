@@ -811,6 +811,119 @@ export async function cancelSession(
   return { ok: true, view };
 }
 
+/**
+ * Migrate every reference to `ghostId` in `trade_sessions` and
+ * `session_events` over to `realUserId`, then delete the ghost row.
+ * Called from the OAuth callback when a user signs in via Discord
+ * while already carrying a ghost session cookie — their in-progress
+ * trades follow them into the real account.
+ *
+ * Edge case: if the real user already had an active session with
+ * the same counterpart a ghost session is tied to, the partial
+ * unique index on `(user_a_id, user_b_id) WHERE status='active'`
+ * would reject the UPDATE. We swallow per-session errors and leave
+ * the conflicting session under the ghost id; when the loop
+ * finishes, we only delete the ghost row if NO sessions still
+ * reference it (otherwise cascade delete would wipe them).
+ *
+ * Per-session logic:
+ *   - Rewrite the ghost's slot to point at the real user.
+ *   - Re-normalise the a/b canonical ordering.
+ *   - If the ghost was in `confirmedByUserIds`, carry that
+ *     confirmation to the real user.
+ *   - If `lastEditedByUserId` was the ghost, promote it to the real
+ *     user for the debounce-DM job.
+ */
+export async function mergeGhostIntoRealUser(
+  db: Db,
+  ghostId: string,
+  realUserId: string,
+): Promise<void> {
+  const sessions = await db
+    .select()
+    .from(tradeSessions)
+    .where(or(
+      eq(tradeSessions.userAId, ghostId),
+      eq(tradeSessions.userBId, ghostId),
+    ));
+
+  for (const s of sessions) {
+    const now = new Date();
+    try {
+      // Slot B null (open invitation created by the ghost) — just
+      // rewrite the creator slot.
+      if (s.userBId === null) {
+        await db
+          .update(tradeSessions)
+          .set({ userAId: realUserId, updatedAt: now })
+          .where(eq(tradeSessions.id, s.id));
+        continue;
+      }
+
+      const other = s.userAId === ghostId ? s.userBId : s.userAId;
+      const { userAId, userBId } = normalizeParticipants(realUserId, other);
+      const realInA = userAId === realUserId;
+      // Cards travel with whoever owned them, not with slot position.
+      const ghostCards = s.userAId === ghostId ? s.userACards : s.userBCards;
+      const otherCards = s.userAId === ghostId ? s.userBCards : s.userACards;
+
+      const nextConfirmations = s.confirmedByUserIds.includes(ghostId)
+        ? [...s.confirmedByUserIds.filter(id => id !== ghostId), realUserId]
+        : s.confirmedByUserIds;
+
+      await db
+        .update(tradeSessions)
+        .set({
+          userAId,
+          userBId,
+          userACards: realInA ? ghostCards : otherCards,
+          userBCards: realInA ? otherCards : ghostCards,
+          confirmedByUserIds: nextConfirmations,
+          lastEditedByUserId: s.lastEditedByUserId === ghostId
+            ? realUserId
+            : s.lastEditedByUserId,
+          updatedAt: now,
+        })
+        .where(eq(tradeSessions.id, s.id));
+    } catch (err) {
+      // Pair-uniqueness conflict: the real user already has an
+      // active session with this counterpart. Leave the ghost row
+      // alive so the session isn't cascaded into oblivion; the user
+      // won't see it in their list but it'll fall out of TTL
+      // eventually.
+      console.error(
+        'mergeGhostIntoRealUser: session migration failed',
+        s.id,
+        err,
+      );
+    }
+  }
+
+  // Rewrite the event-log actor references. session_events has FK
+  // ON DELETE SET NULL so stale refs become null instead of
+  // cascading — still safe to do before the ghost delete for
+  // cleaner audit history.
+  await db
+    .update(sessionEvents)
+    .set({ actorUserId: realUserId })
+    .where(eq(sessionEvents.actorUserId, ghostId));
+
+  // Only delete the ghost if nothing still references it. The
+  // trade_sessions FK is ON DELETE CASCADE — deleting a ghost with
+  // unmigrated sessions would wipe those sessions.
+  const remaining = await db
+    .select({ id: tradeSessions.id })
+    .from(tradeSessions)
+    .where(or(
+      eq(tradeSessions.userAId, ghostId),
+      eq(tradeSessions.userBId, ghostId),
+    ))
+    .limit(1);
+  if (remaining.length === 0) {
+    await db.delete(users).where(eq(users.id, ghostId));
+  }
+}
+
 // Expose drizzle helpers that future files will reuse so we don't
 // fan out the imports across call sites.
 export { sql, gt };

@@ -43,6 +43,7 @@ import { VariantBadge } from './VariantBadge';
  */
 export function SessionView({ sessionId }: { sessionId: string }) {
   const auth = useAuthContext();
+  const viewerIsGhost = !!auth.user?.isAnonymous;
   const priceData = usePriceDataContext();
   const cardIndex = useCardIndexContext();
   const { listsDrawerOpen, setListsDrawerOpen, openLists } = useDrawerContext();
@@ -183,6 +184,19 @@ export function SessionView({ sessionId }: { sessionId: string }) {
 
         {session && session.openSlot && (
           <OpenSlotInvite sessionId={session.id} onCancel={async () => { await cancel(); }} />
+        )}
+
+        {session && !session.openSlot && viewerIsGhost && (
+          <GhostSignInBanner
+            onSignIn={() => {
+              // Full nav to the Discord OAuth start endpoint. The
+              // callback will merge this ghost's sessions into the
+              // real user row before redirecting to `/`. After sign-
+              // in the user can navigate back to this session URL
+              // and see it under their real identity.
+              window.location.href = '/api/auth/discord';
+            }}
+          />
         )}
 
         {session && !session.openSlot && (
@@ -465,6 +479,37 @@ function CounterpartTile({ snap }: { snap: TradeCardSnapshot }) {
         )}
       </div>
     </div>
+  );
+}
+
+// --- Ghost sign-in CTA ----------------------------------------------------
+
+/**
+ * Shown when the current viewer joined as an anonymous ghost — nudges
+ * them to sign in so this trade survives beyond the ghost cookie's
+ * TTL. Discord OAuth callback handles the ghost → real migration,
+ * rewriting every trade_sessions row this ghost is in over to the
+ * signed-in user before swapping the cookie.
+ */
+function GhostSignInBanner({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <section className="rounded-lg border border-gold/40 bg-gold/8 px-4 py-3 flex items-center gap-3 flex-wrap">
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] font-semibold text-gold">
+          You're signed in as a guest
+        </div>
+        <div className="text-[11px] text-gray-300 mt-0.5">
+          Sign in with Discord to keep this trade and see it on Home later.
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onSignIn}
+        className="shrink-0 px-3 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors"
+      >
+        Sign in with Discord
+      </button>
+    </section>
   );
 }
 

@@ -6,6 +6,11 @@ export interface SessionData {
   username: string;
   handle: string;
   avatarUrl: string | null;
+  /** True when the signed-in user is a ghost minted for an
+   *  anonymous session claim. Ghosts have no Discord backing; the UI
+   *  uses this to render the "Sign in to save this trade" CTA and
+   *  to suppress community-feature surfaces that don't apply. */
+  isAnonymous?: boolean;
   // Phase 4: Discord OAuth access token, persisted so the user can
   // re-sync their guild memberships without a full re-auth. Stored
   // in the iron-session encrypted cookie — never hits the DB. Expires
@@ -41,6 +46,7 @@ export async function getSession(
     username: session.username,
     handle: session.handle,
     avatarUrl: session.avatarUrl,
+    isAnonymous: session.isAnonymous ?? false,
     discordAccessToken: session.discordAccessToken,
     discordAccessTokenExpiresAt: session.discordAccessTokenExpiresAt,
   };
@@ -56,6 +62,7 @@ export async function createSession(
   session.username = data.username;
   session.handle = data.handle;
   session.avatarUrl = data.avatarUrl;
+  session.isAnonymous = data.isAnonymous ?? false;
   session.discordAccessToken = data.discordAccessToken;
   session.discordAccessTokenExpiresAt = data.discordAccessTokenExpiresAt;
   await session.save();

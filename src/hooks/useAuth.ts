@@ -6,6 +6,10 @@ export interface User {
   username: string;
   handle: string;
   avatarUrl: string | null;
+  /** True when the signed-in user is a ghost minted for a shared-
+   *  trade claim. The UI uses this to show a "Sign in to save this
+   *  trade" CTA and to hide community-feature surfaces. */
+  isAnonymous?: boolean;
 }
 
 export interface AuthApi {

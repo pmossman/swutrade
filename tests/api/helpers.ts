@@ -95,6 +95,7 @@ export function mockResponse(): VercelResponse & {
 export async function sealTestCookie(userId: string, opts: {
   discordAccessToken?: string;
   discordAccessTokenExpiresAt?: number;
+  isAnonymous?: boolean;
 } = {}): Promise<string> {
   return sealData(
     {
@@ -102,6 +103,7 @@ export async function sealTestCookie(userId: string, opts: {
       username: 'Test',
       handle: 'test',
       avatarUrl: null,
+      isAnonymous: opts.isAnonymous ?? false,
       discordAccessToken: opts.discordAccessToken,
       discordAccessTokenExpiresAt: opts.discordAccessTokenExpiresAt,
     },
