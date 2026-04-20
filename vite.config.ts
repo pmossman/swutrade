@@ -30,5 +30,14 @@ export default defineConfig({
     poolOptions: {
       threads: { maxThreads: 4 },
     },
+    // Integration tests in tests/api/ do 4-5 Postgres round trips
+    // over Neon from CI. At ~300-800ms per round trip on a slow GA
+    // moment that's easily 3-4s, leaving no headroom over vitest's
+    // default 5000ms. 15s is plenty for a real test without masking
+    // a genuine hang — any test that sits for 15s is a bug, not a
+    // slow network. (Fixed after run 24653105703 timed out on two
+    // Postgres-heavy tests with no code changes since a prior green.)
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
   },
 })
