@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, expectNoConsoleErrors } from './_fixtures';
 
 /**
  * Covers the Phase 5b "Live trade" flow end-to-end at the browser
@@ -21,18 +21,13 @@ import { test, expect } from '@playwright/test';
  * routing / module graph fails here.
  */
 test.describe('Live trade session', () => {
-  test('GET /s/<unknown> renders the app chrome, not a 404', async ({ page }) => {
+  test('GET /s/<unknown> renders the app chrome, not a 404', async ({ page, consoleErrors }) => {
     // Visiting any /s/<code> directly — even a made-up one — must
     // serve the SPA index so client routing can render the Not
     // Found state. The bug was that Vercel's default behaviour for
     // an unrewritten path is a literal 404 page from the platform,
     // so the SPA never boots and we can't even show a friendly
     // message.
-    const errors: string[] = [];
-    page.on('console', msg => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-
     const response = await page.goto('/s/SPECTESTNOPE');
     expect(response?.status()).toBe(200);
 
@@ -48,23 +43,14 @@ test.describe('Live trade session', () => {
       page.getByText(/doesn't exist|no longer available|not found/i).first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    // Filter: the API 404 on a fake session id is expected and
-    // surfaces as a browser resource warning. Treat that specific
-    // shape as noise so the assertion targets real runtime errors
-    // (React crashes, ErrorBoundary triggers) rather than the
-    // expected not-found round-trip.
-    const unexpected = errors.filter(msg =>
-      !/Failed to load resource.*404.*Not Found/i.test(msg),
-    );
-    expect(unexpected).toEqual([]);
+    // Zero unexpected console errors — the fixture's default filter
+    // strips out the expected API 404 + 401 noise, so anything
+    // remaining is a real runtime error (React crash, ErrorBoundary
+    // fire, unhandled promise rejection).
+    expectNoConsoleErrors(consoleErrors);
   });
 
-  test('anonymous user clicks Live trade → QR canvas renders', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('console', msg => {
-      if (msg.type() === 'error') errors.push(msg.text());
-    });
-
+  test('anonymous user clicks Live trade → QR canvas renders', async ({ page, consoleErrors }) => {
     await page.goto('/');
     // The button is always visible in the trade builder's action
     // strip regardless of auth — per the Phase 5b vision where
@@ -96,6 +82,6 @@ test.describe('Live trade session', () => {
     const shareInput = page.locator('input[readonly]').first();
     await expect(shareInput).toHaveValue(/\/s\/[A-Z0-9]{8}$/);
 
-    expect(errors).toEqual([]);
+    expectNoConsoleErrors(consoleErrors);
   });
 });
