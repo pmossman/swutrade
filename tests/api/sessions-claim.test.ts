@@ -74,6 +74,35 @@ describeWithDb('sessions — open + claim flow', () => {
     expect(row.userACards).toHaveLength(1);
   });
 
+  it('anonymous create-open mints a ghost creator + seeds both sides', async () => {
+    // No cookie at all — caller is an anonymous browser hitting
+    // the trade builder's "Share live trade" button.
+    const req = mockRequest({
+      method: 'POST',
+      body: {
+        initialCards: [snap('a-1', 2)],
+        counterpartInitialCards: [snap('b-1')],
+      },
+    });
+    const res = mockResponse();
+    await handleCreateOpenSession(req, res);
+    expect(res._status).toBe(201);
+    const body = res._json as {
+      id: string;
+      ghost: { id: string; handle: string; username: string } | null;
+    };
+    expect(body.ghost).not.toBeNull();
+    if (body.ghost) ghostIdsToClean.push(body.ghost.id);
+    createdSessionIds.push(body.id);
+
+    const db = getDb();
+    const [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, body.id));
+    expect(row.userAId).toBe(body.ghost!.id);
+    expect(row.userBId).toBeNull();
+    expect(row.userACards.map(c => c.productId)).toEqual(['a-1']);
+    expect(row.userBCards.map(c => c.productId)).toEqual(['b-1']);
+  });
+
   it('non-participant GET on an open session returns preview (no auth required)', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);

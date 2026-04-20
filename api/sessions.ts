@@ -275,19 +275,25 @@ export async function handleConfirmSession(req: VercelRequest, res: VercelRespon
 
 /**
  * Create an "open-slot" shared trade — slot A is the creator, slot B
- * stays null until someone claims it via QR / shared link. Signed-in
- * creators only for v1; a future sliver could allow a ghost creator
- * (would mean anyone could spawn open sessions without any identity,
- * which needs more thought around spam/abuse).
+ * stays null until someone claims it via QR / shared link. Accepts
+ * both signed-in and anonymous creators:
+ *   - Signed in: session.userId is the creator, no ghost minted.
+ *   - Anonymous: mints a ghost user (same pattern as the claim
+ *     handler), sets the iron-session cookie to that ghost, and the
+ *     ghost becomes the creator.
+ *
+ * Anonymous creation is what enables the "two strangers at the LGS
+ * with no SWUTrade account" flow — the first person hits the Share
+ * button, a ghost is minted, they see their QR, the second person
+ * scans → second ghost minted → both trade as guests. Either can
+ * sign in later to save via the OAuth-callback merge.
  */
 const CreateOpenBodySchema = z.object({
   initialCards: z.array(TradeCardSnapshotSchema).max(200).default([]),
+  counterpartInitialCards: z.array(TradeCardSnapshotSchema).max(200).default([]),
 });
 
 export async function handleCreateOpenSession(req: VercelRequest, res: VercelResponse) {
-  const session = await requireSession(req, res);
-  if (!session) return;
-
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -299,12 +305,35 @@ export async function handleCreateOpenSession(req: VercelRequest, res: VercelRes
   }
 
   const db = getDb();
+
+  // Resolve creator identity — existing session OR mint a ghost.
+  // Same pattern as handleClaimSession; the ghost case is what
+  // makes anonymous QR-first flows possible.
+  let creatorUserId: string;
+  let mintedGhost: { id: string; handle: string; username: string } | null = null;
+  const existing = await getSession(req, res);
+  if (existing) {
+    creatorUserId = existing.userId;
+  } else {
+    const ghost = await createGhostUser(db);
+    await createAuthSession(req, res, {
+      userId: ghost.id,
+      username: ghost.username,
+      handle: ghost.handle,
+      avatarUrl: null,
+      isAnonymous: true,
+    });
+    mintedGhost = ghost;
+    creatorUserId = ghost.id;
+  }
+
   const { id } = await createOpenSession(db, {
-    creatorUserId: session.userId,
+    creatorUserId,
     creatorCards: parsed.data.initialCards,
+    counterpartInitialCards: parsed.data.counterpartInitialCards,
   });
 
-  return res.status(201).json({ id });
+  return res.status(201).json({ id, ghost: mintedGhost });
 }
 
 /**

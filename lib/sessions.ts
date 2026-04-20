@@ -505,19 +505,31 @@ export async function createOpenSession(
   db: Db,
   args: {
     creatorUserId: string;
+    /** Creator's half, seeded on insert. */
     creatorCards?: TradeCardSnapshot[];
+    /** Counterpart's half, pre-seeded while slot B is still open.
+     *  Used to promote a calculator-in-progress ("Hi, here's what
+     *  I'm offering and what I want from you") into a session the
+     *  scanner can review and tweak. Kept when slot B is claimed —
+     *  the claimer inherits the pre-seeded half and can edit from
+     *  there. Defaults to an empty array. */
+    counterpartInitialCards?: TradeCardSnapshot[];
   },
 ): Promise<{ id: string }> {
   const id = generateSessionCode();
+  const creatorCards = args.creatorCards ?? [];
+  const counterpartCards = args.counterpartInitialCards ?? [];
   await db.insert(tradeSessions).values({
     id,
     userAId: args.creatorUserId,
     userBId: null,
-    userACards: args.creatorCards ?? [],
-    userBCards: [],
+    userACards: creatorCards,
+    userBCards: counterpartCards,
     status: 'active',
     confirmedByUserIds: [],
-    lastEditedByUserId: args.creatorCards && args.creatorCards.length > 0 ? args.creatorUserId : null,
+    lastEditedByUserId: creatorCards.length > 0 || counterpartCards.length > 0
+      ? args.creatorUserId
+      : null,
     lastNotifiedAt: {},
     expiresAt: nextExpiresAt(),
   });
