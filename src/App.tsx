@@ -519,9 +519,9 @@ function App() {
           toggle, Share, Clear) live here rather than in AppHeader so
           they don't compete with breadcrumbs / NavMenu for width.
           Right-aligned, tight, drops Share/Clear on mobile into a kebab.
-          "Live trade" is always visible (even with no cards) since its
-          value is "start a shared canvas with someone now"; the other
-          actions depend on cards existing. */}
+          "Invite someone" is always visible (even with no cards) since
+          its value is "start a shared canvas with someone now"; the
+          other actions depend on cards existing. */}
       <div className="px-3 sm:px-6 pt-2 pb-1 max-w-5xl mx-auto w-full shrink-0 flex items-center gap-2 justify-end">
         <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
         <ShareLiveTradeButton yourCards={yourCards} theirCards={theirCards} />
