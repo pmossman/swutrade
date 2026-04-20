@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   AlarmClock,
   ArrowLeftRight,
@@ -11,9 +11,7 @@ import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
 import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
-import { HandlePickerDialog } from './HandlePickerDialog';
 import { TradeExpandPeek } from './TradeExpandPeek';
-import { apiPost } from '../services/apiClient';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -60,7 +58,6 @@ export function HomeView({ auth }: HomeViewProps) {
   const onOpenCommunity = () => nav.toCommunity();
   const onBuildTrade = nav.toBuildTrade;
   const onOpenProfile = nav.toProfile;
-  const onProposeTo = nav.toProposeWith;
   // `useMyTrades` is the unified view layer — merges proposals +
   // sessions into one TradeRow stream. The older `useTradesList` is
   // still consulted for the `needsResponse` callout (which already
@@ -76,23 +73,6 @@ export function HomeView({ auth }: HomeViewProps) {
   // the shared open-state so the drawer at App root responds here.
   const { byFamily } = useCardIndexContext();
   const { openLists } = useDrawerContext();
-  const [handlePickerOpen, setHandlePickerOpen] = useState(false);
-  const [startingOpen, setStartingOpen] = useState(false);
-
-  // Open/QR trade entry — POSTs /api/sessions/create-open, navigates
-  // to /s/<id> where the creator sees their own QR + a link. No
-  // counterpart handle required; a scanner claims the slot when the
-  // QR is shown in person (or the link shared any other way).
-  const handleStartOpenTrade = useCallback(async () => {
-    if (startingOpen) return;
-    setStartingOpen(true);
-    try {
-      const result = await apiPost<{ id: string }>('/api/sessions/create-open', { initialCards: [] });
-      if (result.ok) nav.toSession(result.data.id);
-    } finally {
-      setStartingOpen(false);
-    }
-  }, [nav, startingOpen]);
 
   // `myTrades` already derives `needsResponse` + `counts` across the
   // unified proposal + session stream, so we don't redo that work here.
@@ -165,24 +145,12 @@ export function HomeView({ auth }: HomeViewProps) {
               onOpenSettings={onOpenSettings}
               onManageCommunities={onManageCommunities}
               onOpenCommunity={onOpenCommunity}
-              onOpenHandlePicker={() => setHandlePickerOpen(true)}
-              onStartOpenTrade={handleStartOpenTrade}
-              startingOpen={startingOpen}
             />
           </div>
         </div>
 
         <StoresModule />
       </main>
-
-      <HandlePickerDialog
-        open={handlePickerOpen}
-        onClose={() => setHandlePickerOpen(false)}
-        onPick={handle => {
-          setHandlePickerOpen(false);
-          onProposeTo(handle);
-        }}
-      />
     </div>
   );
 }
@@ -231,7 +199,7 @@ function GreetingRow({
           className="flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
         >
           <PlusIcon className="w-4 h-4" />
-          Balance a trade
+          New trade
         </button>
       </div>
     </div>
@@ -652,19 +620,19 @@ function CommunitiesModule({
   onOpenSettings,
   onManageCommunities,
   onOpenCommunity,
-  onOpenHandlePicker,
-  onStartOpenTrade,
-  startingOpen,
 }: {
   guilds: GuildMembershipSummary[];
   status: 'loading' | 'ready' | 'saving' | 'error';
   onOpenSettings: () => void;
   onManageCommunities: () => void;
   onOpenCommunity: () => void;
-  onOpenHandlePicker: () => void;
-  onStartOpenTrade: () => void;
-  startingOpen: boolean;
 }) {
+  // Community discovery surface only — trade entry points (Share QR,
+  // Propose a trade) used to live here but were collapsed to the
+  // single "+ New trade" CTA in the GreetingRow. Proposals are now
+  // reached from inside a trade (TradeSummary's Send-as-proposal) or
+  // from a profile's "Trade with @X"; QR sharing happens from inside
+  // a trade via the builder's "Invite someone" button.
   return (
     <ModuleSection
       icon={<Users aria-hidden className="w-4 h-4" />}
@@ -680,31 +648,9 @@ function CommunitiesModule({
         </button>
       }
     >
-      <div className="flex items-baseline justify-between gap-2 mb-3">
-        <div className="text-[12px] text-gray-400 tabular-nums">
-          <span className="text-gray-200 font-semibold">{guilds.length}</span>
-          {guilds.length === 1 ? ' community' : ' communities'}
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onStartOpenTrade}
-            disabled={startingOpen}
-            className="text-[11px] text-cyan-300 hover:text-cyan-200 font-medium transition-colors disabled:opacity-60"
-            title="Generate a QR/link to invite someone into a shared trade — great for in-person at the LGS"
-          >
-            {startingOpen ? 'Starting…' : 'Share QR →'}
-          </button>
-          {guilds.length > 0 && (
-            <button
-              type="button"
-              onClick={onOpenHandlePicker}
-              className="text-[11px] text-gold hover:text-gold-bright font-medium transition-colors"
-            >
-              Propose a trade →
-            </button>
-          )}
-        </div>
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{guilds.length}</span>
+        {guilds.length === 1 ? ' community' : ' communities'}
       </div>
 
       {status === 'loading' && <LoadingState label="Loading your communities…" />}

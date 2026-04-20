@@ -1,8 +1,10 @@
 import { test, expect, expectNoConsoleErrors } from './_fixtures';
 
 /**
- * Covers the Phase 5b "Live trade" flow end-to-end at the browser
- * layer. Two bugs shipped through CI before this spec existed:
+ * Covers the Phase 5b shared-session invite flow end-to-end at the
+ * browser layer (previously called "Live trade"; the button is now
+ * "Invite someone"). Two bugs shipped through CI before this spec
+ * existed:
  *
  *   1. vercel.json lacked a `/s/:id` rewrite, so every session URL
  *      404'd in the browser even though the API endpoint was fine.
@@ -20,7 +22,7 @@ import { test, expect, expectNoConsoleErrors } from './_fixtures';
  * assert zero console errors. Any future regression to the session
  * routing / module graph fails here.
  */
-test.describe('Live trade session', () => {
+test.describe('Invite-someone shared session', () => {
   test('GET /s/<unknown> renders the app chrome, not a 404', async ({ page, consoleErrors }) => {
     // Visiting any /s/<code> directly — even a made-up one — must
     // serve the SPA index so client routing can render the Not
@@ -50,14 +52,17 @@ test.describe('Live trade session', () => {
     expectNoConsoleErrors(consoleErrors);
   });
 
-  test('anonymous user clicks Live trade → QR canvas renders', async ({ page, consoleErrors }) => {
+  test('anonymous user clicks Invite someone → QR canvas renders', async ({ page, consoleErrors }) => {
     await page.goto('/');
     // The button is always visible in the trade builder's action
     // strip regardless of auth — per the Phase 5b vision where
     // anonymous users can create sessions without a Discord account.
-    const liveTradeBtn = page.getByRole('button', { name: /Live trade/i }).first();
-    await expect(liveTradeBtn).toBeVisible({ timeout: 10_000 });
-    await liveTradeBtn.click();
+    // Labelled "Invite someone" — same placement + behaviour as the
+    // earlier "Live trade", renamed to clarify its role now that
+    // sessions live under the unified trade primitive.
+    const inviteBtn = page.getByRole('button', { name: /Invite someone/i }).first();
+    await expect(inviteBtn).toBeVisible({ timeout: 10_000 });
+    await inviteBtn.click();
 
     // URL flips to /s/<code>. The code is 8 alphanumeric chars
     // from the session-id alphabet (see lib/sessions.ts).

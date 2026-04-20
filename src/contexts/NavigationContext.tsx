@@ -31,7 +31,7 @@ export interface NavigationApi {
   toHome(): void;
 
   /** Empty trade builder (no propose / counter / edit context). Used
-   *  by the "+ Balance a trade" CTA. Clears trade intents so a stale
+   *  by the "+ New trade" CTA. Clears trade intents so a stale
    *  in-session propose doesn't resume silently. */
   toBuildTrade(): void;
 

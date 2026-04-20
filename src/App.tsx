@@ -37,6 +37,7 @@ import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
 import { HomeView } from './components/HomeView';
+import { GhostHomeView } from './components/GhostHomeView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
@@ -297,7 +298,7 @@ function App() {
         // Clear propose/counter/edit so the composer opens clean. Keep
         // from+autoBalance if they're set — they represent the user's
         // current sender context (e.g. they were on "Trade with @X" and
-        // clicked Balance a trade from the same page).
+        // clicked New trade from the same page).
         pushTo(reset([], { view: 'trade' }));
         intent.setIntent({ propose: null, counter: null, edit: null });
       },
@@ -423,6 +424,14 @@ function App() {
   // the trade builder. Signed-out users never see it — detectViewMode
   // falls back to 'trade' when no user is present.
   if (viewMode === 'home') {
+    // Ghost users (anonymous, minted by a shared-trade claim or open
+    // session) see a scoped dashboard — the full HomeView surfaces
+    // (My Communities / My Lists / My Stores) all require a real
+    // account, so rendering them as empty reads as broken. GhostHomeView
+    // nudges them to sign in and lists whatever sessions they have.
+    if (auth.user?.isAnonymous) {
+      return <GhostHomeView auth={auth} />;
+    }
     // HomeView pulls its navigation from `useNavigation()`; no more
     // per-callback prop drilling. A single `nav` object enforces URL
     // + intent + viewMode lockstep so the intent-drift bug class is
@@ -519,9 +528,9 @@ function App() {
           toggle, Share, Clear) live here rather than in AppHeader so
           they don't compete with breadcrumbs / NavMenu for width.
           Right-aligned, tight, drops Share/Clear on mobile into a kebab.
-          "Live trade" is always visible (even with no cards) since its
-          value is "start a shared canvas with someone now"; the other
-          actions depend on cards existing. */}
+          "Invite someone" is always visible (even with no cards) since
+          its value is "start a shared canvas with someone now"; the
+          other actions depend on cards existing. */}
       <div className="px-3 sm:px-6 pt-2 pb-1 max-w-5xl mx-auto w-full shrink-0 flex items-center gap-2 justify-end">
         <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
         <ShareLiveTradeButton yourCards={yourCards} theirCards={theirCards} />
