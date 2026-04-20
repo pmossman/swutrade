@@ -56,7 +56,7 @@ Five journeys, ordered by frequency. Every design decision is validated against 
 8. Both tap **Confirm** (bottom action bar, gold).
 9. Haptic thump on settle. Banner: "Trade settled. See you at the next store night."
 
-**Tap count to shared canvas**: 3 (Alice) + 1 (Bob).
+**Tap count to shared canvas**: 2 (Alice — FAB, then show QR is automatic) + 1 (Bob — Accept invite).
 **Screens involved**: Trades, Start-trade sheet, Trade canvas, Card picker.
 
 ### J2. Async pitch via Discord
@@ -255,6 +255,8 @@ Sheet (tap balance to open)
 
 **Persistence.** Mode + percentage persist via localStorage + (signed-in) server side on the user's profile. When a trade URL includes `?pct=` / `?pm=` (share from another user), those values win on load and are applied via the raw setters that don't overwrite the local preference — identical semantics to v1.
 
+### 4.4. Card picker (bottom sheet, full-height)
+
 **Purpose**: find a card, add it. Nothing else.
 **Primary**: tap tile = add with qty 1. Long-press = quick stepper.
 **Secondary**: scope chips at top (All / Theirs / Overlap / Binder — contextual).
@@ -440,7 +442,7 @@ Two groups: **action tones** (used by buttons, chrome, status chips when an acti
 | `accent` | primary CTA, active state, selection | `#D4A85A` (warm gold) | same |
 | `danger` | cancel, decline, destructive | `#C04A3A` | `#D86255` |
 
-#### State tones (5) — for trade-state badges
+#### State tones (6) — for trade-state badges
 
 | Token | States it paints | Light | Dark |
 |---|---|---|---|
@@ -582,7 +584,7 @@ Accessibility is a first-class constraint, not a Phase 3 cleanup pass.
 - **Keyboard navigation**: the bottom tab bar is fully keyboard-operable on desktop (arrow keys move between tabs, Enter activates — WAI-ARIA `role="tablist"`). Trade canvas card rows are focusable (arrow keys between rows, Enter to open detail, Delete/Backspace invokes the swipe-remove action). Gestures are accelerators; keyboard users get every action via visible buttons.
 - **Screen reader labels**: every icon-only button (FAB, overflow, segmented control) carries an `aria-label`. Sheets open with `aria-live="polite"` announcing their purpose. Balance strip updates announce the new total on every edit.
 - **Color contrast**: palette tokens audited against WCAG AA (4.5:1 for body, 3:1 for large text) in both light and dark. State tones are AA-compliant against `surface`. Audit pinned in a Phase 1 unit test that parses the CSS custom properties and asserts contrast per pair.
-- **Tap targets**: minimum 44×44 CSS pixels for every interactive element (Apple HIG baseline). FAB is 56×56, row tap zones include their full padding, segmented controls are 40px tall (under baseline, flagged — considering bumping to 44).
+- **Tap targets**: minimum 44×44 CSS pixels for every interactive element (Apple HIG baseline). FAB is 56×56, row tap zones include their full padding, segmented controls are **44px tall** (locked at baseline — review-02 Obs 1 flagged 40px as under-minimum; accessibility floors are design-time locks, not implementation-time negotiations).
 
 ---
 
@@ -729,7 +731,7 @@ Ships: `app-v2/` directory scaffolding, Vercel project wiring, auth, trade canva
 | 1a | Scaffolding + auth | `app-v2/` builds, deploys to new Vercel project, Discord OAuth works on preview, ghost users mint on open trade |
 | 1b | Layout shell | Four tabs render + swipe between them; Screen/NavBar/TabBar/FAB primitives done; dark mode works; reduced-motion respected |
 | 1c | Cards tabs | Binder + Wishlist show real data from /api/sync; Card picker opens as sheet and adds cards; ghost users see read-only + sign-in prompt |
-| 1d | Trade canvas (solo) | `/s/:code` renders against a server-backed open session from tap-one; add/remove cards; balance strip; tap-to-expand price sheet; share → copy link works |
+| 1d | Trade canvas (solo) | `/s/:code` renders against a server-backed open session from tap-one; add/remove cards; balance strip; tap-to-expand price sheet; share → copy link works. **Create-open failure handling** (review-02 Obs 3): if `POST /api/sessions/create-open` fails (network hiccup at an LGS is the canonical case), the FAB's tap shows an inline `ErrorState` with a single **Retry** action — no offline-queue, no locally-minted code that might collide with a server round, no silent failure. The canvas does not mount until the server session exists. Covered by a Playwright spec that mocks the endpoint as 500. |
 | 1e | Live trade | Open slot → QR render → counterpart scans + claims → both edit → both confirm → settle |
 | 1f | Async pitch | Profile (other) → Trade with → composer → send → recipient sees inbound with Accept/Decline |
 | 1g | Home list + polish | Trades tab aggregates everything; swipe-to-cancel; empty states; loading states; state-badge palette applied |
@@ -741,6 +743,8 @@ STOP before Phase 2 — wait for user approval to continue.
 ### Phase 2 — Polish + parity · ~2 weeks
 
 Ships: Community tab (directory, no activity feed), Settings drill-down, Profile editing, UX-A5 ghost-merge banner, counter-offer, suggest-a-trade, **Web Push**, **edit-in-place for pitched trades**, **shared-list URLs** (`/list?w=&a=`), **bulk multi-select decline**.
+
+**Density flag (review-02 Obs 3)**: this is ten items. Post-Phase-1 the implementation agent will re-scope Phase 2 in `progress.md` before starting — possibly splitting into 2a (community + settings + profile + ghost banner + counter + suggest) and 2b (push + edit-in-place + `/list` + bulk decline), or cutting a lower-priority item. Flag early rather than discovering mid-stream that Phase 2 is a second MVP.
 
 STOP before Phase 3.
 
