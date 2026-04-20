@@ -291,6 +291,258 @@ export function nextExpiresAt(fromDate: Date = new Date()): Date {
   return new Date(fromDate.getTime() + SESSION_TTL_MS);
 }
 
-// Expose drizzle helpers that future files (create/edit endpoints)
-// will reuse so we don't fan out the imports across call sites.
+/**
+ * Create a new active session between two signed-in users, seeded
+ * with the proposer's starting half. Returns either `{ created: true,
+ * id }` or `{ created: false, id }` when an active session already
+ * existed (caller redirects into the existing one).
+ *
+ * Pair uniqueness is enforced both here (explicit lookup) AND by the
+ * partial unique index — the lookup handles the happy path cleanly,
+ * the index is the belt-and-suspenders guard against races.
+ */
+export async function createOrGetActiveSession(
+  db: Db,
+  args: {
+    creatorUserId: string;
+    counterpartUserId: string;
+    /** Creator's starting half. Counterpart starts empty. */
+    creatorCards?: TradeCardSnapshot[];
+  },
+): Promise<{ created: boolean; id: string }> {
+  const existing = await findActiveSessionForPair(db, args.creatorUserId, args.counterpartUserId);
+  if (existing) return { created: false, id: existing };
+
+  const id = generateSessionCode();
+  const { userAId, userBId } = normalizeParticipants(args.creatorUserId, args.counterpartUserId);
+  const creatorIsA = userAId === args.creatorUserId;
+  const creatorCards = args.creatorCards ?? [];
+
+  try {
+    await db.insert(tradeSessions).values({
+      id,
+      userAId,
+      userBId,
+      userACards: creatorIsA ? creatorCards : [],
+      userBCards: creatorIsA ? [] : creatorCards,
+      status: 'active',
+      confirmedByUserIds: [],
+      lastEditedByUserId: creatorCards.length > 0 ? args.creatorUserId : null,
+      lastNotifiedAt: {},
+      expiresAt: nextExpiresAt(),
+    });
+  } catch (err) {
+    // Race: another create landed between our lookup and our insert.
+    // Re-lookup and return the winner's id. The partial unique index
+    // on (user_a_id, user_b_id) WHERE status='active' is what rejects
+    // the second insert.
+    const winner = await findActiveSessionForPair(db, args.creatorUserId, args.counterpartUserId);
+    if (winner) return { created: false, id: winner };
+    throw err;
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: id,
+    actorUserId: args.creatorUserId,
+    type: 'created',
+  });
+  return { created: true, id };
+}
+
+/**
+ * Replace the viewer's half of a session. Per-side ownership:
+ * a viewer can only edit their own cards, never the counterpart's.
+ * Any edit clears the confirmed_by array — both parties must re-
+ * confirm after any mutation.
+ *
+ * Extends the expiry window so an active back-and-forth doesn't
+ * expire mid-negotiation. The lastEditedBy bookkeeping feeds the
+ * debounced-DM job in a later sliver.
+ *
+ * Returns the updated session view or a reason string for known
+ * failure modes (`not-found`, `not-participant`, `terminal`).
+ */
+export type EditSessionResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' };
+
+export async function editSessionSide(
+  db: Db,
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    cards: TradeCardSnapshot[];
+  },
+): Promise<EditSessionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  const viewerIsA = row.userAId === args.viewerUserId;
+  const now = new Date();
+
+  // Snapshot whether the counterpart had confirmed before this edit
+  // so the event payload can say "cleared N confirmations." Useful
+  // for the future timeline UI.
+  const priorConfirmations = row.confirmedByUserIds.length;
+
+  await db
+    .update(tradeSessions)
+    .set({
+      userACards: viewerIsA ? args.cards : row.userACards,
+      userBCards: viewerIsA ? row.userBCards : args.cards,
+      // Every edit clears confirmations — the counterpart needs to
+      // see the new state before confirming again.
+      confirmedByUserIds: [],
+      lastEditedAt: now,
+      lastEditedByUserId: args.viewerUserId,
+      updatedAt: now,
+      // Bump expiry forward on active use.
+      expiresAt: nextExpiresAt(now),
+    })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'edited',
+    payload: { side: viewerIsA ? 'a' : 'b', count: args.cards.length },
+  });
+
+  if (priorConfirmations > 0) {
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'unconfirmed',
+      payload: { cleared: priorConfirmations },
+    });
+  }
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+/**
+ * Add the viewer to confirmed_by_user_ids. If the counterpart is
+ * also already confirmed, the transition is settle-and-freeze: the
+ * session moves to `settled` and `settled_at` captures the moment.
+ *
+ * Idempotent — confirming twice is a no-op.
+ */
+export type ConfirmSessionResult =
+  | { ok: true; view: SessionView; settled: boolean }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' };
+
+export async function confirmSession(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string },
+): Promise<ConfirmSessionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  // Already confirmed — idempotent no-op beyond re-fetch for the
+  // caller's rendered view.
+  if (row.confirmedByUserIds.includes(args.viewerUserId)) {
+    const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+    return view
+      ? { ok: true, view, settled: false }
+      : { ok: false, reason: 'not-found' };
+  }
+
+  const counterpartId = row.userAId === args.viewerUserId ? row.userBId : row.userAId;
+  const counterpartAlreadyConfirmed = row.confirmedByUserIds.includes(counterpartId);
+  const nextConfirmations = [...row.confirmedByUserIds, args.viewerUserId];
+  const settling = counterpartAlreadyConfirmed;
+  const now = new Date();
+
+  await db
+    .update(tradeSessions)
+    .set({
+      confirmedByUserIds: nextConfirmations,
+      ...(settling ? { status: 'settled' as const, settledAt: now } : {}),
+      updatedAt: now,
+    })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'confirmed',
+  });
+  if (settling) {
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'settled',
+    });
+  }
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view, settled: settling };
+}
+
+/**
+ * Transition an active session to `cancelled`. Either participant
+ * can cancel. Idempotent — cancelling a terminal session just
+ * returns its current view.
+ */
+export type CancelSessionResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' };
+
+export async function cancelSession(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string },
+): Promise<CancelSessionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+
+  if (row.status === 'active') {
+    const now = new Date();
+    await db
+      .update(tradeSessions)
+      .set({
+        status: 'cancelled',
+        settledAt: now,
+        updatedAt: now,
+      })
+      .where(eq(tradeSessions.id, args.sessionId));
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'cancelled',
+    });
+  }
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+// Expose drizzle helpers that future files will reuse so we don't
+// fan out the imports across call sites.
 export { sql, gt };
