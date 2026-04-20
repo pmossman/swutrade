@@ -171,7 +171,11 @@ export async function resolveProposal(opts: {
     }
 
     // 2) DM the proposer a concise notification with the outcome.
+    // Skipped when proposer has no discord id — shouldn't happen in
+    // practice (proposals require Discord auth to send), but the
+    // users.discord_id column is nullable since Phase 5b ghost users.
     try {
+      if (!proposer.discordId) throw new Error('proposer has no discord_id');
       const notifyBody = buildProposerNotification({
         tradeId: trade.id,
         recipientHandle: recipient.handle,

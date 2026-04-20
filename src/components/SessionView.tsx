@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
+import QRCode from 'react-qr-code';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState } from './ui/states';
 import { TradeSide } from './TradeSide';
@@ -13,7 +14,7 @@ import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useIsMobile } from '../hooks/useMediaQuery';
-import { useSession, type SessionView as SessionData } from '../hooks/useSession';
+import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
 import { PERSIST_KEYS } from '../persistence';
 import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
@@ -58,7 +59,8 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   });
 
   const api = useSession(sessionId);
-  const { session, status, saveCards, confirm, cancel, hasUnseenCounterpartEdit, markCounterpartSeen } = api;
+  const { session, preview, status, saveCards, confirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen } = api;
+  const [claiming, setClaiming] = useState(false);
 
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
@@ -154,17 +156,36 @@ export function SessionView({ sessionId }: { sessionId: string }) {
       <AppHeader auth={auth} breadcrumbs={breadcrumbs} onOpenLists={openLists} />
 
       <main className="flex-1 px-3 sm:px-6 py-3 max-w-6xl mx-auto w-full flex flex-col gap-3">
-        {status === 'loading' && !session && <LoadingState label="Loading shared trade…" />}
+        {status === 'loading' && !session && !preview && <LoadingState label="Loading shared trade…" />}
         {status === 'error' && !session && (
           <ErrorState>Couldn't load this trade. Try refreshing.</ErrorState>
         )}
         {status === 'not-found' && (
           <ErrorState>
-            This shared trade doesn't exist or you're not a participant. It may have been cancelled or expired.
+            This shared trade doesn't exist or is no longer available. It may have been cancelled, expired, or already claimed by someone else.
           </ErrorState>
         )}
 
-        {session && (
+        {status === 'preview' && preview && (
+          <InvitePrompt
+            preview={preview}
+            claiming={claiming}
+            onClaim={async () => {
+              setClaiming(true);
+              try {
+                await claim();
+              } finally {
+                setClaiming(false);
+              }
+            }}
+          />
+        )}
+
+        {session && session.openSlot && (
+          <OpenSlotInvite sessionId={session.id} onCancel={async () => { await cancel(); }} />
+        )}
+
+        {session && !session.openSlot && (
           <>
             <SessionHeader
               session={session}
@@ -444,6 +465,142 @@ function CounterpartTile({ snap }: { snap: TradeCardSnapshot }) {
         )}
       </div>
     </div>
+  );
+}
+
+// --- Invite flows ---------------------------------------------------------
+
+/**
+ * Shown to a VIEWER who isn't a session participant but the session
+ * has an open slot — e.g., someone scanned a QR code at the game
+ * store. Surfaces the creator's identity and a single primary
+ * action: Join. Anonymous visitors get a ghost user minted behind
+ * the scenes + a "sign in to keep this trade" hint for later.
+ */
+function InvitePrompt({
+  preview,
+  onClaim,
+  claiming,
+}: {
+  preview: SessionPreview;
+  onClaim: () => Promise<void> | void;
+  claiming: boolean;
+}) {
+  const { user } = useAuthContext();
+  return (
+    <section className="rounded-xl border border-cyan-500/40 bg-cyan-950/20 p-6 max-w-xl mx-auto w-full flex flex-col items-center text-center gap-4">
+      <div className="flex flex-col items-center gap-2">
+        <CounterpartAvatar
+          avatarUrl={preview.creator.avatarUrl}
+          name={preview.creator.username || preview.creator.handle}
+        />
+        <div>
+          <div className="text-[11px] tracking-[0.18em] uppercase text-cyan-300 font-bold">
+            You're invited to a trade
+          </div>
+          <div className="text-base font-semibold text-gray-100 mt-0.5">
+            @{preview.creator.handle}
+            {preview.creator.isAnonymous && (
+              <span className="ml-2 text-[11px] text-gray-500 font-normal">(guest)</span>
+            )}
+          </div>
+        </div>
+      </div>
+      <p className="text-sm text-gray-300 leading-relaxed max-w-sm">
+        {preview.creatorCardCount > 0
+          ? <>They've started a trade with {preview.creatorCardCount} card{preview.creatorCardCount === 1 ? '' : 's'} on their side. Join to see what they're offering and add your own cards.</>
+          : <>They've started a trade and invited you to fill in your side. Join to build it together.</>}
+      </p>
+      {!user && (
+        <div className="text-[11px] text-gray-400 leading-relaxed max-w-sm">
+          You can join as a guest — no account needed. Sign in later to save this trade to your SWUTrade account.
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => void onClaim()}
+        disabled={claiming}
+        className="px-6 h-10 rounded-lg bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-60 text-sm"
+      >
+        {claiming ? 'Joining…' : 'Join this trade'}
+      </button>
+    </section>
+  );
+}
+
+/**
+ * Shown to the CREATOR of an open-slot session (viewer is slot A,
+ * slot B null) — renders the QR code + shareable URL + a link to
+ * copy. Creator can edit their half while waiting for a claim;
+ * cancelling the session closes the invite.
+ *
+ * QR encodes the absolute URL of this page so a scanning phone
+ * opens the same route; the scanner either sees the InvitePrompt
+ * (non-participant, anon/signed-in) or — if they happen to already
+ * be signed in as the creator's counterpart — the full session.
+ */
+function OpenSlotInvite({
+  sessionId,
+  onCancel,
+}: {
+  sessionId: string;
+  onCancel: () => Promise<void> | void;
+}) {
+  const shareUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/s/${encodeURIComponent(sessionId)}`
+    : `/s/${sessionId}`;
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard unavailable (permissions / http context) —
+      // fallback is the manually-selectable URL in the textbox below.
+    }
+  }, [shareUrl]);
+
+  return (
+    <section className="rounded-xl border border-cyan-500/40 bg-cyan-950/20 p-6 max-w-xl mx-auto w-full flex flex-col items-center gap-4">
+      <div className="text-center">
+        <div className="text-[11px] tracking-[0.18em] uppercase text-cyan-300 font-bold">
+          Waiting for your counterpart
+        </div>
+        <div className="text-base font-semibold text-gray-100 mt-0.5">
+          Share this QR or link
+        </div>
+      </div>
+      <div className="p-3 bg-white rounded-lg">
+        <QRCode value={shareUrl} size={192} />
+      </div>
+      <div className="w-full flex items-center gap-2">
+        <input
+          type="text"
+          readOnly
+          value={shareUrl}
+          onFocus={e => e.currentTarget.select()}
+          className="flex-1 min-w-0 bg-space-800 border border-space-700 rounded-md px-3 h-9 text-[12px] text-gray-200 font-mono"
+        />
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="px-3 h-9 rounded-md bg-cyan-500/20 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/30 text-xs font-semibold"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="text-[12px] text-gray-400 text-center max-w-sm leading-relaxed">
+        They can scan the QR from their phone, or open the link. They can join as a guest — no sign-in required.
+      </p>
+      <button
+        type="button"
+        onClick={() => void onCancel()}
+        className="text-[11px] text-gray-500 hover:text-red-300 underline transition-colors"
+      >
+        Cancel this invitation
+      </button>
+    </section>
   );
 }
 

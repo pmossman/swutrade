@@ -17,10 +17,24 @@ import {
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
-  discordId: text('discord_id').unique().notNull(),
+  // Nullable as of Phase 5b (anonymous / ghost users) — a signed-in
+  // Discord user has a non-null id; a ghost claimed via QR doesn't.
+  // Still unique when set. Upgrade path: ghost → real via the OAuth
+  // callback which merges the ghost row into the Discord user.
+  discordId: text('discord_id').unique(),
   username: text('username').notNull(),
   handle: text('handle').unique().notNull(),
   avatarUrl: text('avatar_url'),
+  // True when this row was created as a ghost for an anonymous
+  // participant in a shared trade. Ghost users:
+  //   - have a null discord_id, auto-generated handle / username
+  //   - never appear in community rollups, directory, or activity
+  //     feeds (every public listing must add `WHERE is_anonymous =
+  //     false`)
+  //   - can't own wants / available / guild memberships / peer prefs
+  //     until they sign in (the OAuth callback merges them into the
+  //     Discord account at that point)
+  isAnonymous: boolean('is_anonymous').default(false).notNull(),
   wantsPublic: boolean('wants_public').default(true).notNull(),
   availablePublic: boolean('available_public').default(false).notNull(),
   // Phase 4 — account-level settings. Three-axis consent model:
@@ -490,17 +504,22 @@ export const tradeSessions = pgTable(
     // + QR handoff. Large enough for no collisions under realistic
     // active-session volumes.
     id: text('id').primaryKey(),
-    // Participants stored canonically — `user_a_id` < `user_b_id`
-    // lexicographically. Lets the partial unique index + lookups
-    // work without coalesce gymnastics. Callers normalise before
-    // insert; select queries check both positions when filtering by
-    // viewer id.
+    // Participants stored canonically — when both are set,
+    // `user_a_id` < `user_b_id` lexicographically. Lets the partial
+    // unique index + lookups work without coalesce gymnastics.
+    // Callers normalise before insert; select queries check both
+    // positions when filtering by viewer id.
+    //
+    // `user_b_id` is nullable for the QR / in-person flow: a user
+    // creates an "open" session with just themselves in slot A and
+    // shares a QR-coded URL. The scanner claims slot B — either as
+    // an existing user or as a freshly-minted ghost (is_anonymous).
+    // Slot A is never null; someone has to originate the session.
     userAId: text('user_a_id')
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     userBId: text('user_b_id')
-      .references(() => users.id, { onDelete: 'cascade' })
-      .notNull(),
+      .references(() => users.id, { onDelete: 'cascade' }),
     // Live card state — what each side currently offers. Mutated
     // in place by PUT endpoints. Same TradeCardSnapshot shape as
     // trade_proposals for code reuse on the render side.
@@ -537,10 +556,14 @@ export const tradeSessions = pgTable(
     // Partial unique index: only ONE active session per sorted pair.
     // Settled/cancelled/expired rows skipped via the WHERE clause
     // (Postgres partial indexes), which means a pair can start a
-    // fresh session after completing an old one.
+    // fresh session after completing an old one. Also skipped: rows
+    // where user_b_id is null (open, un-claimed sessions) — a
+    // single user can have many open slots waiting for a scanner,
+    // and the uniqueness concept only applies once the pair is
+    // fully formed.
     uniqueIndex('trade_sessions_active_pair_idx')
       .on(t.userAId, t.userBId)
-      .where(sql`${t.status} = 'active'`),
+      .where(sql`${t.status} = 'active' AND ${t.userBId} IS NOT NULL`),
     // Lookup by viewer id — the "my sessions" query hits these.
     index('trade_sessions_user_a_status_idx').on(t.userAId, t.status),
     index('trade_sessions_user_b_status_idx').on(t.userBId, t.status),

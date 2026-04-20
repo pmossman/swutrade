@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   AlarmClock,
   ArrowLeftRight,
@@ -25,6 +25,7 @@ import {
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { HandlePickerDialog } from './HandlePickerDialog';
 import { TradeExpandPeek } from './TradeExpandPeek';
+import { apiPost } from '../services/apiClient';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -83,6 +84,22 @@ export function HomeView({ auth }: HomeViewProps) {
   const { byFamily } = useCardIndexContext();
   const { openLists } = useDrawerContext();
   const [handlePickerOpen, setHandlePickerOpen] = useState(false);
+  const [startingOpen, setStartingOpen] = useState(false);
+
+  // Open/QR trade entry — POSTs /api/sessions/create-open, navigates
+  // to /s/<id> where the creator sees their own QR + a link. No
+  // counterpart handle required; a scanner claims the slot when the
+  // QR is shown in person (or the link shared any other way).
+  const handleStartOpenTrade = useCallback(async () => {
+    if (startingOpen) return;
+    setStartingOpen(true);
+    try {
+      const result = await apiPost<{ id: string }>('/api/sessions/create-open', { initialCards: [] });
+      if (result.ok) nav.toSession(result.data.id);
+    } finally {
+      setStartingOpen(false);
+    }
+  }, [nav, startingOpen]);
 
   const { needsResponse, tradeCounts } = useMemo(() => {
     const needs: TradeListEntry[] = [];
@@ -175,6 +192,8 @@ export function HomeView({ auth }: HomeViewProps) {
               onManageCommunities={onManageCommunities}
               onOpenCommunity={onOpenCommunity}
               onOpenHandlePicker={() => setHandlePickerOpen(true)}
+              onStartOpenTrade={handleStartOpenTrade}
+              startingOpen={startingOpen}
             />
           </div>
         </div>
@@ -601,6 +620,8 @@ function CommunitiesModule({
   onManageCommunities,
   onOpenCommunity,
   onOpenHandlePicker,
+  onStartOpenTrade,
+  startingOpen,
 }: {
   guilds: GuildMembershipSummary[];
   status: 'loading' | 'ready' | 'saving' | 'error';
@@ -608,6 +629,8 @@ function CommunitiesModule({
   onManageCommunities: () => void;
   onOpenCommunity: () => void;
   onOpenHandlePicker: () => void;
+  onStartOpenTrade: () => void;
+  startingOpen: boolean;
 }) {
   return (
     <ModuleSection
@@ -629,15 +652,26 @@ function CommunitiesModule({
           <span className="text-gray-200 font-semibold">{guilds.length}</span>
           {guilds.length === 1 ? ' community' : ' communities'}
         </div>
-        {guilds.length > 0 && (
+        <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={onOpenHandlePicker}
-            className="text-[11px] text-gold hover:text-gold-bright font-medium transition-colors"
+            onClick={onStartOpenTrade}
+            disabled={startingOpen}
+            className="text-[11px] text-cyan-300 hover:text-cyan-200 font-medium transition-colors disabled:opacity-60"
+            title="Generate a QR/link to invite someone into a shared trade — great for in-person at the LGS"
           >
-            Propose a trade →
+            {startingOpen ? 'Starting…' : 'Share QR →'}
           </button>
-        )}
+          {guilds.length > 0 && (
+            <button
+              type="button"
+              onClick={onOpenHandlePicker}
+              className="text-[11px] text-gold hover:text-gold-bright font-medium transition-colors"
+            >
+              Propose a trade →
+            </button>
+          )}
+        </div>
       </div>
 
       {status === 'loading' && <LoadingState label="Loading your communities…" />}

@@ -127,6 +127,13 @@
       "when": 1776642633913,
       "tag": "0017_magical_sleepwalker",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1776648182111,
+      "tag": "0018_premium_cammi",
+      "breakpoints": true
     }
   ]
 }

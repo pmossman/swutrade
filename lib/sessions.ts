@@ -31,6 +31,61 @@ type Db = ReturnType<typeof getDb>;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 8;
 
+/** Guest handle alphabet — lowercase + digits, no confusables. */
+const GUEST_HANDLE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const GUEST_HANDLE_LENGTH = 5;
+
+function generateGuestSuffix(): string {
+  const bytes = new Uint8Array(GUEST_HANDLE_LENGTH);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (let i = 0; i < GUEST_HANDLE_LENGTH; i++) {
+    out += GUEST_HANDLE_ALPHABET[bytes[i] % GUEST_HANDLE_ALPHABET.length];
+  }
+  return out;
+}
+
+/**
+ * Create a ghost user row for an anonymous participant — used when
+ * someone scans a QR-coded `/s/<code>` URL without being signed in.
+ *
+ * Ghost invariants:
+ *   - `is_anonymous = true`. Every public listing / community query
+ *     must exclude these rows (`WHERE is_anonymous = false`).
+ *   - `discord_id = null`. Upgrade path via the OAuth callback
+ *     merges the ghost row into the real Discord user when they
+ *     eventually sign in (ghost id gets rewritten across
+ *     trade_sessions, ghost row deleted, session cookie swapped).
+ *   - Auto-generated handle (`guest-<5-char-suffix>`) — collision-
+ *     resistant enough we never retry; display name "Guest <SUFFIX>".
+ *
+ * Returns the freshly-inserted row. Caller is expected to set this
+ * user as the iron-session cookie's subject so downstream requests
+ * see them as authenticated (same cookie shape as a real user).
+ */
+export interface GhostUser {
+  id: string;
+  handle: string;
+  username: string;
+}
+
+export async function createGhostUser(db: Db): Promise<GhostUser> {
+  const suffix = generateGuestSuffix();
+  const id = `gst-${suffix}`;
+  const handle = `guest-${suffix}`;
+  const username = `Guest ${suffix.toUpperCase()}`;
+  await db.insert(users).values({
+    id,
+    // discord_id nullable — ghosts have none until they sign in.
+    discordId: null,
+    username,
+    handle,
+    avatarUrl: null,
+    isAnonymous: true,
+  });
+  return { id, handle, username };
+}
+
 export function generateSessionCode(): string {
   const bytes = new Uint8Array(CODE_LENGTH);
   crypto.getRandomValues(bytes);
@@ -70,7 +125,13 @@ export interface SessionView {
     handle: string;
     username: string;
     avatarUrl: string | null;
+    isAnonymous: boolean;
   } | null;
+  /** True when slot B hasn't been claimed yet — the session is an
+   *  "open" QR/link invitation waiting for a scanner. In this state
+   *  `counterpart` is null and the UI shows the invite-and-QR surface
+   *  instead of the two-panel trade canvas. */
+  openSlot: boolean;
   yourCards: TradeCardSnapshot[];
   theirCards: TradeCardSnapshot[];
   confirmedByViewer: boolean;
@@ -102,19 +163,26 @@ export async function getSessionForViewer(
   if (!row) return null;
   if (row.userAId !== viewerUserId && row.userBId !== viewerUserId) return null;
 
-  const counterpartId = row.userAId === viewerUserId ? row.userBId : row.userAId;
-  const [counterpart] = await db
-    .select({
-      id: users.id,
-      handle: users.handle,
-      username: users.username,
-      avatarUrl: users.avatarUrl,
-    })
-    .from(users)
-    .where(eq(users.id, counterpartId))
-    .limit(1);
-
+  // Counterpart id may be null for open-slot sessions (viewer = A,
+  // slot B still waiting for a claim). Skip the user lookup in that
+  // case; the view just returns `counterpart: null` and the UI
+  // renders the "invite someone" state + QR.
   const viewerIsA = row.userAId === viewerUserId;
+  const counterpartId = viewerIsA ? row.userBId : row.userAId;
+  const counterpart = counterpartId
+    ? (await db
+        .select({
+          id: users.id,
+          handle: users.handle,
+          username: users.username,
+          avatarUrl: users.avatarUrl,
+          isAnonymous: users.isAnonymous,
+        })
+        .from(users)
+        .where(eq(users.id, counterpartId))
+        .limit(1))[0]
+    : null;
+
   const yourCards = viewerIsA ? row.userACards : row.userBCards;
   const theirCards = viewerIsA ? row.userBCards : row.userACards;
 
@@ -128,17 +196,80 @@ export async function getSessionForViewer(
           handle: counterpart.handle,
           username: counterpart.username,
           avatarUrl: counterpart.avatarUrl,
+          isAnonymous: counterpart.isAnonymous,
         }
       : null,
+    openSlot: counterpartId === null,
     yourCards,
     theirCards,
     confirmedByViewer: row.confirmedByUserIds.includes(viewerUserId),
-    confirmedByCounterpart: row.confirmedByUserIds.includes(counterpartId),
+    confirmedByCounterpart: counterpartId !== null && row.confirmedByUserIds.includes(counterpartId),
     lastEditedByViewer: row.lastEditedByUserId === viewerUserId,
     lastEditedAt: row.lastEditedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     settledAt: row.settledAt?.toISOString() ?? null,
+    expiresAt: row.expiresAt.toISOString(),
+  };
+}
+
+/**
+ * Preview of an open-slot session — rendered for non-participants
+ * who've followed a QR/invite link. Returns the creator's identity
+ * so the scanner knows who they're about to trade with, plus a count
+ * of cards currently in slot A so they get a sense of what's being
+ * proposed. Null for:
+ *   - unknown session id
+ *   - session is terminal (settled/cancelled/expired)
+ *   - session has both slots filled (not an open invitation)
+ *
+ * Deliberately does NOT return slot-A cards themselves — a scanner
+ * shouldn't be able to browse the details until they claim. Keeps
+ * "open session URL harvesting" from leaking card lists.
+ */
+export interface SessionPreview {
+  id: string;
+  creator: {
+    handle: string;
+    username: string;
+    avatarUrl: string | null;
+    isAnonymous: boolean;
+  };
+  creatorCardCount: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export async function getSessionPreview(
+  db: Db,
+  sessionId: string,
+): Promise<SessionPreview | null> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, sessionId))
+    .limit(1);
+  if (!row) return null;
+  if (row.status !== 'active') return null;
+  if (row.userBId !== null) return null;
+
+  const [creator] = await db
+    .select({
+      handle: users.handle,
+      username: users.username,
+      avatarUrl: users.avatarUrl,
+      isAnonymous: users.isAnonymous,
+    })
+    .from(users)
+    .where(eq(users.id, row.userAId))
+    .limit(1);
+  if (!creator) return null;
+
+  return {
+    id: row.id,
+    creator,
+    creatorCardCount: row.userACards.reduce((n, c) => n + c.qty, 0),
+    createdAt: row.createdAt.toISOString(),
     expiresAt: row.expiresAt.toISOString(),
   };
 }
@@ -173,24 +304,32 @@ export async function listActiveSessionsForViewer(
 
   if (rows.length === 0) return [];
 
+  // Open-slot sessions have a null counterpart id — filter those
+  // out before the user lookup and leave `counterpart: null` in the
+  // final view.
   const counterpartIds = Array.from(new Set(
-    rows.map(r => r.userAId === viewerUserId ? r.userBId : r.userAId),
+    rows
+      .map(r => r.userAId === viewerUserId ? r.userBId : r.userAId)
+      .filter((id): id is string => id !== null),
   ));
-  const counterpartRows = await db
-    .select({
-      id: users.id,
-      handle: users.handle,
-      username: users.username,
-      avatarUrl: users.avatarUrl,
-    })
-    .from(users)
-    .where(inArray(users.id, counterpartIds));
+  const counterpartRows = counterpartIds.length > 0
+    ? await db
+        .select({
+          id: users.id,
+          handle: users.handle,
+          username: users.username,
+          avatarUrl: users.avatarUrl,
+          isAnonymous: users.isAnonymous,
+        })
+        .from(users)
+        .where(inArray(users.id, counterpartIds))
+    : [];
   const byId = new Map(counterpartRows.map(u => [u.id, u]));
 
   return rows.map(r => {
-    const counterpartId = r.userAId === viewerUserId ? r.userBId : r.userAId;
-    const counterpart = byId.get(counterpartId);
     const viewerIsA = r.userAId === viewerUserId;
+    const counterpartId = viewerIsA ? r.userBId : r.userAId;
+    const counterpart = counterpartId ? byId.get(counterpartId) : null;
     return {
       id: r.id,
       status: r.status,
@@ -201,12 +340,14 @@ export async function listActiveSessionsForViewer(
             handle: counterpart.handle,
             username: counterpart.username,
             avatarUrl: counterpart.avatarUrl,
+            isAnonymous: counterpart.isAnonymous,
           }
         : null,
+      openSlot: counterpartId === null,
       yourCards: viewerIsA ? r.userACards : r.userBCards,
       theirCards: viewerIsA ? r.userBCards : r.userACards,
       confirmedByViewer: r.confirmedByUserIds.includes(viewerUserId),
-      confirmedByCounterpart: r.confirmedByUserIds.includes(counterpartId),
+      confirmedByCounterpart: counterpartId !== null && r.confirmedByUserIds.includes(counterpartId),
       lastEditedByViewer: r.lastEditedByUserId === viewerUserId,
       lastEditedAt: r.lastEditedAt.toISOString(),
       createdAt: r.createdAt.toISOString(),
@@ -350,6 +491,129 @@ export async function createOrGetActiveSession(
 }
 
 /**
+ * Create an "open-slot" session — slot A is the creator, slot B is
+ * null. Used by the QR / in-person flow: the creator starts a
+ * session, shares the URL, and whoever scans becomes the slot B
+ * participant (via `claimOpenSlot`).
+ *
+ * Unlike `createOrGetActiveSession`, there's no pair uniqueness
+ * guarantee here — a single user can have multiple open-slot
+ * sessions simultaneously (e.g. running two tables at the same LGS).
+ * The partial unique index only kicks in once slot B is filled.
+ */
+export async function createOpenSession(
+  db: Db,
+  args: {
+    creatorUserId: string;
+    creatorCards?: TradeCardSnapshot[];
+  },
+): Promise<{ id: string }> {
+  const id = generateSessionCode();
+  await db.insert(tradeSessions).values({
+    id,
+    userAId: args.creatorUserId,
+    userBId: null,
+    userACards: args.creatorCards ?? [],
+    userBCards: [],
+    status: 'active',
+    confirmedByUserIds: [],
+    lastEditedByUserId: args.creatorCards && args.creatorCards.length > 0 ? args.creatorUserId : null,
+    lastNotifiedAt: {},
+    expiresAt: nextExpiresAt(),
+  });
+  await recordSessionEvent(db, {
+    sessionId: id,
+    actorUserId: args.creatorUserId,
+    type: 'created',
+    payload: { openSlot: true },
+  });
+  return { id };
+}
+
+/**
+ * Fill the second slot of an open session with the viewer. Handles
+ * every participant edge case:
+ *   - Session already has both slots filled, viewer is one of them
+ *     → no-op success (idempotent on re-scan)
+ *   - Session already has both slots filled, viewer is NOT a
+ *     participant → 'conflict' (someone else got there first)
+ *   - Slot B is null, viewer is the creator → 'self' (can't claim
+ *     your own session)
+ *   - Slot B is null, viewer is someone else → fill it
+ *   - Session is terminal → 'terminal'
+ */
+export type ClaimOpenSlotResult =
+  | { ok: true; view: SessionView; claimed: boolean }
+  | { ok: false; reason: 'not-found' | 'self' | 'conflict' | 'terminal' };
+
+export async function claimOpenSlot(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string },
+): Promise<ClaimOpenSlotResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  // Already a participant — idempotent no-op.
+  if (row.userAId === args.viewerUserId || row.userBId === args.viewerUserId) {
+    const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+    if (!view) return { ok: false, reason: 'not-found' };
+    return { ok: true, view, claimed: false };
+  }
+
+  // Slot B filled by someone else — race loser.
+  if (row.userBId !== null) return { ok: false, reason: 'conflict' };
+
+  // Slot B null → fill. Normalise the pair to satisfy the canonical
+  // a<b ordering the rest of the codebase relies on; if the claimer's
+  // id sorts before the creator's, we swap the slot assignment and
+  // keep the cards aligned with whoever owns them.
+  const { userAId, userBId } = normalizeParticipants(row.userAId, args.viewerUserId);
+  const creatorStaysInA = userAId === row.userAId;
+  const now = new Date();
+
+  try {
+    await db
+      .update(tradeSessions)
+      .set({
+        userAId,
+        userBId,
+        // If the sort flipped, the cards swap columns too — creator's
+        // cards always travel with the creator's id.
+        userACards: creatorStaysInA ? row.userACards : row.userBCards,
+        userBCards: creatorStaysInA ? row.userBCards : row.userACards,
+        updatedAt: now,
+        // Bump expiry so the session doesn't time out just because
+        // the scan happened close to the original expires_at.
+        expiresAt: nextExpiresAt(now),
+      })
+      .where(eq(tradeSessions.id, args.sessionId));
+  } catch (err) {
+    // Race: another claim landed between our read and write (partial
+    // unique index on `(user_a_id, user_b_id) WHERE user_b_id IS NOT
+    // NULL` isn't relevant here, but the pair-uniqueness index would
+    // reject if the claimer already had a separate active session
+    // with the creator). Return conflict and let the client decide.
+    return { ok: false, reason: 'conflict' };
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'created',
+    payload: { claimed: true },
+  });
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view, claimed: true };
+}
+
+/**
  * Replace the viewer's half of a session. Per-side ownership:
  * a viewer can only edit their own cards, never the counterpart's.
  * Any edit clears the confirmed_by array — both parties must re-
@@ -466,7 +730,11 @@ export async function confirmSession(
   }
 
   const counterpartId = row.userAId === args.viewerUserId ? row.userBId : row.userAId;
-  const counterpartAlreadyConfirmed = row.confirmedByUserIds.includes(counterpartId);
+  // Open-slot session (no counterpart yet): confirming is allowed
+  // but can never settle because the counterpart isn't set. Settle
+  // waits for the claim + their subsequent confirm.
+  const counterpartAlreadyConfirmed = counterpartId !== null
+    && row.confirmedByUserIds.includes(counterpartId);
   const nextConfirmations = [...row.confirmedByUserIds, args.viewerUserId];
   const settling = counterpartAlreadyConfirmed;
   const now = new Date();

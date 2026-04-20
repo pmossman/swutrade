@@ -12,6 +12,7 @@ export interface SessionCounterpart {
   handle: string;
   username: string;
   avatarUrl: string | null;
+  isAnonymous: boolean;
 }
 
 /**
@@ -25,6 +26,7 @@ export interface SessionView {
   status: SessionStatus;
   viewer: { userId: string };
   counterpart: SessionCounterpart | null;
+  openSlot: boolean;
   yourCards: TradeCardSnapshot[];
   theirCards: TradeCardSnapshot[];
   confirmedByViewer: boolean;
@@ -37,10 +39,29 @@ export interface SessionView {
   expiresAt: string;
 }
 
-export type SessionFetchStatus = 'loading' | 'ready' | 'not-found' | 'error';
+/**
+ * Shape returned when the viewer is NOT a participant but the
+ * session has an open slot — shown as "Join this trade" prompt.
+ * Mirrors `lib/sessions.ts::SessionPreview`.
+ */
+export interface SessionPreview {
+  id: string;
+  creator: {
+    handle: string;
+    username: string;
+    avatarUrl: string | null;
+    isAnonymous: boolean;
+  };
+  creatorCardCount: number;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export type SessionFetchStatus = 'loading' | 'ready' | 'preview' | 'not-found' | 'error';
 
 export interface SessionApi {
   session: SessionView | null;
+  preview: SessionPreview | null;
   status: SessionFetchStatus;
   /** Replace the viewer's half; the server clears confirmations and
    *  bumps expiry. Optimistically updates local state before the
@@ -52,6 +73,10 @@ export interface SessionApi {
   /** Cancel an active session. Terminal from both sides; either
    *  participant can cancel. */
   cancel: () => Promise<void>;
+  /** Claim the open slot. Mints a ghost user if the viewer has no
+   *  session cookie; otherwise promotes the signed-in user into
+   *  slot B. Re-fetches on success so status flips to 'ready'. */
+  claim: () => Promise<void>;
   /** True when the counterpart has edited more recently than we last
    *  saw — drives the "Alice changed something" banner in the UI. */
   hasUnseenCounterpartEdit: boolean;
@@ -84,6 +109,7 @@ export function useSession(sessionId: string | null): SessionApi {
   const [session, setSession] = useState<SessionView | null>(
     () => (sessionId ? cache.get(sessionId) ?? null : null),
   );
+  const [preview, setPreview] = useState<SessionPreview | null>(null);
   const [status, setStatus] = useState<SessionFetchStatus>(
     () => (sessionId && cache.has(sessionId) ? 'ready' : 'loading'),
   );
@@ -116,9 +142,10 @@ export function useSession(sessionId: string | null): SessionApi {
   const fetchOnce = useCallback(async () => {
     if (!sessionId) return;
     if (mutationInFlightRef.current) return;
-    const result = await apiGet<{ session: SessionView }>(
-      `/api/sessions/${encodeURIComponent(sessionId)}`,
-    );
+    const result = await apiGet<{
+      session?: SessionView;
+      preview?: SessionPreview;
+    }>(`/api/sessions/${encodeURIComponent(sessionId)}`);
     if (mutationInFlightRef.current) return;
     if (!result.ok) {
       // Preserve any cached body but flag the right terminal status.
@@ -126,7 +153,17 @@ export function useSession(sessionId: string | null): SessionApi {
       else if (!cache.has(sessionId)) setStatus('error');
       return;
     }
-    applyServerSession(result.data.session);
+    if (result.data.session) {
+      setPreview(null);
+      applyServerSession(result.data.session);
+      return;
+    }
+    if (result.data.preview) {
+      setPreview(result.data.preview);
+      setStatus('preview');
+      return;
+    }
+    setStatus('not-found');
   }, [sessionId, applyServerSession]);
 
   // Initial fetch.
@@ -266,12 +303,36 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
+  const claim = useCallback(async () => {
+    if (!sessionId) return;
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/claim`,
+      );
+      if (!result.ok || !result.data.session) {
+        // On conflict (someone else claimed first), fall through and
+        // re-fetch so the UI flips to whatever state the server
+        // actually has — probably a 404 now that the slot is filled.
+        mutationInFlightRef.current = false;
+        await fetchOnce();
+        return;
+      }
+      setPreview(null);
+      applyServerSession(result.data.session);
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession, fetchOnce]);
+
   return {
     session,
+    preview,
     status,
     saveCards,
     confirm,
     cancel,
+    claim,
     hasUnseenCounterpartEdit,
     markCounterpartSeen,
   };

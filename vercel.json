@@ -28,9 +28,11 @@
     { "source": "/api/bot/events", "destination": "/api/bot?action=events" },
     { "source": "/api/me/sessions", "destination": "/api/sessions?action=list" },
     { "source": "/api/sessions/create", "destination": "/api/sessions?action=create" },
+    { "source": "/api/sessions/create-open", "destination": "/api/sessions?action=create-open" },
     { "source": "/api/sessions/:id/edit", "destination": "/api/sessions?action=edit&id=:id" },
     { "source": "/api/sessions/:id/confirm", "destination": "/api/sessions?action=confirm&id=:id" },
     { "source": "/api/sessions/:id/cancel", "destination": "/api/sessions?action=cancel&id=:id" },
+    { "source": "/api/sessions/:id/claim", "destination": "/api/sessions?action=claim&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]

@@ -1,15 +1,19 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { requireSession } from '../lib/auth.js';
+import { createSession as createAuthSession, getSession, requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
 import { users } from '../lib/schema.js';
 import {
   cancelSession,
+  claimOpenSlot,
   confirmSession,
+  createGhostUser,
+  createOpenSession,
   createOrGetActiveSession,
   editSessionSide,
   getSessionForViewer,
+  getSessionPreview,
   listActiveSessionsForViewer,
 } from '../lib/sessions.js';
 
@@ -40,20 +44,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleConfirmSession(req, res);
     case 'cancel':
       return handleCancelSession(req, res);
+    case 'create-open':
+      return handleCreateOpenSession(req, res);
+    case 'claim':
+      return handleClaimSession(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/sessions action' });
   }
 }
 
 /**
- * Single session lookup. 404s both when the id doesn't exist AND
- * when the viewer isn't a participant — session ids aren't probeable
- * by non-participants (same policy as trade_proposals detail).
+ * Single session lookup. Response shape varies by viewer's
+ * relationship to the session:
+ *
+ *   - Participant viewer → `{ session: SessionView }` with the full
+ *     viewer-centric render.
+ *   - Non-participant + session has open slot B → `{ preview:
+ *     SessionPreview }` so the UI can show a "Join this trade"
+ *     prompt with the creator's identity.
+ *   - Anything else (terminal, pair filled, unknown id) → 404.
+ *
+ * No auth required — an anonymous visitor hitting a QR-coded URL
+ * gets the preview without needing a session cookie first. They'll
+ * create a ghost session cookie when they actually claim via
+ * POST /api/sessions/:id/claim.
  */
 export async function handleGetSession(req: VercelRequest, res: VercelResponse) {
-  const session = await requireSession(req, res);
-  if (!session) return;
-
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -65,13 +81,29 @@ export async function handleGetSession(req: VercelRequest, res: VercelResponse) 
   }
 
   const db = getDb();
-  const view = await getSessionForViewer(db, id, session.userId);
-  if (!view) {
-    return res.status(404).json({ error: 'Not found' });
+
+  // Viewer first — if they're a participant, give them the full
+  // session payload. Anonymous users (no cookie) skip this branch.
+  const session = await getSession(req, res);
+  if (session) {
+    const view = await getSessionForViewer(db, id, session.userId);
+    if (view) {
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.json({ session: view });
+    }
   }
 
-  res.setHeader('Cache-Control', 'private, no-store');
-  return res.json({ session: view });
+  // Not a participant (or not signed in) — check if this is an open
+  // invitation we can preview. Anyone with the URL can preview; the
+  // preview is intentionally limited (creator identity + card
+  // count, no card list).
+  const preview = await getSessionPreview(db, id);
+  if (preview) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.json({ preview });
+  }
+
+  return res.status(404).json({ error: 'Not found' });
 }
 
 /**
@@ -238,6 +270,104 @@ export async function handleConfirmSession(req: VercelRequest, res: VercelRespon
   return res.json({
     session: result.ok ? result.view : null,
     settled: result.ok ? result.settled : false,
+  });
+}
+
+/**
+ * Create an "open-slot" shared trade — slot A is the creator, slot B
+ * stays null until someone claims it via QR / shared link. Signed-in
+ * creators only for v1; a future sliver could allow a ghost creator
+ * (would mean anyone could spawn open sessions without any identity,
+ * which needs more thought around spam/abuse).
+ */
+const CreateOpenBodySchema = z.object({
+  initialCards: z.array(TradeCardSnapshotSchema).max(200).default([]),
+});
+
+export async function handleCreateOpenSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = CreateOpenBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const db = getDb();
+  const { id } = await createOpenSession(db, {
+    creatorUserId: session.userId,
+    creatorCards: parsed.data.initialCards,
+  });
+
+  return res.status(201).json({ id });
+}
+
+/**
+ * Claim the open slot B of an existing session. Works for both
+ * signed-in and anonymous visitors:
+ *   - Signed-in: session cookie identifies the claimer; they
+ *     become slot B as a real user.
+ *   - Anonymous: server mints a fresh ghost user, sets the
+ *     iron-session cookie to that ghost id, and the ghost becomes
+ *     slot B. The browser is now "signed in as guest" for the
+ *     duration of the ghost's TTL — they can edit the session and
+ *     the cookie will carry them across reloads. Future sign-in via
+ *     Discord merges the ghost into the real account.
+ *
+ * Idempotent: if the claimer is already a participant, returns the
+ * current view. Race-safe: two concurrent anonymous claims will
+ * cause one of them to hit `conflict`.
+ */
+export async function handleClaimSession(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const db = getDb();
+
+  // Resolve the viewer — existing cookie OR mint a ghost.
+  let viewerId: string;
+  let mintedGhost: { id: string; handle: string; username: string } | null = null;
+  const existing = await getSession(req, res);
+  if (existing) {
+    viewerId = existing.userId;
+  } else {
+    const ghost = await createGhostUser(db);
+    await createAuthSession(req, res, {
+      userId: ghost.id,
+      username: ghost.username,
+      handle: ghost.handle,
+      avatarUrl: null,
+    });
+    mintedGhost = ghost;
+    viewerId = ghost.id;
+  }
+
+  const result = await claimOpenSlot(db, { sessionId: id, viewerUserId: viewerId });
+  if (!result.ok) {
+    // Map library reasons to HTTP. 'self' = creator trying to claim
+    // their own invite; 'conflict' = slot already filled by someone
+    // else; 'terminal' = session is no longer active; 'not-found'
+    // = bad id.
+    if (result.reason === 'not-found') return res.status(404).json({ error: 'Not found' });
+    if (result.reason === 'self') return res.status(400).json({ error: "You can't claim your own invitation" });
+    if (result.reason === 'terminal') return res.status(409).json({ error: 'Session is no longer active' });
+    if (result.reason === 'conflict') return res.status(409).json({ error: 'Someone else already joined this session' });
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(result.ok && result.claimed ? 201 : 200).json({
+    session: result.ok ? result.view : null,
+    ghost: mintedGhost,
   });
 }
 
