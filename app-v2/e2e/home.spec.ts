@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 /*
- * Smoke test for Phase 1b exit criteria:
- *   - Four tabs render and route.
- *   - Trades FAB opens the Sheet; Escape dismisses it.
- *   - prefers-reduced-motion is respected (no Framer spring when on).
+ * Smoke tests for Phase 1a-1d exit criteria that don't require
+ * /api/* (since `vite dev` doesn't serve the serverless functions).
+ * Full API-backed e2e lives behind `vercel dev` in CI and isn't
+ * wired up yet.
  */
 
-test.describe('Home shell (1b smoke)', () => {
+test.describe('Shell (tabs + routing)', () => {
   test('tab bar renders four destinations and Trades is active by default', async ({ page }) => {
     await page.goto('/');
 
@@ -38,36 +38,44 @@ test.describe('Home shell (1b smoke)', () => {
     await expect(page).toHaveURL(/\/me$/);
     await expect(page.getByRole('heading', { name: 'Me', level: 1 })).toBeVisible();
   });
+});
 
-  test('Start-trade FAB opens the sheet, Escape closes it', async ({ page }) => {
+test.describe('Trades FAB (create-open failure path)', () => {
+  test('Retry banner surfaces when the server is unreachable', async ({ page }) => {
+    // Under `vite dev` there's no /api/sessions/create-open; the
+    // dev server serves index.html for unmatched routes, apiPost's
+    // JSON parse throws, and the route catches + shows the banner.
+    // Covers sub-phase 1d exit criterion "create-open failure
+    // handling" (design §10).
     await page.goto('/');
-
     await page.getByRole('button', { name: 'Start trade' }).click();
 
-    const sheet = page.getByRole('dialog');
-    await expect(sheet).toBeVisible();
-    await expect(sheet.getByText('Start trade')).toBeVisible();
-
-    await page.keyboard.press('Escape');
-    await expect(sheet).toBeHidden();
+    const banner = page.getByRole('alert');
+    await expect(banner).toBeVisible();
+    await expect(banner.getByText(/couldn't start a trade/i)).toBeVisible();
+    await expect(banner.getByRole('button', { name: /retry/i })).toBeVisible();
   });
+});
 
-  test('reduced-motion disables sheet spring transition', async ({ browser }) => {
-    const context = await browser.newContext({
-      ...browser.contexts()[0]?.storageState,
-      reducedMotion: 'reduce',
-    });
-    const page = await context.newPage();
-    await page.goto('/');
+test.describe('Trade canvas (unknown code)', () => {
+  test('/s/<bogus> renders the Trade-not-found state', async ({ page }) => {
+    await page.goto('/s/BOGUS123');
+    await expect(
+      page.getByRole('heading', { name: /trade not found/i }),
+    ).toBeVisible();
+    // Tab bar hides on standalone routes.
+    await expect(page.getByRole('tablist', { name: /primary/i })).toBeHidden();
+  });
+});
 
-    // With reduced-motion the sheet should render immediately after the tap.
-    // We don't assert the transition-duration directly (CSS-only timing is
-    // hard to probe deterministically); instead we rely on the sheet being
-    // fully in view within 50ms, which is well under the 280ms spring.
-    await page.getByRole('button', { name: 'Start trade' }).click();
-    const sheet = page.getByRole('dialog');
-    await expect(sheet).toBeVisible({ timeout: 100 });
-
-    await context.close();
+test.describe('Cards tab (ghost state)', () => {
+  test('signed-out user sees the sign-in CTA on the Cards tab', async ({ page }) => {
+    // /api/auth/me returns index.html under vite dev → useAuth
+    // resolves to user=null, isLoading=false → ghost branch renders.
+    await page.goto('/cards');
+    await expect(
+      page.getByRole('heading', { name: /sign in to keep a list/i }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: /continue with discord/i })).toBeVisible();
   });
 });
