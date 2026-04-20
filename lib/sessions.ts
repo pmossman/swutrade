@@ -13,6 +13,11 @@
 import { and, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { getDb } from './db.js';
 import {
+  createDiscordBotClient,
+  type DiscordBotClient,
+} from './discordBot.js';
+import { buildSessionInviteMessage } from './proposalMessages.js';
+import {
   sessionEvents,
   tradeSessions,
   users,
@@ -934,6 +939,177 @@ export async function mergeGhostIntoRealUser(
   if (remaining.length === 0) {
     await db.delete(users).where(eq(users.id, ghostId));
   }
+}
+
+/**
+ * Invite a specific SWUTrade handle to an open-slot session via a
+ * Discord DM carrying the session URL. Alternative to the QR / share-
+ * link affordance — the creator picks a known handle and the server
+ * delivers the URL directly to the invitee's DMs.
+ *
+ * Invariants:
+ *   - Only the session CREATOR (slot A) can invite.
+ *   - Session must be `active` and have `user_b_id === null`. If slot
+ *     B is already filled OR the session is terminal, invites are
+ *     rejected with `not-open`.
+ *   - Self-invites are rejected (`self-invite`).
+ *   - Debounce: identical invites (same target handle) within the
+ *     DEBOUNCE_WINDOW_MS of the last successful invite are suppressed.
+ *     Returns `ok: true` idempotently so repeat clicks from the UI are
+ *     safe; a debug event is logged to explain why no DM went out.
+ *   - The DM is sent via `DiscordBotClient.sendDirectMessage`. Any
+ *     thrown error collapses to `dm-failed` (bot has no DM perms, user
+ *     has DMs disabled, etc.); the session + event log stay untouched
+ *     so the creator can retry.
+ *   - On success, a `notified` event is recorded with payload
+ *     `{ kind: 'invite', targetUserId, targetHandle }`. We re-use the
+ *     existing `notified` type rather than adding a new enum value to
+ *     avoid a schema migration — the payload disambiguates.
+ */
+export const SESSION_INVITE_DEBOUNCE_MS = 10 * 60 * 1000;
+
+export async function inviteHandleToSession(
+  db: Db,
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    targetHandle: string;
+    bot?: DiscordBotClient;
+    /** Absolute base URL for the outbound link (e.g.
+     *  `https://beta.swutrade.com`). Falls back to the beta origin
+     *  so unit tests + local scripts don't need to thread it through. */
+    appBaseUrl?: string;
+  },
+): Promise<
+  | { ok: true; invited: { userId: string; handle: string } }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'not-creator'
+        | 'not-open'
+        | 'self-invite'
+        | 'no-such-handle'
+        | 'dm-failed';
+    }
+> {
+  const [sessionRow] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!sessionRow) return { ok: false, reason: 'not-found' };
+
+  // "Open" here means both: session is active AND slot B is still
+  // null. A terminal session OR a fully-claimed pair both collapse to
+  // 'not-open' because in either case the invite-by-handle surface
+  // has nothing useful to do.
+  if (sessionRow.status !== 'active' || sessionRow.userBId !== null) {
+    return { ok: false, reason: 'not-open' };
+  }
+  if (sessionRow.userAId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-creator' };
+  }
+
+  // Normalize the handle — strip leading `@` and whitespace. Accept
+  // `@alice`, `alice`, `  @alice  `, etc. as the same lookup.
+  const handle = args.targetHandle.trim().replace(/^@+/, '');
+  if (!handle) return { ok: false, reason: 'no-such-handle' };
+
+  const [target] = await db
+    .select({ id: users.id, handle: users.handle, discordId: users.discordId })
+    .from(users)
+    .where(eq(users.handle, handle))
+    .limit(1);
+  if (!target) return { ok: false, reason: 'no-such-handle' };
+  if (target.id === sessionRow.userAId) {
+    return { ok: false, reason: 'self-invite' };
+  }
+
+  // Need the inviter's own handle for the DM body.
+  const [inviter] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, args.viewerUserId))
+    .limit(1);
+  if (!inviter) return { ok: false, reason: 'not-creator' };
+
+  // Debounce: scan session_events for recent `notified` rows that
+  // targeted this same handle. Any hit within the window collapses
+  // to a successful no-op so users who tap Invite twice don't trip
+  // Discord's DM-spam heuristics.
+  const debounceCutoff = new Date(Date.now() - SESSION_INVITE_DEBOUNCE_MS);
+  const priorInvites = await db
+    .select({ id: sessionEvents.id, payload: sessionEvents.payload })
+    .from(sessionEvents)
+    .where(and(
+      eq(sessionEvents.sessionId, args.sessionId),
+      eq(sessionEvents.type, 'notified'),
+      gt(sessionEvents.createdAt, debounceCutoff),
+    ));
+  const recentlyInvited = priorInvites.some(e => {
+    const p = e.payload as
+      | { kind?: string; targetHandle?: string; targetUserId?: string }
+      | null;
+    if (!p || p.kind !== 'invite') return false;
+    return p.targetHandle === handle || p.targetUserId === target.id;
+  });
+  if (recentlyInvited) {
+    // Leave a breadcrumb so the timeline answers "why didn't @alice
+    // get a second DM?" without needing to correlate logs.
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'notified',
+      payload: {
+        kind: 'invite-debounced',
+        targetHandle: handle,
+        targetUserId: target.id,
+      },
+    });
+    return { ok: true, invited: { userId: target.id, handle } };
+  }
+
+  // Ghost / anonymous targets have no discord_id and therefore no DM
+  // channel we can open. Surface that as 'dm-failed' — same UX as "we
+  // tried and it didn't land," and the caller can offer the QR/share-
+  // link alternative.
+  if (!target.discordId) {
+    return { ok: false, reason: 'dm-failed' };
+  }
+
+  const baseUrl = args.appBaseUrl ?? 'https://beta.swutrade.com';
+  const sessionUrl = `${baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
+  const body = buildSessionInviteMessage({
+    inviterHandle: inviter.handle,
+    sessionUrl,
+  });
+
+  const bot = args.bot ?? createDiscordBotClient();
+  try {
+    await bot.sendDirectMessage(target.discordId, body);
+  } catch (err) {
+    console.error(
+      'inviteHandleToSession: sendDirectMessage failed',
+      args.sessionId,
+      target.id,
+      err,
+    );
+    return { ok: false, reason: 'dm-failed' };
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'notified',
+    payload: {
+      kind: 'invite',
+      targetHandle: handle,
+      targetUserId: target.id,
+    },
+  });
+
+  return { ok: true, invited: { userId: target.id, handle } };
 }
 
 // Expose drizzle helpers that future files will reuse so we don't

@@ -34,6 +34,7 @@
     { "source": "/api/sessions/:id/confirm", "destination": "/api/sessions?action=confirm&id=:id" },
     { "source": "/api/sessions/:id/cancel", "destination": "/api/sessions?action=cancel&id=:id" },
     { "source": "/api/sessions/:id/claim", "destination": "/api/sessions?action=claim&id=:id" },
+    { "source": "/api/sessions/:id/invite-handle", "destination": "/api/sessions?action=invite-handle&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ]
