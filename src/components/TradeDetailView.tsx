@@ -32,7 +32,7 @@ interface TradeDetailViewProps {
  */
 export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
   const auth = useAuthContext();
-  const { trade, status, cancel, cancelling, accept, decline, nudge, mutating } = useTradeDetail(tradeId);
+  const { trade, status, cancel, cancelling, accept, decline, nudge, promoteToShared, mutating } = useTradeDetail(tradeId);
   const [actionError, setActionError] = useState<string | null>(null);
   const [nudgeOpen, setNudgeOpen] = useState(false);
 
@@ -89,6 +89,25 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
       } else {
         setActionError(result.detail ?? "Couldn't decline. Try again in a moment.");
       }
+    }
+  };
+
+  const handlePromoteToShared = async () => {
+    setActionError(null);
+    const result = await promoteToShared();
+    if (result.ok) {
+      // Full-page navigation — the shared canvas is a distinct view
+      // and we want the URL + history entry to reflect the jump so
+      // back-button semantics match user expectation.
+      window.location.href = `/s/${encodeURIComponent(result.data.sessionId)}`;
+      return;
+    }
+    if (result.reason === 'already-resolved') {
+      setActionError('This proposal was already resolved.');
+    } else if (result.reason === 'forbidden') {
+      setActionError("You can't promote a proposal you sent — edit it instead.");
+    } else {
+      setActionError(result.detail ?? "Couldn't open a shared canvas. Try again in a moment.");
     }
   };
 
@@ -182,6 +201,7 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
               onCancel={handleCancel}
               onAccept={handleAccept}
               onDecline={handleDecline}
+              onPromoteToShared={handlePromoteToShared}
               onOpenNudge={() => setNudgeOpen(true)}
               mutating={mutating || cancelling}
               error={actionError}
@@ -241,6 +261,7 @@ function ActionBar({
   onCancel,
   onAccept,
   onDecline,
+  onPromoteToShared,
   onOpenNudge,
   mutating,
   error,
@@ -249,6 +270,7 @@ function ActionBar({
   onCancel: () => void;
   onAccept: () => void;
   onDecline: () => void;
+  onPromoteToShared: () => void;
   onOpenNudge: () => void;
   mutating: boolean;
   error: string | null;
@@ -256,6 +278,7 @@ function ActionBar({
   if (trade.status !== 'pending') return null;
 
   if (trade.viewerIsRecipient) {
+    const proposerHandle = trade.proposer?.handle ?? 'them';
     return (
       <section className="flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
@@ -282,6 +305,16 @@ function ActionBar({
             className="flex-1 sm:flex-none px-4 h-9 rounded-lg bg-red-500/10 border border-red-500/40 text-red-300 text-sm font-bold hover:bg-red-500/20 hover:border-red-400/60 transition-colors disabled:opacity-50 disabled:cursor-wait"
           >
             {mutating ? 'Working…' : 'Decline'}
+          </button>
+          <button
+            type="button"
+            onClick={onPromoteToShared}
+            disabled={mutating}
+            data-testid="promote-to-shared"
+            title={`Open a shared trade canvas with @${proposerHandle} so you can both edit`}
+            className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors disabled:opacity-50 disabled:cursor-wait"
+          >
+            {mutating ? 'Working…' : 'Edit together'}
           </button>
         </div>
         {error && <div className="text-[11px] text-red-300">{error}</div>}

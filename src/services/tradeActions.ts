@@ -87,6 +87,12 @@ export function nudgeProposal(
   return post('/api/trades?action=nudge', note ? { id, note } : { id });
 }
 
+export function promoteProposalToShared(
+  id: string,
+): Promise<ActionResult<{ sessionId: string; created: boolean }>> {
+  return post('/api/trades?action=promote-to-shared', { proposalId: id });
+}
+
 export interface BulkResolveResult {
   id: string;
   outcome: 'ok' | 'already-resolved' | 'not-found' | 'forbidden';
