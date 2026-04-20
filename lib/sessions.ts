@@ -14,12 +14,14 @@ import { and, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import type { getDb } from './db.js';
 import {
   sessionEvents,
+  tradeProposals,
   tradeSessions,
   users,
   type SessionEventType,
   type SessionStatus,
   type TradeCardSnapshot,
 } from './schema.js';
+import { recordEvent as recordProposalEvent } from './proposalEvents.js';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -934,6 +936,183 @@ export async function mergeGhostIntoRealUser(
   if (remaining.length === 0) {
     await db.delete(users).where(eq(users.id, ghostId));
   }
+}
+
+/**
+ * Promote a pending proposal into a shared collaborative session.
+ *
+ * The recipient of a pending proposal clicks "Edit together" and
+ * converts the one-shot ping-pong proposal into a mutable shared
+ * canvas. From there, both parties work inside the trade_sessions
+ * primitive — edit, confirm, settle — instead of the
+ * accept/decline/counter lifecycle.
+ *
+ * Semantics:
+ *   1. Only the RECIPIENT can promote. Proposers who want to iterate
+ *      on their own proposal use the existing edit flow — promoting
+ *      would be a no-op for them.
+ *   2. Only `pending` proposals can be promoted. A terminal proposal
+ *      (accepted/declined/cancelled/expired/countered) returns
+ *      `not-pending` so the UI can surface the race cleanly.
+ *   3. If the pair already has an ACTIVE session, return its id with
+ *      `already-active-session` — the caller can redirect the viewer
+ *      into that existing canvas rather than creating a parallel one.
+ *      Belt for the partial unique index's suspenders.
+ *   4. On success: the proposal flips to `countered` (reuses the
+ *      existing terminal state — a promoted proposal has effectively
+ *      been replaced by the session) and a new session row is seeded
+ *      with both parties' cards positioned correctly under the
+ *      canonical a<b ordering.
+ *
+ * Write ordering is deliberate: the session insert commits FIRST, then
+ * the proposal transition. If the session insert fails mid-flight the
+ * proposal stays pending — the recipient can retry or fall back to
+ * accept/decline/counter. If the proposal transition fails after the
+ * session insert, the try/catch surfaces `error` (see below) and the
+ * orphan session is cleaned up so we don't leave both primitives
+ * pointing at each other.
+ */
+export type PromoteProposalResult =
+  | { ok: true; sessionId: string }
+  | {
+      ok: false;
+      reason: 'not-found' | 'not-recipient' | 'not-pending' | 'already-active-session';
+      sessionId?: string;
+    };
+
+export async function promoteProposalToSession(
+  db: Db,
+  args: {
+    proposalId: string;
+    /** Must be the proposal's recipientUserId — proposers can't
+     *  promote their own proposal. */
+    viewerUserId: string;
+  },
+): Promise<PromoteProposalResult> {
+  const [proposal] = await db
+    .select()
+    .from(tradeProposals)
+    .where(eq(tradeProposals.id, args.proposalId))
+    .limit(1);
+  if (!proposal) return { ok: false, reason: 'not-found' };
+  if (proposal.recipientUserId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-recipient' };
+  }
+  if (proposal.status !== 'pending') {
+    return { ok: false, reason: 'not-pending' };
+  }
+
+  // If the pair already has an active session, hand its id back so
+  // the caller can redirect the viewer in. Guards against "propose,
+  // forget, then promote a fresh proposal to the same counterpart"
+  // creating a parallel canvas — the partial unique index would
+  // reject that insert anyway, but the explicit lookup gives the UI
+  // a clean way to recover without a 5xx.
+  const existing = await findActiveSessionForPair(
+    db,
+    proposal.proposerUserId,
+    proposal.recipientUserId,
+  );
+  if (existing) {
+    return { ok: false, reason: 'already-active-session', sessionId: existing };
+  }
+
+  const sessionId = generateSessionCode();
+  const { userAId, userBId } = normalizeParticipants(
+    proposal.proposerUserId,
+    proposal.recipientUserId,
+  );
+  // Cards travel with the user who owns them. The proposal's
+  // offeringCards are the PROPOSER'S contribution; receivingCards are
+  // what the proposer wanted from the recipient. After normalisation,
+  // whichever slot (A or B) holds the proposer gets the offeringCards;
+  // the recipient's slot gets the receivingCards as their starting
+  // half. Either side can then edit their own cards freely.
+  const proposerIsA = userAId === proposal.proposerUserId;
+  const now = new Date();
+
+  try {
+    await db.insert(tradeSessions).values({
+      id: sessionId,
+      userAId,
+      userBId,
+      userACards: proposerIsA ? proposal.offeringCards : proposal.receivingCards,
+      userBCards: proposerIsA ? proposal.receivingCards : proposal.offeringCards,
+      status: 'active',
+      confirmedByUserIds: [],
+      // The recipient just pressed "Edit together" — they're the
+      // actor on this row's first action, so the debounce-DM job
+      // targets the PROPOSER when it next fires.
+      lastEditedByUserId: args.viewerUserId,
+      lastNotifiedAt: {},
+      expiresAt: nextExpiresAt(now),
+    });
+  } catch (err) {
+    // Belt-and-suspenders against the pair unique index + a race
+    // where another promotion landed between our lookup and insert.
+    // Re-check and fall back to the winner if one exists.
+    const winner = await findActiveSessionForPair(
+      db,
+      proposal.proposerUserId,
+      proposal.recipientUserId,
+    );
+    if (winner) {
+      return { ok: false, reason: 'already-active-session', sessionId: winner };
+    }
+    throw err;
+  }
+
+  // Transition the proposal. If this fails we clean up the session
+  // row to avoid orphaning both sides of the promotion.
+  try {
+    await db
+      .update(tradeProposals)
+      .set({
+        status: 'countered',
+        respondedAt: now,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(tradeProposals.id, proposal.id),
+        eq(tradeProposals.status, 'pending'),
+      ));
+  } catch (err) {
+    await db
+      .delete(tradeSessions)
+      .where(eq(tradeSessions.id, sessionId))
+      .catch((cleanupErr) => {
+        // Orphan session cleanup failed — log so it's traceable in
+        // audit, but surface the original transition error to the
+        // caller (which matters for debugging the primary failure).
+        console.error(
+          'promoteProposalToSession: orphan session cleanup failed',
+          sessionId,
+          cleanupErr,
+        );
+      });
+    throw err;
+  }
+
+  // Event bookkeeping — best-effort, same pattern as elsewhere.
+  // Session-side: reuse `created` with a `promotedFromProposalId`
+  // payload flag so the timeline can distinguish a promoted session
+  // from a direct-create without adding a new event type.
+  // Proposal-side: `countered` with the new session id so the
+  // proposal timeline shows what happened to it.
+  await recordSessionEvent(db, {
+    sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'created',
+    payload: { promotedFromProposalId: proposal.id },
+  });
+  await recordProposalEvent(db, {
+    proposalId: proposal.id,
+    actorUserId: args.viewerUserId,
+    type: 'countered',
+    payload: { promotedToSessionId: sessionId },
+  });
+
+  return { ok: true, sessionId };
 }
 
 // Expose drizzle helpers that future files will reuse so we don't

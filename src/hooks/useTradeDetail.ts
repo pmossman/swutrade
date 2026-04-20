@@ -6,6 +6,7 @@ import {
   cancelProposal,
   declineProposal,
   nudgeProposal,
+  promoteProposalToShared,
   type ActionResult,
 } from '../services/tradeActions';
 
@@ -91,6 +92,14 @@ export interface TradeDetailApi {
   accept: () => Promise<ActionResult<{ id: string; status: string }>>;
   decline: () => Promise<ActionResult<{ id: string; status: string }>>;
   nudge: (note?: string) => Promise<ActionResult<{ id: string; nudgedAt: string }>>;
+  /**
+   * Recipient action — promote this proposal into a shared trade
+   * session. On success the caller navigates to `/s/<sessionId>`.
+   * `created: false` means the pair already had an active canvas
+   * and the server is redirecting into it rather than minting a
+   * parallel one.
+   */
+  promoteToShared: () => Promise<ActionResult<{ sessionId: string; created: boolean }>>;
   /** True while any of cancel/accept/decline is in flight. Nudge has
    *  its own separate lifecycle since it's a background ping, not a
    *  primary state transition. */
@@ -192,6 +201,10 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
   const cancel = useCallback(() => wrap(() => cancelProposal(id ?? '')), [wrap, id]);
   const accept = useCallback(() => wrap(() => acceptProposal(id ?? '')), [wrap, id]);
   const decline = useCallback(() => wrap(() => declineProposal(id ?? '')), [wrap, id]);
+  const promoteToShared = useCallback(
+    () => wrap(() => promoteProposalToShared(id ?? '')),
+    [wrap, id],
+  );
 
   // Nudge is lighter-weight than the other mutations — no status
   // transition, no page flip — so it doesn't share the `mutating`
@@ -215,6 +228,7 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
     accept,
     decline,
     nudge,
+    promoteToShared,
     mutating,
     reload,
   };
