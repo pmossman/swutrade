@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TradeCard } from '../types';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useComposerBar } from '../hooks/useComposerBar';
+import { usePrimaryAction } from '../hooks/usePrimaryAction';
+import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
 
 interface CardSnapshot {
   productId: string;
@@ -149,12 +151,12 @@ export function EditBar({
     onApplyMatch(seeded.yours, seeded.theirs);
   }, [seeded, onApplyMatch]);
 
-  const handleSave = () => {
+  const handleSave = useCallback(() => {
     submit({
       endpoint: '/api/trades?action=edit',
       body: { id: editingTradeId },
     });
-  };
+  }, [submit, editingTradeId]);
 
   const recipientHandle = original?.recipient?.handle ?? null;
   const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
@@ -167,6 +169,35 @@ export function EditBar({
   const alreadyResolved = sendState.kind === 'already-resolved';
   const saving = sendState.kind === 'sending';
   const sendError = sendState.kind === 'error' ? sendState.message : null;
+
+  // Register the primary action with the shared bottom bar. Memoized so
+  // the context can shallow-compare and skip redundant updates — a new
+  // spec object every render would thrash. Spec is null in states that
+  // don't have a primary action (load states, saved, already-resolved)
+  // so the bar simply hides in those cases.
+  const canSave = offerCount + receiveCount > 0 && !saving;
+  const primaryAction = useMemo<PrimaryActionSpec | null>(() => {
+    if (loadState !== 'ready') return null;
+    if (saved) {
+      return {
+        label: 'Saved',
+        onClick: () => {},
+        sent: true,
+        testId: 'edit-primary-action',
+      };
+    }
+    if (alreadyResolved) return null;
+    return {
+      label: 'Save edits',
+      loadingLabel: 'Saving…',
+      onClick: handleSave,
+      disabled: !canSave,
+      loading: saving,
+      error: sendError ?? undefined,
+      testId: 'edit-primary-action',
+    };
+  }, [loadState, saved, alreadyResolved, canSave, saving, sendError, handleSave]);
+  usePrimaryAction(primaryAction);
 
   const body = (() => {
     if (loadState === 'loading') {
@@ -222,26 +253,18 @@ export function EditBar({
       );
     }
 
-    const canSave = offerCount + receiveCount > 0 && !saving;
+    // Primary action (Save edits) lives in the shared PrimaryActionBar
+    // at the bottom of the trade builder — registered above via
+    // `usePrimaryAction`. This informational banner is just context.
     return (
-      <>
-        <span className="flex-1 min-w-0">
-          <span className="text-gray-400">Editing your proposal to </span>
-          <strong className="text-gold">@{recipientHandle}</strong>
-          <span className="text-gray-500 text-[11px] ml-2">
-            · Offer <strong className="text-emerald-300">{offerCount}</strong>
-            · Receive <strong className="text-blue-300">{receiveCount}</strong>
-          </span>
+      <span className="flex-1 min-w-0">
+        <span className="text-gray-400">Editing your proposal to </span>
+        <strong className="text-gold">@{recipientHandle}</strong>
+        <span className="text-gray-500 text-[11px] ml-2">
+          · Offer <strong className="text-emerald-300">{offerCount}</strong>
+          · Receive <strong className="text-blue-300">{receiveCount}</strong>
         </span>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={!canSave}
-          className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {saving ? 'Saving…' : 'Save edits'}
-        </button>
-      </>
+      </span>
     );
   })();
 
@@ -299,11 +322,9 @@ export function EditBar({
           )}
         </div>
       )}
-      {sendError && (
-        <div className="mt-1 text-[11px] text-red-300 px-1">
-          Couldn't save: {sendError}
-        </div>
-      )}
+      {/* Send error renders under the PrimaryActionBar now — one place
+          for the user to see "something went wrong" near the retry
+          target. See `PrimaryActionBar.tsx`. */}
     </div>
   );
 }

@@ -9,6 +9,8 @@ import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile'
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { usePricing } from '../contexts/PricingContext';
 import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
+import { usePrimaryAction } from '../hooks/usePrimaryAction';
+import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -177,6 +179,50 @@ export function ProposeBar({
   const undelivered = sent && sendState.deliveryStatus === 'failed';
   const sendError = sendState.kind === 'error' ? sendState.message : null;
 
+  // Pull counts up out of the body-IIFE so the primary action hook
+  // (below) can register its disabled state without re-computing them.
+  // Consumed by `body` too via closure.
+  const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
+  const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
+  const canSend = offerCount + receiveCount > 0 && !sending;
+
+  // Opening the confirm modal is the "primary action" on this bar —
+  // the modal hosts the real Send. Resetting the error state here means
+  // a previous failure doesn't keep the bar stuck in 'error' after the
+  // user retries.
+  const openConfirm = useCallback(() => {
+    if (!canSend) return;
+    if (sendState.kind === 'error') resetSendState();
+    setConfirmOpen(true);
+  }, [canSend, sendState.kind, resetSendState]);
+
+  // Register the Send proposal CTA with the shared bottom bar. Hidden
+  // during upstream fetch states (`!profile`, `fetchState === 'error'`,
+  // recipient-private) and after-send so the user reads the banner
+  // once and isn't tempted to re-send.
+  const primaryAction = useMemo<PrimaryActionSpec | null>(() => {
+    if (!profile || fetchState === 'error') return null;
+    if (sent) {
+      return {
+        label: undelivered ? 'Proposal saved' : 'Proposal sent',
+        onClick: () => {},
+        sent: true,
+        testId: 'propose-primary-action',
+      };
+    }
+    return {
+      label: 'Send proposal',
+      loadingLabel: 'Sending…',
+      onClick: openConfirm,
+      disabled: !canSend,
+      loading: sending,
+      error: sendError ?? undefined,
+      hint: !canSend && !sending ? 'Add at least one card to either side to enable.' : undefined,
+      testId: 'propose-open-confirm',
+    };
+  }, [profile, fetchState, sent, undelivered, canSend, sending, sendError, openConfirm]);
+  usePrimaryAction(primaryAction);
+
   const body = (() => {
     if (sent && !undelivered) {
       return (
@@ -231,9 +277,9 @@ export function ProposeBar({
       );
     }
 
-    const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
-    const receiveCount = theirCards.reduce((n, c) => n + c.qty, 0);
-    const canSend = offerCount + receiveCount > 0 && !sending;
+    // offerCount / receiveCount / canSend are computed outside the
+    // IIFE so the primary action hook can use them; consumed here by
+    // closure.
     const overlapAvailable = !!preview
       && (preview.overlapOffering > 0 || preview.overlapReceiving > 0);
     const isEmpty = offerCount + receiveCount === 0;
@@ -317,26 +363,11 @@ export function ProposeBar({
               ★ Priorities
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              if (!canSend) return;
-              // Previous failed attempt shouldn't leave the bar stuck
-              // in 'error' once the user re-opens the modal to retry.
-              if (sendState.kind === 'error') resetSendState();
-              setConfirmOpen(true);
-            }}
-            disabled={!canSend}
-            data-testid="propose-open-confirm"
-            title={
-              !canSend && !sending
-                ? 'Add at least one card to either side to enable.'
-                : undefined
-            }
-            className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {sending ? 'Sending…' : 'Send proposal'}
-          </button>
+          {/* Send proposal primary action moved to the shared
+              PrimaryActionBar at the bottom of the builder. The bar's
+              onClick opens the confirm modal — same flow as the old
+              inline button — just rendered in a thumb-reachable spot
+              with consistent gold styling across composer modes. */}
         </div>
       </>
     );
@@ -366,11 +397,9 @@ export function ProposeBar({
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 rounded-lg bg-gold/10 border border-gold/30 text-xs text-gray-200">
         {body}
       </div>
-      {sendError && (
-        <div className="mt-1 text-[11px] text-red-300 px-1">
-          Couldn't send: {sendError}
-        </div>
-      )}
+      {/* Send error renders under the PrimaryActionBar (bottom of
+          screen) now — kept near the retry target rather than split
+          across top and bottom of the page. */}
       {sentTradeId && (
         <div className="mt-1 text-[10px] text-gray-500 px-1 font-mono truncate">
           Trade {sentTradeId}

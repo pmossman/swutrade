@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TradeCard } from '../types';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useComposerBar } from '../hooks/useComposerBar';
+import { usePrimaryAction } from '../hooks/usePrimaryAction';
+import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
 
 interface CardSnapshot {
   productId: string;
@@ -146,12 +148,12 @@ export function CounterBar({
     onApplyMatch(seeded.yours, seeded.theirs);
   }, [seeded, onApplyMatch]);
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     submit({
       endpoint: '/api/trades/counter',
       body: { counterOfId: originalTradeId },
     });
-  };
+  }, [submit, originalTradeId]);
 
   const proposerHandle = original?.proposer?.handle ?? null;
   const offerCount = yourCards.reduce((n, c) => n + c.qty, 0);
@@ -162,6 +164,34 @@ export function CounterBar({
   const undelivered = sent && sendState.deliveryStatus === 'failed';
   const alreadyResolved = sendState.kind === 'already-resolved';
   const sendError = sendState.kind === 'error' ? sendState.message : null;
+
+  // Register the primary action (Send counter) with the shared bottom
+  // bar. Memoized for context shallow-compare; see usePrimaryAction
+  // JSDoc. Spec is null for load states + terminal states where no
+  // retry is meaningful.
+  const canSend = offerCount + receiveCount > 0 && !sending;
+  const primaryAction = useMemo<PrimaryActionSpec | null>(() => {
+    if (loadState !== 'ready') return null;
+    if (sent) {
+      return {
+        label: undelivered ? 'Counter saved' : 'Counter sent',
+        onClick: () => {},
+        sent: true,
+        testId: 'counter-primary-action',
+      };
+    }
+    if (alreadyResolved) return null;
+    return {
+      label: 'Send counter',
+      loadingLabel: 'Sending…',
+      onClick: handleSend,
+      disabled: !canSend,
+      loading: sending,
+      error: sendError ?? undefined,
+      testId: 'counter-primary-action',
+    };
+  }, [loadState, sent, undelivered, alreadyResolved, canSend, sending, sendError, handleSend]);
+  usePrimaryAction(primaryAction);
 
   const body = (() => {
     if (loadState === 'loading') {
@@ -219,26 +249,17 @@ export function CounterBar({
       );
     }
 
-    const canSend = offerCount + receiveCount > 0 && !sending;
+    // Primary action (Send counter) lives in the shared PrimaryActionBar.
+    // This banner is informational context only.
     return (
-      <>
-        <span className="flex-1 min-w-0">
-          <span className="text-gray-400">Countering </span>
-          <strong className="text-gold">@{proposerHandle}</strong>'s proposal
-          <span className="text-gray-500 text-[11px] ml-2">
-            · Offer <strong className="text-emerald-300">{offerCount}</strong>
-            · Receive <strong className="text-blue-300">{receiveCount}</strong>
-          </span>
+      <span className="flex-1 min-w-0">
+        <span className="text-gray-400">Countering </span>
+        <strong className="text-gold">@{proposerHandle}</strong>'s proposal
+        <span className="text-gray-500 text-[11px] ml-2">
+          · Offer <strong className="text-emerald-300">{offerCount}</strong>
+          · Receive <strong className="text-blue-300">{receiveCount}</strong>
         </span>
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={!canSend}
-          className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-[11px] font-bold hover:bg-gold/30 hover:border-gold/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {sending ? 'Sending…' : 'Send counter'}
-        </button>
-      </>
+      </span>
     );
   })();
 
@@ -289,11 +310,7 @@ export function CounterBar({
           )}
         </div>
       )}
-      {sendError && (
-        <div className="mt-1 text-[11px] text-red-300 px-1">
-          Couldn't send: {sendError}
-        </div>
-      )}
+      {/* Send error renders under the PrimaryActionBar now. */}
     </div>
   );
 }

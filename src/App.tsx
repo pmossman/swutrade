@@ -44,6 +44,7 @@ import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
 import { SessionView } from './components/SessionView';
+import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
 import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
 
@@ -766,6 +767,15 @@ function App() {
           onPrimary={hasCards ? () => setShowSummary(true) : undefined}
         />
       </div>
+
+      {/* Bottom-pinned primary action — Propose / Counter / Edit /
+          AutoBalance each register their Send/Save/Apply here via
+          `usePrimaryAction` (see PrimaryActionContext). Renders null
+          when nothing is registered (solo mode without intent).
+          Addresses UX-A2: the four composer bars no longer each carry
+          their own button; the primary affordance lives in one
+          consistent place. */}
+      <PrimaryActionBar />
 
       {/* Migration prompt on first sign-in with local items */}
       {migrationPrompt && <MigrationDialog prompt={migrationPrompt} />}

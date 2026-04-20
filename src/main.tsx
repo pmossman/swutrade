@@ -7,6 +7,7 @@ import { PriceDataProvider } from './contexts/PriceDataContext.tsx'
 import { CardIndexProvider } from './contexts/CardIndexContext.tsx'
 import { DrawerProvider } from './contexts/DrawerContext.tsx'
 import { PricingProvider } from './contexts/PricingContext.tsx'
+import { PrimaryActionProvider } from './contexts/PrimaryActionContext.tsx'
 import { ErrorBoundary } from './components/ui/ErrorBoundary.tsx'
 
 // Root-level error boundary sits OUTSIDE the providers so a throw in
@@ -22,7 +23,9 @@ createRoot(document.getElementById('root')!).render(
           <CardIndexProvider>
             <DrawerProvider>
               <PricingProvider>
-                <App />
+                <PrimaryActionProvider>
+                  <App />
+                </PrimaryActionProvider>
               </PricingProvider>
             </DrawerProvider>
           </CardIndexProvider>
