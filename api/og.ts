@@ -1,10 +1,18 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resvg } from '@resvg/resvg-js';
-import { inflateSync } from 'fflate';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { inter_400, inter_700, inter_900 } from './_fonts.js';
+// List-share decoders live in `lib/listShareCodec.ts` so the test
+// suite can import them without pulling in the JSON data imports
+// below (which are bundled at deploy time and absent in CI).
+import {
+  decodeWants,
+  decodeAvailableRefs,
+  type WantsRef,
+  type AvailableRef,
+} from '../lib/listShareCodec.js';
 // Inlined at build time so the function never needs to self-fetch its own
 // (potentially auth-walled) origin to resolve card names/prices.
 import productIndex from '../public/data/product-index.json' with { type: 'json' };
@@ -42,118 +50,6 @@ type ProductIndex = Record<string, CardInfo>;
 type FamilyEntry = { p: string; v: string; m: number | null; l: number | null; n: string };
 type FamilyIndex = Record<string, FamilyEntry[]>;
 
-// Same canonical order as src/variants.ts — kept in sync manually
-// because api/og.ts is bundled separately and doesn't import from src/.
-// Position is bit-significant for wants-URL masks; new variants must
-// be appended, never inserted.
-const CANONICAL_VARIANTS = [
-  'Standard', 'Foil', 'Hyperspace', 'Hyperspace Foil',
-  'Prestige', 'Prestige Foil', 'Serialized', 'Showcase',
-  'Gold', 'Rose Gold',
-] as const;
-type CanonicalVariant = typeof CANONICAL_VARIANTS[number];
-
-function maskToVariants(mask: number): CanonicalVariant[] {
-  const out: CanonicalVariant[] = [];
-  for (let i = 0; i < CANONICAL_VARIANTS.length; i++) {
-    if (mask & (1 << i)) out.push(CANONICAL_VARIANTS[i]);
-  }
-  return out;
-}
-
-// Share URLs for Wants + Available params are deflate+base64url
-// compressed by `src/urlCodec.ts::compressParam` (added 2026-04-15 in
-// `43b7fec` to shrink big lists under URL length limits). Compressed
-// payloads carry a `~` prefix so legacy uncompressed URLs still decode.
-// This file used to duplicate the decoders without the decompression
-// step, silently returning [] for every modern share link → empty
-// image. Keep this helper + both decoders' first lines in sync with
-// the client codec until they're unified (see queue item).
-const COMPRESS_PREFIX = '~';
-
-function fromBase64Url(str: string): Uint8Array {
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = Buffer.from(padded, 'base64').toString('binary');
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function decompressParam(param: string): string {
-  if (!param.startsWith(COMPRESS_PREFIX)) return param;
-  try {
-    const deflated = fromBase64Url(param.slice(COMPRESS_PREFIX.length));
-    return new TextDecoder().decode(inflateSync(deflated));
-  } catch {
-    // Malformed compressed payload — return empty so downstream
-    // split('') produces []. Rendering an empty image beats crashing
-    // the handler and serving a 500 for a bad share URL.
-    return '';
-  }
-}
-
-export interface WantsRef {
-  familyId: string;
-  qty: number;
-  acceptedVariants: string[] | null;  // null = any
-  isPriority: boolean;
-}
-
-// Exported for `tests/api/og-codec.test.ts` — the cross-boundary
-// round-trip (client encode → server decode) is the coverage that was
-// missing when `43b7fec` added compression to the client but not here.
-export function decodeWants(param: string): WantsRef[] {
-  if (!param) return [];
-  const raw = decompressParam(param);
-  const out: WantsRef[] = [];
-  for (const entry of raw.split(',').filter(Boolean)) {
-    const fields = entry.split('.');
-    if (fields.length < 2) continue;
-    const [encId, qtyStr, ...flags] = fields;
-    let familyId: string;
-    try {
-      familyId = decodeURIComponent(encId);
-    } catch {
-      continue;
-    }
-    if (!familyId) continue;
-    const qty = clampQty(parseInt(qtyStr, 10));
-    let acceptedVariants: string[] | null = null;
-    let isPriority = false;
-    for (const flag of flags) {
-      if (flag === 'p') isPriority = true;
-      else if (flag.startsWith('r')) {
-        const m = parseInt(flag.slice(1), 16);
-        if (Number.isFinite(m)) {
-          const vs = maskToVariants(m);
-          if (vs.length > 0) acceptedVariants = vs;
-        }
-      }
-    }
-    out.push({ familyId, qty, acceptedVariants, isPriority });
-  }
-  return out;
-}
-
-export interface AvailableRef { productId: string; qty: number }
-
-export function decodeAvailableRefs(param: string): AvailableRef[] {
-  if (!param) return [];
-  const raw = decompressParam(param);
-  const out: AvailableRef[] = [];
-  for (const entry of raw.split(',').filter(Boolean)) {
-    const [productId, qtyStr] = entry.split('.');
-    if (!productId) continue;
-    out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
-  }
-  return out;
-}
-
-function clampQty(n: number): number {
-  if (!Number.isFinite(n) || n < 1) return 1;
-  if (n > 99) return 99;
-  return Math.floor(n);
-}
 
 // Fetched card images live here for the lifetime of the warm container so
 // repeat renders of the same trade (or popular cards) don't re-fetch from

@@ -1,17 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { encodeWants, encodeAvailable } from '../../src/urlCodec.js';
 import type { WantsItem, AvailableItem } from '../../src/persistence/index.js';
-import { decodeWants, decodeAvailableRefs } from '../../api/og.js';
+import { decodeWants, decodeAvailableRefs } from '../../lib/listShareCodec.js';
 
 /**
  * Cross-boundary round-trip tests for the list-image share flow.
  *
  * The class of bug this closes: `src/urlCodec.ts` encodes wants +
  * available share-URL params with deflate + base64url compression
- * (added 2026-04-15, commit `43b7fec`). The server-side decoder in
- * `api/og.ts` used to duplicate the uncompressed parse logic without
- * the matching `decompressParam` step, silently returning `[]` for
- * every modern share link → empty image.
+ * (added 2026-04-15, commit `43b7fec`). The server-side decoder
+ * (originally inlined in `api/og.ts`, now `lib/listShareCodec.ts`)
+ * used to duplicate the uncompressed parse logic without the
+ * matching `decompressParam` step, silently returning `[]` for every
+ * modern share link → empty image.
  *
  * The existing `src/urlCodec.test.ts` suite tested encode/decode on
  * the CLIENT only — both sides of the assert used the client codec,
