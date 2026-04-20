@@ -23,6 +23,7 @@ import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { recordEvent, listEvents, lastNudgedAt } from '../lib/proposalEvents.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
+import { promoteProposalToSession } from '../lib/sessions.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -52,6 +53,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'edit':       return handleEdit(req, res);
     case 'nudge':      return handleNudge(req, res);
     case 'bulk-resolve': return handleBulkResolve(req, res);
+    case 'promote-to-shared': return handlePromoteToShared(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/trades action' });
   }
@@ -1552,4 +1554,67 @@ export async function handleBulkResolve(
 
   const okCount = results.reduce((n, r) => n + (r.outcome === 'ok' ? 1 : 0), 0);
   return res.json({ results, okCount, notificationsSent });
+}
+
+// --- promote-to-shared (Phase 5b sliver 6 — proposal → session promotion) ---
+
+const PromoteBodySchema = z.object({
+  proposalId: z.string().min(1),
+});
+
+/**
+ * Recipient-only. Converts a pending proposal into a shared trade
+ * session so both parties can collaborate on the trade as a mutable
+ * canvas instead of ping-ponging accept/decline/counter.
+ *
+ * Status mapping:
+ *   - ok                      → 201 `{ sessionId, created: true }`
+ *   - already-active-session  → 200 `{ sessionId, created: false }`
+ *                               (caller redirects into the existing
+ *                               canvas rather than creating a
+ *                               parallel one)
+ *   - not-found               → 404
+ *   - not-recipient           → 403 (proposer can't promote — they'd
+ *                               use the existing edit flow)
+ *   - not-pending             → 409 (race with accept/decline/counter)
+ */
+export async function handlePromoteToShared(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = PromoteBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { proposalId } = parsed.data;
+
+  const db = getDb();
+  const result = await promoteProposalToSession(db, {
+    proposalId,
+    viewerUserId: session.userId,
+  });
+
+  if (result.ok) {
+    return res.status(201).json({ sessionId: result.sessionId, created: true });
+  }
+
+  switch (result.reason) {
+    case 'not-found':
+      return res.status(404).json({ error: 'Not found' });
+    case 'not-recipient':
+      return res.status(403).json({
+        error: 'Only the recipient can promote this proposal',
+      });
+    case 'not-pending':
+      return res.status(409).json({ error: 'This proposal is no longer pending' });
+    case 'already-active-session':
+      // 200 + created=false — the pair already has a shared canvas.
+      // The client redirects the viewer into it.
+      return res.status(200).json({ sessionId: result.sessionId!, created: false });
+  }
 }
