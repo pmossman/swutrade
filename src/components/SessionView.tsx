@@ -13,33 +13,32 @@ import { usePricing } from '../contexts/PricingContext';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
-import { useIsMobile } from '../hooks/useMediaQuery';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
 import { PERSIST_KEYS } from '../persistence';
 import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
 type TradeCardSnapshot = CardSnapshot;
-import { cardImageUrl } from '../services/priceService';
-import { extractBaseName, extractVariantLabel } from '../variants';
-import { VariantBadge } from './VariantBadge';
+import { extractVariantLabel } from '../variants';
 
 /**
  * Shared-state trade canvas — the interactive surface for a session
  * between two signed-in users. Mounts at `/s/<id>`.
  *
- * Layout mirrors the main trade builder so the primitive feels
- * unified: two panels, balance strip at the bottom. Differences from
- * the Solo (calculator) view:
- *   - The LEFT panel is the viewer's editable half, powered by the
- *     existing TradeSide component + `useSession.saveCards`.
- *   - The RIGHT panel shows the counterpart's cards read-only — they
- *     own their half and edit it from their own browser.
- *   - An action strip above the panels carries live-indicator, last-
- *     edited timestamp, Confirm, and Cancel.
+ * Layout is explicit about the flow: add cards first, confirm after.
+ *   - Top: identity strip (who's on the other side + lifecycle status).
+ *   - Middle: balance strip + two panels. Left is the viewer's
+ *     editable half (powered by TradeSide + `useSession.saveCards`).
+ *     Right is the counterpart's cards — same TradeSide component in
+ *     `readOnly` mode so they get the full per-card price breakdown
+ *     the viewer's side has.
+ *   - Bottom: action bar with Confirm + Cancel. Placed AFTER the cards
+ *     because the flow is "stage → confirm" — confirming a trade
+ *     before either side has finished adding makes no sense.
+ *   - Settled / cancelled / expired states visibly lock the canvas:
+ *     a prominent banner names the terminal state, TradeSide flips to
+ *     readOnly on both sides, and the action bar hides entirely.
  *   - A banner fires when the counterpart has edited since the
  *     viewer last saw it (dismissed by scrolling or clicking through).
- *   - Settled / cancelled / expired states freeze the UI into a
- *     terminal banner with a link back to My Trades.
  */
 export function SessionView({ sessionId }: { sessionId: string }) {
   const auth = useAuthContext();
@@ -50,7 +49,6 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const { percentage, priceMode } = usePricing();
   const wants = useWants();
   const available = useAvailable();
-  const isMobile = useIsMobile();
   // Fresh filter state per session — doesn't share with the main
   // trade builder so session-specific variant/set scope doesn't
   // bleed back into the user's calculator when they navigate home.
@@ -203,57 +201,96 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           />
         )}
 
-        {session && !session.openSlot && (
-          <>
-            <SessionHeader
-              session={session}
-              onConfirm={handleConfirm}
-              onCancel={handleCancel}
-              confirming={confirming}
-              cancelling={cancelling}
-            />
+        {session && !session.openSlot && (() => {
+          const counterpartHandle = session.counterpart?.handle ?? null;
+          const terminal = session.status !== 'active';
+          const counterpartCards = snapshotsToTradeCards(session.theirCards, byProductId);
+          return (
+            <>
+              <SessionIdentityStrip session={session} />
 
-            {hasUnseenCounterpartEdit && (
-              <button
-                type="button"
-                onClick={markCounterpartSeen}
-                className="w-full text-left px-3 py-2 rounded-lg border border-cyan-500/40 bg-cyan-950/30 text-[12px] text-cyan-200 hover:bg-cyan-950/50 transition-colors"
-              >
-                @{session.counterpart?.handle ?? 'Your counterpart'} made changes. Tap to dismiss.
-              </button>
-            )}
+              {terminal ? (
+                <TerminalBanner session={session} />
+              ) : hasUnseenCounterpartEdit ? (
+                <button
+                  type="button"
+                  onClick={markCounterpartSeen}
+                  className="w-full text-left px-3 py-2 rounded-lg border border-cyan-500/40 bg-cyan-950/30 text-[12px] text-cyan-200 hover:bg-cyan-950/50 transition-colors"
+                >
+                  @{counterpartHandle ?? 'Your counterpart'} made changes. Tap to dismiss.
+                </button>
+              ) : null}
 
-            <TradeBalance
-              yourCards={viewerTradeCards}
-              theirCards={snapshotsToTradeCards(session.theirCards, byProductId)}
-            />
-
-            <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
-              <TradeSide
-                label="Your side"
-                cards={viewerTradeCards}
-                percentage={percentage}
-                priceMode={priceMode}
-                onAdd={handleAdd}
-                onRemove={handleRemove}
-                onChangeQty={handleChangeQty}
-                accentColor="emerald"
-                borderColor="border-emerald-500/20"
-                setCards={priceData.cards}
-                isLoading={priceData.isAnyLoading}
-                onLoadAllSets={handleLoadAllSets}
-                filters={filters}
-                wants={wants}
-                available={available}
-                sharedLists={null}
-                collapsed={false}
-                onToggleCollapse={isMobile ? undefined : undefined}
-                counterpartHandle={session.counterpart?.handle ?? null}
+              <TradeBalance
+                yourCards={viewerTradeCards}
+                theirCards={counterpartCards}
               />
-              <ReadonlyCounterpartSide session={session} />
-            </div>
-          </>
-        )}
+
+              <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
+                <TradeSide
+                  label="Your side"
+                  cards={viewerTradeCards}
+                  percentage={percentage}
+                  priceMode={priceMode}
+                  onAdd={handleAdd}
+                  onRemove={handleRemove}
+                  onChangeQty={handleChangeQty}
+                  accentColor="emerald"
+                  borderColor="border-emerald-500/20"
+                  setCards={priceData.cards}
+                  isLoading={priceData.isAnyLoading}
+                  onLoadAllSets={handleLoadAllSets}
+                  filters={filters}
+                  wants={wants}
+                  available={available}
+                  sharedLists={null}
+                  collapsed={false}
+                  counterpartHandle={counterpartHandle}
+                  readOnly={terminal}
+                />
+                <TradeSide
+                  label={counterpartHandle ? `@${counterpartHandle}'s side` : 'Their side'}
+                  cards={counterpartCards}
+                  percentage={percentage}
+                  priceMode={priceMode}
+                  // Read-only — counterpart owns this half. Handlers are
+                  // required by the interface but never fire because
+                  // Add Card + qty steppers are hidden in readOnly mode.
+                  onAdd={noop}
+                  onRemove={noop}
+                  onChangeQty={noop}
+                  accentColor="blue"
+                  borderColor="border-blue-500/20"
+                  setCards={priceData.cards}
+                  isLoading={priceData.isAnyLoading}
+                  onLoadAllSets={handleLoadAllSets}
+                  filters={filters}
+                  wants={wants}
+                  available={available}
+                  sharedLists={null}
+                  collapsed={false}
+                  counterpartHandle={counterpartHandle}
+                  readOnly
+                  readOnlyEmptyLabel={
+                    counterpartHandle
+                      ? `Waiting for @${counterpartHandle} to add cards.`
+                      : 'Waiting for your counterpart to add cards.'
+                  }
+                />
+              </div>
+
+              {!terminal && (
+                <SessionActionBar
+                  session={session}
+                  onConfirm={handleConfirm}
+                  onCancel={handleCancel}
+                  confirming={confirming}
+                  cancelling={cancelling}
+                />
+              )}
+            </>
+          );
+        })()}
       </main>
 
       <ListsDrawer
@@ -269,21 +306,14 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   );
 }
 
-// --- Header + action strip -------------------------------------------------
+// --- Identity + status strip (top) ---------------------------------------
 
-function SessionHeader({
-  session,
-  onConfirm,
-  onCancel,
-  confirming,
-  cancelling,
-}: {
-  session: SessionData;
-  onConfirm: () => void;
-  onCancel: () => void;
-  confirming: boolean;
-  cancelling: boolean;
-}) {
+/**
+ * Top strip — identifies the counterpart and surfaces the lifecycle
+ * state. Never carries the Confirm / Cancel buttons: those belong
+ * below the cards so the flow reads as stage → confirm.
+ */
+function SessionIdentityStrip({ session }: { session: SessionData }) {
   const counterpart = session.counterpart;
   const settled = session.status === 'settled';
   const cancelled = session.status === 'cancelled';
@@ -333,27 +363,124 @@ function SessionHeader({
           </>
         )}
       </div>
+    </section>
+  );
+}
 
-      {active && (
-        <div className="flex items-center gap-2 sm:ml-auto">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={cancelling}
-            className="px-3 h-9 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
-          >
-            Cancel trade
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={confirming || session.confirmedByViewer}
-            className="px-4 h-9 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-60 text-xs"
-          >
-            {session.confirmedByViewer ? 'Waiting on @' + (counterpart?.handle ?? '…') : 'Confirm'}
-          </button>
+// --- Terminal banner (settled / cancelled / expired) ----------------------
+
+/**
+ * Prominent banner rendered in place of the counterpart-edit nudge
+ * when the session has reached a terminal state. Reads as a "this
+ * trade is locked" notice — pairs with `readOnly` TradeSide on both
+ * sides of the canvas so there's no ambiguity about whether further
+ * edits are possible.
+ */
+function TerminalBanner({ session }: { session: SessionData }) {
+  const counterpartHandle = session.counterpart?.handle ?? null;
+  if (session.status === 'settled') {
+    const when = session.settledAt ?? session.updatedAt;
+    return (
+      <section className="rounded-lg border border-emerald-500/40 bg-emerald-900/20 px-4 py-3">
+        <div className="text-[11px] tracking-[0.18em] uppercase text-emerald-300 font-bold">
+          Trade settled
         </div>
-      )}
+        <div className="text-sm text-gray-200 mt-0.5">
+          Both of you confirmed on {formatTerminalDate(when)}. This trade is locked — no more edits.
+        </div>
+      </section>
+    );
+  }
+  if (session.status === 'cancelled') {
+    return (
+      <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3">
+        <div className="text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold">
+          Trade cancelled
+        </div>
+        <div className="text-sm text-gray-300 mt-0.5">
+          This trade was cancelled{counterpartHandle ? ` — either you or @${counterpartHandle} closed it out` : ''}. No more edits.
+        </div>
+      </section>
+    );
+  }
+  // expired
+  return (
+    <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3">
+      <div className="text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold">
+        Trade expired
+      </div>
+      <div className="text-sm text-gray-300 mt-0.5">
+        This trade expired from inactivity. No more edits — start a fresh one if you still want to trade.
+      </div>
+    </section>
+  );
+}
+
+function formatTerminalDate(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// --- Action bar (below cards) --------------------------------------------
+
+/**
+ * Confirm + Cancel live HERE, below the cards, because the flow is
+ * stage → confirm. Only renders when the session is active; terminal
+ * states drop the bar entirely.
+ */
+function SessionActionBar({
+  session,
+  onConfirm,
+  onCancel,
+  confirming,
+  cancelling,
+}: {
+  session: SessionData;
+  onConfirm: () => void;
+  onCancel: () => void;
+  confirming: boolean;
+  cancelling: boolean;
+}) {
+  const counterpartHandle = session.counterpart?.handle ?? null;
+  const bothEmpty = session.yourCards.length === 0 && session.theirCards.length === 0;
+  // Disable Confirm with an inline hint when the canvas is empty —
+  // settling a trade with no cards isn't a real transaction.
+  const confirmDisabled =
+    confirming || session.confirmedByViewer || bothEmpty;
+  const confirmLabel = session.confirmedByViewer
+    ? `Waiting on @${counterpartHandle ?? 'them'}`
+    : 'Confirm trade';
+  return (
+    <section className="rounded-xl border border-space-700 bg-space-800/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex-1 text-[11px] text-gray-400 leading-relaxed">
+        {bothEmpty ? (
+          <>Add cards on at least one side before confirming.</>
+        ) : session.confirmedByViewer ? (
+          <>You've confirmed. Waiting on @{counterpartHandle ?? 'them'} — they still need to confirm to lock in this trade.</>
+        ) : session.confirmedByCounterpart ? (
+          <>@{counterpartHandle ?? 'Your counterpart'} already confirmed. Confirm to lock this trade in.</>
+        ) : (
+          <>Happy with both sides? Confirm to lock it in. Both of you have to confirm to settle.</>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={cancelling}
+          className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
+        >
+          Cancel trade
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={confirmDisabled}
+          className="px-4 h-10 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-60 text-xs"
+        >
+          {confirmLabel}
+        </button>
+      </div>
     </section>
   );
 }
@@ -410,80 +537,11 @@ function CounterpartAvatar({ avatarUrl, name }: { avatarUrl: string | null; name
   );
 }
 
-// --- Read-only counterpart side -------------------------------------------
-
-function ReadonlyCounterpartSide({ session }: { session: SessionData }) {
-  const cards = session.theirCards;
-  const total = cards.reduce((n, c) => n + c.qty, 0);
-  const counterpartHandle = session.counterpart?.handle ?? 'counterpart';
-  return (
-    <div className="rounded-xl border border-blue-500/20 bg-space-800/40 flex flex-col min-h-[16rem]">
-      <div className="flex items-baseline justify-between px-4 py-3 border-b border-space-700">
-        <div className="flex flex-col">
-          <span className="text-[11px] tracking-[0.18em] uppercase text-blue-300 font-bold">
-            @{counterpartHandle} offers
-          </span>
-          <span className="text-[10px] text-gray-500 mt-0.5">Read-only — they own this side</span>
-        </div>
-        <span className="text-[11px] text-gray-500 tabular-nums">
-          {total} {total === 1 ? 'card' : 'cards'}
-        </span>
-      </div>
-      {cards.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-600 px-4 py-12 text-center">
-          Waiting for @{counterpartHandle} to add cards.
-        </div>
-      ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-3">
-          {cards.map((c, idx) => (
-            <CounterpartTile key={`${c.productId}-${idx}`} snap={c} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CounterpartTile({ snap }: { snap: TradeCardSnapshot }) {
-  const [errored, setErrored] = useState(false);
-  const src = cardImageUrl(snap.productId, 'md');
-  const baseName = extractBaseName(snap.name);
-  const variantLabel = extractVariantLabel(snap.name) || snap.variant;
-  return (
-    <div
-      className="relative rounded-md overflow-hidden border border-space-700 bg-space-900/80"
-      title={`${snap.name}${snap.qty > 1 ? ` × ${snap.qty}` : ''}`}
-    >
-      <div className="relative w-full aspect-[5/7] bg-space-900">
-        {src && !errored ? (
-          <img
-            src={src}
-            alt={snap.name}
-            loading="lazy"
-            onError={() => setErrored(true)}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-600 text-lg">?</div>
-        )}
-        {snap.qty > 1 && (
-          <span className="absolute top-1 right-1 min-w-[22px] h-[18px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold tabular-nums bg-black/85 text-white ring-1 ring-blue-400/70">
-            ×{snap.qty}
-          </span>
-        )}
-      </div>
-      <div className="px-1.5 py-1 leading-tight">
-        <div className="text-[10px] text-gray-300 truncate">{baseName}</div>
-        {variantLabel && (
-          <VariantBadge
-            variant={variantLabel}
-            size="xs"
-            className="inline-block max-w-full truncate align-middle"
-          />
-        )}
-      </div>
-    </div>
-  );
+// Dispatched to readOnly TradeSide's Add/Remove/ChangeQty props. Every
+// path that fires them is gated behind `!readOnly`, so these are
+// strictly placeholder satisfiers for the prop contract.
+function noop() {
+  /* intentional — readOnly gates every handler call site */
 }
 
 // --- Ghost sign-in CTA ----------------------------------------------------

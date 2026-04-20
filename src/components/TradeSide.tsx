@@ -78,6 +78,17 @@ interface TradeSideProps {
    *  panel already carries that information — rendering both reads
    *  as duplicated chrome. */
   headerless?: boolean;
+  /** Read-only mode — drops Add Card CTA + per-row qty stepper + kebab,
+   *  and swaps the empty-state for a quiet "No cards yet" placeholder.
+   *  Used for the counterpart side of a shared session (always) and
+   *  for the viewer's side once the session reaches a terminal state
+   *  (settled / cancelled / expired). */
+  readOnly?: boolean;
+  /** Rendered in the read-only empty slot. Defaults to a generic "No
+   *  cards yet." — sessions override with counterpart-specific copy
+   *  ("Waiting for @handle to add cards."). Ignored when readOnly
+   *  is false. */
+  readOnlyEmptyLabel?: string;
 }
 
 const headerColors: Record<string, string> = {
@@ -142,6 +153,8 @@ export function TradeSide({
   autoScopeToTheirs,
   counterpartHandle,
   headerless,
+  readOnly = false,
+  readOnlyEmptyLabel,
 }: TradeSideProps) {
   const { byFamilyAll, byProductId } = useCardIndexContext();
   const isMobile = useIsMobile();
@@ -396,25 +409,27 @@ export function TradeSide({
 
   return (
     <>
-      <TradeSearchOverlay
-        open={overlayOpen}
-        onDismiss={handleDismissOverlay}
-        label={label}
-        accentColor={accentColor}
-        counterpartHandle={counterpartHandle}
-        allCards={allCards}
-        isLoading={isLoading}
-        filters={filters}
-        sourceChips={sourceChips}
-        cards={cards}
-        percentage={percentage}
-        priceMode={priceMode}
-        onAdd={onAdd}
-        onChangeQty={onChangeQty}
-        onRemove={onRemove}
-        seed={seed}
-        onSeedConsumed={handleSeedConsumed}
-      />
+      {!readOnly && (
+        <TradeSearchOverlay
+          open={overlayOpen}
+          onDismiss={handleDismissOverlay}
+          label={label}
+          accentColor={accentColor}
+          counterpartHandle={counterpartHandle}
+          allCards={allCards}
+          isLoading={isLoading}
+          filters={filters}
+          sourceChips={sourceChips}
+          cards={cards}
+          percentage={percentage}
+          priceMode={priceMode}
+          onAdd={onAdd}
+          onChangeQty={onChangeQty}
+          onRemove={onRemove}
+          seed={seed}
+          onSeedConsumed={handleSeedConsumed}
+        />
+      )}
       <div
         className={`relative bg-space-800 rounded-xl border ${borderColor} overflow-hidden flex flex-col ${collapsed ? 'flex-none' : 'min-h-0'} ${collapsed || flexBasis !== undefined ? '' : 'flex-auto'}`}
         style={!collapsed && flexBasis !== undefined ? { flex: `0 1 ${flexBasis * 100}%` } : undefined}
@@ -475,16 +490,22 @@ export function TradeSide({
         {/* Card list sits above the sticky Add Card footer below. */}
         <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${collapsed ? 'hidden' : ''}`}>
           {cards.length === 0 ? (
-            <AddCardsTile
-              label={label}
-              accentColor={accentColor}
-              onOpen={openOverlay}
-              hint={
-                counterpartHandle && overlapCards.length > 0
-                  ? 'Or tap the Suggest a match button above'
-                  : undefined
-              }
-            />
+            readOnly ? (
+              <div className="flex-1 flex items-center justify-center text-sm text-gray-600 px-4 py-12 text-center">
+                {readOnlyEmptyLabel ?? 'No cards yet.'}
+              </div>
+            ) : (
+              <AddCardsTile
+                label={label}
+                accentColor={accentColor}
+                onOpen={openOverlay}
+                hint={
+                  counterpartHandle && overlapCards.length > 0
+                    ? 'Or tap the Suggest a match button above'
+                    : undefined
+                }
+              />
+            )
           ) : (
             <div className="divide-y divide-space-700">
               {cards.map(tc => {
@@ -501,6 +522,7 @@ export function TradeSide({
                     onChangeQty={delta => onChangeQty(key, delta)}
                     onRemove={() => onRemove(key)}
                     onReplace={() => handleReplace(tc.card)}
+                    readOnly={readOnly}
                   />
                 );
               })}
@@ -510,8 +532,9 @@ export function TradeSide({
 
         {/* Sticky Add Card footer — reads as the natural "next step" after
             the card list. Hidden when collapsed (nothing to append to) or
-            when empty (AddCardsTile above is already the CTA). */}
-        {!collapsed && cards.length > 0 && (
+            when empty (AddCardsTile above is already the CTA) or in
+            read-only mode (counterpart side / settled session). */}
+        {!collapsed && !readOnly && cards.length > 0 && (
           <button
             type="button"
             onClick={openOverlay}

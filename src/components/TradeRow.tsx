@@ -108,6 +108,11 @@ interface TradeRowProps {
    *  user can swap to a different variant (the picker doesn't support
    *  in-place edits yet). */
   onReplace: () => void;
+  /** Read-only mode — drops the qty stepper + kebab, renders qty as a
+   *  static "× N" badge instead. Used for the counterpart side of a
+   *  shared trade session and for the viewer's side once the session
+   *  is settled / cancelled / expired. */
+  readOnly?: boolean;
 }
 
 /**
@@ -125,6 +130,7 @@ export function TradeRow({
   onChangeQty,
   onRemove,
   onReplace,
+  readOnly = false,
 }: TradeRowProps) {
   const unitPrice = adjustPrice(getCardPrice(card, priceMode), percentage);
   const altUnitPrice = adjustPrice(getAltPrice(card, priceMode), percentage);
@@ -241,32 +247,41 @@ export function TradeRow({
           </div>
         )}
       </div>
-      {/* Secondary actions collapsed behind a kebab to keep the row
-          scannable. Qty controls stay primary. `hover-reveal` hides
-          the kebab until the row is hovered or focused — touch
-          devices (no hover) see it at 0.7 opacity via the media-query
-          in index.css, so mobile still has access without the dense
-          always-on eight-zone row. */}
-      <div className="shrink-0 hover-reveal">
-        <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
-      </div>
-      <div className="flex items-center gap-0.5 shrink-0">
-        <button
-          onClick={() => qty <= 1 ? onRemove() : onChangeQty(-1)}
-          className={decrementClasses}
-          aria-label={qty <= 1 ? 'Remove' : 'Decrease quantity'}
-        >
-          {qty <= 1 ? '×' : '−'}
-        </button>
-        <span className={qtyValueClasses}>{qty}</span>
-        <button
-          onClick={() => onChangeQty(1)}
-          className={incrementClasses}
-          aria-label="Increase quantity"
-        >
-          +
-        </button>
-      </div>
+      {!readOnly && (
+        <>
+          {/* Secondary actions collapsed behind a kebab to keep the row
+              scannable. Qty controls stay primary. `hover-reveal` hides
+              the kebab until the row is hovered or focused — touch
+              devices (no hover) see it at 0.7 opacity via the media-query
+              in index.css, so mobile still has access without the dense
+              always-on eight-zone row. */}
+          <div className="shrink-0 hover-reveal">
+            <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
+          </div>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              onClick={() => qty <= 1 ? onRemove() : onChangeQty(-1)}
+              className={decrementClasses}
+              aria-label={qty <= 1 ? 'Remove' : 'Decrease quantity'}
+            >
+              {qty <= 1 ? '×' : '−'}
+            </button>
+            <span className={qtyValueClasses}>{qty}</span>
+            <button
+              onClick={() => onChangeQty(1)}
+              className={incrementClasses}
+              aria-label="Increase quantity"
+            >
+              +
+            </button>
+          </div>
+        </>
+      )}
+      {readOnly && qty > 1 && (
+        <span className={`shrink-0 ${isCompact ? 'text-[10px]' : isLarge ? 'text-sm' : 'text-xs'} tabular-nums text-gray-400 font-semibold`}>
+          × {qty}
+        </span>
+      )}
       <span className={lineTotalClasses}>{formatPrice(lineTotal)}</span>
     </div>
   );

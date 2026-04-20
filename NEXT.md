@@ -31,7 +31,20 @@ Skipping any of 1-3 is a bug in the process.
 
 ## Active slice
 
-*(none currently — pick next from the queue)*
+### Live trade UX pass
+
+**Why:** Dogfooded the session flow with my wife — the feature works but the canvas has UX friction: confirm/accept controls read as "primary action" before cards are even picked; a settled trade doesn't visually lock; the counterpart side doesn't surface per-card price breakdown like the viewer's side does.
+
+**What ships:**
+- Re-order SessionView so add/remove happens above, confirm/settle controls sit below the cards (flow: stage → confirm).
+- Settled / cancelled / expired state visibly locks both sides — edit controls disabled or hidden, clear "Settled on X" banner.
+- "Their" side gets the same per-card price breakdown the viewer's side has.
+- Pass over every state (solo waiting / shared active / one-confirmed / both-confirmed / settled / cancelled / expired) for clarity of "what do I do next?"
+
+**Done when:**
+- [ ] Dogfooded end-to-end via agent-browser with both participants' views.
+- [ ] Every session state has a clear primary affordance or lock state.
+- [ ] Between-slice ritual passes.
 
 ---
 
@@ -99,6 +112,50 @@ Skipping any of 1-3 is a bug in the process.
 ---
 
 ## Later (unscheduled, priority order)
+
+### UX audit 2026-04-19 — cohesion wave
+
+Six findings from a senior-designer audit of the full app after Phase 5b shipped. Ordered by impact. **Pick these up after the live-trade UX pass and before returning to Phase 5a tail or Phase 4 v2.**
+
+#### UX-A1 — Promote Lists out of the drawer (highest impact)
+
+**Problem:** Lists / Wants / Available live in a globally-accessible *drawer*. The trade builder reads from them invisibly. Users don't form the mental model "these are my cards, these are the ones I want" because the primary surface for that concept is literally hidden. The drawer metaphor tells users "this is secondary" when it's actually the inventory state the rest of the app runs on.
+
+**What ships:** Home gets a first-class "Your binder" module (Available) + "Your wishlist" module (Wants), replacing or complementing the My-Lists drawer entry. Drawer stays as a quick-edit affordance *from inside* the trade builder (where in-context tweaks make sense) but is no longer the primary surface. Home priority order: Needs Response → My Trades → Binder/Wishlist → Communities.
+
+#### UX-A2 — Collapse four mutex bars into one Trade Context strip
+
+**Problem:** `EditBar / CounterBar / ProposeBar / AutoBalanceBanner` stack above the trade builder as a mutex (`src/App.tsx:575-624`). Each is a different *mode* of the same canvas. Users read them as "the screen mysteriously changes its top banner based on where I came from."
+
+**What ships:** One `<TradeContextStrip>` with a single shape: `[counterpart avatar/handle] [mode verb] [primary action]`. Mode verb derived from URL intent (`proposing to @alice`, `countering @bob's offer`, `editing your pending trade`, `solo`). Four components → one.
+
+#### UX-A3 — Reframe TradeDetailView's response buttons
+
+**Problem:** Four buttons on a pending proposal: Accept / Counter / Decline / Edit Together. First three are proposal vocabulary; "Edit Together" is session vocabulary. Reads as "so these four things aren't the same type of thing?" — the exact confusion Phase 5b meant to collapse.
+
+**What ships:** Relabel as *ways to respond to a pitch* — e.g. "Accept as-is · Edit together · Counter offer · Decline." Group visually so Accept and Edit-together read as adjacent positive responses. Consider Edit-together as the middle-ground default when the recipient wants to negotiate *and* see cards change in real-time.
+
+#### UX-A4 — Rehome the Communities module
+
+**Problem:** Communities module on Home competes with the trading loop. Mental model "check my Discord servers" ≠ "see my trades." Right now it's a sidebar widget on the main dashboard.
+
+**What ships:** Remove Communities from Home. It already has its own destination (`/?community=1`) accessible via NavMenu. Trade-relevant community signals (overlap with guild members, Community-wants chip) already surface in context inside the builder — that's where they belong.
+
+#### UX-A5 — Ghost → real-user merge reassurance
+
+**Problem:** Sign-in silently migrates ghost work into the real account. Silent success in ownership transitions is anxiety-inducing: users wonder if they lost their trade.
+
+**What ships:** One-shot gold banner on first post-merge load: "We carried your trade with @alice over. View it." Dismissible, flag on user or per-session. Only renders immediately after a ghost→real OAuth callback.
+
+#### UX-A6 — Audit all profile entry points for consistency
+
+**Problem:** Multiple entry points to `/u/<handle>` (community member list, trade counterpart name, @mentions in message). Not verified they all route consistently or preserve context (e.g., returning after "Trade with @X").
+
+**What ships:** Grep pass for every `toProfile` / `/u/` navigation site, verify consistent Back-button behavior and that the profile view's CTAs reflect the origin (e.g., "Back to your trades" vs "Back to @community").
+
+---
+
+### Pre-UX-audit items
 
 Items that didn't make the Foundation bundle cut but should land before Phase 4 v2 / Phase 5 work resumes.
 
