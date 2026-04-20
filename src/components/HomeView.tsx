@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import {
   AlarmClock,
   ArrowLeftRight,
-  ClipboardList,
+  BookOpen,
+  Star,
   Store,
   Users,
 } from 'lucide-react';
@@ -17,8 +18,10 @@ import { useAvailable } from '../hooks/useAvailable';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useDrawerContext } from '../contexts/DrawerContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { cardImageUrl } from '../services/priceService';
+import { extractBaseName } from '../variants';
 import type { CardVariant } from '../types';
-import type { WantsItem } from '../persistence/schemas';
+import type { WantsItem, AvailableItem } from '../persistence/schemas';
 
 interface HomeViewProps {
   auth: AuthApi;
@@ -71,7 +74,7 @@ export function HomeView({ auth }: HomeViewProps) {
   // need for this view to re-trigger `loadAllSets`, the PriceData
   // provider handles that once at app mount. DrawerContext gives us
   // the shared open-state so the drawer at App root responds here.
-  const { byFamily } = useCardIndexContext();
+  const { byFamily, byProductId } = useCardIndexContext();
   const { openLists } = useDrawerContext();
 
   // `myTrades` already derives `needsResponse` + `counts` across the
@@ -113,12 +116,14 @@ export function HomeView({ auth }: HomeViewProps) {
           />
         )}
 
-        {/* Desktop: CSS grid with explicit column tracks pairs action
-            surfaces (Trades, Response) on the left with resource
-            surfaces (Lists, Communities) on the right. Mobile: flows
-            to a single column in priority order (trades, lists,
-            communities, stores). gap-6 for mobile breathing room;
-            lg:gap-8 for the tighter-pair desktop split. */}
+        {/* Desktop: 2-column grid. Left column (primary flow): My Trades
+            + your wishlist. Right column (secondary context): your
+            binder + communities. Mobile: single column in priority
+            order — trades, wishlist, binder, communities, stores.
+            Lists used to be ONE combined module behind a drawer —
+            promoted to two first-class modules (UX-A1 in the audit)
+            because "these are my cards" is load-bearing for the
+            trading loop, not a sidebar affordance. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="flex flex-col gap-6">
             <TradesModule
@@ -130,15 +135,20 @@ export function HomeView({ auth }: HomeViewProps) {
               onBuildTrade={onBuildTrade}
             />
 
-            <ListsModule
+            <WishlistModule
               wants={wants.items}
-              availableCount={available.items.length}
               cardByFamily={byFamily}
-              onEditLists={openLists}
+              onEditWishlist={() => openLists('wants')}
             />
           </div>
 
           <div className="flex flex-col gap-6">
+            <BinderModule
+              available={available.items}
+              cardByProductId={byProductId}
+              onEditBinder={() => openLists('available')}
+            />
+
             <CommunitiesModule
               guilds={enrolledGuilds}
               status={guilds.status}
@@ -527,88 +537,237 @@ function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof type
   }
 }
 
-// --- 📋 My Lists module ----------------------------------------------------
+// --- ⭐ Your wishlist module -----------------------------------------------
 
-function ListsModule({
+/**
+ * Cap on how many rows each of the two list modules surface on Home
+ * before deferring to the drawer. Tuned for density against the
+ * rest of the dashboard — higher than the earlier ListsModule's
+ * priorities-only preview because these modules are the primary
+ * surface for inventory state now, not a drawer-affordance widget.
+ */
+const LIST_MODULE_CAP = 5;
+
+function WishlistModule({
   wants,
-  availableCount,
   cardByFamily,
-  onEditLists,
+  onEditWishlist,
 }: {
   wants: WantsItem[];
-  availableCount: number;
   cardByFamily: Map<string, CardVariant>;
-  onEditLists: () => void;
+  onEditWishlist: () => void;
 }) {
-  const priorityWants = useMemo(() => {
-    return wants.filter(w => w.isPriority).slice(0, 5);
+  const priorityCount = useMemo(() => wants.filter(w => w.isPriority).length, [wants]);
+  // Priorities pinned first, then everything else by newest-added.
+  // The existing drawer sort is identical; mirroring here keeps the
+  // "top of the wishlist" concept consistent across both surfaces.
+  const sorted = useMemo(() => {
+    return [...wants].sort((a, b) => {
+      const pa = a.isPriority ? 1 : 0;
+      const pb = b.isPriority ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      return b.addedAt - a.addedAt;
+    });
   }, [wants]);
+  const visible = sorted.slice(0, LIST_MODULE_CAP);
 
   return (
     <ModuleSection
-      icon={<ClipboardList aria-hidden className="w-4 h-4" />}
-      label="My Lists"
-      headingId="my-lists-heading"
+      icon={<Star aria-hidden className="w-4 h-4" />}
+      label="Your wishlist"
+      headingId="your-wishlist-heading"
       action={
         <button
           type="button"
-          onClick={onEditLists}
+          onClick={onEditWishlist}
           className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
         >
-          Edit lists →
+          Edit wishlist →
         </button>
       }
     >
       <div className="text-[12px] text-gray-400 tabular-nums mb-3">
         <span className="text-gray-200 font-semibold">{wants.length}</span>
-        {' wants · '}
-        <span className="text-gray-200 font-semibold">{availableCount}</span>
-        {' available'}
+        {wants.length === 1 ? ' card' : ' cards'}
+        {priorityCount > 0 && (
+          <>
+            {' · '}
+            <span className="text-gold font-semibold">{priorityCount}</span>
+            {' priority'}
+          </>
+        )}
       </div>
 
-      {wants.length === 0 && availableCount === 0 && (
-        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
-          No lists yet.{' '}
-          <button
-            type="button"
-            onClick={onEditLists}
-            className="text-gold hover:text-gold-bright underline font-semibold"
-          >
-            Add cards you want or have
-          </button>
-          {' — others with matching lists can find you.'}
-        </div>
+      {wants.length === 0 && (
+        <EmptyListState
+          onEdit={onEditWishlist}
+          linkText="Add cards you want"
+          suffix=" — others with matching cards can find you in matchmaking."
+        />
       )}
-      {wants.length > 0 && priorityWants.length === 0 && (
-        <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-500 leading-relaxed">
-          Star a want to mark it a priority — priorities show up first here and in matchmaking.
-        </div>
-      )}
-      {priorityWants.length > 0 && (
+      {visible.length > 0 && (
         <ul className="flex flex-col gap-1">
-          {priorityWants.map((w, idx) => {
+          {visible.map((w, idx) => {
             const card = cardByFamily.get(w.familyId);
-            const name = card?.name ?? 'Priority card';
             return (
               <li
                 key={w.id}
-                className={idx >= 2 ? 'hidden lg:list-item' : undefined}
+                // Mobile caps at 3 rows so the module stays compact;
+                // desktop shows the full 5 since the vertical real
+                // estate is there.
+                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
               >
-                <button
-                  type="button"
-                  onClick={onEditLists}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
-                >
-                  <span aria-hidden className="text-gold text-sm leading-none shrink-0">★</span>
-                  <span className="flex-1 text-[12px] text-gray-200 truncate">{name}</span>
-                  <span className="text-[11px] text-gray-500 tabular-nums shrink-0">×{w.qty}</span>
-                </button>
+                <ListItemRow
+                  productId={card?.productId ?? null}
+                  name={card?.name ?? 'Card'}
+                  qty={w.qty}
+                  isPriority={w.isPriority}
+                  onClick={onEditWishlist}
+                />
               </li>
             );
           })}
         </ul>
       )}
     </ModuleSection>
+  );
+}
+
+// --- 📘 Your binder module ------------------------------------------------
+
+function BinderModule({
+  available,
+  cardByProductId,
+  onEditBinder,
+}: {
+  available: AvailableItem[];
+  cardByProductId: Map<string, CardVariant>;
+  onEditBinder: () => void;
+}) {
+  // Binder has no priority concept — newest additions float to the top
+  // (most likely to be what the viewer is actively thinking about;
+  // a week-old add is background inventory).
+  const sorted = useMemo(() => {
+    return [...available].sort((a, b) => b.addedAt - a.addedAt);
+  }, [available]);
+  const visible = sorted.slice(0, LIST_MODULE_CAP);
+
+  return (
+    <ModuleSection
+      icon={<BookOpen aria-hidden className="w-4 h-4" />}
+      label="Your binder"
+      headingId="your-binder-heading"
+      action={
+        <button
+          type="button"
+          onClick={onEditBinder}
+          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+        >
+          Edit binder →
+        </button>
+      }
+    >
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{available.length}</span>
+        {available.length === 1 ? ' card available' : ' cards available'}
+      </div>
+
+      {available.length === 0 && (
+        <EmptyListState
+          onEdit={onEditBinder}
+          linkText="Add cards you have"
+          suffix=" — they surface in other traders' searches and in matchmaking suggestions."
+        />
+      )}
+      {visible.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {visible.map((a, idx) => {
+            const card = cardByProductId.get(a.productId);
+            return (
+              <li
+                key={a.id}
+                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
+              >
+                <ListItemRow
+                  productId={a.productId}
+                  name={card?.name ?? 'Card'}
+                  qty={a.qty}
+                  onClick={onEditBinder}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </ModuleSection>
+  );
+}
+
+// Shared row for both list modules — thumbnail + name + qty.
+// Tapping the row routes back into the drawer on the appropriate
+// tab so the "edit" affordance is the whole row, not just the label.
+function ListItemRow({
+  productId,
+  name,
+  qty,
+  isPriority = false,
+  onClick,
+}: {
+  productId: string | null;
+  name: string;
+  qty: number;
+  isPriority?: boolean;
+  onClick: () => void;
+}) {
+  const imgUrl = productId ? cardImageUrl(productId, 'sm') : null;
+  const baseName = extractBaseName(name);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
+    >
+      <span
+        aria-hidden
+        className="shrink-0 w-8 h-11 rounded overflow-hidden bg-space-900 border border-space-700"
+      >
+        {imgUrl ? (
+          <img src={imgUrl} alt="" loading="lazy" className="w-full h-full object-cover" />
+        ) : (
+          <span className="w-full h-full flex items-center justify-center text-gray-600 text-xs">?</span>
+        )}
+      </span>
+      <span className="flex-1 min-w-0 flex items-center gap-1.5">
+        {isPriority && (
+          <span aria-hidden className="text-gold text-sm leading-none shrink-0">★</span>
+        )}
+        <span className="text-[12px] text-gray-200 truncate">{baseName}</span>
+      </span>
+      <span className="text-[11px] text-gray-500 tabular-nums shrink-0">×{qty}</span>
+    </button>
+  );
+}
+
+function EmptyListState({
+  onEdit,
+  linkText,
+  suffix,
+}: {
+  onEdit: () => void;
+  linkText: string;
+  suffix: string;
+}) {
+  return (
+    <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+      <button
+        type="button"
+        onClick={onEdit}
+        className="text-gold hover:text-gold-bright underline font-semibold"
+      >
+        {linkText}
+      </button>
+      {suffix}
+    </div>
   );
 }
 

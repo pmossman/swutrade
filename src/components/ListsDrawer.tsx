@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Tabs from '@radix-ui/react-tabs';
 import { QRCodeSVG } from 'qrcode.react';
@@ -12,6 +12,7 @@ import { encodeWants, encodeAvailable } from '../urlCodec';
 import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useDrawerContext } from '../contexts/DrawerContext';
 import { preventAutoFocus } from '../utils/dialogFocus';
 import { usePopularWants } from '../hooks/usePopularWants';
 
@@ -47,6 +48,19 @@ export function ListsDrawer({
   const [tab, setTab] = useState<ListTab>('wants');
   const [mode, setMode] = useState<Mode>('list');
   const [editingWantId, setEditingWantId] = useState<string | null>(null);
+
+  // Callers can nominate a tab to open on via DrawerContext's
+  // `openLists('wants'|'available')` — Home's split Wishlist / Binder
+  // modules do this so tapping "Edit wishlist" lands on the wants tab
+  // and "Edit binder" lands on the available tab. Consumed + cleared
+  // here so the hint doesn't stick across opens.
+  const { requestedTab, clearRequestedTab } = useDrawerContext();
+  useEffect(() => {
+    if (open && requestedTab) {
+      setTab(requestedTab);
+      clearRequestedTab();
+    }
+  }, [open, requestedTab, clearRequestedTab]);
 
   const wantsCount = wants.items.length;
   const availableCount = available.items.length;
