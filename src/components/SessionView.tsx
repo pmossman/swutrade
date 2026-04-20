@@ -183,7 +183,11 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         )}
 
         {session && session.openSlot && (
-          <OpenSlotInvite sessionId={session.id} onCancel={async () => { await cancel(); }} />
+          <OpenSlotInvite
+            sessionId={session.id}
+            viewerIsGhost={viewerIsGhost}
+            onCancel={async () => { await cancel(); }}
+          />
         )}
 
         {session && !session.openSlot && viewerIsGhost && (
@@ -586,9 +590,11 @@ function InvitePrompt({
  */
 function OpenSlotInvite({
   sessionId,
+  viewerIsGhost,
   onCancel,
 }: {
   sessionId: string;
+  viewerIsGhost: boolean;
   onCancel: () => Promise<void> | void;
 }) {
   const shareUrl = typeof window !== 'undefined'
@@ -638,6 +644,15 @@ function OpenSlotInvite({
       <p className="text-[12px] text-gray-400 text-center max-w-sm leading-relaxed">
         They can scan the QR from their phone, or open the link. They can join as a guest — no sign-in required.
       </p>
+
+      {/* Alternative invite path — type a handle, the server sends
+          the URL as a Discord DM. Ghost creators don't have a Discord
+          identity to originate the DM from, so we hide the form for
+          them and they stay on the QR/share-link path. */}
+      {!viewerIsGhost && (
+        <InviteByHandleForm sessionId={sessionId} />
+      )}
+
       <button
         type="button"
         onClick={() => void onCancel()}
@@ -646,6 +661,103 @@ function OpenSlotInvite({
         Cancel this invitation
       </button>
     </section>
+  );
+}
+
+/**
+ * Secondary invite path rendered under the QR / share-link. The
+ * creator types a SWUTrade handle, clicks Invite, and the server DMs
+ * that user the session URL. No pre-claim; the invitee still has to
+ * click through. This is a side effect — we deliberately do NOT
+ * re-render the session on success. The slot stays open; when they
+ * eventually join via the URL the existing claim flow handles it.
+ */
+function InviteByHandleForm({ sessionId }: { sessionId: string }) {
+  const [handle, setHandle] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (submitting) return;
+    const trimmed = handle.trim().replace(/^@+/, '');
+    if (!trimmed) {
+      setErrorMessage('Enter a SWUTrade handle to invite.');
+      setSuccessMessage(null);
+      return;
+    }
+    setSubmitting(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch(
+        `/api/sessions/${encodeURIComponent(sessionId)}/invite-handle`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ handle: trimmed }),
+        },
+      );
+      const body = (await res.json().catch(() => null)) as
+        | { invited?: { handle: string }; error?: string }
+        | null;
+      if (!res.ok) {
+        setErrorMessage(body?.error ?? 'Could not send the invite. Try again.');
+        return;
+      }
+      const invitedHandle = body?.invited?.handle ?? trimmed;
+      setSuccessMessage(`Invited @${invitedHandle} — they'll get a Discord DM.`);
+      setHandle('');
+    } catch {
+      setErrorMessage('Network error. Try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [handle, sessionId, submitting]);
+
+  return (
+    <div className="w-full flex flex-col gap-2 pt-2 border-t border-space-700">
+      <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.18em] text-gray-500 font-bold">
+        <span className="flex-1 h-px bg-space-700" aria-hidden />
+        <span>or</span>
+        <span className="flex-1 h-px bg-space-700" aria-hidden />
+      </div>
+      <div className="text-[12px] text-gray-300 font-semibold text-center">
+        Invite by handle
+      </div>
+      <form onSubmit={handleSubmit} className="flex items-center gap-2">
+        <input
+          type="text"
+          placeholder="@handle"
+          value={handle}
+          onChange={e => {
+            setHandle(e.currentTarget.value);
+            // Clear stale feedback as soon as they start editing
+            // again — the old message no longer reflects input state.
+            if (errorMessage) setErrorMessage(null);
+            if (successMessage) setSuccessMessage(null);
+          }}
+          disabled={submitting}
+          autoComplete="off"
+          spellCheck={false}
+          className="flex-1 min-w-0 bg-space-800 border border-space-700 rounded-md px-3 h-9 text-[13px] text-gray-200 disabled:opacity-60"
+        />
+        <button
+          type="submit"
+          disabled={submitting || handle.trim().length === 0}
+          className="px-3 h-9 rounded-md bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-60 text-xs"
+        >
+          {submitting ? 'Inviting…' : 'Invite'}
+        </button>
+      </form>
+      {successMessage && (
+        <div className="text-[11px] text-emerald-300">{successMessage}</div>
+      )}
+      {errorMessage && (
+        <div className="text-[11px] text-red-400">{errorMessage}</div>
+      )}
+    </div>
   );
 }
 
