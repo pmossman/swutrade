@@ -8,6 +8,7 @@ import { Chip } from '../components/primitives/Chip';
 import { TradeSide } from '../components/TradeSide';
 import { BalanceStrip } from '../components/BalanceStrip';
 import { CardPicker } from '../components/CardPicker';
+import { PriceSheet } from '../components/PriceSheet';
 import { useSession } from '../hooks/useSession';
 import type { TradeCardSnapshot } from '../lib/trade';
 import { totalOf } from '../lib/trade';
@@ -25,6 +26,7 @@ export function TradeCanvasRoute() {
   const navigate = useNavigate();
   const trade = useSession(code);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [priceSheetOpen, setPriceSheetOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   if (trade.status === 'pending') {
@@ -191,8 +193,7 @@ export function TradeCanvasRoute() {
           theirCards={session.theirCards}
           yourTotal={yourTotal}
           theirTotal={theirTotal}
-          // PriceSheet wires in a follow-up commit; undefined disables
-          // the open-pricing tap for now.
+          onOpenPricing={() => setPriceSheetOpen(true)}
         />
 
         <TradeSide
@@ -258,6 +259,15 @@ export function TradeCanvasRoute() {
         onOpenChange={setPickerOpen}
         title="Add to your side"
         onPick={handleAddFromPicker}
+      />
+
+      <PriceSheet
+        open={priceSheetOpen}
+        onOpenChange={setPriceSheetOpen}
+        yourCards={session.yourCards}
+        theirCards={session.theirCards}
+        yourTotal={yourTotal}
+        theirTotal={theirTotal}
       />
     </Screen>
   );
