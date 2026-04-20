@@ -65,8 +65,11 @@ export function useSession(id: string | undefined): UseSessionResult {
   else if (preview) status = 'preview';
   else status = 'not-found';
 
-  const editMut = useMutation<SessionView, ApiError, TradeCardSnapshot[]>({
-    mutationFn: (cards) => apiPut<SessionView>(`/api/sessions/${id}/edit`, { cards }),
+  // Edit/confirm/cancel/claim all return { session: SessionView [+ extras] }
+  // from v1's handlers. setQueryData writes the GetResponse shape directly.
+  const editMut = useMutation<{ session: SessionView }, ApiError, TradeCardSnapshot[]>({
+    mutationFn: (cards) =>
+      apiPut<{ session: SessionView }>(`/api/sessions/${id}/edit`, { cards }),
     onMutate: async (cards) => {
       if (!id) return;
       await client.cancelQueries({ queryKey: KEY(id) });
@@ -91,33 +94,46 @@ export function useSession(id: string | undefined): UseSessionResult {
       const c = ctx as { prev?: GetResponse } | undefined;
       if (c?.prev) client.setQueryData(KEY(id), c.prev);
     },
-    onSuccess: (view) => {
+    onSuccess: (res) => {
       if (!id) return;
-      client.setQueryData(KEY(id), { session: view } as GetResponse);
+      client.setQueryData(KEY(id), { session: res.session } as GetResponse);
     },
   });
 
-  const confirmMut = useMutation<{ view: SessionView; settled: boolean }, ApiError>({
-    mutationFn: () => apiPost(`/api/sessions/${id}/confirm`),
+  const confirmMut = useMutation<
+    { session: SessionView; settled: boolean },
+    ApiError
+  >({
+    mutationFn: () =>
+      apiPost<{ session: SessionView; settled: boolean }>(
+        `/api/sessions/${id}/confirm`,
+      ),
     onSuccess: (res) => {
       if (!id) return;
-      client.setQueryData(KEY(id), { session: res.view } as GetResponse);
+      client.setQueryData(KEY(id), { session: res.session } as GetResponse);
     },
   });
 
-  const cancelMut = useMutation<{ view: SessionView }, ApiError>({
-    mutationFn: () => apiPost(`/api/sessions/${id}/cancel`),
+  const cancelMut = useMutation<{ session: SessionView }, ApiError>({
+    mutationFn: () =>
+      apiPost<{ session: SessionView }>(`/api/sessions/${id}/cancel`),
     onSuccess: (res) => {
       if (!id) return;
-      client.setQueryData(KEY(id), { session: res.view } as GetResponse);
+      client.setQueryData(KEY(id), { session: res.session } as GetResponse);
     },
   });
 
-  const claimMut = useMutation<{ view: SessionView }, ApiError>({
-    mutationFn: () => apiPost(`/api/sessions/${id}/claim`),
+  const claimMut = useMutation<
+    { session: SessionView; ghost: unknown },
+    ApiError
+  >({
+    mutationFn: () =>
+      apiPost<{ session: SessionView; ghost: unknown }>(
+        `/api/sessions/${id}/claim`,
+      ),
     onSuccess: (res) => {
       if (!id) return;
-      client.setQueryData(KEY(id), { session: res.view } as GetResponse);
+      client.setQueryData(KEY(id), { session: res.session } as GetResponse);
     },
   });
 

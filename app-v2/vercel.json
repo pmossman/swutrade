@@ -1,4 +1,8 @@
 {
+  "devCommand": "npm run dev -- --port $PORT",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "installCommand": "npm install",
   "rewrites": [
     { "source": "/api/auth/me", "destination": "/api/auth?action=me" },
     { "source": "/api/auth/discord", "destination": "/api/auth?action=discord" },
@@ -36,6 +40,6 @@
     { "source": "/compose", "destination": "/" },
     { "source": "/list", "destination": "/" },
 
-    { "source": "/((?!api|assets|data|favicon\\.ico).*)", "destination": "/" }
+    { "source": "/((?!api|assets|data|@|src/|node_modules/|favicon\\.ico).*)", "destination": "/" }
   ]
 }
