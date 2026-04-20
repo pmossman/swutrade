@@ -39,11 +39,20 @@ export function useSession(id: string | undefined): UseSessionResult {
       }
     },
     enabled: !!id,
-    // Session state is server-authoritative; refetch on focus to pick up
-    // edits from the counterpart without full polling for now. Full
-    // 2.5s polling ships in 1e (live trade) per v1's useSession pattern.
     refetchOnWindowFocus: 'always',
-    staleTime: 5_000,
+    staleTime: 2_000,
+    // Live-trade polling (design §8 + v1's useSession). Poll every 2.5s
+    // while the session is active OR in preview-waiting — both states
+    // benefit from live updates from the counterpart. Stop polling on
+    // terminal states (settled / cancelled / expired) and on error so
+    // we don't hammer a dead endpoint.
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      if (!data) return 2500;
+      if (data.session && data.session.status !== 'active') return false;
+      return 2500;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const session = query.data?.session ?? null;

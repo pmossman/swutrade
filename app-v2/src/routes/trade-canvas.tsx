@@ -9,6 +9,8 @@ import { TradeSide } from '../components/TradeSide';
 import { BalanceStrip } from '../components/BalanceStrip';
 import { CardPicker } from '../components/CardPicker';
 import { PriceSheet } from '../components/PriceSheet';
+import { InviteSheet } from '../components/InviteSheet';
+import { useAuth } from '../hooks/useAuth';
 import { useSession } from '../hooks/useSession';
 import type { TradeCardSnapshot } from '../lib/trade';
 import { totalOf } from '../lib/trade';
@@ -25,8 +27,10 @@ export function TradeCanvasRoute() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
   const trade = useSession(code);
+  const auth = useAuth();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [priceSheetOpen, setPriceSheetOpen] = useState(false);
+  const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   if (trade.status === 'pending') {
@@ -217,7 +221,7 @@ export function TradeCanvasRoute() {
             session.openSlot ? (
               <button
                 type="button"
-                onClick={handleShare}
+                onClick={() => setInviteSheetOpen(true)}
                 className="h-11 w-full rounded-xl bg-accent font-semibold text-accent-fg"
               >
                 Invite someone
@@ -269,6 +273,15 @@ export function TradeCanvasRoute() {
         yourTotal={yourTotal}
         theirTotal={theirTotal}
       />
+
+      {code ? (
+        <InviteSheet
+          open={inviteSheetOpen}
+          onOpenChange={setInviteSheetOpen}
+          sessionId={code}
+          canInviteByHandle={!!auth.user && !auth.user.isAnonymous}
+        />
+      ) : null}
     </Screen>
   );
 }
