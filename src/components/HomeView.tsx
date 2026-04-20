@@ -2,26 +2,14 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   AlarmClock,
   ArrowLeftRight,
-  Ban,
-  Check,
   ClipboardList,
-  Hand,
-  Hourglass,
-  Pencil,
-  Repeat2,
   Store,
-  Undo2,
   Users,
 } from 'lucide-react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
-import {
-  useTradesList,
-  type TradeListEntry,
-  type TradeActivityEntry,
-  type TradeActivityType,
-} from '../hooks/useTradesList';
+import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { HandlePickerDialog } from './HandlePickerDialog';
 import { TradeExpandPeek } from './TradeExpandPeek';
@@ -73,7 +61,12 @@ export function HomeView({ auth }: HomeViewProps) {
   const onBuildTrade = nav.toBuildTrade;
   const onOpenProfile = nav.toProfile;
   const onProposeTo = nav.toProposeWith;
-  const trades = useTradesList();
+  // `useMyTrades` is the unified view layer — merges proposals +
+  // sessions into one TradeRow stream. The older `useTradesList` is
+  // still consulted for the `needsResponse` callout (which already
+  // had overflow/highlight chrome tuned to the proposal shape) but
+  // everything inside the My Trades module reads from `myTrades`.
+  const myTrades = useMyTrades();
   const guilds = useGuildMemberships();
   const wants = useWants();
   const available = useAvailable();
@@ -101,28 +94,10 @@ export function HomeView({ auth }: HomeViewProps) {
     }
   }, [nav, startingOpen]);
 
-  const { needsResponse, tradeCounts } = useMemo(() => {
-    const needs: TradeListEntry[] = [];
-    let incoming = 0;
-    let outgoing = 0;
-    let resolved = 0;
-    for (const t of trades.proposals) {
-      if (t.status === 'pending') {
-        if (t.direction === 'received') {
-          needs.push(t);
-          incoming += 1;
-        } else {
-          outgoing += 1;
-        }
-      } else {
-        resolved += 1;
-      }
-    }
-    return {
-      needsResponse: needs,
-      tradeCounts: { incoming, outgoing, resolved },
-    };
-  }, [trades.proposals]);
+  // `myTrades` already derives `needsResponse` + `counts` across the
+  // unified proposal + session stream, so we don't redo that work here.
+  const { needsResponse } = myTrades;
+  const tradeCounts = myTrades.counts;
 
   const enrolledGuilds = useMemo(
     () => guilds.enrollable.filter(g => g.enrolled),
@@ -152,7 +127,7 @@ export function HomeView({ auth }: HomeViewProps) {
             reads as "everything else waits — deal with this first." */}
         {needsResponse.length > 0 && (
           <NeedsResponseCallout
-            proposals={needsResponse}
+            rows={needsResponse}
             onOpenTrade={onOpenTrade}
             onOpenTradesHistory={onOpenTradesHistory}
           />
@@ -167,13 +142,12 @@ export function HomeView({ auth }: HomeViewProps) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="flex flex-col gap-6">
             <TradesModule
-              status={trades.status}
+              status={myTrades.status}
               counts={tradeCounts}
-              activity={trades.recentActivity}
+              rows={myTrades.rows}
               onOpenTrade={onOpenTrade}
               onOpenTradesHistory={onOpenTradesHistory}
               onBuildTrade={onBuildTrade}
-              viewerHandle={user?.handle}
             />
 
             <ListsModule
@@ -272,16 +246,16 @@ function GreetingRow({
 const HOME_PROPOSAL_CAP = 5;
 
 function NeedsResponseCallout({
-  proposals,
+  rows,
   onOpenTrade,
   onOpenTradesHistory,
 }: {
-  proposals: TradeListEntry[];
+  rows: TradeRow[];
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
 }) {
-  const visible = proposals.slice(0, HOME_PROPOSAL_CAP);
-  const overflow = proposals.length - visible.length;
+  const visible = rows.slice(0, HOME_PROPOSAL_CAP);
+  const overflow = rows.length - visible.length;
   // Single row expanded at a time — collapses the previous peek when a
   // new one is clicked, avoiding multiple card grids competing for the
   // viewport at once.
@@ -297,24 +271,27 @@ function NeedsResponseCallout({
         <h2 id="needs-response-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
           <AlarmClock aria-hidden className="w-4 h-4" />
           <span>Needs your response</span>
-          <span className="text-xs tabular-nums text-gold font-bold">{proposals.length}</span>
+          <span className="text-xs tabular-nums text-gold font-bold">{rows.length}</span>
         </h2>
       </div>
       <ul className="flex flex-col gap-1.5">
-        {visible.map(p => {
-          const expanded = expandedId === p.id;
+        {visible.map(row => {
+          const expanded = expandedId === row.id;
           return (
-            <li key={p.id}>
-              <TradeRow
-                trade={p}
-                onClick={() => setExpandedId(expanded ? null : p.id)}
-                highlight
+            <li key={`${row.kind}-${row.id}`}>
+              <TradeListRow
+                row={row}
+                onClick={() => setExpandedId(expanded ? null : row.id)}
                 expanded={expanded}
                 peek={
-                  <TradeExpandPeek
-                    proposalId={p.id}
-                    onOpenDetail={() => onOpenTrade(p.id)}
-                  />
+                  row.kind === 'proposal' ? (
+                    <TradeExpandPeek
+                      proposalId={row.id}
+                      onOpenDetail={() => onOpenTrade(row.id)}
+                    />
+                  ) : (
+                    <SessionPeek row={row} />
+                  )
                 }
               />
             </li>
@@ -327,7 +304,7 @@ function NeedsResponseCallout({
           onClick={onOpenTradesHistory}
           className="mt-2 w-full flex items-center justify-center gap-1 px-4 py-2 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 text-xs font-medium text-gray-400 hover:text-gold transition-colors"
         >
-          See all {proposals.length} pending →
+          See all {rows.length} pending →
         </button>
       )}
     </section>
@@ -339,25 +316,26 @@ function NeedsResponseCallout({
 function TradesModule({
   status,
   counts,
-  activity,
+  rows,
   onOpenTrade,
   onOpenTradesHistory,
   onBuildTrade,
-  viewerHandle,
 }: {
   status: 'loading' | 'ready' | 'error';
-  counts: { incoming: number; outgoing: number; resolved: number };
-  activity: TradeActivityEntry[];
+  counts: { incoming: number; outgoing: number; resolved: number; activeSessions: number };
+  rows: TradeRow[];
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
   onBuildTrade: () => void;
-  viewerHandle: string | undefined;
 }) {
-  const hasAny = counts.incoming + counts.outgoing + counts.resolved > 0;
-  // A single expanded proposalId across the activity feed so opening
-  // one row collapses any other. Separate from the callout's state —
-  // the two lists show different proposals and we don't try to keep
-  // a selection in sync.
+  const hasAny = rows.length > 0;
+  // Mobile caps at 3 rows; desktop at 5. Past that, the "View
+  // history" link in the header is the overflow.
+  const MOBILE_CAP = 3;
+  const DESKTOP_CAP = 5;
+  const visible = rows.slice(0, DESKTOP_CAP);
+  // Single expanded id across the unified list — opening one row
+  // collapses any other.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
@@ -375,13 +353,25 @@ function TradesModule({
         </button>
       }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
-        <span className="text-gray-200 font-semibold">{counts.incoming}</span>
-        {' incoming · '}
-        <span className="text-gray-200 font-semibold">{counts.outgoing}</span>
-        {' outgoing · '}
-        <span className="text-gray-200 font-semibold">{counts.resolved}</span>
-        {' resolved'}
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex flex-wrap gap-x-3 gap-y-1">
+        {counts.activeSessions > 0 && (
+          <span>
+            <span className="text-cyan-300 font-semibold">{counts.activeSessions}</span>
+            {' shared'}
+          </span>
+        )}
+        <span>
+          <span className="text-gray-200 font-semibold">{counts.incoming}</span>
+          {' awaiting'}
+        </span>
+        <span>
+          <span className="text-gray-200 font-semibold">{counts.outgoing}</span>
+          {' pitched'}
+        </span>
+        <span>
+          <span className="text-gray-200 font-semibold">{counts.resolved}</span>
+          {' resolved'}
+        </span>
       </div>
 
       {status === 'loading' && <LoadingState label="Loading trades…" />}
@@ -393,39 +383,34 @@ function TradesModule({
             onClick={onBuildTrade}
             className="text-gold hover:text-gold-bright underline font-semibold"
           >
-            Balance a trade
+            Start one
           </button>
-          {' to get started — share it with a friend or send it in-app.'}
+          {' — build alone, invite someone to trade together, or share a QR at the shop.'}
         </div>
       )}
-      {status !== 'loading' && hasAny && activity.length === 0 && (
-        <div className="rounded-lg bg-space-800/20 border border-dashed border-space-700 px-4 py-3 text-[11px] text-gray-500">
-          No recent activity yet. Accepts, counters, and nudges will show up here.
-        </div>
-      )}
-      {activity.length > 0 && (
-        <ul className="flex flex-col gap-1">
-          {/* Mobile shows 3, desktop 5 — matches the module-pattern
-              spec ("richer on desktop"). Items past the desktop cap
-              stay hidden; the overflow link in the header covers them. */}
-          {activity.map((a, idx) => {
-            const peekKey = `${a.proposalId}-${a.createdAt}-${idx}`;
-            const expanded = expandedId === peekKey;
+      {hasAny && (
+        <ul className="flex flex-col gap-1.5">
+          {visible.map((row, idx) => {
+            const expanded = expandedId === row.id;
+            const onToggle = () => setExpandedId(expanded ? null : row.id);
             return (
               <li
-                key={peekKey}
-                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
+                key={`${row.kind}-${row.id}`}
+                className={idx >= MOBILE_CAP ? 'hidden lg:list-item' : undefined}
               >
-                <ActivityRow
-                  activity={a}
-                  viewerHandle={viewerHandle}
+                <TradeListRow
+                  row={row}
+                  onClick={onToggle}
                   expanded={expanded}
-                  onClick={() => setExpandedId(expanded ? null : peekKey)}
                   peek={
-                    <TradeExpandPeek
-                      proposalId={a.proposalId}
-                      onOpenDetail={() => onOpenTrade(a.proposalId)}
-                    />
+                    row.kind === 'proposal' ? (
+                      <TradeExpandPeek
+                        proposalId={row.id}
+                        onOpenDetail={() => onOpenTrade(row.id)}
+                      />
+                    ) : (
+                      <SessionPeek row={row} />
+                    )
                   }
                 />
               </li>
@@ -437,92 +422,140 @@ function TradesModule({
   );
 }
 
-function ActivityRow({
-  activity,
-  viewerHandle,
+/**
+ * Compact peek for a session row — no fetch, just metadata + a
+ * primary action. Session cards would require a separate fetch to
+ * re-render here; we defer the richer peek to a later sliver and
+ * let users click through to the canvas for the full view.
+ */
+function SessionPeek({ row }: { row: TradeRow }) {
+  const label = row.counterpart
+    ? `@${row.counterpart.handle}${row.counterpart.isAnonymous ? ' (guest)' : ''}`
+    : 'Waiting on counterpart';
+  return (
+    <div className="border-t border-space-700/60 px-3 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[11px] text-gray-400">
+          {row.openSlot
+            ? 'Open invitation — share the QR or link from inside.'
+            : `Shared trade with ${label} · ${row.yourCount} offered · ${row.theirCount} received`}
+        </div>
+        <a
+          href={`/s/${encodeURIComponent(row.id)}`}
+          className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-cyan-300 hover:text-cyan-200 transition-colors"
+        >
+          Open session
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+          </svg>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Unified list row for My Trades — renders a proposal OR a session
+ * with the same chrome. State badge + counterpart identity + card
+ * counts + timestamp. Expand reveals the kind-appropriate peek (full
+ * card images for proposals, metadata for sessions).
+ */
+function TradeListRow({
+  row,
   onClick,
   expanded,
   peek,
 }: {
-  activity: TradeActivityEntry;
-  viewerHandle: string | undefined;
+  row: TradeRow;
   onClick: () => void;
   expanded?: boolean;
-  /** Rendered inside the same bordered container under the header when
-   *  `expanded` is true. Same pattern as TradeRow — keeps the peek
-   *  visually continuous with the row it belongs to. */
   peek?: React.ReactNode;
 }) {
-  const actorLabel = activity.actor
-    ? (activity.actor.handle === viewerHandle ? 'You' : `@${activity.actor.handle}`)
-    : 'System';
-  const verb = verbForActivityType(activity.type);
-  // Subject: for actions taken *on* the viewer's proposal by someone
-  // else, read "your proposal"; for actions the viewer took, read
-  // "your proposal to @X"; for system-generated (expired) it's just
-  // "the proposal".
-  const subject = (() => {
-    if (actorLabel === 'You') {
-      return activity.counterpartHandle ? `your proposal to @${activity.counterpartHandle}` : 'your proposal';
-    }
-    if (activity.actor) return 'your proposal';
-    return 'a proposal';
-  })();
-  const when = timeAgoShort(activity.createdAt);
+  const counterpartLabel = row.counterpart
+    ? `@${row.counterpart.handle}${row.counterpart.isAnonymous ? ' (guest)' : ''}`
+    : row.openSlot ? 'Waiting for counterpart' : 'Unknown trader';
+  const when = timeAgoShort(row.lastActivityAt);
+  const highlight = row.state === 'awaiting';
   const containerClass = expanded
-    ? 'bg-space-800/70 border-gold/40'
-    : 'bg-space-800/30 border-space-700 hover:border-gold/30';
+    ? (highlight ? 'bg-gold/12 border-gold/50' : 'bg-space-800/70 border-gold/40')
+    : highlight
+      ? 'bg-gold/8 border-gold/40 hover:border-gold/60'
+      : 'bg-space-800/40 border-space-700 hover:border-gold/30';
   return (
     <div className={`rounded-lg border transition-colors ${containerClass}`}>
       <button
         type="button"
         onClick={onClick}
         aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} trade with ${counterpartLabel}`}
         className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
-          expanded ? 'hover:bg-space-800/90' : 'hover:bg-space-800/50'
+          highlight ? 'hover:bg-gold/12' : 'hover:bg-white/[0.02] active:bg-white/[0.04]'
         }`}
       >
-        <span aria-hidden className="shrink-0 flex items-center justify-center">{glyphForActivityType(activity.type)}</span>
+        <Avatar
+          avatarUrl={row.counterpart?.avatarUrl ?? null}
+          name={row.counterpart?.username || row.counterpart?.handle || '?'}
+        />
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-gray-200 truncate">
-            <span className="font-medium">{actorLabel}</span>{' '}
-            <span className="text-gray-400">{verb}</span>{' '}
-            <span className="text-gray-400">{subject}</span>
+          <div className="flex items-baseline gap-2 min-w-0 flex-wrap">
+            <span className="text-sm font-medium text-gray-100 truncate">
+              {counterpartLabel}
+            </span>
+            <StateBadge state={row.state} />
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+            {row.yourCount} offered · {row.theirCount} received · {when}
+            {row.kind === 'proposal' && row.topCard && ` · ${row.topCard.name}`}
           </div>
         </div>
-        <span className="text-[11px] text-gray-500 tabular-nums shrink-0">{when}</span>
+        <ChevronIcon
+          className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${
+            expanded ? 'rotate-0' : '-rotate-90'
+          }`}
+        />
       </button>
       {expanded && peek}
     </div>
   );
 }
 
-function verbForActivityType(t: TradeActivityType): string {
-  switch (t) {
-    case 'accepted':  return 'accepted';
-    case 'declined':  return 'declined';
-    case 'cancelled': return 'cancelled';
-    case 'countered': return 'countered';
-    case 'edited':    return 'edited';
-    case 'nudged':    return 'nudged';
-    case 'expired':   return 'expired on';
-  }
+/**
+ * State badge — single source of truth for how each `TradeRowState`
+ * renders. Colors follow the app palette: cyan=shared (active, in
+ * flight), gold=attention/pending, emerald=terminal-positive,
+ * red=terminal-negative, neutral=everything else. Short labels
+ * because they live on a crowded row.
+ */
+function StateBadge({ state }: { state: TradeRowState }) {
+  const { label, tone } = stateBadgeSpec(state);
+  const toneClass = BADGE_TONES[tone];
+  return (
+    <span className={`shrink-0 px-1.5 h-[18px] inline-flex items-center rounded text-[9px] tracking-wider uppercase font-bold ${toneClass}`}>
+      {label}
+    </span>
+  );
 }
 
-function glyphForActivityType(t: TradeActivityType): React.ReactNode {
-  // Sized to match the `text-base leading-none` span this replaced —
-  // w-4 h-4 keeps the row rhythm identical. Accepted/declined get a
-  // semantic tint so the positive/negative read at a glance; the rest
-  // stay neutral and lean on the adjacent verb for meaning.
-  const cls = 'w-4 h-4';
-  switch (t) {
-    case 'accepted':  return <Check className={`${cls} text-emerald-400`} />;
-    case 'declined':  return <Ban className={`${cls} text-red-400`} />;
-    case 'cancelled': return <Undo2 className={cls} />;
-    case 'countered': return <Repeat2 className={cls} />;
-    case 'edited':    return <Pencil className={cls} />;
-    case 'nudged':    return <Hand className={cls} />;
-    case 'expired':   return <Hourglass className={cls} />;
+const BADGE_TONES: Record<string, string> = {
+  cyan:    'bg-cyan-900/40 border border-cyan-500/40 text-cyan-200',
+  gold:    'bg-gold/15 border border-gold/40 text-gold',
+  emerald: 'bg-emerald-900/40 border border-emerald-500/40 text-emerald-300',
+  red:     'bg-red-900/40 border border-red-500/40 text-red-300',
+  neutral: 'bg-space-700/60 border border-space-600 text-gray-400',
+  purple:  'bg-purple-900/40 border border-purple-500/40 text-purple-300',
+};
+
+function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof typeof BADGE_TONES } {
+  switch (state) {
+    case 'shared':          return { label: 'Shared',   tone: 'cyan' };
+    case 'shared-waiting':  return { label: 'Invite',   tone: 'cyan' };
+    case 'awaiting':        return { label: 'Awaiting', tone: 'gold' };
+    case 'pitched':         return { label: 'Pitched',  tone: 'gold' };
+    case 'settled':         return { label: 'Settled',  tone: 'emerald' };
+    case 'declined':        return { label: 'Declined', tone: 'red' };
+    case 'cancelled':       return { label: 'Cancelled', tone: 'neutral' };
+    case 'expired':         return { label: 'Expired',  tone: 'neutral' };
+    case 'countered':       return { label: 'Countered', tone: 'purple' };
   }
 }
 
@@ -797,91 +830,6 @@ function ModuleSection({
 
 // --- Rows / shared UI ------------------------------------------------------
 
-function TradeRow({
-  trade,
-  onClick,
-  highlight,
-  expanded,
-  peek,
-}: {
-  trade: TradeListEntry;
-  onClick: () => void;
-  highlight?: boolean;
-  /** When true the chevron rotates downward AND the `peek` slot is
-   *  rendered inside the same container below the header. Keeping the
-   *  peek inside the row's bordered box (rather than a sibling below)
-   *  is what makes the expanded state read as "one taller row" instead
-   *  of "two stacked cards". */
-  expanded?: boolean;
-  /** Rendered inside the bordered container under the row header when
-   *  `expanded` is true. Typically <TradeExpandPeek ... /> — but the
-   *  slot is just a ReactNode so callers could render anything (e.g.
-   *  future alternate details surfaces) without this component knowing. */
-  peek?: React.ReactNode;
-}) {
-  const counterpart = trade.counterpart;
-  const label = counterpart ? `@${counterpart.handle}` : 'Unknown trader';
-  // Viewer-centric grammar. For a received proposal, the counterpart is
-  // offering `offeringCount` to me and asking for `receivingCount` from
-  // me — so "Receive X · Give Y" reads directly. Sent is the mirror.
-  const detail = trade.direction === 'received'
-    ? `Receive ${trade.receivingCount} · Give ${trade.offeringCount}`
-    : `Offer ${trade.offeringCount} · Want ${trade.receivingCount}`;
-  const when = timeAgoShort(trade.updatedAt);
-  const previewBits: string[] = [];
-  if (trade.topCard) {
-    const variant = trade.topCard.variant;
-    const variantSuffix = variant && variant.toLowerCase() !== 'standard'
-      ? ` (${formatVariant(variant)})`
-      : '';
-    previewBits.push(`${trade.topCard.name}${variantSuffix}`);
-  }
-  if (trade.hasMessage) previewBits.push('has message');
-  const preview = previewBits.join(' · ');
-
-  const containerClass = highlight
-    ? 'bg-gold/8 border-gold/40 hover:border-gold/60'
-    : 'bg-space-800/40 border-space-700 hover:border-gold/30';
-
-  return (
-    <div className={`rounded-lg border transition-colors ${containerClass}`}>
-      <button
-        type="button"
-        onClick={onClick}
-        aria-expanded={expanded}
-        // Button has no border of its own — the outer div owns the
-        // container chrome. Hover/active state is a subtle background
-        // overlay so the whole header still reads as tappable.
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${
-          highlight ? 'hover:bg-gold/12 active:bg-gold/16' : 'hover:bg-white/[0.02] active:bg-white/[0.04]'
-        }`}
-      >
-        <Avatar avatarUrl={counterpart?.avatarUrl ?? null} name={counterpart?.username || counterpart?.handle || '?'} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-sm font-medium text-gray-100 truncate">
-              {label}
-            </span>
-            <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
-              {when}
-            </span>
-          </div>
-          <div className="text-[11px] text-gray-500 mt-0.5 truncate">
-            {detail}
-            {preview && ` · ${preview}`}
-          </div>
-        </div>
-        <ChevronIcon
-          className={`w-4 h-4 text-gray-500 shrink-0 transition-transform ${
-            expanded ? 'rotate-0' : '-rotate-90'
-          }`}
-        />
-      </button>
-      {expanded && peek}
-    </div>
-  );
-}
-
 function timeAgoShort(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60000);
@@ -892,11 +840,6 @@ function timeAgoShort(iso: string): string {
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString();
-}
-
-function formatVariant(variant: string): string {
-  const lower = variant.toLowerCase();
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
 
 function Avatar({ avatarUrl, name }: { avatarUrl: string | null; name: string }) {
