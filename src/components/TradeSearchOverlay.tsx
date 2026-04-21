@@ -361,11 +361,6 @@ export function TradeSearchOverlay({
         )}
       </div>
 
-      {/* Trending card strip removed from the picker — early-dogfood
-          feedback: too much competing content in the overlay's empty
-          state. The /api/trending endpoint stays in place for when we
-          surface it elsewhere (community view's a likely home). */}
-
       {/* Grid only mounts when the overlay is actually shown — browse
           mode renders hundreds of tiles, so we don't pay that DOM
           cost while the overlay is hidden behind the trade view. */}

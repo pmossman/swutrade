@@ -5,7 +5,7 @@
 > Files covered:
 > - `src/components/ListsDrawer.tsx`, `src/components/ListRows.tsx`, `src/components/ListCardPicker.tsx`, `src/components/ListView.tsx`, `src/components/MigrationDialog.tsx`
 > - `src/hooks/useWants.ts`, `src/hooks/useAvailable.ts`, `src/hooks/useSharedLists.ts`, `src/hooks/usePopularWants.ts`, `src/hooks/useServerSync.ts`, `src/hooks/useRecipientProfile.ts`, `src/hooks/useCommunityCards.ts`, `src/hooks/usePersistedState.ts`
-> - `src/hooks/useSelectionFilters.ts`, `src/hooks/useTrending.ts`, `src/applySelectionFilters.ts`, `src/listMatching.ts`
+> - `src/hooks/useSelectionFilters.ts`, `src/applySelectionFilters.ts`, `src/listMatching.ts`
 > - `src/persistence/index.ts`, `src/persistence/schemas.ts`
 > - `src/urlCodec.ts` (the list-sharing half; trade-side codec is covered by `c-trade-builder.md`)
 > - Tests: `src/listMatching.test.ts`, `src/applySelectionFilters.test.ts`, `src/hooks/useSelectionFilters.test.ts`, `src/hooks/useWants.test.ts`, `src/hooks/useAvailable.test.ts`, `src/persistence/migration.test.ts`, `src/persistence/schemas.test.ts`, `e2e/drawer.spec.ts`, `e2e/shared-list.spec.ts`, `e2e/recipient.spec.ts`, `e2e/curate-and-share.spec.ts`, `e2e/migration.auth.spec.ts`, `e2e/sync.auth.spec.ts`
@@ -64,8 +64,6 @@ The one-sentence version: **wants are cross-printing wishes keyed by `familyId`;
 **`src/hooks/useCommunityCards.ts`** — fetches `/api/me/community`. Returns `{ wantFamilyIds, availableProductIds, status }`; gated on being signed in.
 
 **`src/hooks/useSelectionFilters.ts`** — per-surface variant + set chip state with positive-selection semantics. Each surface (trade view, picker, etc.) passes its own storage keys so filters don't bleed between them. Exports pure reducers so `ListView` (which keeps filters ephemeral) can reuse the same mutual-exclusion rules as the persisted hook.
-
-**`src/hooks/useTrending.ts`** — fetches `/api/trending` — a community-wide "most-wanted families" list. Not used by the drawer itself; included here because trending is another read-side aggregation over the wants table.
 
 **`src/hooks/usePersistedState.ts`** — thin `useState` wrapper that mirrors to localStorage under a Zod schema. Used by several surfaces whose state needs to survive reloads (percentage slider, price mode, trade view mode).
 
@@ -196,7 +194,6 @@ Both `w` and `a` are compressed via deflate + base64url with a `~` prefix (`src/
 - `POST /api/popular-wants` — body `{ familyIds: string[] }`. Returns `{ counts: { familyId: userCount } }`. Anonymous-safe. Short cache (`s-maxage=30, swr=120`) because counts change as users edit, but not second-by-second.
 - `GET /api/user/<handle>` — public profile. `wants` is `null` when the user's `wantsPublic` flag is off; `available` is `null` when `availablePublic` is off. Cached `public, s-maxage=60, swr=300`.
 - `GET /api/me/community` — auth required. Returns `{ wantFamilyIds, availableProductIds }` for mutually-enrolled guild members who've opted into rollups.
-- `GET /api/trending` — auth-optional. Returns top-N most-wanted familyIds across the whole site.
 
 Note: `/api/sync/{wants,available}` and `/api/me/community` are served by consolidated dispatchers (`api/sync.ts`, `api/me.ts`) routed via `vercel.json` rewrites — see `j-infra.md` for the serverless function-count ceiling that drove consolidation.
 
@@ -209,7 +206,6 @@ Note: `/api/sync/{wants,available}` and `/api/me/community` are served by consol
 - `useRecipientProfile(handle)` — `{ profile, fetchState }`; the propose bar + trade-side picker share this so they don't each fetch.
 - `useCommunityCards(isSignedIn)` — `{ wantFamilyIds, availableProductIds, status }`.
 - `useSelectionFilters({ variants, sets })` — persisted variant/set chips; pass storage keys to scope.
-- `useTrending()` — site-wide most-wanted families.
 - `usePersistedState(key, schema, initial)` — generic localStorage-backed state.
 
 ### Components

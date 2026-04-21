@@ -32,7 +32,7 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 - **`detectViewMode(isSignedIn)`** — pure function at `src/routing/config.ts:212` that reads `window.location` and returns a `ViewMode`. Uses the `VIEW_ROUTES` table's `matches()` predicates in declaration order; first match wins.
 - **`VIEW_ROUTES`** — ordered table of `{ mode, matches, paramKeys }` at `src/routing/config.ts:113`. The `paramKeys` are consulted by `useTradeUrl`'s merge-write so a non-trade-builder view's params don't get stripped when a card is added.
 - **`VIEW_PARAM_KEYS`** — superset at `src/routing/config.ts:52` used by `nav.toX()` methods to blow away stale view params before setting the destination's. Deliberately excludes trade-codec keys (`y`/`t`/`pct`/`pm`) and trade-intent keys (`propose`/`counter`/`edit`/`from`/`autoBalance`).
-- **`NavigationApi`** — interface at `src/contexts/NavigationContext.tsx:28`. Methods named by destination (`toHome`, `toProposeWith`, `toSettings`), not by URL structure. Every in-app nav flows through one of these.
+- **`NavigationApi`** — interface at `src/contexts/NavigationContext.tsx:28`. Methods named by destination (`toHome`, `toTradesHistory`, `toSettings`), not by URL structure. Every in-app nav flows through one of these.
 - **Signed-in hint** — `localStorage` key `swu.signedInHint` at `src/hooks/useAuth.ts:41`. Pre-seeds `isSignedIn` on first render so a returning signed-in user doesn't flash the trade-builder view before `/api/auth/me` resolves. Advisory only; server remains the trust surface.
 - **Ghost user** — anonymous user minted by a shared-trade claim or open-session creation (see [`g-auth.md`](./g-auth.md)). `auth.user?.isAnonymous === true`. `HomeView` is swapped for `GhostHomeView` for this population at `src/App.tsx:432`.
 - **Trade intent** — the five query-param signals (`propose`, `from`, `counter`, `edit`, `autoBalance`) owned by `useTradeIntent`. The `NavigationApi` mirrors them into React state whenever a nav is issued so pushState-driven nav works without a reload (see `aeb0aa2`).
@@ -150,16 +150,16 @@ Ten methods named by destination. Every method that sets an intent param guarant
 4. `PriceDataProvider`'s mount effect calls `loadAllSets()` — catalog begins streaming in. `CardIndexProvider` rebuilds its `useMemo` each time `cards` changes.
 5. `/api/auth/me` resolves. If confirmed signed-in, the hint stays set and nothing visible changes. If signed-out, the hint clears and the `useEffect` at `src/App.tsx:194` re-runs `detectViewMode(false)` — if `prev` was `'home'` or `'trade'` we flip; any explicit view sticks.
 
-### In-app navigation (e.g., Home → Propose with @alice)
+### In-app navigation (e.g., Home → Trades history)
 
-1. Click handler calls `nav.toProposeWith('alice')`.
-2. `nav.toProposeWith` (`src/App.tsx:305`) computes the next `URLSearchParams`:
+1. Click handler calls `nav.toTradesHistory()`.
+2. `nav.toTradesHistory` (`src/App.tsx`) computes the next `URLSearchParams`:
    - `reset([])` drops every key in `VIEW_PARAM_KEYS` from the current params (so a stale `settings=1` or `community=1` can't survive).
-   - Adds `propose=alice` via the `extras` parameter.
-3. `pushTo(next)` writes `window.history.pushState(null, '', ...)` and calls `setViewMode(detectViewMode(isSignedIn))` — the new URL has `?propose=alice`, which matches the trade route's trade-intent-keys clause (`src/routing/config.ts:189`), so `viewMode` flips to `'trade'`.
-4. `intent.setIntent({ propose: 'alice', counter: null, edit: null })` mirrors the URL into React state. Without this, `useTradeIntent` would not re-read the URL until popstate, so `ProposeBar` wouldn't render.
+   - Adds `trades=1` via the `extras` parameter.
+3. `pushTo(next)` writes `window.history.pushState(null, '', ...)` and calls `setViewMode(detectViewMode(isSignedIn))` — the new URL has `?trades=1`, which matches the trades-history route rule (`src/routing/config.ts:146`), so `viewMode` flips to `'trades-history'`.
+4. Intent state isn't touched — trades-history doesn't own any trade-composer intent.
 
-These three writes (URL, `viewMode`, intent) are the in-lockstep triad. The pre-`nav` code path had them scattered across inline closures, which caused the Home → Propose regression fixed in `aeb0aa2` — the URL got `?propose=...` but `useTradeIntent` never re-read it, so the composer stayed blank. Every `nav.toX()` method now guarantees the triad by construction.
+These atomic writes (URL, `viewMode`, intent) are the in-lockstep triad every `nav.toX()` method guarantees by construction. The pre-`nav` code path had them scattered across inline closures, which caused a Home → Propose regression (`aeb0aa2`) — the URL got `?propose=...` but `useTradeIntent` never re-read it, so the composer stayed blank. Propose-to-a-handle nav happens via full-page `<a href="/?propose=handle">` links (from ProfileView + related surfaces) — those trigger App re-mount, which naturally re-reads URL + intent + viewMode in sync without needing a dedicated `nav.toX()` method.
 
 ### popstate (browser back/forward)
 
@@ -187,7 +187,7 @@ Each `nav.toX()` method follows the same three steps:
 
 1. Compute next URLSearchParams via `reset(keep, extras)`. `reset` always drops every key in `VIEW_PARAM_KEYS` then re-adds `keep` (preserved params) and `extras` (this destination's new params).
 2. `pushTo(next)` pushes the URL and runs `setViewMode(detectViewMode(isSignedIn))`.
-3. Mirror intent state: views that set intent params (`toBuildTrade`, `toProposeWith`) call `intent.setIntent(...)`; views that leave the composer (`toHome`) call `intent.clearIntent()`. Views that don't touch intent (`toSettings`, `toCommunity`, `toProfile`, `toTradeDetail`, `toTradesHistory`) leave intent alone — this matches the "user has a half-built propose, peeks at Community, comes back" mental model.
+3. Mirror intent state: views that set intent params (`toBuildTrade`) call `intent.setIntent(...)`; views that leave the composer (`toHome`) call `intent.clearIntent()`. Views that don't touch intent (`toSettings`, `toCommunity`, `toProfile`, `toTradeDetail`, `toTradesHistory`) leave intent alone — this matches the "user has a half-built propose, peeks at Community, comes back" mental model.
 
 `toSession` is the one exception: it does a full-page `window.location.href` navigation rather than pushState, because session state is server-authoritative (there's no SPA state worth preserving across session boundaries) and SessionView's mount needs to cleanly read the pathname.
 

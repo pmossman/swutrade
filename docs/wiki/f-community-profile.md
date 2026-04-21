@@ -11,7 +11,6 @@
 > - `src/hooks/useGuildMemberships.ts` — `/api/me/guilds` + enroll/patch + Discord refresh.
 > - `src/hooks/useAccountSettings.ts` — `/api/me/prefs` registry-driven self prefs.
 > - `src/hooks/useRecentPartners.ts` — `/api/me/recent-partners` chips in HandlePickerDialog.
-> - `src/hooks/useTrending.ts` — `/api/trending` (orphaned; see Tech debt).
 > - `api/me.ts` — single dispatcher for every `/api/me/*` action (prefs, guilds, community-members, community-activity, recent-partners).
 > - `api/user/[handle].ts` — public profile fetch for `/u/<handle>`.
 > - Schema rows in `lib/schema.ts`: `users` privacy columns (lines 30–88), `userPeerPrefs` (lines 103–126), `botInstalledGuilds` (lines 143–160), `userGuildMemberships` (lines 172–200), `communityEvents` (see migration 0016).
@@ -59,7 +58,6 @@ The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business r
 
 **`src/hooks/useRecentPartners.ts`** — five-chip recent trade-partner list. Fires once per dialog open; no refresh path (the dialog is remounted fresh each invocation, so staleness is bounded).
 
-**`src/hooks/useTrending.ts`** — residual hook calling `/api/trending`. See Tech debt; the trending strip was removed from `TradeSearchOverlay` on 2026-04-17 and no surface currently renders this hook's return value.
 
 ### Server
 
@@ -280,9 +278,9 @@ The "Send proposal" button is visually primary (gold), "Start shared trade" is s
 
 `SettingsView.tsx` inlines the breadcrumb + Done-button logic across five sub-views. An R2 routing slice considered extracting a shared `<DrillDownShell>` that owned breadcrumbs + Done. Dropped because the content variability was high enough that parameterizing it made the shell noisier than the duplication saved. If a sixth drill-down destination ships, revisit.
 
-### `useTrending` is orphaned
+### ~~`useTrending` orphan~~ — deleted 2026-04-21
 
-`src/hooks/useTrending.ts` calls `/api/trending` and is referenced only from `NEXT.md`. The trending strip was removed from `TradeSearchOverlay` on 2026-04-17 (NEXT.md:342) because the empty-state layout was too busy and the feature wasn't load-bearing at current scale. The endpoint was kept because "community view is a likely future home." Options: (a) surface in the Community Overview tab, (b) delete both the hook and the endpoint. Neither has been done.
+`src/hooks/useTrending.ts` + `api/trending.ts` + the integration test were deleted after the original strip removal (2026-04-17) never found a new home. Option (b) in the original audit entry. If trending resurfaces (e.g., in the Community Overview tab), rebuild the hook alongside the surface that consumes it.
 
 ### `as any` in ProfileView
 

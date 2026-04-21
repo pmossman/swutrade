@@ -8,7 +8,7 @@ import { createContext, useContext, type ReactNode } from 'react';
  * (aeb0aa2) and the inline `navigateParams` closures it touched.
  *
  * Shape principles:
- *   - Methods are named by DESTINATION ("toProposeWith", "toSettings")
+ *   - Methods are named by DESTINATION ("toTradesHistory", "toSettings")
  *     not by the URL structure. Call sites read as user intent, not as
  *     query-param manipulation.
  *   - Any method that sets an intent param (propose / counter / edit /
@@ -34,11 +34,6 @@ export interface NavigationApi {
    *  by the "+ New trade" CTA. Clears trade intents so a stale
    *  in-session propose doesn't resume silently. */
   toBuildTrade(): void;
-
-  /** Proposal composer aimed at a specific handle. `handle` may or may
-   *  not be in the viewer's communities — validation happens at the
-   *  composer. */
-  toProposeWith(handle: string): void;
 
   /** "Start a trade" from a profile page. Carries sender context via
    *  `?from=` and optionally fires the auto-balance one-shot. */

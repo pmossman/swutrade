@@ -307,10 +307,6 @@ function App() {
         pushTo(reset([], { view: 'trade' }));
         intent.setIntent({ propose: null, counter: null, edit: null });
       },
-      toProposeWith: handle => {
-        pushTo(reset([], { propose: handle }));
-        intent.setIntent({ propose: handle, counter: null, edit: null });
-      },
       toStartTradeFrom: (fromHandle, autoBalance) => {
         handleStartTrade(fromHandle, autoBalance);
       },
