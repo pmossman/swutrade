@@ -167,16 +167,21 @@ test.describe('Shared session lifecycle', () => {
     try {
       await a.page.getByRole('button', { name: /Invite someone/i }).first().click();
       await expect(a.page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
-      // Open-slot invite surface is visible — QR + waiting-for-
-      // counterpart copy + the "Cancel this invitation" link.
-      await expect(a.page.getByText(/Waiting for your counterpart/i)).toBeVisible({ timeout: 10_000 });
+      // Open-slot invite surface is visible — QR + "Share this QR or
+      // link" heading + the "Cancel this invitation" link. "Share this
+      // QR or link" is unique to the invite panel; the string
+      // "Waiting for your counterpart" also shows up as the empty-state
+      // label on the counterpart TradeSide after cancel, so we match on
+      // the unique invite-panel copy instead.
+      const invitePanelHeading = a.page.getByText(/Share this QR or link/i);
+      await expect(invitePanelHeading).toBeVisible({ timeout: 10_000 });
       const cancelLink = a.page.getByRole('button', { name: /Cancel this invitation/i });
       await expect(cancelLink).toBeVisible();
       await cancelLink.click();
 
       // Post-cancel: invite surface is gone, terminal banner is up.
       await expect(a.page.getByText(/Trade cancelled/i)).toBeVisible({ timeout: 10_000 });
-      await expect(a.page.getByText(/Waiting for your counterpart/i)).toHaveCount(0);
+      await expect(invitePanelHeading).toHaveCount(0);
       await expect(a.page.getByRole('button', { name: /Cancel this invitation/i })).toHaveCount(0);
 
       expect(filterConsoleErrors(a.errors)).toEqual([]);
