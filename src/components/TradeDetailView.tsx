@@ -21,14 +21,15 @@ interface TradeDetailViewProps {
  * a status badge, chain-context links if this is part of a counter
  * chain, the activity timeline, and role-appropriate actions:
  *
- *   - Proposer + pending: Cancel · Edit · Nudge
- *   - Recipient + pending: Accept · Counter · Decline
+ *   - Proposer + pending: Edit · Nudge · Cancel this proposal
+ *   - Recipient + pending: Move forward (Accept as-is · Edit together)
+ *                        + Push back (Counter offer · Decline)
  *   - Anyone + thread-delivered: Open thread in Discord
  *
- * Counter is a deep-link to the web composer (/?counter=<id>) since
- * it's a multi-step edit surface. Accept/Decline fire inline via the
- * web endpoints, duplicating the bot button surface for users who
- * prefer staying in the web app.
+ * Counter + Edit-together are deep-links to the web composer
+ * (/?counter=<id>) or a shared session (/s/<code>); Accept + Decline
+ * fire inline via the web endpoints, duplicating the Discord-bot
+ * button surface for users who prefer the web.
  */
 export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
   const auth = useAuthContext();
@@ -252,9 +253,11 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
 }
 
 /**
- * Role-aware action cluster. Recipient gets Accept/Counter/Decline on
- * a pending; proposer gets Cancel/Edit/Nudge. Closed proposals render
- * nothing — the status badge + timestamps tell the story.
+ * Role-aware action cluster. Recipient sees two response groups
+ * ("Move forward" — Accept as-is, Edit together / "Push back" —
+ * Counter offer, Decline); proposer gets Edit/Nudge/Cancel. Closed
+ * proposals render nothing — the status badge + timestamps tell the
+ * story.
  */
 function ActionBar({
   trade,
@@ -279,43 +282,65 @@ function ActionBar({
 
   if (trade.viewerIsRecipient) {
     const proposerHandle = trade.proposer?.handle ?? 'them';
+    // Two response groups, split to make the mental model obvious:
+    //   (1) Move forward  — Accept (as-is) · Edit together (shared canvas)
+    //   (2) Push back     — Counter · Decline
+    // v1 shipped all four as a flat wrap-row with Edit together
+    // appended last (UX-A3 in the audit) — reads as "Accept/Counter/
+    // Decline are one thing and Edit-together is a tacked-on fourth
+    // option". Grouping + ordering forces the question the user is
+    // actually answering: "do I take this, or push back?" Colors keep
+    // their audit-documented meaning (emerald=success, cyan=shared,
+    // red=destructive, neutral=keep-negotiating).
     return (
-      <section className="flex flex-col gap-2">
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onAccept}
-            disabled={mutating}
-            data-testid="accept-proposal"
-            className="flex-1 sm:flex-none px-4 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/50 text-emerald-200 text-sm font-bold hover:bg-emerald-500/25 hover:border-emerald-400/70 transition-colors disabled:opacity-50 disabled:cursor-wait"
-          >
-            {mutating ? 'Working…' : 'Accept'}
-          </button>
-          <a
-            href={`/?counter=${encodeURIComponent(trade.id)}`}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors"
-          >
-            Counter
-          </a>
-          <button
-            type="button"
-            onClick={onDecline}
-            disabled={mutating}
-            data-testid="decline-proposal"
-            className="flex-1 sm:flex-none px-4 h-9 rounded-lg bg-red-500/10 border border-red-500/40 text-red-300 text-sm font-bold hover:bg-red-500/20 hover:border-red-400/60 transition-colors disabled:opacity-50 disabled:cursor-wait"
-          >
-            {mutating ? 'Working…' : 'Decline'}
-          </button>
-          <button
-            type="button"
-            onClick={onPromoteToShared}
-            disabled={mutating}
-            data-testid="promote-to-shared"
-            title={`Open a shared trade canvas with @${proposerHandle} so you can both edit`}
-            className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors disabled:opacity-50 disabled:cursor-wait"
-          >
-            {mutating ? 'Working…' : 'Edit together'}
-          </button>
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
+          <div className="text-[10px] tracking-[0.18em] uppercase text-gray-500 font-bold">
+            Move forward
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onAccept}
+              disabled={mutating}
+              data-testid="accept-proposal"
+              className="flex-1 sm:flex-none px-4 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/50 text-emerald-200 text-sm font-bold hover:bg-emerald-500/25 hover:border-emerald-400/70 transition-colors disabled:opacity-50 disabled:cursor-wait"
+            >
+              {mutating ? 'Working…' : 'Accept as-is'}
+            </button>
+            <button
+              type="button"
+              onClick={onPromoteToShared}
+              disabled={mutating}
+              data-testid="promote-to-shared"
+              title={`Open a shared trade canvas with @${proposerHandle} so you can both edit`}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 h-9 rounded-lg bg-cyan-500/15 border border-cyan-500/50 text-cyan-200 text-sm font-bold hover:bg-cyan-500/25 hover:border-cyan-400/70 transition-colors disabled:opacity-50 disabled:cursor-wait"
+            >
+              {mutating ? 'Working…' : 'Edit together'}
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="text-[10px] tracking-[0.18em] uppercase text-gray-500 font-bold">
+            Push back
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <a
+              href={`/?counter=${encodeURIComponent(trade.id)}`}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center px-4 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors"
+            >
+              Counter offer
+            </a>
+            <button
+              type="button"
+              onClick={onDecline}
+              disabled={mutating}
+              data-testid="decline-proposal"
+              className="flex-1 sm:flex-none px-4 h-9 rounded-lg bg-red-500/10 border border-red-500/40 text-red-300 text-sm font-bold hover:bg-red-500/20 hover:border-red-400/60 transition-colors disabled:opacity-50 disabled:cursor-wait"
+            >
+              {mutating ? 'Working…' : 'Decline'}
+            </button>
+          </div>
         </div>
         {error && <div className="text-[11px] text-red-300">{error}</div>}
       </section>
