@@ -61,10 +61,14 @@ test.describe('Shared list URL roundtrip', () => {
     await page.goto(SHARE_URL + '&from=pmoss');
     await expect(page.getByText('SHARED LIST')).toBeVisible({ timeout: 10_000 });
 
-    // Header gains a "@pmoss" link that navigates to /?profile=pmoss.
+    // Header gains a "@pmoss" link that navigates to /u/pmoss.
+    // (Normalized 2026-04-21 in UX-A6 — ListView previously used the
+    // `?profile=` query form while every other profile entry in the
+    // app used /u/<handle>. Both routes still decode via
+    // `detectViewMode` but the pathname form is the canonical one.)
     const senderLink = page.getByRole('link', { name: '@pmoss' }).first();
     await expect(senderLink).toBeVisible();
-    await expect(senderLink).toHaveAttribute('href', /\/\?profile=pmoss/);
+    await expect(senderLink).toHaveAttribute('href', /\/u\/pmoss/);
 
     // Footer swaps its attribution copy from "Anonymous list" to the
     // sender's handle.
