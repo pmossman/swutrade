@@ -40,151 +40,60 @@ Skipping any of 1–3 is a bug in the process.
 
 Ordered smallest / highest-clarity first so the between-slice ritual feedback loop stays fast. Re-order as priorities shift.
 
-### 1. UX-A5 — Ghost → real-user merge reassurance
+### 1. Wishlist / Binder split (foundational)
 
-**Why:** Sign-in silently migrates ghost trades + sessions into the real user row (`mergeGhostIntoRealUser` in `lib/sessions.ts`, called from `api/auth.ts` callback). Silent success in ownership transitions is anxiety-inducing — users wonder if they lost their in-progress trade.
+**Why:** Home presents "Your wishlist" and "Your binder" as two first-class modules, but both deep-link into the same `ListsDrawer` with tabs labelled "Wants" + "Available". The copy mismatch (wishlist↔wants, binder↔available) is a comprehension gap; more importantly, the shared edit surface couples the two concepts' evolution. They have different mental models (hunting vs. holding) and different data shapes (wants carries priority + variant restriction; available does not) — any improvement to one has to defend against regressions in the other. Splitting them unblocks independent evolution.
 
-**What ships:**
-- New `users.merge_banner_dismissed_at timestamptz` column (nullable). Additive migration.
-- OAuth callback records the merged-from ghost id in the iron-session cookie (or a short-lived signed URL fragment) so the client knows a merge just happened.
-- One-shot gold banner on first post-merge Home / Session render: "We carried your trade with @alice over. View it." Dismissible via button that writes `merge_banner_dismissed_at = now()`.
-- Only fires once per real-user account; subsequent sign-ins on new devices don't re-trigger.
+**What ships (split slice only — no new features):**
+- Two dedicated full-page views reachable from Home: `/?view=wishlist` and `/?view=binder` (or the equivalent via existing query-param router). Each owns its own layout + chrome.
+- Reconcile vocabulary: "Wishlist" / "Binder" everywhere user-facing (headers, nav, breadcrumbs, empty states). Schema names (`wants` / `available`) stay internal.
+- Keep the in-trade-builder drawer as a slim quick-edit sidebar only — it's load-bearing for "let me add a card I have while staging a trade." Home's module links route to the dedicated views, not the drawer.
+- Feature parity with today's drawer tabs — no new functionality in this slice.
+- `useNavigation` grows `toWishlist()` / `toBinder()` methods; Home modules call them.
+- Route config (`src/routing/config.ts`) adds the two new view modes + STANDALONE flags so `useTradeUrl` leaves their params alone.
 
 **Done when:**
-- [ ] Migration applied to Neon.
-- [ ] Integration test covering the callback flags the cookie + the banner appears on next load.
-- [ ] e2e test: ghost opens a session, signs in, banner appears, dismiss persists across reload.
+- [ ] Two dedicated views render feature-equivalent to today's drawer tabs.
+- [ ] Home's wishlist + binder modules link to the dedicated views.
+- [ ] Drawer retains only the in-trade-builder role; no Home entry point into it.
+- [ ] Vocabulary reconciled across the wishlist/binder user-facing surfaces.
+- [ ] e2e specs that clicked into "Edit wishlist →" / "Edit binder →" updated for the new routes.
 - [ ] Between-slice ritual passes.
+
+**Follow-up:** the enhancement backlog below lives on its own so we can pick per-slice after this foundation lands.
 
 ---
 
-### 2. UX-A3 — Reframe TradeDetailView response buttons
+## Wishlist / Binder enhancement backlog
 
-**Why:** `TradeDetailView` shows four response buttons on a pending proposal: Accept / Counter / Decline / Edit Together. First three are proposal vocabulary, Edit-Together is session vocabulary. v2 dogfooding (tabled below) reinforced that this mismatch is a real comprehension gap — the exact confusion Phase 5b meant to collapse.
+Each item is a potential per-slice pickup after the **Wishlist / Binder split (foundational)** queue item lands. Nothing here is committed; they're a menu to choose from as real use warrants. Items are intentionally unsized — scope them when one is promoted to the Queue.
 
-**What ships:**
-- Relabel as ways-to-respond with consistent vocabulary: "Accept · Edit together · Counter · Decline".
-- Visually group Accept + Edit-together (positive responses) vs Counter + Decline.
-- Consider Edit-together as the middle-ground default when the recipient wants to negotiate *and* see cards change live.
-- Copy change in `src/components/TradeDetailView.tsx`; possibly a minor reshape of the action bar.
+### Wishlist (forward-looking — "what I'm hunting for")
 
-**Done when:**
-- [ ] Labels + visual grouping updated.
-- [ ] e2e spec assertions updated where they reference the old labels.
-- [ ] Between-slice ritual passes.
+- **Priority made hero.** Today's star toggle + sort-pinned-first are functional but understated. A dedicated "top 5 priorities" strip at the top, plus a stronger visual pinning affordance, would match the "these are the cards I most want" mental model.
+- **Richer variant restriction UX.** Current editor is a text-modal; a visual picker (chips with art thumbnails, or a variant-gallery) would make "I want ONLY hyperspace Luke" legible at a glance instead of requiring clicks to confirm.
+- **Community match signal.** Inline per-row "3 traders in your communities have this" with a deep-link into the matched members. Reuses `useCommunityCards` data already flowing into the trade builder's overlap chip.
+- **Staleness surface.** "In your wishlist for 47 days" affordance + optional auto-remove prompts after N months. Wishlist-rot is a real problem for active traders.
+- **Alert subscriptions.** Per-card toggle: "Tell me when someone in my communities lists this card as available." Builds on the Phase 3 notifications inbox.
+- **Wishlist sharing shape.** Today wishlists are shareable as a URL-encoded list. A richer "publish my wishlist to my communities" flow would push matching logic to the server and notify matches proactively.
+- **Budget awareness.** Total-wishlist value indicator + per-item price trend ("up 12% this week"). Adjacent to the existing price-mode plumbing.
 
----
+### Binder (backward-looking — "what I have")
 
-### 3. Decoder unification (followup from 2026-04-20 share-image bug)
+- **Value headline.** Big "$X market value · $Y low · $Z mid" strip at the top with toggle for which mode drives it. Binder-total is a meaningful number physical binders can't easily produce.
+- **Set-completion progress.** "JTL Standard: 34/72 cards · Hyperspace: 12/72" — shows collection depth, enables set-completion as a trading goal.
+- **Grouping by set.** Mirror physical-binder pages — expand/collapse per set, drag to reorder sets (stretch), pinned "recently added" section at top.
+- **Condition field.** NM / LP / MP / HP / D per card. TCG-native, deliberately skipped in v0; worth revisiting once proposals need condition negotiation.
+- **Outbound match signal.** "5 of your binder cards are on someone's wishlist" — inverse of the wishlist-side match chip, points at trade opportunities the user isn't actively hunting for.
+- **Bulk import.** TCGPlayer collection export → CSV paste → binder-seed. Collection-tools users arrive with data elsewhere; making import one-shot removes a migration barrier.
+- **Export + share.** Binder CSV export for personal records; "share my binder with @alice" shortcut that links to a read-only binder view.
+- **Duplicate insight.** "You have 4× Luke Skywalker (Standard)" callouts + suggestion to split excess into wants fodder.
 
-**Why:** Today's fix (commits `9555d86` + `fcdf9aa`) patched the symptom — wants/available share params are now decompressed server-side. But two parallel decoder implementations still exist: `src/urlCodec.ts` (client encode + decode, `restriction` shape) and `lib/listShareCodec.ts` (server decode, `acceptedVariants` shape). Any future change to the client encoder has to be mirrored server-side or the same divergence class recurs. The new `tests/api/og-codec.test.ts` catches drift but shouldn't be the only guard.
+### Cross-cutting (affects both views after the split)
 
-**What ships:**
-- Single decoder module usable from both client and server (likely in `lib/listShareCodec.ts` since `lib/` is already server-safe and importable from `src/`).
-- A small shape adapter for the `restriction` (client) ↔ `acceptedVariants` (server) mismatch. Adapter lives with the decoder.
-- `src/urlCodec.ts` delegates decoding to the shared module; encoder stays client-side (browser-only-safe imports only).
-- Delete the duplicated logic.
-
-**Done when:**
-- [ ] One decoder source of truth; `grep 'function decodeWants'` returns one match.
-- [ ] Adapter for shape diff is covered by its own unit test.
-- [ ] `tests/api/og-codec.test.ts` still passes (round-trip remains the integration guard).
-- [ ] Between-slice ritual passes.
-
----
-
-### 4. UX-A2 — Collapse four-bar mutex into a PrimaryActionBar
-
-**Why:** `EditBar / CounterBar / ProposeBar / AutoBalanceBanner` stack above the trade builder as a mutex (`src/App.tsx:575–624`). Each is a different *mode* of the same canvas. v2 dogfooding confirmed this is the single biggest visual-hierarchy gap: v2's bottom-pinned primary CTA was the strongest lesson, and v1's top-of-screen composer bars are where the misalignment lives.
-
-**What ships:**
-- New `<PrimaryActionBar>` pinned bottom on mobile (desktop: stay top for now, or float). State-driven label: Send proposal / Save counter / Save edit / Invite someone / Confirm trade.
-- The three composer bars (Edit / Counter / Propose) shrink to informational content only — matchmaker hint, note textarea, imbalance callout. Their "Send" / "Save" buttons move into `PrimaryActionBar`.
-- `AutoBalanceBanner` stays as informational (unchanged or minor).
-- The `useComposerBar` hook already consolidates send-state-machine logic — PrimaryActionBar reads from that.
-
-**Done when:**
-- [ ] Primary CTA is visually dominant and bottom-pinned on mobile.
-- [ ] Composer bars render only informational content; no Send buttons left inside them.
-- [ ] Desktop regression check — action strip + PrimaryActionBar don't both occupy primary weight.
-- [ ] Propose / counter / edit / auto-balance e2e specs still pass.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** UX-A2 from the 2026-04-19 audit; confirmed by v2 dogfood.
-
----
-
-### 5. Copy + context fixes
-
-**Why:** Clarity wins bundled: Discord DM text is third-person and confusing on first read, the Counter button label is ambiguous, post-send navigation goes to the wrong destination, landing-page empty state has no explanation, CounterBar drops users cold into a composer.
-
-**What ships:**
-- `lib/proposalMessages.ts`: field names "They're offering" → "You would receive", "They're asking for" → "You would give" (recipient-first framing).
-- `lib/proposalMessages.ts`: Counter button label "Counter" → "Counter offer".
-- `src/components/ProposeBar.tsx` + `CounterBar.tsx`: post-send primary link "Back to community" → "View your trades" (→ `/?trades=1`), keep community as secondary.
-- `src/components/CounterBar.tsx`: context banner on mount — "Responding to @X's proposal. Sides are flipped — you're now offering what they asked for. [View original]". Dismissible with localStorage.
-- `src/App.tsx` (trade view empty state): one-line subtitle explaining the two-panel trade model.
-- `src/components/AccountMenu.tsx`: sign-in popover copy reframed to lead with community/trade, not "sync".
-- `src/components/SettingsView.tsx`: 1-line note on EnrollableGuildCard explaining the bundled toggle behavior when enrolling.
-
-**Done when:**
-- [ ] All copy changes in place, spot-checked in the running app.
-- [ ] CounterBar's new banner dismissible, remembered via localStorage.
-- [ ] propose.auth e2e + trades-history e2e updated if any assertions referenced changed text.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** UX_REVIEW CU1, CU2, CU3, CU4, CU7, CF6, CF7.
-
----
-
-### 6. UX-A4 — Rehome the Communities module
-
-**Why:** Communities module on Home competes with the trading loop. Mental model "check my Discord servers" ≠ "see my trades." Right now it's a sidebar widget on the main dashboard. v2 audit pushed for this removal — the destination already exists at `/?community=1` via NavMenu, and trade-relevant community signals (overlap chip in picker) are already surfaced in context.
-
-**What ships:**
-- Remove `<CommunitiesModule>` from `HomeView.tsx`.
-- Community-related empty state on Home if user has zero enrolled guilds → short CTA pointing to Settings.
-
-**Done when:**
-- [ ] Communities module no longer renders on Home.
-- [ ] Discovery path via NavMenu verified.
-- [ ] Community e2e specs still pass (they navigate via the main nav, not Home).
-- [ ] Between-slice ritual passes.
-
----
-
-### 7. UX-A6 — Profile entry-points audit
-
-**Why:** Multiple entry points to `/u/<handle>` (community member list, trade counterpart name, @mentions). Not verified they all route consistently or preserve context (e.g., returning after "Trade with @X").
-
-**What ships:**
-- Grep pass for every `nav.toProfile` / `/u/` navigation site.
-- Verify consistent Back-button behavior across entry points.
-- Profile view CTAs reflect the origin (e.g., "Back to your trades" when arriving from My Trades, "Back to @community" when arriving from community directory).
-
-**Done when:**
-- [ ] Audit doc or inline comment enumerates every entry point + its expected Back behavior.
-- [ ] Inconsistencies resolved (or deliberately accepted with a note).
-- [ ] Between-slice ritual passes.
-
----
-
-### 8. Test-file dedup
-
-**Why:** `makeFakeBot()` + proposal-row seeding helpers are duplicated across ~4 test files. A schema change to `trade_proposals` or the bot interface becomes an N-file fan-out. Shared helper `tests/api/discordFakes.ts` partially exists (from the Phase 5b work), but the migration isn't complete.
-
-**What ships:**
-- `tests/api/discordFakes.ts`: single canonical `createFakeDiscordBotClient(opts?: { sendFails?, editFails?, sendResponse? })`. 4 in-file variants deleted.
-- Extend `tests/api/helpers.ts` with `seedTradeProposal(overrides?) → { id, cleanup }`. Cleanup bound to id at creation time so failed inserts never leak.
-- Migrate existing call sites.
-
-**Done when:**
-- [ ] All 4 test files import from the shared fakes/fixtures.
-- [ ] `grep 'function makeFakeBot'` returns one match.
-- [ ] Full vitest suite green.
-- [ ] Between-slice ritual passes.
-
-**Pointers:** CODE_REVIEW A7; TEST_REVIEW 1, 2, 5.
+- **Quick-swap drawer.** From inside the trade builder, the drawer stays the fast-edit surface; consider swapping its tab UI for two distinct slim sidebars matching the dedicated views' vocabulary.
+- **Keyboard shortcuts.** `G W` → wishlist, `G B` → binder, as part of the broader keyboard-nav item in the Later section.
+- **Consistent empty states.** Wishlist empty state leans "add cards you want and we'll find matches"; binder empty state leans "add cards you have and we'll surface opportunities." They should be deliberately different, not a templated default.
 
 ---
 
@@ -258,6 +167,31 @@ Branch preserved for reference (no merge planned). `docs/v2/` scaffolding stays 
 ## Done
 
 *(append here as slices ship; newest-first)*
+
+### 2026-04-21 — First-run tutorial for signed-out users
+Commits: `9f50146`, `08f8519`. Three-step coachmark tour fires once on a signed-out user's first visit; never auto-resurfaces after dismissal. Steps: (1) centered welcome intro, (2) anchored to the Offering side's empty-state Add-cards tile, (3) anchored to the AccountMenu trigger with a Discord sign-in pitch. Gated on `!isSignedIn && !isAuthLoading && !localStorage['swu.tour.dismissedAt']` so returning users and signed-in users never see it. Replayable via a new "Show tutorial" entry in the signed-out AccountMenu popover that clears the flag. Custom lightweight overlay (no floating-ui / Radix dep) — backdrop with a box-shadow hole-punch around the anchor rect, callout card positioned above/below with viewport clamping. Playwright coverage: three tests in `e2e/tutorial.spec.ts` (shows-on-first-visit, skip-and-persist, replay-from-AccountMenu). All 18 existing anonymous e2e specs unchanged after `playwright.config.ts::use.storageState` pre-seeds dismissal; two auth specs that start anonymous (`session-lifecycle`, `session-live-trade`) add the same init-script dismissal.
+
+### 2026-04-21 — Fix: cancel on open-slot session didn't visibly take effect
+Commits: `1aafc96`, `9fa61f8`. User-reported: clicking "Cancel this invitation" on a waiting-for-counterpart session did nothing visible even though the DB row flipped to cancelled. Root cause: `SessionView.openSlot` was derived purely from `userBId === null`, which stays null on open-slot sessions even after cancel; the client rendered `<OpenSlotInvite>` whenever `openSlot === true` and guarded the terminal banner on `!openSlot`, so the QR card never went away. Redefined `openSlot = counterpartId === null && status === 'active'`; cancelled open sessions now drop into the standard `SessionIdentityStrip + TerminalBanner` path. Test gaps filled: new `sessions-write.test.ts` case covers cancel-on-open-slot via `createOpenSession` + asserts the returned `SessionView.openSlot` flag; new e2e case in `session-lifecycle.auth.spec.ts` clicks "Cancel this invitation" before a claim and asserts terminal banner renders. Follow-up: e2e locator tightened from `/Waiting for your counterpart/i` (also matches TradeSide's empty-state label) to `/Share this QR or link/i` (unique to the invite panel).
+
+### 2026-04-21 — UX-A4 walk-back: 2×2 Home grid + Communities reinstated
+Commits: `94c07a3`, `6b6e36a`. UX-A4 originally deleted `CommunitiesModule` from Home on the theory it competed with the trading loop. Walked back within hours: removal left a blank quadrant and buried enrolled servers behind the hamburger menu. Reinstated as a peer module in a new 2×2 Home grid — row 1 = Trades / Communities (active surfaces), row 2 = Wishlist / Binder (inventory). `StoresModule` deleted in the walk-back: reserving a dimmed placeholder for an unshipped Phase 4 feature wasn't earning its real estate; the LGS surface will ship its own when it lands. `CommunitiesModule` sorts guilds by trader count descending, caps at 5 rows, deep-links each into `/?community=1&guildId=<id>`.
+
+### 2026-04-21 — Streamline: orphan deletes + Batch A
+Commit: `a6fbfea`. Deleted the orphaned `useTrending` hook + `api/trending.ts` + integration test (was unused since the trending strip was removed from the picker on 2026-04-17, never found a new home). Deleted the `toProposeWith` method from `NavigationApi` + its implementation in App.tsx after a grep confirmed zero callers. Also fixed the `AutoBalanceBanner` primary-action gap: when a user arrives via `?from=@bob&autoBalance=1` and the banner applies a match, a `Propose to @bob` button now lands in `PrimaryActionBar` for the send step. Commit `baae51e`.
+
+### 2026-04-21 — UX cohesion wave (UX-A1 through UX-A6) + cohesion polish
+Series of commits shipping the 2026-04-19 UX audit findings. Highlights:
+- **UX-A1** (`6a96994`): Lists drawer promoted into two first-class Home modules (Wishlist + Binder). Precursor to the dedicated-view split in the Queue.
+- **UX-A2** (`cb37bcc`): Four-bar mutex (`EditBar`/`CounterBar`/`ProposeBar`/`AutoBalanceBanner`) collapsed into a shared bottom-pinned `<PrimaryActionBar>` reading from a new `PrimaryActionContext`. Composer bars now render informational content only; primary CTAs live in one place.
+- **UX-A3** (`5a2e08e`): `TradeDetailView` response buttons regrouped into "Move forward" (Accept + Edit-together, cyan) vs "Push back" (Counter + Decline) intent groups.
+- **UX-A4** (`94c07a3` + `6b6e36a`): Communities module removed, then reinstated in 2×2 grid. See separate Done entry.
+- **UX-A5** (`0be3d52`): Ghost → real-user merge reassurance banner. New `users.pendingMergeBanner` cookie slot; OAuth callback flags it when ghost→real session migration moved ≥1 row; `<MergeReassuranceBanner>` renders a one-shot gold toast + clears via `POST /api/auth/dismiss-merge-banner`.
+- **UX-A6** (`9ba980c`): origin-aware back-breadcrumb on ProfileView via `document.referrer` — "Back to trades" vs "Back to community" based on where the user came from. Normalized `?profile=` / `/u/` navigation sites.
+- **Mobile polish** (`b67542e`): haptics helper respecting `prefers-reduced-motion`, 44×44 tap targets, muted side-identity chrome (outer panel neutral, pale tint chip behind the OFFERING/RECEIVING label only).
+- **Copy + context** (`0a0aeca`, `f4994a1`, `9eec0b3`): recipient-first proposal DM framing, counter-bar side-flip notice, post-send primary link → "View your trades", "Invite someone" hidden in propose/counter/edit/auto-balance modes.
+- **Test dedup** (`a7c2b95`): three fake-bot variants consolidated into `createRecordingFakeBot`.
+- **Decoder unification** (`da1577a`): client/server share decoders unified through `lib/listShareCodec.ts` with a shape adapter for the `restriction` ↔ `acceptedVariants` mismatch.
 
 ### 2026-04-20 — Share-list image fix + cross-boundary codec test
 Commits: `9555d86`, `fcdf9aa`. Beta user reported signed-out share-image for a wants list showed no cards. Root cause: commit `43b7fec` (2026-04-15) added deflate+base64url compression to `src/urlCodec.ts` wants/available encoders but the duplicate decoders in `api/og.ts` never got the matching `decompressParam` step — new share URLs carried the `~` prefix, `split(',')` found nothing, `renderListImage` returned an empty PNG. Zero test coverage for `api/og.ts` meant the divergence at the client/server boundary was invisible. Fix: added decompression to the server decoder with a try/catch for malformed payloads (empty image beats 500 on a bad URL). Extracted decoders to `lib/listShareCodec.ts` so tests can import without triggering og.ts's heavy JSON-data imports (not present in CI). New `tests/api/og-codec.test.ts` (9 tests) asserts client-encode → server-decode round-trip. Followup queued: unify the two decoder implementations (queue item #3).
