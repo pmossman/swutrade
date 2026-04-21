@@ -252,12 +252,26 @@ export function CounterBar({
     // Primary action (Send counter) lives in the shared PrimaryActionBar.
     // This banner is informational context only.
     return (
-      <span className="flex-1 min-w-0">
-        <span className="text-gray-400">Countering </span>
-        <strong className="text-gold">@{proposerHandle}</strong>'s proposal
-        <span className="text-gray-500 text-[11px] ml-2">
-          · Offer <strong className="text-emerald-300">{offerCount}</strong>
-          · Receive <strong className="text-blue-300">{receiveCount}</strong>
+      <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <span>
+          <span className="text-gray-400">Countering </span>
+          <strong className="text-gold">@{proposerHandle}</strong>'s proposal
+          <span className="text-gray-500 text-[11px] ml-2">
+            · Offer <strong className="text-emerald-300">{offerCount}</strong>
+            · Receive <strong className="text-blue-300">{receiveCount}</strong>
+          </span>
+        </span>
+        {/* Side-flip explainer — counters invert the perspective:
+            what the original proposer offered is now on YOUR
+            Receiving side. Without this note, users tried to edit
+            the "wrong" side based on their mental model of the
+            proposal they were responding to. Persistent (not
+            dismissible) because each counter flow is independent and
+            a one-time dismiss across sessions doesn't save more
+            than the sentence takes to read. */}
+        <span className="text-[10px] text-gray-500 leading-tight">
+          Sides are flipped — what they offered now lines up with your
+          Receiving side.
         </span>
       </span>
     );

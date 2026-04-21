@@ -52,7 +52,7 @@ export function AccountMenu({ auth }: AccountMenuProps) {
             <div className="px-2 py-1.5 border-b border-space-700 mb-1">
               <div className="text-sm font-semibold text-gray-100">Not signed in</div>
               <div className="text-[11px] text-gray-500 leading-relaxed">
-                Sync lists, share a profile, and match trades with other players.
+                Send trade proposals, join your Discord communities, and find matches with other players.
               </div>
             </div>
 

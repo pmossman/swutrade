@@ -165,11 +165,17 @@ export function buildProposalMessage(
     description: ctx.message ? `> ${ctx.message}` : undefined,
     fields: [
       {
-        name: `They're offering (${formatSubtotal(ctx.offeringCards)})`,
+        // Recipient-first framing — these DMs land in the RECIPIENT's
+        // inbox. "You would receive / give" is unambiguous about who
+        // ends up with what; the older "They're offering / asking for"
+        // required mentally flipping perspective every time and read
+        // awkwardly with imbalance callouts (also phrased from the
+        // recipient's POV).
+        name: `You would receive (${formatSubtotal(ctx.offeringCards)})`,
         value: formatCardList(ctx.offeringCards),
       },
       {
-        name: `They're asking for (${formatSubtotal(ctx.receivingCards)})`,
+        name: `You would give (${formatSubtotal(ctx.receivingCards)})`,
         value: formatCardList(ctx.receivingCards),
       },
       ...(imbalance ? [imbalance] : []),
@@ -630,11 +636,17 @@ export function buildThreadApprovalRequestMessage(
     description: ctx.message ? `> ${ctx.message}` : undefined,
     fields: [
       {
-        name: `They're offering (${formatSubtotal(ctx.offeringCards)})`,
+        // Recipient-first framing — these DMs land in the RECIPIENT's
+        // inbox. "You would receive / give" is unambiguous about who
+        // ends up with what; the older "They're offering / asking for"
+        // required mentally flipping perspective every time and read
+        // awkwardly with imbalance callouts (also phrased from the
+        // recipient's POV).
+        name: `You would receive (${formatSubtotal(ctx.offeringCards)})`,
         value: formatCardList(ctx.offeringCards),
       },
       {
-        name: `They're asking for (${formatSubtotal(ctx.receivingCards)})`,
+        name: `You would give (${formatSubtotal(ctx.receivingCards)})`,
         value: formatCardList(ctx.receivingCards),
       },
       ...(imbalance ? [imbalance] : []),

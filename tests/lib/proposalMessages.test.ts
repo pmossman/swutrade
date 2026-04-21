@@ -15,10 +15,14 @@ function snap(name: string, variant = 'Standard', qty = 1, unitPrice = 1.23): Tr
 }
 
 function cardListField(body: ReturnType<typeof buildProposalMessage>, kind: 'offering' | 'asking') {
+  // Recipient-first field labels (renamed 2026-04-21 — see
+  // `lib/proposalMessages.ts` for the rationale).
+  //   offering side → "You would receive"
+  //   asking  side → "You would give"
   const embed = body.embeds?.[0];
   const field = embed?.fields?.find(f => kind === 'offering'
-    ? f.name.startsWith("They're offering")
-    : f.name.startsWith("They're asking")
+    ? f.name.startsWith('You would receive')
+    : f.name.startsWith('You would give')
   );
   return field?.value ?? '';
 }
@@ -67,7 +71,7 @@ describe('formatCardList truncation (via buildProposalMessage)', () => {
   });
 
   it('subtotal calculation includes ALL cards, not just the shown ones', () => {
-    // Subtotal is on the field NAME (e.g. "They're offering ($X.XX)")
+    // Subtotal is on the field NAME (e.g. "You would receive ($X.XX)")
     // — must reflect the full value regardless of truncation, so the
     // recipient doesn't see a misleading "low" total.
     const cards = Array.from({ length: 40 }, () =>
@@ -75,7 +79,7 @@ describe('formatCardList truncation (via buildProposalMessage)', () => {
     );
     const body = buildProposalMessage({ ...baseCtx, offeringCards: cards });
     const embed = body.embeds?.[0];
-    const offeringField = embed?.fields?.find(f => f.name.startsWith("They're offering"));
+    const offeringField = embed?.fields?.find(f => f.name.startsWith('You would receive'));
     // 40 cards × $10 = $400 shown in the header regardless of truncation.
     expect(offeringField?.name).toContain('$400.00');
   });

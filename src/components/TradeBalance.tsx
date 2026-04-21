@@ -156,6 +156,16 @@ export function TradeBalance({
           {actionLine}
         </div>
       )}
+      {/* Empty-state subtitle — first-time users land on two empty
+          panels and a blank balance bar; a one-liner naming the
+          two-side model (you give / you get) is worth more than the
+          vertical space it costs. Hidden as soon as ANY card is in
+          play, so returning users with active trades never see it. */}
+      {balance.tier === 'empty' && (
+        <div className="text-[10px] sm:text-[11px] text-center text-gray-600 mt-0.5 leading-relaxed">
+          Add cards to each side: what you'd give, what you'd get.
+        </div>
+      )}
     </div>
   );
 
