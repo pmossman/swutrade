@@ -19,7 +19,7 @@ import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
 type TradeCardSnapshot = CardSnapshot;
 import { extractVariantLabel } from '../variants';
-import { hapticMedium, hapticSuccess } from '../utils/haptics';
+import { hapticMedium, hapticSoft, hapticSuccess } from '../utils/haptics';
 
 /**
  * Shared-state trade canvas — the interactive surface for a session
@@ -59,8 +59,9 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   });
 
   const api = useSession(sessionId);
-  const { session, preview, status, saveCards, confirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen } = api;
+  const { session, preview, status, saveCards, confirm, unconfirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen } = api;
   const [claiming, setClaiming] = useState(false);
+  const [unconfirming, setUnconfirming] = useState(false);
 
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
@@ -156,6 +157,16 @@ export function SessionView({ sessionId }: { sessionId: string }) {
       setCancelling(false);
     }
   }, [cancel, cancelling, session]);
+  const handleUnconfirm = useCallback(async () => {
+    if (unconfirming || !session || session.status !== 'active') return;
+    hapticSoft();
+    setUnconfirming(true);
+    try {
+      await unconfirm();
+    } finally {
+      setUnconfirming(false);
+    }
+  }, [unconfirm, unconfirming, session]);
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
@@ -217,7 +228,10 @@ export function SessionView({ sessionId }: { sessionId: string }) {
               <SessionIdentityStrip session={session} />
 
               {terminal ? (
-                <TerminalBanner session={session} />
+                <TerminalBanner
+                  session={session}
+                  isSignedIn={!!auth.user && !auth.user.isAnonymous}
+                />
               ) : hasUnseenCounterpartEdit ? (
                 <button
                   type="button"
@@ -227,6 +241,18 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   @{counterpartHandle ?? 'Your counterpart'} made changes. Tap to dismiss.
                 </button>
               ) : null}
+
+              {/* Active-session commitment strip — surfaces who has
+                  confirmed and what's needed next. Only one of the two
+                  partial states renders (viewer-only or counterpart-
+                  only) since "both confirmed" is a terminal settled
+                  state handled by the banner above. */}
+              {!terminal && (session.confirmedByViewer || session.confirmedByCounterpart) && (
+                <CommitmentStrip
+                  viewerConfirmed={session.confirmedByViewer}
+                  counterpartHandle={counterpartHandle}
+                />
+              )}
 
               <TradeBalance
                 yourCards={viewerTradeCards}
@@ -252,7 +278,18 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   sharedLists={null}
                   collapsed={false}
                   counterpartHandle={counterpartHandle}
-                  readOnly={terminal}
+                  // Once the viewer has confirmed, their side locks.
+                  // Any edit auto-clears confirmations server-side
+                  // (editSessionSide), which would silently invalidate
+                  // the user's explicit commitment — better to force
+                  // them through Unconfirm so the uncommit is a deliberate
+                  // act, not a surprise side-effect of a typo fix.
+                  readOnly={terminal || session.confirmedByViewer}
+                  readOnlyEmptyLabel={
+                    session.confirmedByViewer && !terminal
+                      ? 'Unconfirm above to keep editing this side.'
+                      : undefined
+                  }
                 />
                 <TradeSide
                   label={counterpartHandle ? `@${counterpartHandle}'s side` : 'Their side'}
@@ -288,8 +325,10 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                 <SessionActionBar
                   session={session}
                   onConfirm={handleConfirm}
+                  onUnconfirm={handleUnconfirm}
                   onCancel={handleCancel}
                   confirming={confirming}
+                  unconfirming={unconfirming}
                   cancelling={cancelling}
                 />
               )}
@@ -381,42 +420,65 @@ function SessionIdentityStrip({ session }: { session: SessionData }) {
  * sides of the canvas so there's no ambiguity about whether further
  * edits are possible.
  */
-function TerminalBanner({ session }: { session: SessionData }) {
+function TerminalBanner({
+  session,
+  isSignedIn,
+}: {
+  session: SessionData;
+  isSignedIn: boolean;
+}) {
   const counterpartHandle = session.counterpart?.handle ?? null;
+  // Escape affordance — terminal sessions used to dead-end the user
+  // on the canvas with no route out. Signed-in users get a "Back to
+  // your trades" link; ghosts (no My Trades surface) get "Back to
+  // home" which lands them on the ghost-home session list.
+  const escape = (
+    <a
+      href={isSignedIn ? '/?trades=1' : '/'}
+      className="inline-flex items-center gap-1 text-[12px] font-semibold text-gold hover:text-gold-bright transition-colors"
+    >
+      {isSignedIn ? 'Back to your trades' : 'Back to home'}
+      <span aria-hidden>→</span>
+    </a>
+  );
+
   if (session.status === 'settled') {
     const when = session.settledAt ?? session.updatedAt;
     return (
-      <section className="rounded-lg border border-emerald-500/40 bg-emerald-900/20 px-4 py-3">
+      <section className="rounded-lg border border-emerald-500/40 bg-emerald-900/20 px-4 py-3 flex flex-col gap-2">
         <div className="text-[11px] tracking-[0.18em] uppercase text-emerald-300 font-bold">
           Trade settled
         </div>
-        <div className="text-sm text-gray-200 mt-0.5">
+        <div className="text-sm text-gray-200">
           Both of you confirmed on {formatTerminalDate(when)}. This trade is locked — no more edits.
         </div>
+        {escape}
       </section>
     );
   }
   if (session.status === 'cancelled') {
     return (
-      <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3">
+      <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3 flex flex-col gap-2">
         <div className="text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold">
           Trade cancelled
         </div>
-        <div className="text-sm text-gray-300 mt-0.5">
+        <div className="text-sm text-gray-300">
           This trade was cancelled{counterpartHandle ? ` — either you or @${counterpartHandle} closed it out` : ''}. No more edits.
         </div>
+        {escape}
       </section>
     );
   }
   // expired
   return (
-    <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3">
+    <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3 flex flex-col gap-2">
       <div className="text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold">
         Trade expired
       </div>
-      <div className="text-sm text-gray-300 mt-0.5">
+      <div className="text-sm text-gray-300">
         This trade expired from inactivity. No more edits — start a fresh one if you still want to trade.
       </div>
+      {escape}
     </section>
   );
 }
@@ -429,39 +491,49 @@ function formatTerminalDate(iso: string): string {
 // --- Action bar (below cards) --------------------------------------------
 
 /**
- * Confirm + Cancel live HERE, below the cards, because the flow is
- * stage → confirm. Only renders when the session is active; terminal
- * states drop the bar entirely.
+ * Confirm + Unconfirm + Cancel live HERE, below the cards, because
+ * the flow is stage → confirm. Only renders when the session is
+ * active; terminal states drop the bar entirely.
+ *
+ * Primary action swaps based on viewer state:
+ *   - Not confirmed: "Confirm trade" (emerald)
+ *   - Already confirmed: "Unconfirm to edit" (gold outline) — clears
+ *     the viewer's commitment so they can edit their side again.
+ *     The existing editSessionSide auto-clears confirmations, but
+ *     exposing Unconfirm explicitly keeps "I want to uncommit" a
+ *     deliberate act, not a surprise side-effect.
  */
 function SessionActionBar({
   session,
   onConfirm,
+  onUnconfirm,
   onCancel,
   confirming,
+  unconfirming,
   cancelling,
 }: {
   session: SessionData;
   onConfirm: () => void;
+  onUnconfirm: () => void;
   onCancel: () => void;
   confirming: boolean;
+  unconfirming: boolean;
   cancelling: boolean;
 }) {
   const counterpartHandle = session.counterpart?.handle ?? null;
   const bothEmpty = session.yourCards.length === 0 && session.theirCards.length === 0;
+  const viewerConfirmed = session.confirmedByViewer;
   // Disable Confirm with an inline hint when the canvas is empty —
   // settling a trade with no cards isn't a real transaction.
-  const confirmDisabled =
-    confirming || session.confirmedByViewer || bothEmpty;
-  const confirmLabel = session.confirmedByViewer
-    ? `Waiting on @${counterpartHandle ?? 'them'}`
-    : 'Confirm trade';
+  const confirmDisabled = confirming || bothEmpty;
+
   return (
     <section className="rounded-xl border border-space-700 bg-space-800/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex-1 text-[11px] text-gray-400 leading-relaxed">
         {bothEmpty ? (
           <>Add cards on at least one side before confirming.</>
-        ) : session.confirmedByViewer ? (
-          <>You've confirmed. Waiting on @{counterpartHandle ?? 'them'} — they still need to confirm to lock in this trade.</>
+        ) : viewerConfirmed ? (
+          <>You've confirmed. Tap Unconfirm to edit your side again, or wait for @{counterpartHandle ?? 'your counterpart'} to confirm and settle this trade.</>
         ) : session.confirmedByCounterpart ? (
           <>@{counterpartHandle ?? 'Your counterpart'} already confirmed. Confirm to lock this trade in.</>
         ) : (
@@ -477,16 +549,79 @@ function SessionActionBar({
         >
           Cancel trade
         </button>
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={confirmDisabled}
-          className="px-4 h-10 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-60 text-xs"
-        >
-          {confirmLabel}
-        </button>
+        {viewerConfirmed ? (
+          <button
+            type="button"
+            onClick={onUnconfirm}
+            disabled={unconfirming}
+            className="px-4 h-10 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 disabled:opacity-60 text-xs font-bold"
+          >
+            Unconfirm to edit
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={confirmDisabled}
+            className="px-4 h-10 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-60 text-xs"
+          >
+            Confirm trade
+          </button>
+        )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Mid-canvas strip surfacing who has confirmed on an active session.
+ * Rendered between the identity strip and the TradeBalance so the
+ * commitment state is visually adjacent to the cards that were
+ * committed. Exactly one partial-confirmation state reaches this
+ * strip — the "both confirmed" case settles the session immediately
+ * and routes through TerminalBanner instead.
+ */
+function CommitmentStrip({
+  viewerConfirmed,
+  counterpartHandle,
+}: {
+  viewerConfirmed: boolean;
+  counterpartHandle: string | null;
+}) {
+  if (viewerConfirmed) {
+    return (
+      <section className="rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 flex items-center gap-2">
+        <LockIcon className="w-3.5 h-3.5 text-gold shrink-0" />
+        <div className="text-[12px] text-gold-bright font-semibold">
+          You've confirmed.
+          <span className="text-gold font-normal">
+            {' '}Waiting on @{counterpartHandle ?? 'your counterpart'} to lock the trade in.
+          </span>
+        </div>
+      </section>
+    );
+  }
+  // Counterpart-only confirmed (parent gate excludes neither-confirmed
+  // and both-confirmed settles before reaching this render path).
+  return (
+    <section className="rounded-lg border border-cyan-500/40 bg-cyan-950/30 px-3 py-2 flex items-center gap-2">
+      <LockIcon className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+      <div className="text-[12px] text-cyan-200 font-semibold">
+        @{counterpartHandle ?? 'Your counterpart'} confirmed.
+        <span className="text-cyan-300/80 font-normal">
+          {' '}Confirm below to settle this trade.
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="3" y="7" width="10" height="7" rx="1.5" />
+      <path d="M5 7V5a3 3 0 0 1 6 0v2" />
+    </svg>
   );
 }
 

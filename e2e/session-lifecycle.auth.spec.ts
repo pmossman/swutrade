@@ -117,13 +117,12 @@ test.describe('Shared session lifecycle', () => {
 
       // Context A confirms first.
       await a.page.getByRole('button', { name: /^Confirm trade$/i }).click();
-      // Badge flips to green "You confirmed".
-      await expect(a.page.getByText(/You confirmed/i)).toBeVisible({ timeout: 10_000 });
-      // Button label swaps to "Waiting on @..." — matches the
-      // `confirmLabel` branch in SessionActionBar.
-      await expect(a.page.getByRole('button', { name: /Waiting on @/i })).toBeVisible();
-      // Action-bar hint confirms the half-confirmed state copy.
-      await expect(a.page.getByText(/You've confirmed\. Waiting on @/i)).toBeVisible();
+      // Identity-strip ConfirmBadge flips to "You confirmed".
+      await expect(a.page.getByText(/You confirmed/i).first()).toBeVisible({ timeout: 10_000 });
+      // CommitmentStrip above the cards announces viewer's commitment.
+      await expect(a.page.getByText(/You've confirmed\./i).first()).toBeVisible();
+      // Primary action swaps to "Unconfirm to edit" (gold outline).
+      await expect(a.page.getByRole('button', { name: /^Unconfirm to edit$/i })).toBeVisible();
 
       // Context B needs a beat for the poll to surface @A's confirm,
       // then confirms themselves — this is the transition that flips
@@ -217,6 +216,49 @@ test.describe('Shared session lifecycle', () => {
       await b.page.reload();
       await expect(b.page.getByText(/Trade cancelled/i)).toBeVisible({ timeout: 10_000 });
       await expect(b.page.getByRole('button', { name: /Add cards to /i })).toHaveCount(0);
+
+      // Both sides see the escape link inside the terminal banner.
+      // Ghost participants land on "Back to home" (they don't have
+      // a My Trades surface). The link is inside the banner so
+      // asserting visibility is sufficient — click-through would
+      // navigate away from the canvas.
+      await expect(a.page.getByRole('link', { name: /Back to home/i })).toBeVisible();
+      await expect(b.page.getByRole('link', { name: /Back to home/i })).toBeVisible();
+
+      expect(filterConsoleErrors(a.errors)).toEqual([]);
+      expect(filterConsoleErrors(b.errors)).toEqual([]);
+    } finally {
+      await closeAll([a, b]);
+    }
+  });
+
+  test('confirmer can unconfirm to re-edit before the counterpart confirms', async ({ browser }) => {
+    const { a, b } = await createAndClaim(browser);
+
+    try {
+      await addOneCard(a.page);
+      await addOneCard(b.page);
+
+      // A confirms.
+      await a.page.getByRole('button', { name: /^Confirm trade$/i }).click();
+      await expect(a.page.getByRole('button', { name: /^Unconfirm to edit$/i })).toBeVisible({ timeout: 10_000 });
+      // Your-side Add-cards affordance locks (readOnly gate on the
+      // viewer panel when confirmedByViewer). Counterpart's side is
+      // always readOnly so its add button was never there.
+      await expect(a.page.getByRole('button', { name: /Add cards to Your side/i })).toHaveCount(0);
+
+      // Unconfirm — back to editable.
+      await a.page.getByRole('button', { name: /^Unconfirm to edit$/i }).click();
+      await expect(a.page.getByRole('button', { name: /^Confirm trade$/i })).toBeVisible({ timeout: 10_000 });
+      // CommitmentStrip gone (viewer no longer confirmed).
+      await expect(a.page.getByText(/You've confirmed\./i)).toHaveCount(0);
+      // Viewer side's Add-cards affordance back.
+      await expect(a.page.getByRole('button', { name: /Add cards to Your side/i }).first()).toBeVisible();
+
+      // Session is still 'active' from B's perspective — can still
+      // confirm and settle on the other side of an unconfirm.
+      await b.page.reload();
+      await expect(b.page.getByRole('button', { name: /^Confirm trade$/i })).toBeVisible({ timeout: 10_000 });
 
       expect(filterConsoleErrors(a.errors)).toEqual([]);
       expect(filterConsoleErrors(b.errors)).toEqual([]);

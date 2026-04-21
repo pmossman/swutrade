@@ -790,6 +790,69 @@ export async function confirmSession(
 }
 
 /**
+ * Remove the viewer from `confirmedByUserIds` on an active session.
+ *
+ * Use case: a user hits Confirm, realises a mistake, and wants to
+ * edit their side before the counterpart confirms. Editing ALREADY
+ * clears both confirmations (see `editSessionSide`), so this endpoint
+ * is the lighter-weight path for "I want to uncommit without having
+ * to change a card." Only meaningful before the session settles —
+ * settled sessions refuse the unconfirm (you can't undo a handshake).
+ *
+ * Idempotent — unconfirming when not confirmed is a no-op that just
+ * returns the current view. Terminal sessions (settled / cancelled /
+ * expired) return 'terminal' so the caller can show a clear error
+ * rather than silently appearing to have done nothing.
+ */
+export type UnconfirmSessionResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' };
+
+export async function unconfirmSession(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string },
+): Promise<UnconfirmSessionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  // Idempotent: already unconfirmed → no mutation, just re-fetch for
+  // the caller's rendered view.
+  if (!row.confirmedByUserIds.includes(args.viewerUserId)) {
+    const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+    return view ? { ok: true, view } : { ok: false, reason: 'not-found' };
+  }
+
+  const nextConfirmations = row.confirmedByUserIds.filter(id => id !== args.viewerUserId);
+  const now = new Date();
+
+  await db
+    .update(tradeSessions)
+    .set({
+      confirmedByUserIds: nextConfirmations,
+      updatedAt: now,
+    })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'unconfirmed',
+  });
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+/**
  * Transition an active session to `cancelled`. Either participant
  * can cancel. Idempotent — cancelling a terminal session just
  * returns its current view.

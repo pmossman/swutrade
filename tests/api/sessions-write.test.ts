@@ -6,6 +6,7 @@ import {
   handleConfirmSession,
   handleCreateSession,
   handleEditSession,
+  handleUnconfirmSession,
 } from '../../api/sessions.js';
 import {
   mockRequest,
@@ -215,6 +216,90 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     expect(res._status).toBe(200);
     // Still not settled — bob hasn't confirmed.
     expect((res._json as { settled: boolean }).settled).toBe(false);
+  });
+
+  it('unconfirm removes viewer from confirmedByUserIds; idempotent when not confirmed', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const created = await createSession(alice, bob.handle, [snap('a-1')]);
+    const id = created.body.id!;
+
+    const cookie = await sealTestCookie(alice.id);
+
+    // Confirm first.
+    let res = mockResponse();
+    await handleConfirmSession(
+      mockRequest({ method: 'POST', cookies: { swu_session: cookie }, query: { id } }),
+      res,
+    );
+    expect(res._status).toBe(200);
+
+    const db = getDb();
+    let [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, id));
+    expect(row.confirmedByUserIds).toContain(alice.id);
+
+    // Unconfirm.
+    res = mockResponse();
+    await handleUnconfirmSession(
+      mockRequest({ method: 'POST', cookies: { swu_session: cookie }, query: { id } }),
+      res,
+    );
+    expect(res._status).toBe(200);
+    const unconfirmedView = (res._json as { session: { confirmedByViewer: boolean; status: string } }).session;
+    expect(unconfirmedView.confirmedByViewer).toBe(false);
+    expect(unconfirmedView.status).toBe('active');
+
+    [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, id));
+    expect(row.confirmedByUserIds).not.toContain(alice.id);
+
+    // Idempotent — unconfirming when not confirmed is a no-op 200.
+    res = mockResponse();
+    await handleUnconfirmSession(
+      mockRequest({ method: 'POST', cookies: { swu_session: cookie }, query: { id } }),
+      res,
+    );
+    expect(res._status).toBe(200);
+  });
+
+  it('unconfirm on a settled session returns 409 (cannot undo a handshake)', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const created = await createSession(alice, bob.handle, [snap('a-1')]);
+    const id = created.body.id!;
+
+    // Both confirm → settled.
+    for (const user of [alice, bob]) {
+      const res = mockResponse();
+      await handleConfirmSession(
+        mockRequest({
+          method: 'POST',
+          cookies: { swu_session: await sealTestCookie(user.id) },
+          query: { id },
+        }),
+        res,
+      );
+      expect(res._status).toBe(200);
+    }
+
+    const db = getDb();
+    const [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, id));
+    expect(row.status).toBe('settled');
+
+    // Unconfirm rejected.
+    const res = mockResponse();
+    await handleUnconfirmSession(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(alice.id) },
+        query: { id },
+      }),
+      res,
+    );
+    expect(res._status).toBe(409);
   });
 
   it('cancel transitions active session to cancelled; a new one can be created after', async () => {

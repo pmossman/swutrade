@@ -70,6 +70,11 @@ export interface SessionApi {
   /** Confirm the current state; when both parties are confirmed, the
    *  server transitions status → settled. */
   confirm: () => Promise<{ settled: boolean }>;
+  /** Remove the viewer from the confirmation set. Used when a user
+   *  has confirmed, spotted a mistake, and wants to edit without
+   *  having to bump a card qty as a side effect (editSessionSide
+   *  already clears confirmations; this is the lighter-weight path). */
+  unconfirm: () => Promise<void>;
   /** Cancel an active session. Terminal from both sides; either
    *  participant can cancel. */
   cancel: () => Promise<void>;
@@ -289,6 +294,20 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
+  const unconfirm = useCallback(async () => {
+    if (!sessionId) return;
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/unconfirm`,
+      );
+      if (!result.ok || !result.data.session) return;
+      applyServerSession(result.data.session);
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
   const cancel = useCallback(async () => {
     if (!sessionId) return;
     mutationInFlightRef.current = true;
@@ -331,6 +350,7 @@ export function useSession(sessionId: string | null): SessionApi {
     status,
     saveCards,
     confirm,
+    unconfirm,
     cancel,
     claim,
     hasUnseenCounterpartEdit,

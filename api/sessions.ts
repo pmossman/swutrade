@@ -17,6 +17,7 @@ import {
   getSessionPreview,
   inviteHandleToSession,
   listActiveSessionsForViewer,
+  unconfirmSession,
 } from '../lib/sessions.js';
 
 /**
@@ -44,6 +45,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleEditSession(req, res);
     case 'confirm':
       return handleConfirmSession(req, res);
+    case 'unconfirm':
+      return handleUnconfirmSession(req, res);
     case 'cancel':
       return handleCancelSession(req, res);
     case 'create-open':
@@ -275,6 +278,38 @@ export async function handleConfirmSession(req: VercelRequest, res: VercelRespon
     session: result.ok ? result.view : null,
     settled: result.ok ? result.settled : false,
   });
+}
+
+/**
+ * Remove the viewer from a session's confirmation set. Mirrors
+ * handleConfirmSession's shape (same 404 / 409 semantics); terminal
+ * sessions refuse with 409 since you can't undo a handshake once
+ * both sides have committed.
+ */
+export async function handleUnconfirmSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const db = getDb();
+  const result = await unconfirmSession(db, { sessionId: id, viewerUserId: session.userId });
+  if (!result.ok) {
+    if (result.reason === 'not-found' || result.reason === 'not-participant') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    if (result.reason === 'terminal') {
+      return res.status(409).json({ error: 'Session is no longer active' });
+    }
+  }
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.ok ? result.view : null });
 }
 
 /**
