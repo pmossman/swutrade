@@ -290,9 +290,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const pct = parseInt((req.query.pct as string) || '80', 10);
   const pm = req.query.pm === 'l' ? 'low' : 'market';
 
-  // List mode: render Wants + Available when those params are present
-  // and there's no active trade in the URL. Routed before the trade
-  // path so a list-only share gets a list image.
+  // List mode: render a list image when there's no active trade.
+  // Three variants:
+  //   - wishlist-only  (w && !a)  → single-list layout titled "WISHLIST"
+  //   - binder-only    (!w && a)  → single-list layout titled "TRADE BINDER"
+  //   - combined       (w && a)   → two-column "SHARED LIST" (legacy)
+  // The dedicated single-list variants ship with the Wishlist / Binder
+  // split: each view shares only its own list, so the image should
+  // reflect just that list with tailored copy + color + full-canvas
+  // real estate instead of a half-empty "Available: Empty" column.
+  if (!y && !t && w && !a) {
+    return renderSingleListImage(req, res, 'wishlist', w, pct, pm);
+  }
+  if (!y && !t && !w && a) {
+    return renderSingleListImage(req, res, 'binder', a, pct, pm);
+  }
   if (!y && !t && (w || a)) {
     return renderListImage(req, res, w, a, pct, pm);
   }
@@ -610,6 +622,162 @@ async function renderListImage(
   res.status(200).send(Buffer.from(png));
 }
 
+// =====================================================================
+// Single-list image — used when only `w` (wishlist) or only `a`
+// (binder) is present on the URL. Same 1200×630 canvas as the combined
+// share, but the full width is given over to a single list's rows
+// (split across two columns) with a tailored header + accent color.
+// Introduced with the 2026-04-21 Wishlist / Binder split: the dedicated
+// views' share buttons each encode only their own list, so the image
+// reads as "here is my wishlist" / "here is my trade binder" rather
+// than an awkward half-empty "SHARED LIST · 0 available" combined view.
+// =====================================================================
+
+async function renderSingleListImage(
+  req: VercelRequest,
+  res: VercelResponse,
+  list: 'wishlist' | 'binder',
+  encoded: string,
+  pct: number,
+  pm: 'low' | 'market',
+) {
+  const fams = familyIndex as FamilyIndex;
+  const index = productIndex as ProductIndex;
+
+  // Resolve cards per list type. Wishlist picks the cheapest variant
+  // matching each want's restriction (same as the combined list image);
+  // binder resolves exact productIds.
+  let resolved: ResolvedListCard[] = [];
+  if (list === 'wishlist') {
+    const wants = decodeWants(encoded);
+    resolved = wants.map(want => {
+      const candidates = fams[want.familyId] ?? [];
+      const matching = want.acceptedVariants
+        ? candidates.filter(c => want.acceptedVariants!.includes(c.v))
+        : candidates;
+      if (matching.length === 0) return null;
+      const priceField = pm === 'low' ? 'l' : 'm';
+      const best = matching.reduce((b, c) => {
+        const bp = b[priceField] ?? Infinity;
+        const cp = c[priceField] ?? Infinity;
+        return cp < bp ? c : b;
+      });
+      const raw = best[priceField];
+      const price = raw !== null ? Math.round(raw * pct) / 100 : null;
+      return {
+        productId: best.p,
+        name: best.n,
+        variant: best.v,
+        qty: want.qty,
+        price,
+        isPriority: want.isPriority,
+        imageDataUri: null,
+      };
+    }).filter((c): c is ResolvedListCard => c !== null);
+    // Priority-first, mirrors HomeView + WantsPanel sort so the top of
+    // the image matches what the author sees in the app.
+    resolved.sort((a, b) => {
+      if (a.isPriority !== b.isPriority) return a.isPriority ? -1 : 1;
+      return 0;
+    });
+  } else {
+    const avail = decodeAvailableRefs(encoded);
+    resolved = avail.map(ref => {
+      const card = index[ref.productId];
+      if (!card) return null;
+      const raw = pm === 'low' ? card.l : card.p;
+      const price = raw !== null ? Math.round(raw * pct) / 100 : null;
+      return {
+        productId: ref.productId,
+        name: extractBaseName(card.n),
+        variant: extractVariant(card.n),
+        qty: ref.qty,
+        price,
+        isPriority: false,
+        imageDataUri: null,
+      };
+    }).filter((c): c is ResolvedListCard => c !== null);
+  }
+
+  // Cap total cards rendered so we don't blow the image-fetch budget
+  // on a gigantic list. Two columns × ~11 rows each = ~22 visible.
+  const visible = resolved.slice(0, 40);
+  const imageMap = new Map<string, string | null>();
+  await Promise.all(
+    Array.from(new Set(visible.map(c => c.productId))).map(async id => {
+      imageMap.set(id, await fetchCardImage(id));
+    }),
+  );
+  for (const c of visible) c.imageDataUri = imageMap.get(c.productId) ?? null;
+
+  // Title + subtitle + accent pulled from the list type. Trade-side
+  // palette reuse: blue = wishlist (Receiving-side, "cards I want in"),
+  // emerald = binder (Offering-side, "cards I have out").
+  const isWishlist = list === 'wishlist';
+  const accent = isWishlist ? '#60a5fa' : '#34d399';
+  const title = isWishlist ? 'WISHLIST' : 'TRADE BINDER';
+  const count = resolved.length;
+  let subtitleParts: string[] = [];
+  if (isWishlist) {
+    subtitleParts.push(`${count} card${count === 1 ? '' : 's'}`);
+    const priority = resolved.filter(c => c.isPriority).length;
+    if (priority > 0) subtitleParts.push(`${priority} priority`);
+  } else {
+    subtitleParts.push(`${count} card${count === 1 ? '' : 's'} available`);
+  }
+  const subtitle = subtitleParts.join(' · ');
+
+  // Split the list across two columns. `ceil(n/2)` goes in the left
+  // column so an odd count doesn't leave the right column with one
+  // stranded row beneath many empty slots.
+  const leftHalf = visible.slice(0, Math.ceil(visible.length / 2));
+  const rightHalf = visible.slice(Math.ceil(visible.length / 2));
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e1a"/>
+      <stop offset="1" stop-color="#111627"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Header: SWUTRADE brandmark + list title with accent saber -->
+  <text x="36" y="56" font-size="32" font-weight="900" letter-spacing="3" fill="#e5e7eb">SWU<tspan fill="#F5A623">TRADE</tspan></text>
+  <rect x="36" y="78" width="3" height="20" rx="1.5" fill="${accent}"/>
+  <text x="48" y="94" font-size="18" font-weight="800" letter-spacing="3" fill="${accent}">${title}</text>
+  ${subtitle
+    ? `<text x="1164" y="94" font-size="14" font-weight="700" letter-spacing="2" fill="#9ca3af" text-anchor="end">${escapeXml(subtitle.toUpperCase())}</text>`
+    : ''}
+  <line x1="36" y1="110" x2="1164" y2="110" stroke="#1a1f2e" stroke-width="2"/>
+
+  ${count === 0
+    ? `<text x="600" y="340" fill="#4b5563" font-size="18" text-anchor="middle">Empty</text>`
+    : `${renderListRows(leftHalf, LEFT_X, accent, isWishlist)}
+       ${renderListRows(rightHalf, RIGHT_X, accent, isWishlist)}`}
+
+  ${count > visible.length
+    ? `<text x="600" y="602" font-size="12" font-weight="600" fill="#6b7280" text-anchor="middle">+${count - visible.length} more not shown · swutrade.com</text>`
+    : `<text x="600" y="610" font-size="12" font-weight="600" fill="#6b7280" text-anchor="middle">swutrade.com</text>`}
+</svg>`;
+
+  if (req.query.format === 'svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(svg);
+    return;
+  }
+
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: 2400 },
+  });
+  const png = resvg.render().asPng();
+
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+  res.status(200).send(Buffer.from(png));
+}
+
 type ResolvedListCard = ResolvedCard & { isPriority: boolean };
 
 // Row-based layout for list images. Optimized for recipient scanning
@@ -712,6 +880,87 @@ function renderListColumn(
     const overflowY = GRID_TOP + maxVisible * (LIST_ROW_H + LIST_ROW_GAP) + 14;
     svg += `<text x="${x + COL_WIDTH / 2}" y="${overflowY}" fill="#9ca3af" font-size="12" font-weight="600" text-anchor="middle">+${cards.length - maxVisible} more</text>`;
   }
+
+  return svg;
+}
+
+// Per-row renderer used by the single-list image path. Same row
+// shape as `renderListColumn` but with no header — the single-list
+// variant carries its title in the top-of-canvas chrome, so each
+// column body is just rows. Starts at the same `GRID_TOP` baseline
+// so the two columns line up.
+//
+// `showPriorityStars` is currently `false` in every call (priority
+// is already bubbled up via the priority-first sort) but kept as a
+// parameter so a future callout design can re-enable the per-row
+// star without restructuring.
+function renderListRows(
+  cards: ResolvedListCard[],
+  x: number,
+  _accent: string,
+  showPriorityStars: boolean,
+): string {
+  let svg = '';
+  // How many rows fit — matches renderListColumn's budget so the
+  // two halves of a single-list image line up with the combined
+  // image when viewed side-by-side.
+  const available = GRID_HEIGHT - 20;
+  const maxVisible = Math.floor(available / (LIST_ROW_H + LIST_ROW_GAP));
+  const visible = cards.slice(0, maxVisible);
+
+  visible.forEach((card, i) => {
+    const rowY = GRID_TOP + i * (LIST_ROW_H + LIST_ROW_GAP);
+    const thumbX = x;
+    const thumbY = rowY + (LIST_ROW_H - LIST_THUMB_H) / 2;
+    const textX = x + LIST_THUMB_W + 10;
+
+    if (card.imageDataUri) {
+      svg += `<image href="${card.imageDataUri}" x="${thumbX}" y="${thumbY}" width="${LIST_THUMB_W}" height="${LIST_THUMB_H}" preserveAspectRatio="xMidYMid slice"/>`;
+    } else {
+      svg += `<rect x="${thumbX}" y="${thumbY}" width="${LIST_THUMB_W}" height="${LIST_THUMB_H}" fill="#1f2937" rx="2"/>`;
+    }
+    if (showPriorityStars && card.isPriority) {
+      svg += `<text x="${thumbX + LIST_THUMB_W - 2}" y="${thumbY + 10}" fill="#FFD700" font-size="11" font-weight="900" text-anchor="end" stroke="#000" stroke-width="0.4">★</text>`;
+    }
+
+    const rightEdge = x + COL_WIDTH;
+    const priceBaselineY = rowY + 20;
+    const lineTotal = card.price !== null ? card.price * card.qty : null;
+    const priceColor = card.price === null ? '#f87171' : '#d4a843';
+    svg += `<text x="${rightEdge}" y="${priceBaselineY}" fill="${priceColor}" font-size="13" font-weight="700" text-anchor="end">${escapeXml(formatPrice(lineTotal))}</text>`;
+
+    let qtyRightEdge = rightEdge;
+    if (card.qty > 1) {
+      const priceW = Math.max(40, 10 + (formatPrice(lineTotal).length * 7));
+      qtyRightEdge = rightEdge - priceW - 8;
+      svg += `<text x="${qtyRightEdge}" y="${priceBaselineY}" fill="#9ca3af" font-size="12" font-weight="700" text-anchor="end">×${card.qty}</text>`;
+      qtyRightEdge -= 24;
+    } else {
+      qtyRightEdge = rightEdge - 54;
+    }
+
+    const vbs = variantBadgeStyle(card.variant);
+    let pillRightEdge = qtyRightEdge;
+    if (vbs) {
+      const vlabel = card.variant === 'Hyperspace Foil' ? 'HS Foil' : card.variant;
+      const pillSize = 9;
+      const pillH = pillSize + 4;
+      const pillTextW = vlabel.length * pillSize * 0.6;
+      const pillPadX = 4;
+      const pillW = pillTextW + pillPadX * 2;
+      const pillX = qtyRightEdge - pillW;
+      const pillTopY = rowY + (LIST_ROW_H - pillH) / 2;
+      svg += `<rect x="${pillX}" y="${pillTopY}" width="${pillW}" height="${pillH}" rx="2" fill="${vbs.bg}"/>`;
+      svg += `<text x="${pillX + pillPadX}" y="${pillTopY + pillSize + 1}" fill="${vbs.text}" font-size="${pillSize}" font-weight="700" letter-spacing="0.3">${escapeXml(vlabel.toUpperCase())}</text>`;
+      pillRightEdge = pillX - 8;
+    }
+
+    const nameMaxPx = pillRightEdge - textX;
+    const nameSize = 13;
+    const nameMaxChars = Math.max(10, Math.floor(nameMaxPx / (nameSize * 0.55)));
+    const nameBaselineY = rowY + 20;
+    svg += `<text x="${textX}" y="${nameBaselineY}" fill="#e5e7eb" font-size="${nameSize}" font-weight="500">${escapeXml(truncate(card.name, nameMaxChars))}</text>`;
+  });
 
   return svg;
 }

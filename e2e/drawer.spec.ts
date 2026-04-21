@@ -29,10 +29,13 @@ test.describe('Lists drawer interactions', () => {
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
 
-    // Wants tab is selected by default; row visible with "Any variant".
-    const wantsTab = dialog.getByRole('tab', { name: /^wants/i });
+    // Wishlist tab is selected by default; row visible with "Any variant".
+    // Tab labels were reconciled to user-facing vocabulary ("Wishlist" /
+    // "Trade binder") in the 2026-04-21 split; internal values stay
+    // `wants` / `available`.
+    const wantsTab = dialog.getByRole('tab', { name: /^wishlist/i });
     await expect(wantsTab).toHaveAttribute('data-state', 'active');
-    const wantsPanel = dialog.getByRole('tabpanel', { name: /wants/i });
+    const wantsPanel = dialog.getByRole('tabpanel', { name: /wishlist/i });
     await expect(wantsPanel.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible({
       timeout: 10_000,
     });
@@ -54,11 +57,11 @@ test.describe('Lists drawer interactions', () => {
     await dialog.getByRole('button', { name: 'Mark as priority' }).click();
     await expect(dialog.getByRole('button', { name: 'Unmark as priority' })).toBeVisible();
 
-    // --- Available tab: seeded row visible, can be removed ----------------
-    await dialog.getByRole('tab', { name: /^available/i }).click();
-    const availPanel = dialog.getByRole('tabpanel', { name: /available/i });
+    // --- Trade binder tab: seeded row visible, can be removed ----------------
+    await dialog.getByRole('tab', { name: /^trade binder/i }).click();
+    const availPanel = dialog.getByRole('tabpanel', { name: /trade binder/i });
     await expect(availPanel.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible();
     await availPanel.getByRole('button', { name: 'Remove' }).click();
-    await expect(availPanel.getByText('No available cards yet')).toBeVisible();
+    await expect(availPanel.getByText('Your trade binder is empty')).toBeVisible();
   });
 });

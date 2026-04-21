@@ -30,7 +30,7 @@ interface AvailablePanelProps {
 }
 
 const DEFAULT_EMPTY = {
-  title: 'No available cards yet',
+  title: 'Your trade binder is empty',
   body: 'Save exact cards you have to trade. Matchmaking against other users comes later.',
 };
 

@@ -55,14 +55,14 @@ export function BinderView({
         auth={auth}
         breadcrumbs={[
           { label: 'Home', href: '/' },
-          { label: 'Binder' },
+          { label: 'Trade binder' },
         ]}
       />
 
       <main className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3">
         <header className="flex items-baseline justify-between gap-3 pb-3 border-b border-space-800 mb-2">
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-gray-100">Your binder</h1>
+            <h1 className="text-lg font-bold text-gray-100">Your trade binder</h1>
             <div className="text-[12px] text-gray-400 tabular-nums mt-0.5">
               <span className="text-gray-200 font-semibold">{count}</span>
               {count === 1 ? ' card available' : ' cards available'}
@@ -79,7 +79,7 @@ export function BinderView({
             priceMode={priceMode}
             byProductId={byProductId}
             emptyState={{
-              title: 'Your binder is empty',
+              title: 'Your trade binder is empty',
               body: 'Add cards you have available to trade. Matchmaking will surface them to other traders looking for matches.',
             }}
           />

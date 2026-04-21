@@ -659,7 +659,7 @@ function BinderModule({
   return (
     <ModuleSection
       icon={<BookOpen aria-hidden className="w-4 h-4" />}
-      label="Your binder"
+      label="Your trade binder"
       headingId="your-binder-heading"
       action={
         <button
@@ -667,7 +667,7 @@ function BinderModule({
           onClick={onEditBinder}
           className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
         >
-          Edit binder →
+          Edit trade binder →
         </button>
       }
     >

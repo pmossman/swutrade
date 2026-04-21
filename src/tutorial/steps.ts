@@ -41,7 +41,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   {
     id: 'sign-in',
     title: 'Sign in to unlock more',
-    body: 'Sign in with Discord to save your wishlist and binder, send proposals to other players, and find matches inside your trading communities.',
+    body: 'Sign in with Discord to save your wishlist and trade binder, send proposals to other players, and find matches inside your trading communities.',
     anchor: '[data-tour="account-menu"]',
     placement: 'bottom',
   },

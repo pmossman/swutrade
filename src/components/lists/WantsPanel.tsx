@@ -35,7 +35,7 @@ interface WantsPanelProps {
 }
 
 const DEFAULT_EMPTY = {
-  title: 'No wants yet',
+  title: 'Your wishlist is empty',
   body: "Save cards you're looking for. You'll be able to add them to trades in one tap.",
 };
 

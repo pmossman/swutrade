@@ -32,10 +32,10 @@ test.describe('Curator: build lists and share', () => {
     await expect(dialog).toBeVisible();
     // Wait for Radix Dialog mount animation to settle — on slow CI runners
     // the portal's content can detach mid-click during the animation.
-    await dialog.getByRole('tab', { name: /^wants/i }).waitFor({ state: 'attached' });
+    await dialog.getByRole('tab', { name: /^wishlist/i }).waitFor({ state: 'attached' });
 
     // --- Wants: Hyperspace-only restriction ---------------------------------
-    await dialog.getByRole('tab', { name: /^wants/i }).click();
+    await dialog.getByRole('tab', { name: /^wishlist/i }).click();
     await dialog.getByRole('button', { name: /add card/i }).click();
 
     // Open the variant filter, pick Hyperspace.
@@ -53,7 +53,7 @@ test.describe('Curator: build lists and share', () => {
     await expect(dialog.getByRole('button', { name: 'Only Hyperspace' })).toBeVisible();
 
     // --- Available: exact productId ----------------------------------------
-    await dialog.getByRole('tab', { name: /^available/i }).click();
+    await dialog.getByRole('tab', { name: /^trade binder/i }).click();
     await dialog.getByRole('button', { name: /add card/i }).click();
 
     await dialog.getByPlaceholder('Search cards...').fill('jtl luke hyperspace');
@@ -63,7 +63,7 @@ test.describe('Curator: build lists and share', () => {
 
     await dialog.getByRole('button', { name: /Back to list/i }).click();
     await expect(
-      dialog.getByRole('tabpanel', { name: /available/i })
+      dialog.getByRole('tabpanel', { name: /trade binder/i })
         .getByText('Luke Skywalker - Hero of Yavin'),
     ).toBeVisible();
 
@@ -93,9 +93,9 @@ test.describe('Curator: build lists and share', () => {
     await openMyLists(page);
     const dialog = page.getByRole('dialog', { name: 'MY LISTS' });
     await expect(dialog).toBeVisible();
-    await dialog.getByRole('tab', { name: /^wants/i }).waitFor({ state: 'attached' });
+    await dialog.getByRole('tab', { name: /^wishlist/i }).waitFor({ state: 'attached' });
 
-    await dialog.getByRole('tab', { name: /^wants/i }).click();
+    await dialog.getByRole('tab', { name: /^wishlist/i }).click();
 
     // --- First add: no variant filter → restriction = any ------------------
     await dialog.getByRole('button', { name: /add card/i }).click();
@@ -118,7 +118,7 @@ test.describe('Curator: build lists and share', () => {
 
     // Each row renders its own Remove button — total two.
     await expect(
-      dialog.getByRole('tabpanel', { name: /wants/i })
+      dialog.getByRole('tabpanel', { name: /wishlist/i })
         .getByRole('button', { name: 'Remove' }),
     ).toHaveCount(2);
   });

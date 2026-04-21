@@ -142,14 +142,14 @@ export function ListsDrawer({
           >
             <Tabs.List
               className="flex gap-1 px-3 pt-2 border-b border-space-800"
-              aria-label="Wants and Available lists"
+              aria-label="Wishlist and Trade binder lists"
             >
               {/* Color reservation mirrors the trade panels: Wants lines
                   up with Receiving (blue) — cards the user wants to take
                   in — and Available lines up with Offering (emerald) —
                   cards the user has to give. */}
-              <TabTrigger value="wants" count={wantsCount} accent="blue">Wants</TabTrigger>
-              <TabTrigger value="available" count={availableCount} accent="emerald">Available</TabTrigger>
+              <TabTrigger value="wants" count={wantsCount} accent="blue">Wishlist</TabTrigger>
+              <TabTrigger value="available" count={availableCount} accent="emerald">Trade binder</TabTrigger>
             </Tabs.List>
 
             <Tabs.Content value="wants" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">

@@ -55,7 +55,7 @@ export function NavMenu({ signedIn }: NavMenuProps) {
           <NavRow
             href="/?view=binder"
             icon={<BinderIcon className="w-3.5 h-3.5 text-gray-400" />}
-            label="My Binder"
+            label="My Trade Binder"
             onClose={close}
           />
           {signedIn && (

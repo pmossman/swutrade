@@ -59,7 +59,7 @@ test.describe('Dedicated Binder view', () => {
     await seedLists(page);
     await page.goto('/?view=binder');
 
-    await expect(page.getByRole('heading', { name: /Your binder/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Your trade binder/i })).toBeVisible();
     // Seeded available row — productId 622133 = Luke Skywalker
     // (Hyperspace). Resolved by byProductId in AvailablePanel.
     await expect(page.getByText(/Luke Skywalker/i).first()).toBeVisible({ timeout: 10_000 });
@@ -68,7 +68,7 @@ test.describe('Dedicated Binder view', () => {
 
   test('empty-state copy surfaces when the binder is empty', async ({ page }) => {
     await page.goto('/?view=binder');
-    await expect(page.getByText(/Your binder is empty/i)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Your trade binder is empty/i)).toBeVisible({ timeout: 10_000 });
   });
 });
 
@@ -82,10 +82,10 @@ test.describe('Home → dedicated view routing', () => {
     await expect(page).toHaveURL(/view=wishlist/);
     await expect(page.getByRole('heading', { name: /Your wishlist/i })).toBeVisible({ timeout: 10_000 });
 
-    // Same for My Binder.
+    // Same for My Trade Binder.
     await page.getByRole('button', { name: 'Navigation menu' }).click();
-    await page.getByRole('link', { name: 'My Binder' }).click();
+    await page.getByRole('link', { name: 'My Trade Binder' }).click();
     await expect(page).toHaveURL(/view=binder/);
-    await expect(page.getByRole('heading', { name: /Your binder/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /Your trade binder/i })).toBeVisible({ timeout: 10_000 });
   });
 });
