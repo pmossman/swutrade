@@ -1,7 +1,12 @@
-import { deflateSync, inflateSync } from 'fflate';
+import { deflateSync } from 'fflate';
 import type { TradeCard, CardVariant, PriceMode } from './types';
 import type { WantsItem, AvailableItem, VariantRestriction } from './persistence';
 import { CANONICAL_VARIANTS, type CanonicalVariant } from './variants';
+import {
+  decodeWants as decodeWantsShared,
+  decodeAvailableRefs as decodeAvailableShared,
+  type WantsRef,
+} from '../lib/listShareCodec';
 
 // --- Param compression -------------------------------------------------------
 // Wants/Available params can get very long for big lists because each
@@ -18,14 +23,6 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function fromBase64Url(str: string): Uint8Array {
-  const padded = str.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
 function compressParam(text: string): string {
   if (!text) return text;
   const bytes = new TextEncoder().encode(text);
@@ -33,12 +30,11 @@ function compressParam(text: string): string {
   return COMPRESS_PREFIX + toBase64Url(deflated);
 }
 
-function decompressParam(param: string): string {
-  if (!param.startsWith(COMPRESS_PREFIX)) return param;
-  const deflated = fromBase64Url(param.slice(COMPRESS_PREFIX.length));
-  const bytes = inflateSync(deflated);
-  return new TextDecoder().decode(bytes);
-}
+// Decompression lives in `lib/listShareCodec` — client-side
+// `decodeWants` / `decodeAvailable` below delegate there via the
+// shared-module imports. Keeping decompression in the shared module
+// means a single source of truth for the wire format; the client's
+// job here is just encode-side (+ shape-adapter on decode output).
 
 export interface TradeUrlState {
   yourCards: TradeCard[];
@@ -194,37 +190,34 @@ export function encodeWants(items: readonly WantsUrlEntry[]): string {
   return compressParam(encodeWantsRaw(items));
 }
 
+/**
+ * Client-side wrapper around the shared `lib/listShareCodec` decoder.
+ * The shared module returns `WantsRef` (flat `acceptedVariants: string[] | null`
+ * shape, optimised for server consumers). The frontend prefers the
+ * `WantsUrlEntry` shape with a `restriction` tagged-union that matches
+ * `WantsItem` + the picker UI. This adapter bridges the two: one
+ * decoder implementation, two ergonomic surfaces.
+ *
+ * Before the 2026-04-21 unification, `urlCodec.ts` and `listShareCodec.ts`
+ * carried parallel decoder implementations that diverged silently — the
+ * compression-added-to-one-side-but-not-the-other bug that surfaced on
+ * 2026-04-20. Keeping the adapter thin means a future codec change
+ * (new flag, different compression) only touches `lib/listShareCodec.ts`.
+ */
 export function decodeWants(param: string): WantsUrlEntry[] {
-  if (!param) return [];
-  const raw = decompressParam(param);
-  const out: WantsUrlEntry[] = [];
-  for (const entry of raw.split(',').filter(Boolean)) {
-    const fields = entry.split('.');
-    if (fields.length < 2) continue;
-    const [encId, qtyStr, ...flags] = fields;
-    let familyId: string;
-    try {
-      familyId = decodeURIComponent(encId);
-    } catch {
-      continue;
-    }
-    if (!familyId) continue;
-    const qty = clampQty(parseInt(qtyStr, 10));
-    let restriction: VariantRestriction = { mode: 'any' };
-    let isPriority: true | undefined;
-    for (const flag of flags) {
-      if (flag === 'p') isPriority = true;
-      else if (flag.startsWith('r')) {
-        const mask = parseInt(flag.slice(1), 16);
-        if (Number.isFinite(mask)) {
-          const variants = maskToVariants(mask);
-          if (variants.length > 0) restriction = { mode: 'restricted', variants };
-        }
-      }
-    }
-    out.push({ familyId, qty, restriction, ...(isPriority ? { isPriority } : {}) });
-  }
-  return out;
+  return decodeWantsShared(param).map(wantsRefToUrlEntry);
+}
+
+function wantsRefToUrlEntry(ref: WantsRef): WantsUrlEntry {
+  const restriction: VariantRestriction = ref.acceptedVariants
+    ? { mode: 'restricted', variants: ref.acceptedVariants as CanonicalVariant[] }
+    : { mode: 'any' };
+  const base: WantsUrlEntry = {
+    familyId: ref.familyId,
+    qty: ref.qty,
+    restriction,
+  };
+  return ref.isPriority ? { ...base, isPriority: true } : base;
 }
 
 function encodeAvailableRaw(items: readonly AvailableUrlEntry[]): string {
@@ -235,16 +228,16 @@ export function encodeAvailable(items: readonly AvailableUrlEntry[]): string {
   return compressParam(encodeAvailableRaw(items));
 }
 
+/**
+ * Client-side wrapper around the shared `lib/listShareCodec` decoder.
+ * `AvailableUrlEntry` and `AvailableRef` have identical shapes — no
+ * adapter needed — so this is literally a re-export under a different
+ * name. Kept as a function (not a re-export) so the import surface
+ * from `src/urlCodec.ts` stays consistent across both decoders and
+ * future shape drift can be absorbed here without churning callers.
+ */
 export function decodeAvailable(param: string): AvailableUrlEntry[] {
-  if (!param) return [];
-  const raw = decompressParam(param);
-  const out: AvailableUrlEntry[] = [];
-  for (const entry of raw.split(',').filter(Boolean)) {
-    const [productId, qtyStr] = entry.split('.');
-    if (!productId) continue;
-    out.push({ productId, qty: clampQty(parseInt(qtyStr, 10)) });
-  }
-  return out;
+  return decodeAvailableShared(param);
 }
 
 function clampPct(n: number): number {

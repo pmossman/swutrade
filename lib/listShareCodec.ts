@@ -1,27 +1,26 @@
 /**
- * Server-side decoder for shared wants/available list URL params.
+ * Shared decoder for wants/available list-share URL params.
  *
- * The CLIENT side of this codec lives in `src/urlCodec.ts` — it owns
- * both the encoder and the client-side decoder. This file carries the
- * matching SERVER decoder consumed by `api/og.ts` (for share-image
- * rendering) and its integration tests.
+ * Consumed by:
+ *   - `api/og.ts` — server-side share-image rendering
+ *   - `src/urlCodec.ts` — client-side decoder (via shape-adapter
+ *     wrappers that translate `WantsRef` → `WantsUrlEntry` for
+ *     frontend-friendly types with `restriction` instead of
+ *     `acceptedVariants`)
  *
- * Why two decoders exist: `src/urlCodec.ts` imports frontend-only
- * types (`WantsItem` shape with its `restriction` object, etc.) and
- * co-locates with the encoder for client roundtrip testing. The
- * server consumer works with a lighter `acceptedVariants` array
- * shape and must be independently bundled by Vercel's function
- * builder. Keeping a separate decoder module here avoids pulling any
- * browser deps into the function bundle while still being importable
- * from tests without touching the heavy JSON data imports that live
- * at `api/og.ts`'s top level.
+ * One decoder implementation, tested by both `tests/api/og-codec.
+ * test.ts` (cross-boundary round-trip) and `src/urlCodec.test.ts`
+ * (client-side encode/decode round-trip). Before unification
+ * (2026-04-21) the client + server had parallel decoders that
+ * diverged silently — compression added to one side and not the
+ * other caused the share-list-image bug of 2026-04-20.
  *
- * **Staleness hazard**: any change to the client encoder in
- * `src/urlCodec.ts` (compression scheme, field ordering, flag
- * shorthands) MUST land here too. `tests/api/og-codec.test.ts` is the
- * cross-boundary round-trip that would catch drift. A future slice
- * can unify the two with a shape adapter; until then, keep both
- * sides' tests in sync.
+ * Isomorphism contract: this module works in both browser and Node
+ * runtimes. Uses `atob` (available in both Node 16+ and all modern
+ * browsers) rather than Node's `Buffer` for base64 decoding, and
+ * relies on `TextDecoder` + `fflate.inflateSync` which are both
+ * isomorphic. No browser-only globals (`window`, `document`, `localStorage`)
+ * and no server-only deps (Node `Buffer`, `fs`).
  */
 
 import { inflateSync } from 'fflate';
@@ -62,7 +61,12 @@ const COMPRESS_PREFIX = '~';
 
 function fromBase64Url(str: string): Uint8Array {
   const padded = str.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = Buffer.from(padded, 'base64').toString('binary');
+  // atob is available in both modern browsers and Node 16+; avoids
+  // pulling Node's `Buffer` into the module so it stays isomorphic
+  // and the client bundle (via src/urlCodec.ts) doesn't need a
+  // Buffer polyfill. `atob` is strict about padding + invalid chars
+  // — callers wrap this in try/catch via `decompressParam` below.
+  const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
