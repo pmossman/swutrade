@@ -262,9 +262,9 @@ All three pages use the same chrome mount (`AppHeader` + breadcrumbs) with a `ma
 
 ## Tech debt + known gaps
 
-### ~~Communities module competes with trading loop~~ — shipped UX-A4 (2026-04-21)
+### ~~Communities module competes with trading loop~~ — shipped UX-A4 then walked back (2026-04-21)
 
-Home used to carry a `CommunitiesModule` that duplicated the `/?community=1` destination. Removed: discovery lives at `/?community=1` via NavMenu, trade-relevant community signals (overlap chip, Community-wants picker chip) already surface in context inside the builder. Cross-link [`e-home-nav.md`](./e-home-nav.md) for the Home layout.
+Original UX-A4 deleted `CommunitiesModule` from HomeView on the theory it duplicated `/?community=1`. Walked back the same day: removal left a blank quadrant and buried enrolled servers behind the hamburger menu. Reinstated as a peer module in the top-right quadrant of the new 2×2 Home grid (row 1: Trades + Communities, row 2: Wishlist + Binder). `StoresModule` was deleted in the walk-back — reserving a dimmed placeholder for an unshipped Phase 4 feature wasn't earning its real estate. Cross-link [`e-home-nav.md`](./e-home-nav.md) for the Home layout.
 
 ### Profile entry-point audit
 
@@ -320,7 +320,7 @@ Events are read newest-first but there's no per-user "last seen" watermark, so t
 - [`b-proposals.md`](./b-proposals.md) — `POST /api/trades/propose` is downstream of `onPick(handle)` → `/?propose=<handle>`. ProfileView's "Trade with @X" CTA lands in the same composer.
 - [`c-trade-builder.md`](./c-trade-builder.md) — the Community-wants chip in the trade builder's picker reads from `/api/me/community`. That chip's behavior is documented there, not here.
 - [`d-lists.md`](./d-lists.md) — ProfileView's tabbed wants/available use the same list rendering primitives as the main app. Row chrome, variant restriction display, and priority stars are inherited.
-- [`e-home-nav.md`](./e-home-nav.md) — the view router maps `?community=1`, `?settings=1`, and `/u/<handle>` onto this area's components. The Home Communities module (UX-A4) and the AppHeader breadcrumbs primitive live there.
+- [`e-home-nav.md`](./e-home-nav.md) — the view router maps `?community=1`, `?settings=1`, and `/u/<handle>` onto this area's components. The Home `CommunitiesModule` (UX-A4 walk-back) and the AppHeader breadcrumbs primitive live there.
 - [`g-auth.md`](./g-auth.md) — Ghost users never see community surfaces because the ghost flow restricts them; the OAuth callback also triggers `syncGuildMemberships`, which is how this area's guild data ends up in the DB.
 - [`h-cards-pricing.md`](./h-cards-pricing.md) — ProfileView consumes `byFamilyAll` + `byProductId` to render rows, and goes through `adjustPrice` / `getCardPrice` for totals.
 - [`i-discord-bot.md`](./i-discord-bot.md) — owns the pref registry SCHEMA (what prefs exist, what types), the bot-install + auto-enroll wire, and the `user_guild_memberships` + guild-sync write path. This page consumes those from the web side.
