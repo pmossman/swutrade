@@ -23,6 +23,15 @@ import { test, expect, expectNoConsoleErrors } from './_fixtures';
  * routing / module graph fails here.
  */
 test.describe('Invite-someone shared session', () => {
+  // Both tests start from an anonymous context. Pre-dismiss the
+  // first-run tutorial so its overlay doesn't intercept the
+  // "Invite someone" click.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      try { window.localStorage.setItem('swu.tour.dismissedAt', 'suppressed-by-e2e'); } catch {}
+    });
+  });
+
   test('GET /s/<unknown> renders the app chrome, not a 404', async ({ page, consoleErrors }) => {
     // Visiting any /s/<code> directly — even a made-up one — must
     // serve the SPA index so client routing can render the Not
