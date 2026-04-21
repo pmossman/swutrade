@@ -193,8 +193,12 @@ export function TradeRow({
   });
 
   const qtyBtn = QTY_BTN_COLORS[accentColor];
-  const decrementClasses = `${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qty <= 1 ? 'text-red-400 bg-red-900/30 hover:bg-red-900/50' : qtyBtn}`;
-  const incrementClasses = `${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qtyBtn}`;
+  // hit-area-44 expands the tap zone to WCAG's 44×44 minimum without
+  // visually growing the buttons — mobile-critical for the 20–24px
+  // compact/default sizes where the visual would otherwise be a
+  // finger-sized target at best.
+  const decrementClasses = `hit-area-44 ${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qty <= 1 ? 'text-red-400 bg-red-900/30 hover:bg-red-900/50' : qtyBtn}`;
+  const incrementClasses = `hit-area-44 ${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qtyBtn}`;
   const qtyValueClasses = `${isCompact ? 'w-4 text-[10px]' : isLarge ? 'w-6 text-sm' : 'w-5 text-xs'} text-center font-bold text-gray-200 tabular-nums`;
   const lineTotalClasses = `${isCompact ? 'text-[10px] w-11' : isLarge ? 'text-sm w-16' : 'text-xs w-14'} font-semibold tabular-nums shrink-0 text-right ${priceClass(lineTotal, 'text-gold')}`;
 

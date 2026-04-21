@@ -171,7 +171,7 @@ export function ListsDrawer({
                 <button
                   type="button"
                   aria-label="Close"
-                  className="text-gray-500 hover:text-gray-200 transition-colors"
+                  className="hit-area-44 text-gray-500 hover:text-gray-200 transition-colors"
                 >
                   <CloseIcon className="w-4 h-4" />
                 </button>
@@ -532,7 +532,7 @@ function ShareListsButton({
                 <button
                   type="button"
                   aria-label="Close"
-                  className="text-gray-500 hover:text-gray-200 transition-colors"
+                  className="hit-area-44 text-gray-500 hover:text-gray-200 transition-colors"
                 >
                   <CloseIcon className="w-4 h-4" />
                 </button>

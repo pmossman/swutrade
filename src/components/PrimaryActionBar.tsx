@@ -1,4 +1,5 @@
 import { usePrimaryActionContext } from '../contexts/PrimaryActionContext';
+import { hapticMedium } from '../utils/haptics';
 
 /**
  * Bottom-pinned primary action for the trade builder. Reads from
@@ -63,7 +64,14 @@ export function PrimaryActionBar() {
     <div className="shrink-0 px-3 pt-2 pb-3 max-w-5xl mx-auto w-full">
       <button
         type="button"
-        onClick={onClick}
+        onClick={() => {
+          // Haptic tap before the handler fires so the user feels the
+          // commit immediately — even if the action opens a modal
+          // (ProposeBar's confirm flow) the tap still registers as
+          // "something happened."
+          hapticMedium();
+          onClick();
+        }}
         disabled={effectiveDisabled}
         data-testid={testId}
         className={

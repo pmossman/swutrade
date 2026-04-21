@@ -4,6 +4,7 @@ import { StatusBadge } from './ui/StatusBadge';
 import { LoadingState, ErrorState } from './ui/states';
 import { NudgeDialog } from './NudgeDialog';
 import { useAuthContext } from '../contexts/AuthContext';
+import { hapticMedium, hapticSuccess, hapticError } from '../utils/haptics';
 import {
   useTradeDetail,
   type CardSnapshot,
@@ -70,21 +71,27 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
   };
 
   const handleAccept = async () => {
+    hapticMedium();
     setActionError(null);
     const result = await accept();
     if (!result.ok) {
+      hapticError();
       if (result.reason === 'already-resolved') {
         setActionError('This proposal was already resolved.');
       } else {
         setActionError(result.detail ?? "Couldn't accept. Try again in a moment.");
       }
+    } else {
+      hapticSuccess();
     }
   };
 
   const handleDecline = async () => {
+    hapticMedium();
     setActionError(null);
     const result = await decline();
     if (!result.ok) {
+      hapticError();
       if (result.reason === 'already-resolved') {
         setActionError('This proposal was already resolved.');
       } else {

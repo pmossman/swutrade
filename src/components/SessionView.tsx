@@ -19,6 +19,7 @@ import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
 type TradeCardSnapshot = CardSnapshot;
 import { extractVariantLabel } from '../variants';
+import { hapticMedium, hapticSuccess } from '../utils/haptics';
 
 /**
  * Shared-state trade canvas — the interactive surface for a session
@@ -132,9 +133,14 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const [cancelling, setCancelling] = useState(false);
   const handleConfirm = useCallback(async () => {
     if (confirming || !session || session.status !== 'active') return;
+    hapticMedium(); // "I'm committing" feedback on the tap itself.
     setConfirming(true);
     try {
-      await confirm();
+      const result = await confirm();
+      // Double-pulse when both sides have now confirmed and the trade
+      // settles — this is the "it happened" moment worth celebrating
+      // via feel, not just a banner flip.
+      if (result?.settled) hapticSuccess();
     } finally {
       setConfirming(false);
     }
@@ -142,6 +148,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const handleCancel = useCallback(async () => {
     if (cancelling || !session || session.status !== 'active') return;
     if (!window.confirm('Cancel this shared trade? Both sides will lose the in-progress state.')) return;
+    hapticMedium();
     setCancelling(true);
     try {
       await cancel();

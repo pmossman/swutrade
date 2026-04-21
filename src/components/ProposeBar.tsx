@@ -330,7 +330,7 @@ export function ProposeBar({
             type="button"
             onClick={handleCancel}
             title="Cancel and return to community"
-            className="shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-gray-500 hover:text-gray-200 hover:bg-space-700/60 transition-colors"
+            className="hit-area-44 shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-gray-500 hover:text-gray-200 hover:bg-space-700/60 transition-colors"
             aria-label="Cancel proposal"
           >
             <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>

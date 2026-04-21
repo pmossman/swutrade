@@ -254,7 +254,7 @@ export function AutoBalanceBanner({
           type="button"
           onClick={() => setDismissed(true)}
           aria-label="Dismiss"
-          className="shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
+          className="hit-area-44 shrink-0 text-gray-500 hover:text-gray-200 transition-colors"
         >
           <CloseIcon className="w-3.5 h-3.5" />
         </button>

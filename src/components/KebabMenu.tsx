@@ -45,7 +45,10 @@ export function KebabMenu({ items, size = 'sm', ariaLabel = 'More actions' }: Ke
             e.stopPropagation();
             toggle();
           }}
-          className={`${triggerSize} flex items-center justify-center rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 transition-colors`}
+          // hit-area-44 expands tap zone without growing the visual —
+          // the trigger matches sibling row controls (20–28px) but
+          // the click target meets WCAG 44×44 on touch devices.
+          className={`hit-area-44 ${triggerSize} flex items-center justify-center rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 transition-colors`}
           aria-label={ariaLabel}
         >
           <svg className={dotSize} fill="currentColor" viewBox="0 0 24 24" aria-hidden>

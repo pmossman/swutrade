@@ -265,3 +265,24 @@ body::before {
   background: #242a3d;
   border-radius: 3px;
 }
+
+/* Respect the OS reduced-motion preference. Collapses every CSS
+   transition + animation to ~instant, plus scroll-behavior. Applies
+   AFTER all the rules that define motion above so the override wins.
+   Uses a small non-zero duration (0.01ms) rather than 0s because some
+   Safari builds skip the transitionend event at 0s, which would strand
+   handlers waiting for it. Scale covers both ::before/::after pseudos
+   and Radix data-state animations via the universal selector chain.
+
+   Haptics also gate on this flag (see utils/haptics.ts) so vibration
+   feedback suppresses in tandem with visual motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
