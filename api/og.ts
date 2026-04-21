@@ -770,6 +770,11 @@ async function renderSingleListImage(
 
   const resvg = new Resvg(svg, {
     fitTo: { mode: 'width', value: 2400 },
+    font: {
+      fontFiles: fontPaths,
+      loadSystemFonts: false,
+      defaultFontFamily: 'Inter',
+    },
   });
   const png = resvg.render().asPng();
 
