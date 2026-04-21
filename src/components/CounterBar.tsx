@@ -231,10 +231,10 @@ export function CounterBar({
               : <>Counter sent to <strong>@{proposerHandle}</strong>. They'll see it in a DM.</>}
           </span>
           <a
-            href="/?community=1"
+            href="/?trades=1"
             className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
           >
-            Back to community
+            View your trades
           </a>
         </>
       );
