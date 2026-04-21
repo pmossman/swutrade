@@ -1,5 +1,6 @@
 import type { AuthApi } from '../hooks/useAuth';
 import { Popover } from './Popover';
+import { useTutorialContext } from '../contexts/TutorialContext';
 
 interface AccountMenuProps {
   auth: AuthApi;
@@ -17,6 +18,7 @@ interface AccountMenuProps {
  */
 export function AccountMenu({ auth }: AccountMenuProps) {
   const { user, isLoading, logout } = auth;
+  const tutorial = useTutorialContext();
 
   if (isLoading) return null;
 
@@ -35,6 +37,7 @@ export function AccountMenu({ auth }: AccountMenuProps) {
             onClick={toggle}
             aria-label="Account menu"
             aria-expanded={open}
+            data-tour="account-menu"
             className="flex items-center gap-1.5 pl-1 pr-2 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 transition-colors text-xs font-medium text-gray-400 hover:text-gold"
           >
             <span
@@ -47,7 +50,7 @@ export function AccountMenu({ auth }: AccountMenuProps) {
           </button>
         )}
       >
-        {() => (
+        {({ close }) => (
           <div className="flex flex-col gap-1">
             <div className="px-2 py-1.5 border-b border-space-700 mb-1">
               <div className="text-sm font-semibold text-gray-100">Not signed in</div>
@@ -63,6 +66,15 @@ export function AccountMenu({ auth }: AccountMenuProps) {
               <DiscordIcon className="w-3.5 h-3.5" />
               Sign in with Discord
             </a>
+
+            <button
+              type="button"
+              onClick={() => { tutorial.replay(); close(); }}
+              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold text-gray-300 hover:text-gold hover:bg-gold/10 transition-colors text-left"
+            >
+              <TourIcon className="w-3.5 h-3.5 text-gray-400" />
+              Show tutorial
+            </button>
           </div>
         )}
       </Popover>
@@ -177,6 +189,15 @@ function SignOutIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M10 11.5L13 8l-3-3.5M13 8H6M7 2.5H3.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1H7" />
+    </svg>
+  );
+}
+
+function TourIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 5v3l2 1.5" />
     </svg>
   );
 }

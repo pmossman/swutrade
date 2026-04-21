@@ -21,6 +21,21 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    // Pre-dismiss the first-run tutorial for every anonymous spec so
+    // it doesn't overlay the page and intercept locator clicks. The
+    // tour's own spec (`tutorial.spec.ts`) explicitly clears this
+    // via `addInitScript` before navigation.
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: 'http://localhost:5173',
+          localStorage: [
+            { name: 'swu.tour.dismissedAt', value: 'suppressed-by-e2e' },
+          ],
+        },
+      ],
+    },
   },
   projects: [
     { name: 'chromium', use: devices['Desktop Chrome'] },

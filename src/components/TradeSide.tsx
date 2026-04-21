@@ -72,6 +72,10 @@ interface TradeSideProps {
    *  @alice" — avoids the full-screen overlay feeling disconnected
    *  from its parent flow. */
   counterpartHandle?: string | null;
+  /** First-run tutorial anchor id — rendered as `data-tour` on the
+   *  empty-state Add Cards tile. Set only on the Offering side so
+   *  the coachmark has one predictable target. */
+  dataTourAddCards?: string;
   /** When true, skip the in-panel header strip (label + count +
    *  total). Used in the tabbed layout where the tab bar above the
    *  panel already carries that information — rendering both reads
@@ -159,6 +163,7 @@ export function TradeSide({
   communityAvailableProductIds,
   autoScopeToTheirs,
   counterpartHandle,
+  dataTourAddCards,
   headerless,
   readOnly = false,
   readOnlyEmptyLabel,
@@ -516,6 +521,7 @@ export function TradeSide({
                     ? 'Or tap the Suggest a match button above'
                     : undefined
                 }
+                dataTour={dataTourAddCards}
               />
             )
           ) : (
@@ -575,6 +581,7 @@ function AddCardsTile({
   accentColor,
   onOpen,
   hint,
+  dataTour,
 }: {
   label: string;
   accentColor: 'emerald' | 'blue';
@@ -583,6 +590,10 @@ function AddCardsTile({
    *  used in propose mode to point at the Suggest button above
    *  so undecided users know an auto-fill option exists. */
   hint?: string;
+  /** First-run tutorial anchor — rendered as `data-tour="…"`. Only
+   *  passed on the Offering side so the coachmark has a single,
+   *  predictable target element. */
+  dataTour?: string;
 }) {
   const accentText = accentColor === 'emerald' ? 'text-emerald-300' : 'text-blue-300';
   const accentHoverBorder = accentColor === 'emerald' ? 'hover:border-emerald-500/50' : 'hover:border-blue-500/50';
@@ -593,6 +604,7 @@ function AddCardsTile({
     <button
       type="button"
       onClick={onOpen}
+      data-tour={dataTour}
       className={`group flex-1 m-3 flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-space-700 ${accentHoverBorder} ${accentHoverBg} text-gray-500 transition-colors cursor-pointer px-4 py-8`}
     >
       <svg className={`w-8 h-8 text-space-600 ${accentIcon} transition-colors`} fill="none" stroke="currentColor" viewBox="0 0 24 24">

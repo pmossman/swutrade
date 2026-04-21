@@ -32,6 +32,13 @@ interface Participant {
 async function openParticipant(browser: Parameters<Parameters<typeof test>[1]>[0]['browser'], url = '/'): Promise<Participant> {
   const context = await browser.newContext();
   const page = await context.newPage();
+  // Signed-out participants trigger the first-run tutorial overlay,
+  // which would intercept the first locator click. Pre-dismiss via
+  // localStorage before navigation so specs stay focused on their
+  // own flows.
+  await page.addInitScript(() => {
+    try { window.localStorage.setItem('swu.tour.dismissedAt', 'suppressed-by-e2e'); } catch {}
+  });
   const errors: string[] = [];
   page.on('console', msg => {
     if (msg.type() === 'error') errors.push(msg.text());

@@ -51,6 +51,10 @@ import type { PrimaryActionSpec } from './contexts/PrimaryActionContext';
 import { buildTradeSearch } from './urlCodec';
 import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
 import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
+import { TutorialProvider } from './contexts/TutorialContext';
+import { useTutorial } from './hooks/useTutorial';
+import { TutorialOverlay } from './components/TutorialOverlay';
+import { TUTORIAL_STEPS } from './tutorial/steps';
 
 /** Extract the handle from either `?profile=<handle>` or the
  *  `/u/<handle>` pathname — whichever the user navigated via. */
@@ -75,6 +79,16 @@ function timeAgo(iso: string): string {
 function App() {
   const auth = useAuthContext();
   const { user, isSignedIn } = auth;
+
+  // First-run tutorial: coachmark tour shown once to signed-out
+  // visitors. `useTutorial` handles localStorage gating; hook
+  // instance is shared downstream via <TutorialProvider> so
+  // AccountMenu can expose a Replay entry.
+  const tutorial = useTutorial({
+    totalSteps: TUTORIAL_STEPS.length,
+    isSignedIn,
+    isAuthLoading: auth.isLoading,
+  });
 
   // Pricing knobs live in PricingContext — state + persistence are
   // owned there so every view that renders a price can read them
@@ -695,6 +709,7 @@ function App() {
               communityAvailableProductIds={community.availableProductIds}
               autoScopeToTheirs={!!proposeHandle}
               counterpartHandle={proposeHandle ?? senderHandle ?? null}
+              dataTourAddCards="add-cards"
             />
             {/* Mobile-only drag handle between the two panels. Collapsed
                 panels hide the divider — nothing to resize against. */}
@@ -918,13 +933,19 @@ function App() {
         onOpenChange={setListsDrawerOpen}
       />
       <NavigationProvider value={nav}>
-        {/* UX-A5: post-OAuth-merge reassurance toast. Renders only
-            when the iron-session cookie carries `pendingMergeBanner`
-            (set by api/auth.ts callback when ghost→real merge moved
-            ≥1 session). Position-fixed at top so every view sees it
-            regardless of header structure. Cleared on dismiss. */}
-        <MergeReassuranceBanner auth={auth} />
-        {renderBody()}
+        <TutorialProvider value={tutorial}>
+          {/* UX-A5: post-OAuth-merge reassurance toast. Renders only
+              when the iron-session cookie carries `pendingMergeBanner`
+              (set by api/auth.ts callback when ghost→real merge moved
+              ≥1 session). Position-fixed at top so every view sees it
+              regardless of header structure. Cleared on dismiss. */}
+          <MergeReassuranceBanner auth={auth} />
+          {renderBody()}
+          {/* First-run tutorial — only activates for signed-out users
+              who haven't already dismissed it. Component handles its
+              own gating; rendering unconditionally is safe. */}
+          {tutorial.isActive && <TutorialOverlay tutorial={tutorial} />}
+        </TutorialProvider>
       </NavigationProvider>
     </>
   );
