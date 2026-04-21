@@ -46,6 +46,9 @@ import { TradesHistoryView } from './components/TradesHistoryView';
 import { SessionView } from './components/SessionView';
 import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
+import { usePrimaryAction } from './hooks/usePrimaryAction';
+import type { PrimaryActionSpec } from './contexts/PrimaryActionContext';
+import { buildTradeSearch } from './urlCodec';
 import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
 import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
 
@@ -633,6 +636,26 @@ function App() {
         />
       )}
 
+      {/* Auto-balance mode was missing a primary action. User arrives
+          at `?from=@bob&autoBalance=1` (e.g. from a shared list DM'd
+          to them), clicks "Load trade", sees cards appear — and then
+          the PrimaryActionBar was empty because no propose/counter/
+          edit intent was set. They had to know to manually navigate
+          to `?propose=@bob` to actually send the trade. This surfaces
+          the bridge: `Propose to @bob` lands in the bottom bar
+          whenever we're in auto-balance mode with cards. Mount-gated
+          so the primary action only registers when all conditions
+          hold; `usePrimaryAction` auto-clears on unmount. */}
+      {senderHandle && hasCards && !proposeHandle && !counterId && !editId && (
+        <AutoBalancePrimaryAction
+          senderHandle={senderHandle}
+          yourCards={yourCards}
+          theirCards={theirCards}
+          percentage={percentage}
+          priceMode={priceMode}
+        />
+      )}
+
       {/* Trade panels. Two layouts:
            - split: both panels visible side-by-side (desktop default)
              with mobile flex-col + collapsible panels + drag divider
@@ -1035,6 +1058,56 @@ function TradeTab({
 
 function getTradeCardPrice(tc: TradeCard, priceMode: PriceMode, percentage: number): number {
   return adjustPrice(getCardPrice(tc.card, priceMode), percentage) ?? 0;
+}
+
+/**
+ * Registers a "Propose to @<sender>" primary action when the user is
+ * in auto-balance mode (`?from=<handle>`) WITH cards loaded. Renders
+ * nothing visually — the PrimaryActionBar at the bottom of the
+ * builder reads from `PrimaryActionContext` and renders the button.
+ *
+ * Does a full-page navigation into propose mode on click (same
+ * pattern as TradeSummary's `handleProposeTo` — cards survive via
+ * the URL trade codec) rather than a pushState, because propose mode
+ * owns a different set of top-bar chrome (ProposeBar, different
+ * picker scoping, a different composer hook) and App.tsx's routing
+ * relies on a fresh mount to re-seed all of that cleanly.
+ *
+ * Mount-gated by the caller (App.tsx's conditional render), so the
+ * registration hook only fires when all four conditions hold:
+ * senderHandle is set, hasCards is true, and no other intent
+ * (propose/counter/edit) is active.
+ */
+function AutoBalancePrimaryAction({
+  senderHandle,
+  yourCards,
+  theirCards,
+  percentage,
+  priceMode,
+}: {
+  senderHandle: string;
+  yourCards: TradeCard[];
+  theirCards: TradeCard[];
+  percentage: number;
+  priceMode: PriceMode;
+}) {
+  const onClick = useCallback(() => {
+    const search = buildTradeSearch({ yourCards, theirCards, percentage, priceMode });
+    const params = new URLSearchParams(search);
+    params.set('propose', senderHandle);
+    window.location.href = `/?${params.toString()}`;
+  }, [senderHandle, yourCards, theirCards, percentage, priceMode]);
+
+  const spec = useMemo<PrimaryActionSpec>(
+    () => ({
+      label: `Propose to @${senderHandle}`,
+      onClick,
+      testId: 'autobalance-primary-action',
+    }),
+    [senderHandle, onClick],
+  );
+  usePrimaryAction(spec);
+  return null;
 }
 
 export default App;
