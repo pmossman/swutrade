@@ -134,10 +134,14 @@ export interface SessionView {
     avatarUrl: string | null;
     isAnonymous: boolean;
   } | null;
-  /** True when slot B hasn't been claimed yet — the session is an
-   *  "open" QR/link invitation waiting for a scanner. In this state
-   *  `counterpart` is null and the UI shows the invite-and-QR surface
-   *  instead of the two-panel trade canvas. */
+  /** True when slot B hasn't been claimed yet AND the session is still
+   *  active — i.e., the session is a live QR/link invitation waiting
+   *  for a scanner. In this state `counterpart` is null and the UI
+   *  shows the invite-and-QR surface instead of the two-panel trade
+   *  canvas. Flips to false the moment the session transitions to a
+   *  terminal status (cancelled / expired) even if `userBId` is still
+   *  null, so the UI can route a just-cancelled open session through
+   *  the TerminalBanner path instead of leaving the QR card on screen. */
   openSlot: boolean;
   yourCards: TradeCardSnapshot[];
   theirCards: TradeCardSnapshot[];
@@ -206,7 +210,7 @@ export async function getSessionForViewer(
           isAnonymous: counterpart.isAnonymous,
         }
       : null,
-    openSlot: counterpartId === null,
+    openSlot: counterpartId === null && row.status === 'active',
     yourCards,
     theirCards,
     confirmedByViewer: row.confirmedByUserIds.includes(viewerUserId),
@@ -350,7 +354,7 @@ export async function listActiveSessionsForViewer(
             isAnonymous: counterpart.isAnonymous,
           }
         : null,
-      openSlot: counterpartId === null,
+      openSlot: counterpartId === null && r.status === 'active',
       yourCards: viewerIsA ? r.userACards : r.userBCards,
       theirCards: viewerIsA ? r.userBCards : r.userACards,
       confirmedByViewer: r.confirmedByUserIds.includes(viewerUserId),

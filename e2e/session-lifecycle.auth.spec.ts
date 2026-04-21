@@ -155,6 +155,36 @@ test.describe('Shared session lifecycle', () => {
     }
   });
 
+  test('creator cancels an open-slot invite before anyone claims → terminal state renders', async ({ browser }) => {
+    // Regression guard for the "cancel doesn't seem to work" bug:
+    // `SessionView.openSlot` used to stay `true` after a cancel on
+    // an unclaimed session (because the DB column `user_b_id` is
+    // still null), so the client kept rendering the QR / "Cancel
+    // this invitation" surface instead of the terminal banner. The
+    // fix derives openSlot as "unclaimed AND active" so a cancelled
+    // open invite transitions into the terminal banner path.
+    const a = await openParticipant(browser, '/');
+    try {
+      await a.page.getByRole('button', { name: /Invite someone/i }).first().click();
+      await expect(a.page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
+      // Open-slot invite surface is visible — QR + waiting-for-
+      // counterpart copy + the "Cancel this invitation" link.
+      await expect(a.page.getByText(/Waiting for your counterpart/i)).toBeVisible({ timeout: 10_000 });
+      const cancelLink = a.page.getByRole('button', { name: /Cancel this invitation/i });
+      await expect(cancelLink).toBeVisible();
+      await cancelLink.click();
+
+      // Post-cancel: invite surface is gone, terminal banner is up.
+      await expect(a.page.getByText(/Trade cancelled/i)).toBeVisible({ timeout: 10_000 });
+      await expect(a.page.getByText(/Waiting for your counterpart/i)).toHaveCount(0);
+      await expect(a.page.getByRole('button', { name: /Cancel this invitation/i })).toHaveCount(0);
+
+      expect(filterConsoleErrors(a.errors)).toEqual([]);
+    } finally {
+      await closeAll([a]);
+    }
+  });
+
   test('cancel from one side locks the canvas on both sides', async ({ browser }) => {
     const { a, b } = await createAndClaim(browser);
 

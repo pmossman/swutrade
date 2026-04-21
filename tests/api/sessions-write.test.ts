@@ -15,6 +15,7 @@ import {
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
 import { tradeSessions, type TradeCardSnapshot } from '../../lib/schema.js';
+import { createOpenSession, getSessionForViewer } from '../../lib/sessions.js';
 
 function snap(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1 };
@@ -244,6 +245,46 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     expect(next.status).toBe(201);
     expect(next.body.created).toBe(true);
     expect(next.body.id).not.toBe(id);
+  });
+
+  it('cancel on an open-slot session flips openSlot to false so the UI routes to the terminal banner', async () => {
+    // Regression guard: `openSlot` used to be derived purely from
+    // `userBId === null`, which left a just-cancelled open invitation
+    // rendering the QR card (because `userBId` is still null after a
+    // cancel). The fix derives openSlot as "unclaimed AND active" so
+    // clients can use it as a "show the invite surface" gate without
+    // also having to know about terminal states.
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const db = getDb();
+
+    const { id } = await createOpenSession(db, { creatorUserId: alice.id });
+    createdIds.push(id);
+
+    // Before cancel: open-slot live invite.
+    const before = await getSessionForViewer(db, id, alice.id);
+    expect(before?.openSlot).toBe(true);
+    expect(before?.status).toBe('active');
+
+    const res = mockResponse();
+    await handleCancelSession(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(alice.id) },
+        query: { id },
+      }),
+      res,
+    );
+    expect(res._status).toBe(200);
+
+    const body = res._json as { session: { openSlot: boolean; status: string } };
+    expect(body.session.status).toBe('cancelled');
+    expect(body.session.openSlot).toBe(false);
+
+    // And a fresh read (cache-bypassing) agrees.
+    const after = await getSessionForViewer(db, id, alice.id);
+    expect(after?.openSlot).toBe(false);
+    expect(after?.status).toBe('cancelled');
   });
 
   it('edit returns 404 for a non-participant viewer (no leakage)', async () => {
