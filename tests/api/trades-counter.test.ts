@@ -11,7 +11,7 @@ import {
 import { getDb } from '../../lib/db.js';
 import { tradeProposals, type TradeCardSnapshot } from '../../lib/schema.js';
 import type { DiscordBotClient } from '../../lib/discordBot.js';
-import { createBaseFakeBot, type EditCall, type SendCall } from './discordFakes.js';
+import { createRecordingFakeBot } from './discordFakes.js';
 
 /**
  * Covers POST /api/trades/counter — the recipient-initiated counter
@@ -42,27 +42,13 @@ describeWithDb('POST /api/trades/counter', () => {
     return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
   }
 
-  function makeFakeBot(opts: { editFails?: boolean; sendFails?: boolean } = {}): DiscordBotClient & {
-    editCalls: EditCall[];
-    sendCalls: SendCall[];
-  } {
-    const editCalls: EditCall[] = [];
-    const sendCalls: SendCall[] = [];
-    return Object.assign(
-      createBaseFakeBot({
-        async editChannelMessage(channelId, messageId, body) {
-          editCalls.push({ channelId, messageId, body });
-          if (opts.editFails) throw new Error('simulated edit failure');
-        },
-        async createDmChannel() { return { id: 'dm-counter' }; },
-        async sendDirectMessage(userId, body) {
-          sendCalls.push({ userId, body });
-          if (opts.sendFails) throw new Error('simulated send failure');
-          return { id: 'counter-msg-1', channel_id: 'dm-counter' };
-        },
-      }),
-      { editCalls, sendCalls },
-    );
+  function makeFakeBot(opts: { editFails?: boolean; sendFails?: boolean } = {}) {
+    return createRecordingFakeBot({
+      editFails: opts.editFails ? 'simulated edit failure' : undefined,
+      sendFails: opts.sendFails ? 'simulated send failure' : undefined,
+      dmChannelId: 'dm-counter',
+      sendResponse: { id: 'counter-msg-1', channel_id: 'dm-counter' },
+    });
   }
 
   async function seedOriginal(overrides: {

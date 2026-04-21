@@ -15,24 +15,14 @@ import {
 import { getDb } from '../../lib/db.js';
 import { tradeProposals, proposalEvents, type TradeCardSnapshot } from '../../lib/schema.js';
 import { recordEvent } from '../../lib/proposalEvents.js';
-import type { DiscordBotClient } from '../../lib/discordBot.js';
-import { createBaseFakeBot, type EditCall } from './discordFakes.js';
+import { createRecordingFakeBot } from './discordFakes.js';
 
 function snapshot(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
-function makeFakeBot(): DiscordBotClient & { editCalls: EditCall[] } {
-  const editCalls: EditCall[] = [];
-  return Object.assign(
-    createBaseFakeBot({
-      async editChannelMessage(channelId, messageId, body) {
-        editCalls.push({ channelId, messageId, body });
-      },
-      async createDmChannel() { return { id: 'dm-cancel' }; },
-    }),
-    { editCalls },
-  );
+function makeFakeBot() {
+  return createRecordingFakeBot({ dmChannelId: 'dm-cancel' });
 }
 
 async function insertProposal(overrides: {

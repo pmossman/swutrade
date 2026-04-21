@@ -14,8 +14,7 @@ import {
   proposalEvents,
   type TradeCardSnapshot,
 } from '../../lib/schema.js';
-import type { DiscordBotClient } from '../../lib/discordBot.js';
-import { createBaseFakeBot, type PostCall, type SendCall } from './discordFakes.js';
+import { createRecordingFakeBot } from './discordFakes.js';
 
 /**
  * Covers POST /api/trades/nudge — the proposer-only "bump a pending
@@ -36,30 +35,19 @@ function snapshot(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
-type FakeBot = DiscordBotClient & {
-  sendCalls: SendCall[];
-  postCalls: PostCall[];
-};
-
-function makeFakeBot(opts: { shouldFail?: boolean } = {}): FakeBot {
-  const sendCalls: SendCall[] = [];
-  const postCalls: PostCall[] = [];
-  return Object.assign(
-    createBaseFakeBot({
-      async postChannelMessage(channelId, body) {
-        postCalls.push({ channelId, body });
-        if (opts.shouldFail) throw new Error('simulated post failure');
-        return { id: 'thread-msg-nudge', channel_id: channelId };
-      },
-      async createDmChannel() { return { id: 'dm-nudge' }; },
-      async sendDirectMessage(userId, body) {
-        sendCalls.push({ userId, body });
-        if (opts.shouldFail) throw new Error('simulated send failure');
-        return { id: 'msg-nudge', channel_id: 'dm-nudge' };
-      },
-    }),
-    { sendCalls, postCalls },
-  );
+function makeFakeBot(opts: { shouldFail?: boolean } = {}) {
+  return createRecordingFakeBot({
+    // `shouldFail` applies to both transport paths (thread post + DM)
+    // because the nudge handler picks one or the other per proposal
+    // row and we exercise both paths from this same option switch.
+    sendFails: opts.shouldFail ? 'simulated send failure' : undefined,
+    postFails: opts.shouldFail ? 'simulated post failure' : undefined,
+    dmChannelId: 'dm-nudge',
+    sendResponse: { id: 'msg-nudge', channel_id: 'dm-nudge' },
+    // postChannelMessage's default echoes the called channelId, so
+    // there's no need to configure postResponse — tests assert on
+    // `postCalls[0].channelId` which is the input, not the response.
+  });
 }
 
 async function insertProposal(overrides: {
