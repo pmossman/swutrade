@@ -45,6 +45,7 @@ import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
 import { SessionView } from './components/SessionView';
 import { PrimaryActionBar } from './components/PrimaryActionBar';
+import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
 import { detectViewMode, VIEW_PARAM_KEYS, type ViewMode } from './routing/config';
 import { NavigationProvider, type NavigationApi } from './contexts/NavigationContext';
 
@@ -898,6 +899,12 @@ function App() {
         onOpenChange={setListsDrawerOpen}
       />
       <NavigationProvider value={nav}>
+        {/* UX-A5: post-OAuth-merge reassurance toast. Renders only
+            when the iron-session cookie carries `pendingMergeBanner`
+            (set by api/auth.ts callback when ghost→real merge moved
+            ≥1 session). Position-fixed at top so every view sees it
+            regardless of header structure. Cleared on dismiss. */}
+        <MergeReassuranceBanner auth={auth} />
         {renderBody()}
       </NavigationProvider>
     </>

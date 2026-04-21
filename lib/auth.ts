@@ -19,6 +19,14 @@ export interface SessionData {
   // re-auth only if they explicitly requested a Discord-backed action.
   discordAccessToken?: string;
   discordAccessTokenExpiresAt?: number;
+  /** UX-A5: set by the OAuth callback when a ghost→real merge moved
+   *  at least one session row. Frontend reads this via /api/auth/me
+   *  and renders a one-shot reassurance banner ("We carried your
+   *  trade over"); dismissing via /api/auth/dismiss-merge-banner
+   *  clears it. Persists in the iron-session cookie until dismissed
+   *  or the cookie expires — if the user closes the tab without
+   *  seeing the banner, it re-appears on next visit. */
+  pendingMergeBanner?: { carriedCount: number };
 }
 
 function getSessionOptions(): SessionOptions {
@@ -49,6 +57,7 @@ export async function getSession(
     isAnonymous: session.isAnonymous ?? false,
     discordAccessToken: session.discordAccessToken,
     discordAccessTokenExpiresAt: session.discordAccessTokenExpiresAt,
+    pendingMergeBanner: session.pendingMergeBanner,
   };
 }
 
@@ -65,6 +74,28 @@ export async function createSession(
   session.isAnonymous = data.isAnonymous ?? false;
   session.discordAccessToken = data.discordAccessToken;
   session.discordAccessTokenExpiresAt = data.discordAccessTokenExpiresAt;
+  if (data.pendingMergeBanner) session.pendingMergeBanner = data.pendingMergeBanner;
+  await session.save();
+}
+
+/**
+ * UX-A5: update an existing session's `pendingMergeBanner` slot
+ * without rebuilding the whole session (keeps identity + tokens
+ * intact). Set to a count to flag the banner; pass `null` to clear
+ * after the user dismisses.
+ */
+export async function setPendingMergeBanner(
+  req: VercelRequest,
+  res: VercelResponse,
+  banner: SessionData['pendingMergeBanner'] | null,
+): Promise<void> {
+  const session = await getIronSession<SessionData>(req, res, getSessionOptions());
+  if (!session.userId) return;
+  if (banner) {
+    session.pendingMergeBanner = banner;
+  } else {
+    delete session.pendingMergeBanner;
+  }
   await session.save();
 }
 

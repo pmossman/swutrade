@@ -857,7 +857,7 @@ export async function mergeGhostIntoRealUser(
   db: Db,
   ghostId: string,
   realUserId: string,
-): Promise<void> {
+): Promise<{ migrated: number }> {
   const sessions = await db
     .select()
     .from(tradeSessions)
@@ -865,6 +865,13 @@ export async function mergeGhostIntoRealUser(
       eq(tradeSessions.userAId, ghostId),
       eq(tradeSessions.userBId, ghostId),
     ));
+
+  // Track successful migrations so the caller (OAuth callback) can
+  // decide whether to flag a reassurance banner for the user — UX-A5.
+  // A zero-count merge (ghost existed but had no sessions, e.g. user
+  // opened the app anonymously then signed in without ever claiming
+  // anything) shouldn't trigger the banner; the silent-path is fine.
+  let migrated = 0;
 
   for (const s of sessions) {
     const now = new Date();
@@ -876,6 +883,7 @@ export async function mergeGhostIntoRealUser(
           .update(tradeSessions)
           .set({ userAId: realUserId, updatedAt: now })
           .where(eq(tradeSessions.id, s.id));
+        migrated += 1;
         continue;
       }
 
@@ -904,6 +912,7 @@ export async function mergeGhostIntoRealUser(
           updatedAt: now,
         })
         .where(eq(tradeSessions.id, s.id));
+      migrated += 1;
     } catch (err) {
       // Pair-uniqueness conflict: the real user already has an
       // active session with this counterpart. Leave the ghost row
@@ -941,6 +950,8 @@ export async function mergeGhostIntoRealUser(
   if (remaining.length === 0) {
     await db.delete(users).where(eq(users.id, ghostId));
   }
+
+  return { migrated };
 }
 
 /**

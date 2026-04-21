@@ -27,6 +27,14 @@ export interface AuthApi {
   isSignedIn: boolean;
   /** OAuth URL that installs SWUTrade's bot in a Discord guild. */
   botInstallUrl: string | null;
+  /** UX-A5: when the just-completed OAuth callback merged ghost
+   *  sessions into this real-user account, the server flags how many
+   *  rows moved over. Frontend renders a one-shot reassurance banner
+   *  while non-null; `dismissMergeBanner()` clears it server-side
+   *  AND locally so the banner unmounts immediately. Null in steady
+   *  state. */
+  pendingMergeBanner: { carriedCount: number } | null;
+  dismissMergeBanner: () => Promise<void>;
   login: () => void;
   logout: () => Promise<void>;
 }
@@ -61,6 +69,9 @@ export function useAuth(): AuthApi {
   const [user, setUser] = useState<User | null>(null);
   const [botInstallUrl, setBotInstallUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingMergeBanner, setPendingMergeBanner] = useState<
+    { carriedCount: number } | null
+  >(null);
   // Read once on mount — the hint exists to steer the very first
   // render. After `isLoading` flips false, `!!user` drives isSignedIn
   // and this initial value no longer matters.
@@ -71,13 +82,16 @@ export function useAuth(): AuthApi {
       const result = await apiGet<{
         user?: User | null;
         botInstallUrl?: string | null;
+        pendingMergeBanner?: { carriedCount: number } | null;
       }>('/api/auth/me');
       if (result.ok) {
         setUser(result.data.user ?? null);
         setBotInstallUrl(result.data.botInstallUrl ?? null);
+        setPendingMergeBanner(result.data.pendingMergeBanner ?? null);
         writeHint(!!result.data.user);
       } else {
         setUser(null);
+        setPendingMergeBanner(null);
         writeHint(false);
       }
       setIsLoading(false);
@@ -91,10 +105,29 @@ export function useAuth(): AuthApi {
   const logout = useCallback(async () => {
     await apiPost('/api/auth/logout');
     setUser(null);
+    setPendingMergeBanner(null);
     writeHint(false);
+  }, []);
+
+  const dismissMergeBanner = useCallback(async () => {
+    // Optimistic — clear locally first so the banner unmounts on the
+    // next paint without waiting for the round-trip. The endpoint is
+    // idempotent so a network failure doesn't leave the client + server
+    // out of sync long-term: the next /api/auth/me will reconcile.
+    setPendingMergeBanner(null);
+    await apiPost('/api/auth/dismiss-merge-banner');
   }, []);
 
   const isSignedIn = !!user || (isLoading && initialHint);
 
-  return { user, isLoading, isSignedIn, botInstallUrl, login, logout };
+  return {
+    user,
+    isLoading,
+    isSignedIn,
+    botInstallUrl,
+    pendingMergeBanner,
+    dismissMergeBanner,
+    login,
+    logout,
+  };
 }

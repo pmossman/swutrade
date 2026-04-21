@@ -96,6 +96,7 @@ export async function sealTestCookie(userId: string, opts: {
   discordAccessToken?: string;
   discordAccessTokenExpiresAt?: number;
   isAnonymous?: boolean;
+  pendingMergeBanner?: { carriedCount: number };
 } = {}): Promise<string> {
   return sealData(
     {
@@ -106,6 +107,7 @@ export async function sealTestCookie(userId: string, opts: {
       isAnonymous: opts.isAnonymous ?? false,
       discordAccessToken: opts.discordAccessToken,
       discordAccessTokenExpiresAt: opts.discordAccessTokenExpiresAt,
+      pendingMergeBanner: opts.pendingMergeBanner,
     },
     { password: process.env.SESSION_SECRET!, ttl: 86400 },
   );

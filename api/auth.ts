@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Discord, generateState, generateCodeVerifier } from 'arctic';
 import { parse, serialize } from 'cookie';
 import { eq } from 'drizzle-orm';
-import { createSession, destroySession, getSession } from '../lib/auth.js';
+import { createSession, destroySession, getSession, setPendingMergeBanner } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
 import { users } from '../lib/schema.js';
 import { mergeGhostIntoRealUser } from '../lib/sessions.js';
@@ -20,10 +20,11 @@ import { syncGuildMemberships } from '../lib/guildSync.js';
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const action = (req.query.action as string | undefined) ?? '';
   switch (action) {
-    case 'me':       return handleMe(req, res);
-    case 'discord':  return handleDiscordStart(req, res);
-    case 'callback': return handleCallback(req, res);
-    case 'logout':   return handleLogout(req, res);
+    case 'me':                    return handleMe(req, res);
+    case 'discord':               return handleDiscordStart(req, res);
+    case 'callback':              return handleCallback(req, res);
+    case 'logout':                return handleLogout(req, res);
+    case 'dismiss-merge-banner':  return handleDismissMergeBanner(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/auth action' });
   }
@@ -45,7 +46,35 @@ export async function handleMe(req: VercelRequest, res: VercelResponse) {
       isAnonymous: session.isAnonymous ?? false,
     },
     botInstallUrl: buildBotInstallUrl(),
+    // UX-A5: set by the OAuth callback after a ghost→real merge moved
+    // at least one session. Frontend renders a one-shot reassurance
+    // banner; dismiss posts to /api/auth/dismiss-merge-banner.
+    pendingMergeBanner: session.pendingMergeBanner ?? null,
   });
+}
+
+// --- /api/auth/dismiss-merge-banner ----------------------------------------
+
+/**
+ * Clears the `pendingMergeBanner` flag on the caller's session after
+ * they've seen + acknowledged the "we carried your trade over"
+ * banner. Idempotent — calling on a session without the flag is a
+ * no-op 200. 401 when not signed in.
+ */
+export async function handleDismissMergeBanner(
+  req: VercelRequest,
+  res: VercelResponse,
+) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  const session = await getSession(req, res);
+  if (!session) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  await setPendingMergeBanner(req, res, null);
+  res.json({ ok: true });
 }
 
 /**
@@ -286,9 +315,17 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
   // to this real user row before we swap the cookie. Swallow errors
   // — at worst the ghost's sessions stay under the ghost id until
   // TTL, which degrades gracefully.
+  //
+  // UX-A5: when the merge moves at least one session, flag the new
+  // real-user session cookie so the next /api/auth/me response carries
+  // `pendingMergeBanner` — HomeView renders a one-shot reassurance
+  // banner ("We carried your trade over"). Silent success made users
+  // wonder if their in-progress trade survived the transition.
+  let carriedCount = 0;
   if (ghostIdToMerge && ghostIdToMerge !== discordUser.id) {
     try {
-      await mergeGhostIntoRealUser(db, ghostIdToMerge, discordUser.id);
+      const result = await mergeGhostIntoRealUser(db, ghostIdToMerge, discordUser.id);
+      carriedCount = result.migrated;
     } catch (err) {
       console.error('auth callback: ghost merge failed', ghostIdToMerge, err);
     }
@@ -301,6 +338,7 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
     avatarUrl,
     discordAccessToken: tokens.accessToken(),
     discordAccessTokenExpiresAt: tokens.accessTokenExpiresAt().getTime(),
+    pendingMergeBanner: carriedCount > 0 ? { carriedCount } : undefined,
   });
 
   // Clear OAuth cookies.

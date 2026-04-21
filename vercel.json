@@ -18,6 +18,7 @@
     { "source": "/api/auth/discord", "destination": "/api/auth?action=discord" },
     { "source": "/api/auth/callback", "destination": "/api/auth?action=callback" },
     { "source": "/api/auth/logout", "destination": "/api/auth?action=logout" },
+    { "source": "/api/auth/dismiss-merge-banner", "destination": "/api/auth?action=dismiss-merge-banner" },
     { "source": "/api/trades/propose", "destination": "/api/trades?action=propose" },
     { "source": "/api/trades/counter", "destination": "/api/trades?action=counter" },
     { "source": "/api/trades/cancel", "destination": "/api/trades?action=cancel" },
