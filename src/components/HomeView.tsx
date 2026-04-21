@@ -5,13 +5,11 @@ import {
   BookOpen,
   Star,
   Store,
-  Users,
 } from 'lucide-react';
 import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
 import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
-import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { TradeExpandPeek } from './TradeExpandPeek';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
@@ -28,20 +26,23 @@ interface HomeViewProps {
 }
 
 /**
- * Home 2.0 — dashboard layout.
+ * Home — dashboard layout.
  *
- * Four parallel "my" modules each own a surface in the IA:
+ * Parallel "my" modules each own a surface in the IA:
  *
- *   💱 My Trades       → trades history + recent activity
- *   📋 My Lists        → wants + available (ListsDrawer)
- *   👥 My Communities  → enrolled Discord servers
- *   🏪 My Stores       → LGS placeholder (Phase 4 v2+)
+ *   💱 My Trades          → trades history + recent activity
+ *   ⭐ Your Wishlist      → wants (replaces the older combined My Lists)
+ *   📘 Your Binder        → available (promoted out of drawer, UX-A1)
+ *   🏪 My Stores          → LGS placeholder (Phase 4 v2+)
  *
  * Plus a pinned ⏰ "Needs your response" callout at the top whenever
- * the viewer has open received proposals. The four-module pattern
- * replaces the earlier two-column mailbox layout — beta feedback
- * was that 📥/📤 read as "same mailbox thing" and that a flat
- * two-column split felt arbitrary.
+ * the viewer has open received proposals.
+ *
+ * Historical: a "👥 My Communities" module used to live here too —
+ * removed in UX-A4 because it competed with the trading loop without
+ * fitting the primary path. Discovery now lives at `/?community=1`
+ * via the NavMenu entry; trade-relevant community signals (overlap
+ * chip, Community-wants picker chip) already surface in the builder.
  *
  * Desktop grid splits action surfaces (left: response + trades)
  * from resource surfaces (right: lists + communities) with the
@@ -56,9 +57,6 @@ export function HomeView({ auth }: HomeViewProps) {
   // viewMode flip in one place.
   const onOpenTrade = nav.toTradeDetail;
   const onOpenTradesHistory = nav.toTradesHistory;
-  const onOpenSettings = () => nav.toSettings();
-  const onManageCommunities = () => nav.toSettings({ tab: 'servers' });
-  const onOpenCommunity = () => nav.toCommunity();
   const onBuildTrade = nav.toBuildTrade;
   const onOpenProfile = nav.toProfile;
   // `useMyTrades` is the unified view layer — merges proposals +
@@ -67,7 +65,6 @@ export function HomeView({ auth }: HomeViewProps) {
   // had overflow/highlight chrome tuned to the proposal shape) but
   // everything inside the My Trades module reads from `myTrades`.
   const myTrades = useMyTrades();
-  const guilds = useGuildMemberships();
   const wants = useWants();
   const available = useAvailable();
   // CardIndexContext keeps the byFamily index globally synced — no
@@ -81,11 +78,6 @@ export function HomeView({ auth }: HomeViewProps) {
   // unified proposal + session stream, so we don't redo that work here.
   const { needsResponse } = myTrades;
   const tradeCounts = myTrades.counts;
-
-  const enrolledGuilds = useMemo(
-    () => guilds.enrollable.filter(g => g.enrolled),
-    [guilds.enrollable],
-  );
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
@@ -117,13 +109,17 @@ export function HomeView({ auth }: HomeViewProps) {
         )}
 
         {/* Desktop: 2-column grid. Left column (primary flow): My Trades
-            + your wishlist. Right column (secondary context): your
-            binder + communities. Mobile: single column in priority
-            order — trades, wishlist, binder, communities, stores.
-            Lists used to be ONE combined module behind a drawer —
-            promoted to two first-class modules (UX-A1 in the audit)
-            because "these are my cards" is load-bearing for the
-            trading loop, not a sidebar affordance. */}
+            + your wishlist. Right column (inventory): your binder.
+            Mobile: single column in priority order — trades, wishlist,
+            binder, stores. Lists used to be ONE combined module behind
+            a drawer — promoted to two first-class modules (UX-A1) so
+            "these are my cards" reads as load-bearing for the trading
+            loop, not a sidebar affordance. Communities module was also
+            here but removed in UX-A4 — it competed with the trading
+            loop without fitting the primary path; discovery lives at
+            /?community=1 via NavMenu, and trade-relevant community
+            signals (overlap chip, Community-wants picker chip) already
+            surface in context inside the builder. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           <div className="flex flex-col gap-6">
             <TradesModule
@@ -147,14 +143,6 @@ export function HomeView({ auth }: HomeViewProps) {
               available={available.items}
               cardByProductId={byProductId}
               onEditBinder={() => openLists('available')}
-            />
-
-            <CommunitiesModule
-              guilds={enrolledGuilds}
-              status={guilds.status}
-              onOpenSettings={onOpenSettings}
-              onManageCommunities={onManageCommunities}
-              onOpenCommunity={onOpenCommunity}
             />
           </div>
         </div>
@@ -771,104 +759,14 @@ function EmptyListState({
   );
 }
 
-// --- 👥 My Communities module ----------------------------------------------
-
-function CommunitiesModule({
-  guilds,
-  status,
-  onOpenSettings,
-  onManageCommunities,
-  onOpenCommunity,
-}: {
-  guilds: GuildMembershipSummary[];
-  status: 'loading' | 'ready' | 'saving' | 'error';
-  onOpenSettings: () => void;
-  onManageCommunities: () => void;
-  onOpenCommunity: () => void;
-}) {
-  // Community discovery surface only — trade entry points (Share QR,
-  // Propose a trade) used to live here but were collapsed to the
-  // single "+ New trade" CTA in the GreetingRow. Proposals are now
-  // reached from inside a trade (TradeSummary's Send-as-proposal) or
-  // from a profile's "Trade with @X"; QR sharing happens from inside
-  // a trade via the builder's "Invite someone" button.
-  return (
-    <ModuleSection
-      icon={<Users aria-hidden className="w-4 h-4" />}
-      label="My Communities"
-      headingId="my-communities-heading"
-      action={
-        <button
-          type="button"
-          onClick={onManageCommunities}
-          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
-        >
-          Manage →
-        </button>
-      }
-    >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
-        <span className="text-gray-200 font-semibold">{guilds.length}</span>
-        {guilds.length === 1 ? ' community' : ' communities'}
-      </div>
-
-      {status === 'loading' && <LoadingState label="Loading your communities…" />}
-      {status !== 'loading' && guilds.length === 0 && (
-        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
-          You haven't enrolled in any Discord communities yet.{' '}
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            className="text-gold hover:text-gold-bright underline font-semibold"
-          >
-            Find a server to enroll in
-          </button>
-          {' '}and you'll see its members' wants + available here.
-        </div>
-      )}
-      {guilds.length > 0 && (
-        <ul className="flex flex-col gap-1">
-          {guilds.map((g, idx) => (
-            <li
-              key={g.guildId}
-              // Mobile shows 2; desktop widens to 4. Keeps the right
-              // column from dominating the fold on a phone.
-              className={idx >= 2 ? 'hidden lg:list-item' : undefined}
-            >
-              <GuildCard guild={g} onClick={onOpenCommunity} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </ModuleSection>
-  );
-}
-
-function GuildCard({
-  guild,
-  onClick,
-}: {
-  guild: GuildMembershipSummary;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors text-left"
-    >
-      <GuildAvatar guild={guild} />
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-gray-100 truncate">{guild.guildName}</div>
-        <div className="text-[11px] text-gray-500 mt-0.5">
-          Enrolled
-          {guild.canManage && ' · You manage this server'}
-        </div>
-      </div>
-      <ChevronIcon className="w-4 h-4 text-gray-500 shrink-0 -rotate-90" />
-    </button>
-  );
-}
+// CommunitiesModule / GuildCard / GuildAvatar removed in UX-A4
+// (2026-04-21). They surfaced enrolled Discord servers on Home as a
+// sidebar widget, but the "check my servers" mental model competed
+// with the trading loop without fitting the primary path. Discovery
+// lives at `/?community=1` via the NavMenu entry + per-server
+// directories; trade-relevant signals (overlap chip, Community-wants
+// picker chip) already surface in context inside the builder where
+// they belong.
 
 // --- 🏪 My Stores module (placeholder, Phase 4 v2+) -----------------------
 
@@ -956,22 +854,6 @@ function Avatar({ avatarUrl, name }: { avatarUrl: string | null; name: string })
     <span
       aria-hidden
       className="w-10 h-10 rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0 text-sm"
-    >
-      {initial}
-    </span>
-  );
-}
-
-function GuildAvatar({ guild }: { guild: GuildMembershipSummary }) {
-  const initial = guild.guildName.trim().slice(0, 1).toUpperCase() || '?';
-  if (guild.guildIcon) {
-    const url = `https://cdn.discordapp.com/icons/${guild.guildId}/${guild.guildIcon}.png?size=64`;
-    return <img src={url} alt="" className="w-9 h-9 rounded-full shrink-0" />;
-  }
-  return (
-    <span
-      aria-hidden
-      className="w-9 h-9 rounded-full bg-space-700 text-gold font-bold flex items-center justify-center shrink-0 text-sm"
     >
       {initial}
     </span>

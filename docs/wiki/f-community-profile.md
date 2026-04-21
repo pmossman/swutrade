@@ -264,9 +264,9 @@ All three pages use the same chrome mount (`AppHeader` + breadcrumbs) with a `ma
 
 ## Tech debt + known gaps
 
-### Communities module competes with trading loop
+### ~~Communities module competes with trading loop~~ — shipped UX-A4 (2026-04-21)
 
-`NEXT.md:138-142` (UX-A4). The Home view used to carry a Communities side module that duplicated the `/?community=1` destination. Fix is to remove the module (it has its own top-level destination via NavMenu, and trade-relevant community signals already surface in context inside the builder). Status when this page was written: unstarted; the module still renders on HomeView. Cross-link [`e-home-nav.md`](./e-home-nav.md) for the Home layout owning that module.
+Home used to carry a `CommunitiesModule` that duplicated the `/?community=1` destination. Removed: discovery lives at `/?community=1` via NavMenu, trade-relevant community signals (overlap chip, Community-wants picker chip) already surface in context inside the builder. Cross-link [`e-home-nav.md`](./e-home-nav.md) for the Home layout.
 
 ### Profile entry-point audit
 
