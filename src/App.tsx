@@ -82,6 +82,23 @@ function App() {
   const auth = useAuthContext();
   const { user, isSignedIn } = auth;
 
+  // `routingSignedIn` is the signal that drives the HOME-vs-TRADE
+  // fallback in `detectViewMode`. Ghosts have `isSignedIn === true`
+  // (they carry a server cookie), but the signed-in Home surface's
+  // Communities / Wishlist / Binder modules pull data that ghosts
+  // don't have — so defaulting ghosts to Home produced an awkward
+  // "you're signed in as a guest" banner + empty dashboard. Treat
+  // ghosts as signed-out for the routing fallback only — they land
+  // on the trade builder by default, the same surface a pure
+  // signed-out visitor sees. Ghosts still reach their in-flight
+  // sessions via NavMenu → My Trades (AppHeader treats them as
+  // signed-in, so the entry is available). All the auth-gated
+  // features (useCommunityCards, hooks, etc.) continue to use the
+  // unmodified `isSignedIn` — routing is the only place ghosts get
+  // remapped.
+  const isGhost = !!user?.isAnonymous;
+  const routingSignedIn = isSignedIn && !isGhost;
+
   // First-run tutorial: coachmark tour shown once to signed-out
   // visitors on a bare landing (home / trade builder). `useTutorial`
   // handles localStorage gating; hook instance is shared downstream
@@ -92,7 +109,7 @@ function App() {
   // came specifically to do or see something. Auto-firing on those
   // overlays the user's goal. They can still trigger the tour from
   // the AccountMenu's "Show tutorial" entry if they want it.
-  const tutorialViewMode = detectViewMode(isSignedIn);
+  const tutorialViewMode = detectViewMode(routingSignedIn);
   const suppressTutorial =
     tutorialViewMode === 'session'
     || tutorialViewMode === 'list'
@@ -197,7 +214,7 @@ function App() {
   // localStorage signed-in hint. Without that, a returning user's URL
   // briefly resolves to the trade-builder default before /api/auth/me
   // lands and we flip to 'home' — a visible flash. See useAuth.ts.
-  const [viewMode, setViewMode] = useState<ViewMode>(() => detectViewMode(isSignedIn));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => detectViewMode(routingSignedIn));
   // Signals that the user just clicked "Start a trade" from the
   // shared-list view. Offering-side TradeSide reads this on mount to
   // auto-open its search overlay with the "From the shared link"
@@ -205,14 +222,18 @@ function App() {
   // from the sender's wants. One-shot — cleared after the TradeSide
   // consumes it.
   const [autoOpenOfferingFromShared, setAutoOpenOfferingFromShared] = useState(false);
-  // Keep a live ref of the signed-in flag so popstate (which fires
-  // well after mount) reads the current value, not a stale closure.
-  const isSignedInRef = useRef(isSignedIn);
+  // Keep a live ref of the routing-signed-in flag so popstate (which
+  // fires well after mount) reads the current value, not a stale
+  // closure. Routing-signed-in excludes ghosts — a ghost cookie
+  // promoted to a real account mid-session should re-route away from
+  // the trade-builder default, but until that promotion fires, back/
+  // forward should still treat the ghost as a trade-builder lander.
+  const routingSignedInRef = useRef(routingSignedIn);
   useEffect(() => {
-    isSignedInRef.current = isSignedIn;
-  }, [isSignedIn]);
+    routingSignedInRef.current = routingSignedIn;
+  }, [routingSignedIn]);
   useEffect(() => {
-    const handler = () => setViewMode(detectViewMode(isSignedInRef.current));
+    const handler = () => setViewMode(detectViewMode(routingSignedInRef.current));
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
@@ -230,9 +251,9 @@ function App() {
       // Only auto-switch between the two implicit defaults. Any
       // explicit view (settings, trade-detail, profile, etc.) stays.
       if (prev !== 'home' && prev !== 'trade') return prev;
-      return detectViewMode(isSignedIn);
+      return detectViewMode(routingSignedIn);
     });
-  }, [isSignedIn]);
+  }, [routingSignedIn]);
   const handleStartTrade = useCallback((fromHandle?: string, autoBalance?: boolean) => {
     const params = new URLSearchParams(window.location.search);
     params.set('view', 'trade');
@@ -307,7 +328,7 @@ function App() {
       const search = next.toString();
       const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
       window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
-      setViewMode(detectViewMode(isSignedIn));
+      setViewMode(detectViewMode(routingSignedIn));
       // Forward nav: reset scroll to top so the user doesn't land mid-
       // page on the new view (Home was scrolled → tap "Edit trade
       // binder" → BinderView would otherwise inherit the Home scroll
@@ -392,7 +413,7 @@ function App() {
         window.location.href = `/s/${encodeURIComponent(sessionId)}`;
       },
     };
-  }, [isSignedIn, intent, handleStartTrade]);
+  }, [routingSignedIn, intent, handleStartTrade]);
 
   // Re-render every minute so the footer's "X ago" labels (prices,
   // build age) advance even while the user is idle. Cheap — one

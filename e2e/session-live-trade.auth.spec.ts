@@ -98,4 +98,33 @@ test.describe('Invite-someone shared session', () => {
 
     expectNoConsoleErrors(consoleErrors);
   });
+
+  test('ghost user lands on trade builder (not GhostHomeView) when visiting /', async ({ page }) => {
+    // Regression guard: once a ghost has been minted (via Invite
+    // someone or a QR claim), they used to land on GhostHomeView with
+    // a prominent "You're signed in as a guest" banner on every
+    // subsequent `/` visit. That banner felt noisy for returning
+    // ghosts. Routing now treats ghosts as signed-out for the
+    // HOME-vs-TRADE fallback; they reach their in-flight sessions via
+    // NavMenu → My Trades. GhostHomeView is kept as a defensive
+    // render for `?view=home`, but never the default.
+    await page.goto('/');
+    await page.getByRole('button', { name: /Invite someone/i }).first().click();
+    await expect(page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
+
+    // Navigate back to `/` — this is the interesting state: the
+    // iron-session cookie was set by create-open, so the next
+    // request is a bona-fide ghost session.
+    await page.goto('/');
+    // Trade builder: Add-cards tiles on both sides.
+    await expect(page.getByRole('button', { name: /Add cards to Offering/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('button', { name: /Add cards to Receiving/i })).toBeVisible();
+    // No ghost greeting banner anywhere.
+    await expect(page.getByText(/You're signed in as a guest/i)).toHaveCount(0);
+
+    // "My Trades" still reachable from NavMenu (AppHeader treats
+    // ghost as signed-in, so the entry appears).
+    await page.getByRole('button', { name: 'Navigation menu' }).click();
+    await expect(page.getByRole('link', { name: 'My Trades' })).toBeVisible();
+  });
 });
