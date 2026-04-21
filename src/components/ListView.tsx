@@ -224,7 +224,7 @@ export function ListView({
               <span className="text-gray-600">
                 from{' '}
                 <a
-                  href={`/?profile=${encodeURIComponent(senderHandle)}`}
+                  href={`/u/${encodeURIComponent(senderHandle)}`}
                   className="text-gold hover:text-gold-bright font-semibold underline decoration-gold/30 hover:decoration-gold transition-colors"
                 >
                   @{senderHandle}

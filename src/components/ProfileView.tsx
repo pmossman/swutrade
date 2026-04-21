@@ -48,6 +48,76 @@ interface ProfileViewProps {
   onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
 }
 
+/**
+ * UX-A6: derive an origin-aware "parent" breadcrumb from the
+ * referrer. The profile view has many entry points (Community member
+ * list, activity-feed @mentions, shared-list sender link, Settings
+ * "Public profile" copy-URL, AccountMenu, HomeView avatar click, and
+ * direct /u/<handle> URLs). Flat "Home →" as the only back target
+ * drops the user one level too far in every case except a direct
+ * load — they wanted to return to wherever they were looking at lists
+ * or members, not the dashboard.
+ *
+ * Reads `document.referrer` once on mount (not reactive; breadcrumbs
+ * don't churn). Same-origin referrers map onto known routes by
+ * pathname + query shape:
+ *   - `/?community=1…`   → "Community"  (back to directory)
+ *   - `/?trades=1`       → "My trades"
+ *   - `/?trade=<id>`     → "Trade"
+ *   - `/s/<code>`        → "Shared trade"
+ *   - `/u/<other>`       → "@other"     (profile-to-profile walk)
+ *   - anything else      → "Home" / `/`
+ *
+ * pushState-only nav (e.g., HomeView greeting-row avatar click)
+ * doesn't update `document.referrer`, so those cases fall through to
+ * the Home fallback — safe default, no wrong breadcrumb. The common
+ * case for profile arrivals is full-page `<a href>` navigation where
+ * the referrer is reliable.
+ */
+function deriveProfileParent(): { label: string; href: string } {
+  const fallback = { label: 'Home', href: '/' };
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    return fallback;
+  }
+  const referrer = document.referrer;
+  if (!referrer) return fallback;
+  let ref: URL;
+  try {
+    ref = new URL(referrer);
+  } catch {
+    return fallback;
+  }
+  if (ref.origin !== window.location.origin) return fallback;
+  const path = ref.pathname;
+  const params = ref.searchParams;
+  // Other profile → /u/<handle>
+  const profileMatch = /^\/u\/([^/]+)$/.exec(path);
+  if (profileMatch) {
+    const otherHandle = decodeURIComponent(profileMatch[1]);
+    return { label: `@${otherHandle}`, href: `${ref.pathname}${ref.search}` };
+  }
+  // Shared trade → /s/<code>
+  if (/^\/s\//.test(path)) {
+    return { label: 'Shared trade', href: `${ref.pathname}${ref.search}` };
+  }
+  // Query-shape routes (all served by `/`)
+  if (path === '/' || path === '') {
+    if (params.has('community')) {
+      return { label: 'Community', href: `/${ref.search}` };
+    }
+    if (params.has('trades')) {
+      return { label: 'My trades', href: '/?trades=1' };
+    }
+    if (params.has('trade')) {
+      return { label: 'Trade', href: `/${ref.search}` };
+    }
+    if (params.has('settings')) {
+      return { label: 'Settings', href: `/${ref.search}` };
+    }
+  }
+  return fallback;
+}
+
 export function ProfileView({
   handle,
   percentage,
@@ -58,6 +128,10 @@ export function ProfileView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const auth = useAuthContext();
+  // Captured once at mount — breadcrumbs don't change while the user
+  // is reading the profile. If they navigate away and come back,
+  // component re-mounts and re-reads.
+  const [parentCrumb] = useState(() => deriveProfileParent());
   const { byFamilyAll, byProductId } = useCardIndexContext();
   const { isAnyLoading } = usePriceDataContext();
 
@@ -123,9 +197,10 @@ export function ProfileView({
   // NavMenu + AccountMenu are hidden so we don't push sign-up chrome at
   // someone who just clicked a link to see a list. Signed-in viewers
   // (looking at their own profile or someone else's) get the normal
-  // chrome. Breadcrumb stays minimal — [Home, @handle] — because
-  // viewers arrive via several paths (Community, trade detail, direct
-  // link) and we have no reliable referrer to disambiguate.
+  // chrome. Breadcrumb first entry is origin-aware (derived from
+  // document.referrer via `deriveProfileParent`) so "Back" returns
+  // the user to where they came from — Community, My trades, a trade
+  // detail — instead of dumping them to Home every time. UX-A6.
   const tradeCta = auth.user && auth.user.handle !== profile.user.handle ? (
     // Signed-in, viewing someone else: single primary CTA that lands
     // in the propose composer. Specific label "Trade with @alice" is
@@ -166,7 +241,7 @@ export function ProfileView({
         auth={auth}
         slim={!auth.user}
         breadcrumbs={[
-          { label: 'Home', href: '/' },
+          parentCrumb,
           { label: `@${profile.user.handle}` },
         ]}
       />
