@@ -529,12 +529,17 @@ function App() {
           toggle, Share, Clear) live here rather than in AppHeader so
           they don't compete with breadcrumbs / NavMenu for width.
           Right-aligned, tight, drops Share/Clear on mobile into a kebab.
-          "Invite someone" is always visible (even with no cards) since
-          its value is "start a shared canvas with someone now"; the
-          other actions depend on cards existing. */}
+          "Invite someone" is visible in solo + auto-balance modes — it
+          creates an OPEN-slot session that anyone can claim via QR/link.
+          Hidden in propose/counter/edit modes because the user's intent
+          is "target this specific person async" and a public open-slot
+          doesn't fit that goal (and would visually compete with the
+          Send-proposal primary action in the bottom bar). */}
       <div className="px-3 sm:px-6 pt-2 pb-1 max-w-5xl mx-auto w-full shrink-0 flex items-center gap-2 justify-end">
         <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
-        <ShareLiveTradeButton yourCards={yourCards} theirCards={theirCards} />
+        {!proposeHandle && !counterId && !editId && (
+          <ShareLiveTradeButton yourCards={yourCards} theirCards={theirCards} />
+        )}
         {hasCards && (
           <>
             <div className="hidden md:flex items-center gap-2">
