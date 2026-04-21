@@ -83,13 +83,26 @@ function App() {
   const { user, isSignedIn } = auth;
 
   // First-run tutorial: coachmark tour shown once to signed-out
-  // visitors. `useTutorial` handles localStorage gating; hook
-  // instance is shared downstream via <TutorialProvider> so
-  // AccountMenu can expose a Replay entry.
+  // visitors on a bare landing (home / trade builder). `useTutorial`
+  // handles localStorage gating; hook instance is shared downstream
+  // via <TutorialProvider> so AccountMenu can expose a Replay entry.
+  //
+  // Suppress auto-open on intent-landing views — shared session (/s/
+  // QR scan), shared list URL, trade detail, profile — where the user
+  // came specifically to do or see something. Auto-firing on those
+  // overlays the user's goal. They can still trigger the tour from
+  // the AccountMenu's "Show tutorial" entry if they want it.
+  const tutorialViewMode = detectViewMode(isSignedIn);
+  const suppressTutorial =
+    tutorialViewMode === 'session'
+    || tutorialViewMode === 'list'
+    || tutorialViewMode === 'trade-detail'
+    || tutorialViewMode === 'profile';
   const tutorial = useTutorial({
     totalSteps: TUTORIAL_STEPS.length,
     isSignedIn,
     isAuthLoading: auth.isLoading,
+    suppressAutoOpen: suppressTutorial,
   });
 
   // Pricing knobs live in PricingContext — state + persistence are

@@ -10,12 +10,17 @@ import { useCallback, useEffect, useState } from 'react';
  *     and a signed-in user briefly reads as signed-out. Delaying the
  *     activation until auth has settled avoids a flash of tour on
  *     returning users.
+ *   - `suppressAutoOpen` false — true when the user landed on a view
+ *     that implies a specific intent (shared session via QR, shared
+ *     list, trade detail, profile). Auto-firing on those overlays
+ *     the user's goal; they can still invoke `replay()` from the
+ *     AccountMenu entry if they want the tour later.
  *   - localStorage `swu.tour.dismissedAt` absent — user hasn't seen it.
  *     Skip / Finish both write this key so the tour never auto-resurfaces.
  *
  * `replay()` clears the key and restarts the tour for users who want
- * to see it again from the AccountMenu. Tests can seed the key to
- * suppress activation or call `replay()` to force-show.
+ * to see it again from the AccountMenu. Replay bypasses `suppressAutoOpen`
+ * because the user is explicitly asking for the tour.
  *
  * localStorage failures (private mode, Safari ITP, etc.) fall through
  * silently — no first-run tour is better than a broken one.
@@ -36,14 +41,18 @@ export function useTutorial(opts: {
   totalSteps: number;
   isSignedIn: boolean;
   isAuthLoading: boolean;
+  /** True when the current view implies a specific user intent (e.g.
+   *  `/s/:code` QR landing, shared-list URL, `?trade=<id>`, `/u/<handle>`).
+   *  Suppresses auto-activation only — manual `replay()` still works. */
+  suppressAutoOpen: boolean;
 }): TutorialApi {
-  const { totalSteps, isSignedIn, isAuthLoading } = opts;
+  const { totalSteps, isSignedIn, isAuthLoading, suppressAutoOpen } = opts;
 
   const [isActive, setIsActive] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(0);
 
   useEffect(() => {
-    if (isAuthLoading || isSignedIn) return;
+    if (isAuthLoading || isSignedIn || suppressAutoOpen) return;
     try {
       const dismissed = window.localStorage.getItem(TUTORIAL_STORAGE_KEY);
       if (!dismissed) {
@@ -53,7 +62,7 @@ export function useTutorial(opts: {
     } catch {
       // localStorage unavailable — skip silently.
     }
-  }, [isAuthLoading, isSignedIn]);
+  }, [isAuthLoading, isSignedIn, suppressAutoOpen]);
 
   const next = useCallback(() => {
     setCurrentStep(s => Math.min(s + 1, totalSteps - 1));

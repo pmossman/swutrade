@@ -73,6 +73,53 @@ test.describe('First-run tutorial', () => {
     expect(stored).toBeTruthy();
   });
 
+  test('suppressed on shared-session URL (QR scan) so the invite prompt has focus', async ({ page }) => {
+    await clearTourFlag(page);
+    // /s/<code> with a bogus code lands on the SessionView's
+    // not-found state (the API returns 404 for unknown ids). What
+    // we're testing is the view-mode gate, not the invite flow —
+    // the not-found copy is fine as long as the tutorial doesn't
+    // overlay it.
+    await page.goto('/s/SUPPRESSX');
+
+    // SessionView renders its "doesn't exist or no longer
+    // available" copy, and the tutorial never mounts.
+    await expect(
+      page.getByText(/doesn't exist|no longer available/i).first(),
+    ).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    // Dismissal flag was NOT written — a user who later navigates
+    // to the home/trade-builder surface should still see the tour.
+    const stored = await readTourFlag(page);
+    expect(stored).toBeNull();
+  });
+
+  test('suppressed on shared-list URL so the list view has focus', async ({ page }) => {
+    await clearTourFlag(page);
+    // Minimal ?w= payload — encoding doesn't matter, just needs to
+    // trigger the 'list' view mode. Real shared-list URLs use
+    // deflate+base64url; for suppression we only need the view
+    // detection to fire.
+    await page.goto('/?view=list&w=~abc');
+    // ListView (or its empty fallback) mounts; no tutorial dialog.
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 3_000 });
+
+    const stored = await readTourFlag(page);
+    expect(stored).toBeNull();
+  });
+
+  test('suppressed on profile URL so the profile view has focus', async ({ page }) => {
+    await clearTourFlag(page);
+    await page.goto('/u/nobodyspecial');
+    // ProfileView loads (either finds user or shows not-found);
+    // tutorial stays hidden either way.
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 3_000 });
+
+    const stored = await readTourFlag(page);
+    expect(stored).toBeNull();
+  });
+
   test('Replay from AccountMenu re-opens the tour after dismissal', async ({ page }) => {
     await clearTourFlag(page);
     await page.goto('/');
