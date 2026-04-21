@@ -45,6 +45,18 @@ export interface NavigationApi {
   /** History of the viewer's trades (incoming / outgoing / history). */
   toTradesHistory(): void;
 
+  /** Dedicated wishlist view — the primary edit surface for wants,
+   *  reached from Home's wishlist module and the NavMenu. Replaces
+   *  the drawer's wants tab as the "I'm managing my list" destination;
+   *  the drawer is now a slim in-trade-builder quick-edit sidebar only. */
+  toWishlist(): void;
+
+  /** Dedicated binder view — the primary edit surface for available
+   *  cards, reached from Home's binder module and the NavMenu. Same
+   *  rationale as toWishlist: drawer is trade-builder-local; this is
+   *  the full-page canonical surface. */
+  toBinder(): void;
+
   /** Settings. `tab` drills into a specific section (e.g. `'servers'`
    *  for the guild-management drawer). */
   toSettings(opts?: { tab?: string; guildId?: string; memberHandle?: string }): void;

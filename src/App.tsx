@@ -43,6 +43,8 @@ import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
 import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
+import { WishlistView } from './components/WishlistView';
+import { BinderView } from './components/BinderView';
 import { SessionView } from './components/SessionView';
 import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
@@ -330,6 +332,17 @@ function App() {
       toTradesHistory: () => {
         pushTo(reset([], { trades: '1' }));
       },
+      toWishlist: () => {
+        // Leaving the trade builder: drop any propose/counter/edit
+        // intent so returning later opens a clean composer, matching
+        // the toHome/toTradesHistory pattern.
+        pushTo(reset([], { view: 'wishlist' }));
+        intent.clearIntent();
+      },
+      toBinder: () => {
+        pushTo(reset([], { view: 'binder' }));
+        intent.clearIntent();
+      },
       toSettings: (opts = {}) => {
         const extras: Record<string, string> = { settings: '1' };
         if (opts.tab) extras.tab = opts.tab;
@@ -483,6 +496,33 @@ function App() {
     return <TradesHistoryView />;
   }
 
+  if (viewMode === 'wishlist') {
+    // Dedicated wishlist view — the canonical edit surface for wants.
+    // Drawer is retained only as a quick-edit sidebar inside the
+    // trade builder; nav/home links route here instead.
+    return (
+      <WishlistView
+        auth={auth}
+        wants={wants}
+        allCards={allLoadedCards}
+        percentage={percentage}
+        priceMode={priceMode}
+      />
+    );
+  }
+
+  if (viewMode === 'binder') {
+    return (
+      <BinderView
+        auth={auth}
+        available={available}
+        allCards={allLoadedCards}
+        percentage={percentage}
+        priceMode={priceMode}
+      />
+    );
+  }
+
   if (viewMode === 'trade-detail') {
     const tradeId = new URLSearchParams(window.location.search).get('trade') ?? '';
     // AppHeader's breadcrumb ("Home › My trades › @counterpart") owns
@@ -537,7 +577,7 @@ function App() {
     <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
       {/* Trade builder is the "root" view — no breadcrumbs, logo alone
           orients. AppHeader supplies consistent NavMenu + AccountMenu. */}
-      <AppHeader auth={auth} onOpenLists={openLists} />
+      <AppHeader auth={auth} />
 
       {/* View-level action strip — trade-builder CTAs (split/tabbed
           toggle, Share, Clear) live here rather than in AppHeader so
@@ -553,6 +593,13 @@ function App() {
           Either way a public open-slot competes with the targeted
           flow's primary action. */}
       <div className="px-3 sm:px-6 pt-2 pb-1 max-w-5xl mx-auto w-full shrink-0 flex items-center gap-2 justify-end">
+        {/* "Lists" is the trade-builder-local entry point into the
+            Wishlist / Binder quick-edit drawer. Dedicated Wishlist /
+            Binder views are the canonical edit surfaces (from Home +
+            NavMenu); the drawer is retained here so a user staging a
+            trade can add a just-discovered card to their wants or
+            binder without losing their in-progress composer state. */}
+        <ListsTriggerButton onClick={() => openLists()} />
         <TradeViewToggle mode={tradeViewMode} onToggle={toggleTradeView} />
         {!proposeHandle && !counterId && !editId && !senderHandle && (
           <ShareLiveTradeButton yourCards={yourCards} theirCards={theirCards} />
@@ -981,6 +1028,32 @@ function TradeViewToggle({ mode, onToggle }: { mode: 'split' | 'tabbed'; onToggl
           <line x1="14" y1="4" x2="19" y2="4" strokeLinecap="round" />
         </svg>
       )}
+    </button>
+  );
+}
+
+/**
+ * Trade-builder action-strip entry into the Lists quick-edit drawer.
+ * The drawer is no longer reachable from the global NavMenu — that
+ * now surfaces "My Wishlist" / "My Binder" which route to the
+ * dedicated full-page views. Inside the composer, though, losing
+ * in-progress card state to a full navigation is disruptive, so the
+ * drawer stays as a local affordance. Icon + short label keeps it
+ * visually distinct from the share/clear kebab cluster.
+ */
+function ListsTriggerButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Edit your wishlist or binder"
+      title="Edit your wishlist or binder"
+      className="flex items-center justify-center gap-1.5 px-2.5 h-8 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-xs font-semibold text-gray-400 hover:text-gold transition-colors"
+    >
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M3 3.5h10M3 8h10M3 12.5h7" />
+      </svg>
+      <span className="hidden sm:inline">Lists</span>
     </button>
   );
 }

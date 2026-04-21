@@ -51,7 +51,7 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 
 **`src/components/ui/AppHeader.tsx`** — Chrome-only top bar: Logo + optional Back button + optional Breadcrumbs + NavMenu + AccountMenu. Deliberately has no contextual-action slot (see "Decisions").
 **`src/components/ui/Breadcrumbs.tsx`** — Orientation-only trail. Mobile collapses to just the current-page label; parent-back lives as AppHeader's dedicated Back button.
-**`src/components/NavMenu.tsx`** — Hamburger content-nav popover (Home / My Lists / My Trades / My Communities). Split from AccountMenu by design; see "Decisions".
+**`src/components/NavMenu.tsx`** — Hamburger content-nav popover (Home / My Wishlist / My Binder / My Trades / My Communities). Split from AccountMenu by design; see "Decisions". "My Lists" was replaced by "My Wishlist" + "My Binder" in the 2026-04-21 Wishlist/Binder split — both entries route to their dedicated views via `?view=wishlist` / `?view=binder`.
 **`src/components/AccountMenu.tsx`** — Identity-only popover (Profile / Settings / Sign out, or a Sign-in-with-Discord CTA when signed out).
 **`src/components/Logo.tsx`** — Inline SVG wordmark. Two cards (emerald + blue) leaning toward a gold balance point — reinforces the palette's "sides are emerald/blue, balance is gold".
 **`src/components/BetaBadge.tsx`** — Small kicker pill that renders when `isBetaChannel()` returns true. Tooltip reveals commit + build time.
@@ -126,7 +126,7 @@ Ten methods named by destination. Every method that sets an intent param guarant
 
 ### Components
 
-- **`<AppHeader>`** — pass `auth`, optional `breadcrumbs`, optional `onOpenLists`, optional `slim`. Every view that isn't "slim mode" mounts this at its root. Slim mode hides NavMenu + AccountMenu for shared-link / pre-signup surfaces.
+- **`<AppHeader>`** — pass `auth`, optional `breadcrumbs`, optional `slim`. Every view that isn't "slim mode" mounts this at its root. Slim mode hides NavMenu + AccountMenu for shared-link / pre-signup surfaces. The `onOpenLists` prop was removed in the 2026-04-21 split — the drawer is now trade-builder-local and the NavMenu doesn't offer a "My Lists" entry.
 - **`<Breadcrumbs>`** — typically consumed via `AppHeader`'s `breadcrumbs` prop. Single DOM tree; non-current segments hide on mobile via Tailwind `md:` utilities (Playwright strict-mode locators depend on "current page renders exactly once").
 - **`<NavMenu>`** — consumed internally by `AppHeader`. Exports are the component itself.
 - **`<AccountMenu>`** — consumed internally by `AppHeader`.
@@ -326,7 +326,7 @@ Intentionally minimal. The gold-bordered greeting card uses the same chrome as t
 ### AccountMenu vs NavMenu
 
 Deliberately two menus:
-- **NavMenu** is "where do I want to go" — Home / My Lists / My Trades / My Communities. Hamburger icon.
+- **NavMenu** is "where do I want to go" — Home / My Wishlist / My Binder / My Trades / My Communities. Hamburger icon.
 - **AccountMenu** is "who am I and how do I manage it" — Profile / Settings / Sign out, OR Sign in with Discord for signed-out.
 
 Beta feedback drove the split — users read a "My Lists" entry inside the account menu as "account data" (like settings) rather than "my content." Two affordances match the two mental models. On mobile the two buttons sit side-by-side in a 1.5-gap cluster at the right edge of the header.

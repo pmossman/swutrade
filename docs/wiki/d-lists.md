@@ -1,8 +1,10 @@
 # Lists / inventory / matching
 
-> **Owner scope**: the per-user "wants" (wishlist) and "available" (binder) lists, the drawer that edits them, the shared-list URL codec, and the matching + aggregation layer that surfaces overlap.
+> **Owner scope**: the per-user "wants" (wishlist) and "available" (binder) lists, the dedicated views + quick-edit drawer that edit them, the shared-list URL codec, and the matching + aggregation layer that surfaces overlap.
 >
 > Files covered:
+> - `src/components/WishlistView.tsx`, `src/components/BinderView.tsx` — dedicated full-page surfaces (canonical edit destinations)
+> - `src/components/lists/WantsPanel.tsx`, `src/components/lists/AvailablePanel.tsx` — shared panel bodies used by the views + the drawer
 > - `src/components/ListsDrawer.tsx`, `src/components/ListRows.tsx`, `src/components/ListCardPicker.tsx`, `src/components/ListView.tsx`, `src/components/MigrationDialog.tsx`
 > - `src/hooks/useWants.ts`, `src/hooks/useAvailable.ts`, `src/hooks/useSharedLists.ts`, `src/hooks/usePopularWants.ts`, `src/hooks/useServerSync.ts`, `src/hooks/useRecipientProfile.ts`, `src/hooks/useCommunityCards.ts`, `src/hooks/usePersistedState.ts`
 > - `src/hooks/useSelectionFilters.ts`, `src/applySelectionFilters.ts`, `src/listMatching.ts`
@@ -35,9 +37,19 @@ The one-sentence version: **wants are cross-printing wishes keyed by `familyId`;
 
 ## File map
 
+### Frontend — dedicated views + shared panels
+
+**`src/components/WishlistView.tsx`** — dedicated full-page surface for wants, mounted at `?view=wishlist`. Reached from Home's Wishlist module ("Edit wishlist →"), the NavMenu's "My Wishlist" entry, and direct URL. Renders AppHeader + breadcrumb ("Home › Wishlist") + header strip with count/priority summary + share buttons + `<WantsPanel>` as the editing body. Canonical edit destination for the wants list since the 2026-04-21 split.
+
+**`src/components/BinderView.tsx`** — symmetric view for available cards at `?view=binder`. Same chrome as WishlistView; renders `<AvailablePanel>` as the body. Share buttons encode only `?a=` (not `?w=`) so binder shares are scoped to just the binder content.
+
+**`src/components/lists/WantsPanel.tsx`** — shared list+picker body for wants. Owns its own `mode` (`list` / `picker`) and `editingWantId` state so both callers (drawer + WishlistView) can render it without coordinating. Priority-first sort mirrors Home's WishlistModule so "top of the list" is consistent across every surface. Accepts an `emptyState` override so the drawer's "No wants yet" message and the dedicated view's "Your wishlist is empty" message stay distinct.
+
+**`src/components/lists/AvailablePanel.tsx`** — shared list+picker body for available. Calls `usePopularWants` internally to drive the "N others want this" badge (signed-in only). Accepts the same `emptyState` override.
+
 ### Frontend — drawer + rows + picker
 
-**`src/components/ListsDrawer.tsx`** — Radix Dialog + Tabs drawer. Mounts once at App root (via `DrawerContext`); every view calls `openLists(tab?)` to control it. Has two modes: `list` (view/edit rows) and `picker` (search + add). Hosts the Share button (copy-link / native-share / save-as-image / QR). Since UX-A1 it's become a secondary in-trade quick-edit surface — the primary Lists entry points are now Home's Wishlist + Binder modules.
+**`src/components/ListsDrawer.tsx`** — Radix Dialog + Tabs drawer. Mounts once at App root (via `DrawerContext`); opens only from the trade-builder action strip's "Lists" button now. Home and NavMenu route to the dedicated Wishlist / Binder views instead. Still renders the Share button that encodes BOTH lists (combined `?w=`+`?a=` link), which the dedicated views' per-list share buttons can't replicate. Body content delegates to `<WantsPanel>` / `<AvailablePanel>`.
 
 **`src/components/ListRows.tsx`** — `WantsRow` and `AvailableRow`. Wants rows show the restriction as a toggle-button label ("Any variant" / "Only Hyperspace" / "Hyperspace or Showcase" / "3 variants") that expands into a `RestrictionEditor` chip group. Available rows show the exact variant badge, price, and the "N wants this" popular-wants badge (signed-in only).
 
@@ -369,6 +381,8 @@ Signed-out landings use the slim header variant (`ListView.tsx:204-208`) so sign
 - **Popular-wants exclude-viewer is unconditional when signed in (`api/popular-wants.ts:45`)** — even if the viewer is public, we never count them toward their own "N others want this" number. Subtle but important: without the exclusion, a user's first-day experience is "1 person wants this card I have" and the 1 is themselves; the badge becomes noise.
 
 - **Inventory-as-first-class (UX-A1)** — pre-UX-A1, the wants + available lists lived inside a drawer with a header button. Promoted to first-class Home modules because "these are my cards" is load-bearing for the trade loop, not a sidebar affordance. The drawer still exists as an in-trade quick-edit surface but it's no longer the primary entry point. See the comment at `HomeView.tsx:123-126` and cross-link to `e-home-nav.md`.
+
+- **Wishlist / Binder split (2026-04-21)** — Follow-on to UX-A1. The drawer's shared-tab model lied about the relationship between wants (hunting) and available (holding): different mental models, different data shapes (wants has priority + restriction; available has neither), but forced to share UI. Split into two dedicated views (`WishlistView` / `BinderView`) at `?view=wishlist` / `?view=binder` with reconciled vocabulary (user-facing copy = Wishlist / Binder; schema names = wants / available stay internal). NavMenu's "My Lists" entry replaced with "My Wishlist" + "My Binder" rows routing to the views; Home's Wishlist + Binder modules route to the views; drawer retained as trade-builder-local quick-edit via a new "Lists" button in the action strip. Panel bodies (`WantsPanel` / `AvailablePanel`) are shared between drawer and views so both stay in sync for parity-level changes but can accept per-caller overrides (e.g. distinct empty-state copy). Enhancement backlog lives in NEXT.md under "Wishlist / Binder enhancement backlog" — 7 Wishlist ideas + 8 Binder ideas + 3 cross-cutting notes to pick from per slice.
 
 ## Cross-references
 

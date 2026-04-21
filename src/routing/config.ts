@@ -31,7 +31,9 @@ export type ViewMode =
   | 'community'
   | 'trade-detail'
   | 'trades-history'
-  | 'session';
+  | 'session'
+  | 'wishlist'
+  | 'binder';
 
 /** Params that a trade-composer URL carries. Any of them → trade view. */
 const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance'] as const;
@@ -161,6 +163,19 @@ export const VIEW_ROUTES: readonly ViewRoute[] = [
     paramKeys: ['profile'],
   },
   {
+    mode: 'wishlist',
+    // Dedicated wishlist view — reached from Home's wishlist module
+    // or NavMenu's "My Wishlist" entry. Must match BEFORE the generic
+    // `view=list` / `view=trade` rules since they also consult `view`.
+    matches: ({ params }) => params.get('view') === 'wishlist',
+    paramKeys: ['view'],
+  },
+  {
+    mode: 'binder',
+    matches: ({ params }) => params.get('view') === 'binder',
+    paramKeys: ['view'],
+  },
+  {
     mode: 'list',
     matches: ({ params }) => {
       // Explicit `view=list` takes precedence over implicit `w`/`a`
@@ -244,6 +259,8 @@ export function isStandaloneView(parts: RouteParts): boolean {
     'trade-detail',
     'trades-history',
     'session',
+    'wishlist',
+    'binder',
   ]);
   for (const route of VIEW_ROUTES) {
     if (!STANDALONE.has(route.mode)) continue;

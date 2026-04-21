@@ -13,10 +13,6 @@ interface AppHeaderProps {
    *  current page (no href, not clickable). Omit entirely on views
    *  that are "root" (Home, trade builder) — the logo alone orients. */
   breadcrumbs?: BreadcrumbSegment[];
-  /** Open the ListsDrawer. The drawer lives at each view's root, so
-   *  the header doesn't own it — it just triggers. When omitted, the
-   *  NavMenu's "My Lists" entry is hidden. */
-  onOpenLists?: () => void;
   /** When true, hide NavMenu + AccountMenu content-chrome and render
    *  a slim version — used on shared-link views where the viewer may
    *  be anonymous and we don't want to push them toward sign-up
@@ -46,7 +42,6 @@ interface AppHeaderProps {
 export function AppHeader({
   auth,
   breadcrumbs,
-  onOpenLists,
   slim = false,
 }: AppHeaderProps) {
   const signedIn = !!auth.user;
@@ -88,9 +83,7 @@ export function AppHeader({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 md:gap-2 shrink-0">
-        {showNavMenu && (
-          <NavMenu signedIn={signedIn} onOpenLists={onOpenLists} />
-        )}
+        {showNavMenu && <NavMenu signedIn={signedIn} />}
         {showAccountMenu && <AccountMenu auth={auth} />}
       </div>
     </header>

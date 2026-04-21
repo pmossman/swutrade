@@ -46,7 +46,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const viewerIsGhost = !!auth.user?.isAnonymous;
   const priceData = usePriceDataContext();
   const cardIndex = useCardIndexContext();
-  const { listsDrawerOpen, setListsDrawerOpen, openLists } = useDrawerContext();
+  const { listsDrawerOpen, setListsDrawerOpen } = useDrawerContext();
   const { percentage, priceMode } = usePricing();
   const wants = useWants();
   const available = useAvailable();
@@ -159,7 +159,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
-      <AppHeader auth={auth} breadcrumbs={breadcrumbs} onOpenLists={openLists} />
+      <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
 
       <main className="flex-1 px-3 sm:px-6 py-3 max-w-6xl mx-auto w-full flex flex-col gap-3">
         {status === 'loading' && !session && !preview && <LoadingState label="Loading shared trade…" />}

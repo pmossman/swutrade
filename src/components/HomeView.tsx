@@ -15,7 +15,6 @@ import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
-import { useDrawerContext } from '../contexts/DrawerContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { cardImageUrl } from '../services/priceService';
 import { extractBaseName } from '../variants';
@@ -83,10 +82,11 @@ export function HomeView({ auth }: HomeViewProps) {
   );
   // CardIndexContext keeps the byFamily index globally synced — no
   // need for this view to re-trigger `loadAllSets`, the PriceData
-  // provider handles that once at app mount. DrawerContext gives us
-  // the shared open-state so the drawer at App root responds here.
+  // provider handles that once at app mount. The Lists drawer is a
+  // trade-builder-local affordance now, so Home doesn't reach into
+  // DrawerContext — the wishlist/binder modules route to their own
+  // dedicated views via `nav.toWishlist()` / `nav.toBinder()`.
   const { byFamily, byProductId } = useCardIndexContext();
-  const { openLists } = useDrawerContext();
 
   // `myTrades` already derives `needsResponse` + `counts` across the
   // unified proposal + session stream, so we don't redo that work here.
@@ -100,7 +100,7 @@ export function HomeView({ auth }: HomeViewProps) {
           The Lists drawer lives at App root now, so we just toggle the
           shared open-state via DrawerContext rather than rendering our
           own <ListsDrawer> instance. */}
-      <AppHeader auth={auth} onOpenLists={openLists} />
+      <AppHeader auth={auth} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
         {user && (
@@ -156,12 +156,12 @@ export function HomeView({ auth }: HomeViewProps) {
           <WishlistModule
             wants={wants.items}
             cardByFamily={byFamily}
-            onEditWishlist={() => openLists('wants')}
+            onEditWishlist={nav.toWishlist}
           />
           <BinderModule
             available={available.items}
             cardByProductId={byProductId}
-            onEditBinder={() => openLists('available')}
+            onEditBinder={nav.toBinder}
           />
         </div>
       </main>

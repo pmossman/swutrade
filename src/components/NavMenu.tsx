@@ -1,28 +1,27 @@
 import { Popover } from './Popover';
-import { ListsIcon } from './ListsDrawer';
 
 interface NavMenuProps {
   /** True when the viewer is signed in — enables the server-backed items
-   *  (My Trades, Community) that require an account. Lists work in both
-   *  states since they're localStorage-backed until sync opts in. */
+   *  (My Trades, Community) that require an account. Wishlist + Binder
+   *  work in both states since they're localStorage-backed until sync
+   *  opts in. */
   signedIn: boolean;
-  /** Opens the controlled ListsDrawer. Optional — views that don't own
-   *  a drawer omit it and the "My Lists" entry hides. Callers that do
-   *  want lists access must render a ListsDrawer locally and pass its
-   *  setter. */
-  onOpenLists?: () => void;
 }
 
 /**
  * Hamburger-style content navigation menu. Separate from AccountMenu —
  * AccountMenu is identity (profile / settings / sign out), NavMenu is
- * "where do I want to go in the app" (Home / Lists / Trades / Community).
+ * "where do I want to go in the app" (Home / Wishlist / Binder /
+ * Trades / Community).
  *
- * Splitting these was beta feedback: users read AccountMenu's "My Lists"
- * entry as identity-adjacent (account data) rather than content (my
- * collection). Separate affordances match the mental split.
+ * The single "My Lists" entry was split into "My Wishlist" + "My
+ * Binder" when the Wishlist / Binder split landed — the shared-tab
+ * drawer was conflating two concepts that now have dedicated views.
+ * Drawer still lives for the in-trade-builder quick-edit sidebar
+ * only; it no longer has a global menu entry because the dedicated
+ * views are the canonical edit surface.
  */
-export function NavMenu({ signedIn, onOpenLists }: NavMenuProps) {
+export function NavMenu({ signedIn }: NavMenuProps) {
   return (
     <Popover
       align="right"
@@ -47,13 +46,18 @@ export function NavMenu({ signedIn, onOpenLists }: NavMenuProps) {
             label={signedIn ? 'Home' : 'Trade builder'}
             onClose={close}
           />
-          {onOpenLists && (
-            <NavRow
-              onClick={() => { onOpenLists(); close(); }}
-              icon={<ListsIcon className="w-3.5 h-3.5 text-gray-400" />}
-              label="My Lists"
-            />
-          )}
+          <NavRow
+            href="/?view=wishlist"
+            icon={<WishlistIcon className="w-3.5 h-3.5 text-gray-400" />}
+            label="My Wishlist"
+            onClose={close}
+          />
+          <NavRow
+            href="/?view=binder"
+            icon={<BinderIcon className="w-3.5 h-3.5 text-gray-400" />}
+            label="My Binder"
+            onClose={close}
+          />
           {signedIn && (
             <>
               <NavRow
@@ -109,6 +113,26 @@ function HamburgerIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
       <path d="M2 4h12M2 8h12M2 12h12" />
+    </svg>
+  );
+}
+
+function WishlistIcon({ className }: { className?: string }) {
+  // Star outline — parallel to HomeView's WishlistModule icon so the
+  // NavMenu and Home module chrome reinforce each other.
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M8 2l1.85 3.76 4.15.6-3 2.93.7 4.14L8 11.78l-3.7 1.95.7-4.14-3-2.93 4.15-.6L8 2z" />
+    </svg>
+  );
+}
+
+function BinderIcon({ className }: { className?: string }) {
+  // Book outline — parallel to HomeView's BinderModule icon.
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 2.5h6.5a2 2 0 0 1 2 2v9L9 11.75H3v-9.25z" />
+      <path d="M11.5 4.5H13a0 0 0 0 1 0 0v9l-2.5-1.75" />
     </svg>
   );
 }

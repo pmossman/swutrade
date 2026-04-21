@@ -5,16 +5,14 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
-import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId } from '../variants';
-import { WantsRow, AvailableRow } from './ListRows';
 import { encodeWants, encodeAvailable } from '../urlCodec';
-import { bestMatchForWant } from '../listMatching';
 import { TradeImageModal } from './TradeImageModal';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useDrawerContext } from '../contexts/DrawerContext';
 import { preventAutoFocus } from '../utils/dialogFocus';
-import { usePopularWants } from '../hooks/usePopularWants';
+import { WantsPanel } from './lists/WantsPanel';
+import { AvailablePanel } from './lists/AvailablePanel';
 
 interface ListsDrawerProps {
   wants: WantsApi;
@@ -30,7 +28,6 @@ interface ListsDrawerProps {
 }
 
 type ListTab = 'wants' | 'available';
-type Mode = 'list' | 'picker';
 
 /**
  * Mobile: bottom sheet sliding up from viewport bottom.
@@ -46,8 +43,6 @@ export function ListsDrawer({
   onOpenChange,
 }: ListsDrawerProps) {
   const [tab, setTab] = useState<ListTab>('wants');
-  const [mode, setMode] = useState<Mode>('list');
-  const [editingWantId, setEditingWantId] = useState<string | null>(null);
 
   // Callers can nominate a tab to open on via DrawerContext's
   // `openLists('wants'|'available')` — Home's split Wishlist / Binder
@@ -66,11 +61,10 @@ export function ListsDrawer({
   const availableCount = available.items.length;
   const totalCount = wantsCount + availableCount;
 
-  // Drawer rows display image + display name (wants) or exact variant
-  // (available). For wants, the row's thumbnail should reflect the
-  // restriction — a Showcase-only want should show the Showcase art,
-  // not the family's Standard rep. byFamilyAll powers bestMatchForWant
-  // which picks the right variant per item.
+  // Card indexes — passed into both panels so they don't recompute on
+  // every switch. For wants, the row's thumbnail should reflect the
+  // restriction (byFamilyAll powers bestMatchForWant); for available,
+  // byProductId resolves the exact variant the user picked.
   const { byFamily, byFamilyAll, byProductId } = useMemo(() => {
     const byFamily = new Map<string, CardVariant>();
     const byFamilyAll = new Map<string, CardVariant[]>();
@@ -87,45 +81,12 @@ export function ListsDrawer({
     return { byFamily, byFamilyAll, byProductId };
   }, [allCards]);
 
-  // Picker computes its own saved-count badges (scoped by current
-  // variant filter for wants), so we just thread the raw items
-  // through rather than pre-aggregating here.
-
-  // Priority-first sort for wants, insertion order otherwise
-  const sortedWants = useMemo(() => {
-    return [...wants.items].sort((a, b) => {
-      const pa = a.isPriority ? 1 : 0;
-      const pb = b.isPriority ? 1 : 0;
-      if (pa !== pb) return pb - pa;
-      return a.addedAt - b.addedAt;
-    });
-  }, [wants.items]);
-
-  // "Popular wants" — how many other users have each of our available
-  // cards' families on their public wants list. Signed-in only:
-  // surfaces the social payoff of having an account without requiring
-  // matchmaking to be initiated. Anonymous users see their list plain.
+  // Ghost-gate: ghost users get a sign-in panel instead of the tabs.
+  // Pulled out here so the handler + user read sit together.
   const { user } = useAuthContext();
-  const availableFamilyIds = useMemo<string[]>(() => {
-    if (!user) return [];
-    const ids = new Set<string>();
-    for (const item of available.items) {
-      const card = byProductId.get(item.productId);
-      if (card) ids.add(cardFamilyId(card));
-    }
-    return [...ids];
-  }, [user, available.items, byProductId]);
-  const wantCounts = usePopularWants(availableFamilyIds);
 
-  // Close the picker whenever the drawer or tab changes.
-  const handleTabChange = (next: ListTab) => {
-    setTab(next);
-    setMode('list');
-  };
-  const handleOpenChange = (next: boolean) => {
-    if (!next) setMode('list');
-    onOpenChange(next);
-  };
+  const handleTabChange = (next: ListTab) => setTab(next);
+  const handleOpenChange = (next: boolean) => onOpenChange(next);
 
   return (
     <Dialog.Root open={open} onOpenChange={handleOpenChange}>
@@ -133,27 +94,19 @@ export function ListsDrawer({
         <Dialog.Overlay className="drawer-overlay fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
           aria-describedby={undefined}
-          data-mode={mode}
           onOpenAutoFocus={preventAutoFocus}
-          onEscapeKeyDown={e => {
-            // In picker mode, Esc should only close the picker and leave
-            // the drawer open — the drawer itself is dismissed by another
-            // Esc press from the list view.
-            if (mode === 'picker') {
-              e.preventDefault();
-              setMode('list');
-            }
-          }}
           className={[
             'drawer-content z-50 bg-space-900 border border-space-700 text-gray-100 shadow-2xl',
             'flex flex-col',
-            // Mobile list mode: bottom sheet. Mobile picker mode:
-            // expands to full viewport so the search results have
-            // room to breathe (iOS address bar etc.).
+            // Mobile: bottom sheet. The picker-mode size tweak that
+            // used to live here is now owned by each panel — they
+            // render the picker at natural size and the drawer's own
+            // max-h still governs the viewport envelope. Works in
+            // practice because the picker's internal scroll region
+            // absorbs overflow.
             'max-h-[85dvh] rounded-t-2xl border-b-0',
-            'data-[mode=picker]:max-h-[100dvh] data-[mode=picker]:h-[100dvh] data-[mode=picker]:rounded-none',
-            // Desktop: fixed modal size in either mode.
-            'md:w-[min(720px,calc(100vw-2rem))] md:max-h-[85dvh] md:h-auto md:rounded-2xl md:border md:data-[mode=picker]:max-h-[85dvh] md:data-[mode=picker]:rounded-2xl',
+            // Desktop: fixed modal size.
+            'md:w-[min(720px,calc(100vw-2rem))] md:max-h-[85dvh] md:h-auto md:rounded-2xl md:border',
           ].join(' ')}
         >
           <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-space-800">
@@ -200,121 +153,24 @@ export function ListsDrawer({
             </Tabs.List>
 
             <Tabs.Content value="wants" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-              {mode === 'picker' && tab === 'wants' ? (
-                <ListCardPicker
-                  listType="wants"
-                  allCards={allCards}
-                  percentage={percentage}
-                  priceMode={priceMode}
-                  wants={wants}
-                  onPick={(card, ctx) => {
-                    // Variant filter (acceptedVariants) drives the saved
-                    // restriction. Empty filter → any. Otherwise →
-                    // restricted to the filter set.
-                    const accepted = ctx.acceptedVariants ?? [];
-                    const restriction = accepted.length > 0
-                      ? { mode: 'restricted' as const, variants: accepted }
-                      : { mode: 'any' as const };
-                    wants.add({ familyId: cardFamilyId(card), qty: 1, restriction });
-                  }}
-                  onClose={() => setMode('list')}
-                />
-              ) : (
-                <>
-                  <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                    {sortedWants.length === 0 ? (
-                      <EmptyState
-                        title="No wants yet"
-                        body="Save cards you're looking for. You'll be able to add them to trades in one tap."
-                      />
-                    ) : (
-                      <ul className="flex flex-col gap-2">
-                        {sortedWants.map(item => {
-                          // Prefer the variant that satisfies the want's
-                          // restriction (e.g. Showcase art for a Showcase-
-                          // restricted want). Falls back to the family's
-                          // Standard rep when no candidates loaded yet.
-                          const candidates = byFamilyAll.get(item.familyId) ?? [];
-                          const sampleCard =
-                            bestMatchForWant(item, candidates, priceMode)
-                            ?? byFamily.get(item.familyId)
-                            ?? null;
-                          return (
-                          <WantsRow
-                            key={item.id}
-                            item={item}
-                            sampleCard={sampleCard}
-                            familyCandidates={candidates}
-                            isEditing={editingWantId === item.id}
-                            onChangeQty={qty => wants.update(item.id, { qty })}
-                            onTogglePriority={() => wants.togglePriority(item.id)}
-                            onRemove={() => {
-                              if (editingWantId === item.id) setEditingWantId(null);
-                              wants.remove(item.id);
-                            }}
-                            onToggleEdit={() =>
-                              setEditingWantId(prev => (prev === item.id ? null : item.id))
-                            }
-                            onChangeRestriction={next =>
-                              wants.update(item.id, { restriction: next })
-                            }
-                          />
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                  <AddCardFooter onClick={() => setMode('picker')} accent="blue" />
-                </>
-              )}
+              <WantsPanel
+                wants={wants}
+                allCards={allCards}
+                percentage={percentage}
+                priceMode={priceMode}
+                byFamily={byFamily}
+                byFamilyAll={byFamilyAll}
+              />
             </Tabs.Content>
 
             <Tabs.Content value="available" className="flex-1 min-h-0 data-[state=inactive]:hidden flex flex-col">
-              {mode === 'picker' && tab === 'available' ? (
-                <ListCardPicker
-                  listType="available"
-                  allCards={allCards}
-                  percentage={percentage}
-                  priceMode={priceMode}
-                  available={available}
-                  onPick={card => {
-                    if (!card.productId) return;
-                    available.add({ productId: card.productId, qty: 1 });
-                  }}
-                  onClose={() => setMode('list')}
-                />
-              ) : (
-                <>
-                  <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                    {available.items.length === 0 ? (
-                      <EmptyState
-                        title="No available cards yet"
-                        body="Save exact cards you have to trade. Matchmaking against other users comes later."
-                      />
-                    ) : (
-                      <ul className="flex flex-col gap-2">
-                        {available.items.map(item => {
-                          const card = byProductId.get(item.productId) ?? null;
-                          const fid = card ? cardFamilyId(card) : null;
-                          return (
-                            <AvailableRow
-                              key={item.id}
-                              item={item}
-                              card={card}
-                              percentage={percentage}
-                              priceMode={priceMode}
-                              wantCount={fid ? wantCounts[fid] : undefined}
-                              onChangeQty={qty => available.update(item.id, { qty })}
-                              onRemove={() => available.remove(item.id)}
-                            />
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                  <AddCardFooter onClick={() => setMode('picker')} accent="emerald" />
-                </>
-              )}
+              <AvailablePanel
+                available={available}
+                allCards={allCards}
+                percentage={percentage}
+                priceMode={priceMode}
+                byProductId={byProductId}
+              />
             </Tabs.Content>
           </Tabs.Root>
           )}
@@ -354,26 +210,6 @@ function GhostSignInPanel() {
       >
         Continue with Discord
       </a>
-    </div>
-  );
-}
-
-const ADD_CARD_ACCENT: Record<'blue' | 'emerald', string> = {
-  blue: 'bg-blue-500/10 border-blue-500/30 text-blue-200 hover:bg-blue-500/20 hover:border-blue-500/50',
-  emerald: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/20 hover:border-emerald-500/50',
-};
-
-function AddCardFooter({ onClick, accent }: { onClick: () => void; accent: 'blue' | 'emerald' }) {
-  return (
-    <div className="shrink-0 border-t border-space-800 p-3">
-      <button
-        type="button"
-        onClick={onClick}
-        className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border transition-colors text-xs font-bold tracking-[0.1em] uppercase ${ADD_CARD_ACCENT[accent]}`}
-      >
-        <PlusIcon className="w-3.5 h-3.5" />
-        Add Card
-      </button>
     </div>
   );
 }
@@ -649,34 +485,6 @@ function ImageIcon({ className }: { className?: string }) {
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center text-center py-10 gap-2">
-      <div className="text-sm font-semibold text-gray-300">{title}</div>
-      <div className="text-xs text-gray-500 max-w-sm">{body}</div>
-    </div>
-  );
-}
-
-export function ListsIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <rect x="2.5" y="3" width="11" height="2.25" rx="0.5" />
-      <rect x="2.5" y="7" width="11" height="2.25" rx="0.5" />
-      <rect x="2.5" y="11" width="11" height="2.25" rx="0.5" />
-    </svg>
-  );
-}
-
 function CloseIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -689,22 +497,6 @@ function CloseIcon({ className }: { className?: string }) {
       aria-hidden
     >
       <path d="M4 4L12 12M4 12L12 4" />
-    </svg>
-  );
-}
-
-function PlusIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      aria-hidden
-    >
-      <path d="M8 3V13M3 8H13" />
     </svg>
   );
 }

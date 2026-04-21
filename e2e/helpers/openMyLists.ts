@@ -1,17 +1,20 @@
 import type { Page } from '@playwright/test';
 
 /**
- * Opens the My Lists drawer. "Open my lists" started as a top-level
- * header button, then moved into the AccountMenu popover, and now
- * lives in the NavMenu (hamburger) popover — the AccountMenu was slim-
- * med to identity actions only. Specs that exercise list-drawer flows
- * go through the two-click path here.
+ * Opens the My Lists drawer (the in-trade-builder quick-edit sidebar).
  *
- * Works in both signed-in and signed-out states — NavMenu exposes
- * "My Lists" in both variants since lists are stored client-side
- * until cloud sync is opted into.
+ * History: the entry was a top-level header button → AccountMenu → the
+ * NavMenu's "My Lists" entry → this trade-builder-local "Lists" button
+ * once the Wishlist / Binder split landed. NavMenu now surfaces "My
+ * Wishlist" / "My Binder" which route to the dedicated views; the
+ * drawer is retained only as a trade-builder quick-edit affordance
+ * so users don't lose in-progress composer state to a full navigation.
+ *
+ * The button lives in the trade builder's action strip (top-right,
+ * next to the split/tabbed toggle), labelled "Lists" on wider
+ * viewports and icon-only on narrow ones. The `aria-label` is stable
+ * across both so this helper is viewport-agnostic.
  */
 export async function openMyLists(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Navigation menu' }).click();
-  await page.getByRole('button', { name: 'My Lists' }).click();
+  await page.getByRole('button', { name: 'Edit your wishlist or binder' }).click();
 }

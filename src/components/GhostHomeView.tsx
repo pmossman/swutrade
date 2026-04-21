@@ -2,7 +2,6 @@ import type { AuthApi } from '../hooks/useAuth';
 import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
 import { useMyTrades, type TradeRow } from '../hooks/useMyTrades';
-import { useDrawerContext } from '../contexts/DrawerContext';
 import { useNavigation } from '../contexts/NavigationContext';
 
 interface GhostHomeViewProps {
@@ -41,7 +40,6 @@ interface GhostHomeViewProps {
 export function GhostHomeView({ auth }: GhostHomeViewProps) {
   const { user } = auth;
   const nav = useNavigation();
-  const { openLists } = useDrawerContext();
   // Same hook the signed-in HomeView uses. A ghost's list will only
   // contain session rows; if anything else sneaks in we filter below
   // so the chrome stays honest about what the viewer can actually see.
@@ -62,7 +60,7 @@ export function GhostHomeView({ auth }: GhostHomeViewProps) {
           AccountMenu orient the ghost exactly like a real user. The
           AccountMenu itself knows to render the guest-appropriate
           variant based on `auth.user.isAnonymous`. */}
-      <AppHeader auth={auth} onOpenLists={openLists} />
+      <AppHeader auth={auth} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
         <GhostGreetingCard
