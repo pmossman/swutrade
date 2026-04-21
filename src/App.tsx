@@ -263,6 +263,10 @@ function App() {
     filters.clearAll();
     setAutoOpenOfferingFromShared(true);
     setViewMode('trade');
+    // Matches the scroll-reset in `pushTo`: forward nav starts at the
+    // top. Back/Forward still goes through popstate and inherits the
+    // browser's scroll restoration.
+    window.scrollTo({ top: 0, left: 0 });
   }, [filters, intent]);
   const consumeAutoOpenOffering = useCallback(() => {
     setAutoOpenOfferingFromShared(false);
@@ -291,6 +295,14 @@ function App() {
       const nextPath = window.location.pathname.startsWith('/u/') ? '/' : window.location.pathname;
       window.history.pushState(null, '', search ? `${nextPath}?${search}` : nextPath);
       setViewMode(detectViewMode(isSignedIn));
+      // Forward nav: reset scroll to top so the user doesn't land mid-
+      // page on the new view (Home was scrolled → tap "Edit trade
+      // binder" → BinderView would otherwise inherit the Home scroll
+      // offset). Browser Back/Forward goes through popstate, not this
+      // helper, so the browser's default `scrollRestoration = 'auto'`
+      // still restores the previous view's scroll position on backward
+      // nav — which is the expected UX.
+      window.scrollTo({ top: 0, left: 0 });
     };
     const reset = (keep: readonly string[], extras: Record<string, string> = {}) => {
       // Preserve any non-view param already in the URL (e.g. a trade
