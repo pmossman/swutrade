@@ -126,6 +126,42 @@ export const userPeerPrefs = pgTable(
 );
 
 /**
+ * Explicit bookmark list — "I know @bob, I want to trade with him."
+ * Independent of community enrollment: a user can favorite any other
+ * SWUTrade user with a public profile, even if they share no Discord
+ * guild. Companion to `useRecentPartners` (auto-populated from actual
+ * trade history) — favorites add the "I haven't traded with them yet
+ * but will" case that RecentPartners can't cover.
+ *
+ * Composite PK so re-favoriting the same partner is an upsert / no-op,
+ * not a duplicate row. `note` is optional ("met at LGS tournament") —
+ * ships empty today; wired in schema so the CRUD API doesn't need a
+ * follow-on migration when we add a notes UI.
+ *
+ * `ON DELETE cascade` on both FK columns: when either party deletes
+ * their account, the favorite row is removed. Neither party is
+ * notified that the other favorited them (bookmarking is a one-sided
+ * act, same semantics as bookmarking a public profile URL).
+ */
+export const userFavoritePartners = pgTable(
+  'user_favorite_partners',
+  {
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    partnerUserId: text('partner_user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.partnerUserId] }),
+    index('user_favorite_partners_user_id_idx').on(t.userId),
+  ],
+);
+
+/**
  * Registry of every Discord guild that SWUTrade's bot has been
  * installed into. Written when Discord fires `GUILD_CREATE` at the
  * bot on install (and when someone runs the install OAuth flow);

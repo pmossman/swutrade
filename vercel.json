@@ -12,6 +12,8 @@
     { "source": "/api/me/community-members", "destination": "/api/me?action=community-members" },
     { "source": "/api/me/community-activity", "destination": "/api/me?action=community-activity" },
     { "source": "/api/me/recent-partners", "destination": "/api/me?action=recent-partners" },
+    { "source": "/api/me/favorites/:handle", "destination": "/api/me?action=favorite-delete&handle=:handle" },
+    { "source": "/api/me/favorites", "destination": "/api/me?action=favorites" },
     { "source": "/api/sync/wants", "destination": "/api/sync?kind=wants" },
     { "source": "/api/sync/available", "destination": "/api/sync?kind=available" },
     { "source": "/api/auth/me", "destination": "/api/auth?action=me" },

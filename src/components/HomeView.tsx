@@ -3,6 +3,7 @@ import {
   AlarmClock,
   ArrowLeftRight,
   BookOpen,
+  Handshake,
   Star,
   Users,
 } from 'lucide-react';
@@ -14,6 +15,7 @@ import { TradeExpandPeek } from './TradeExpandPeek';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
+import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { cardImageUrl } from '../services/priceService';
@@ -80,6 +82,11 @@ export function HomeView({ auth }: HomeViewProps) {
     () => guilds.enrollable.filter(g => g.enrolled),
     [guilds.enrollable],
   );
+  // Explicit trading-partner bookmarks. Independent of community
+  // enrollment — lets users pin Discord friends who aren't in any
+  // bot-enabled server. Signed-in only; the server endpoint 401s
+  // for ghosts, so we gate the fetch here and skip for anonymous.
+  const favorites = useFavorites(!!user && !user.isAnonymous);
   // CardIndexContext keeps the byFamily index globally synced — no
   // need for this view to re-trigger `loadAllSets`, the PriceData
   // provider handles that once at app mount. The Lists drawer is a
@@ -164,6 +171,20 @@ export function HomeView({ auth }: HomeViewProps) {
             onEditBinder={nav.toBinder}
           />
         </div>
+
+        {/* Trading partners — explicit bookmarks of people you want
+            to trade with, independent of community enrollment. Closes
+            the gap for Discord friends in no shared bot-enabled server;
+            complements Communities (server-scoped) with a user-scoped
+            list. Row-3 placement below the inventory grid so it reads
+            as "once you know what you have/want, here's who to trade
+            with." */}
+        <PartnersModule
+          favorites={favorites.favorites}
+          status={favorites.status}
+          onStartTradeWith={(handle) => nav.toStartTradeFrom(handle)}
+          onOpenProfile={onOpenProfile}
+        />
       </main>
     </div>
   );
@@ -917,6 +938,122 @@ function GuildAvatar({
     >
       {initial}
     </span>
+  );
+}
+
+// --- 🤝 Trading partners module -------------------------------------------
+
+// Cap the row count so a heavy user doesn't get a wall. Favorites
+// grow linearly with every star-toggle; past the cap the module
+// shows a "+ N more" hint and the rest live on a future partners
+// page (not built yet).
+const PARTNERS_MODULE_CAP = 6;
+
+function PartnersModule({
+  favorites,
+  status,
+  onStartTradeWith,
+  onOpenProfile,
+}: {
+  favorites: Favorite[];
+  status: 'loading' | 'ready' | 'error';
+  onStartTradeWith: (handle: string) => void;
+  onOpenProfile: (handle: string) => void;
+}) {
+  const visible = favorites.slice(0, PARTNERS_MODULE_CAP);
+  const overflow = favorites.length - visible.length;
+
+  return (
+    <ModuleSection
+      icon={<Handshake aria-hidden className="w-4 h-4" />}
+      label="Your trading partners"
+      headingId="your-trading-partners-heading"
+    >
+      {/* Count strip — matches the shape other modules use (N servers,
+          N cards available) so the row reads consistently. Hidden when
+          empty so the empty state takes center stage. */}
+      {favorites.length > 0 && (
+        <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+          <span className="text-gray-200 font-semibold">{favorites.length}</span>
+          {favorites.length === 1 ? ' partner' : ' partners'}
+        </div>
+      )}
+
+      {status === 'loading' && favorites.length === 0 && (
+        <LoadingState label="Loading partners…" />
+      )}
+      {status !== 'loading' && favorites.length === 0 && (
+        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
+          Bookmark trading partners from their profile for one-tap access. Independent of Discord communities — great for friends who trade outside a shared server.
+        </div>
+      )}
+
+      {visible.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {visible.map((fav, idx) => (
+            <li
+              key={fav.userId}
+              className={idx >= 3 ? 'hidden sm:list-item' : undefined}
+            >
+              <PartnerRow
+                favorite={fav}
+                onStartTrade={() => onStartTradeWith(fav.handle)}
+                onOpenProfile={() => onOpenProfile(fav.handle)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {overflow > 0 && (
+        <div className="mt-2 text-[11px] text-gray-500 tabular-nums text-center">
+          +{overflow} more
+        </div>
+      )}
+    </ModuleSection>
+  );
+}
+
+function PartnerRow({
+  favorite,
+  onStartTrade,
+  onOpenProfile,
+}: {
+  favorite: Favorite;
+  onStartTrade: () => void;
+  onOpenProfile: () => void;
+}) {
+  // Two primary actions per row: tap the identity area → their
+  // profile (review before trading); tap the gold "Trade" button →
+  // straight into the composer with them pre-filled as counterpart.
+  // Split on tap targets so a mobile user can still open the profile
+  // without misfiring the one-click-to-trade path.
+  return (
+    <div className="w-full flex items-center gap-3 px-2.5 py-1.5 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/30 hover:bg-space-800/50 transition-colors">
+      <button
+        type="button"
+        onClick={onOpenProfile}
+        aria-label={`Open @${favorite.handle}'s profile`}
+        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+      >
+        <Avatar avatarUrl={favorite.avatarUrl} name={favorite.username || favorite.handle} />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-gray-100 truncate">
+            {favorite.username || `@${favorite.handle}`}
+          </div>
+          <div className="text-[11px] text-gray-500 truncate">
+            @{favorite.handle}
+          </div>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={onStartTrade}
+        className="shrink-0 px-2.5 h-7 rounded-md bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-[11px] font-bold text-gold transition-colors"
+      >
+        Trade
+      </button>
+    </div>
   );
 }
 

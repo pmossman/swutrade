@@ -134,6 +134,13 @@
       "when": 1776648182111,
       "tag": "0018_premium_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1776885490999,
+      "tag": "0019_fat_northstar",
+      "breakpoints": true
     }
   ]
 }

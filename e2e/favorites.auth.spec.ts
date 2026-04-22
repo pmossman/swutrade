@@ -1,0 +1,96 @@
+import { test, expect } from '@playwright/test';
+import { signIn, createIsolatedUser, ensureTestUser, cleanupTestUser, type TestUser } from './helpers/auth';
+
+/**
+ * End-to-end coverage for the Favorites / Trading Partners slice.
+ *
+ * Flow: sign in as Alice, visit Bob's profile, tap the bookmark
+ * toggle, navigate home, assert the Partners module surfaces Bob,
+ * tap "Trade" → lands on the trade builder pre-filled with Bob as
+ * counterpart. Also exercises the remove-toggle path on re-visit.
+ *
+ * Doesn't exercise:
+ *   - HandlePickerDialog integration (deferred per scope)
+ *   - Multi-partner sort / cap behavior (covered in unit tests)
+ *   - Partner sharing between devices (server round-trip is the
+ *     unit test's concern; here we only verify UI wiring)
+ */
+test.describe('Favorites / trading partners', () => {
+  test.describe.configure({ mode: 'serial' });
+  let alice: TestUser;
+  let bob: TestUser;
+
+  test.beforeEach(async ({ context }) => {
+    alice = createIsolatedUser();
+    bob = createIsolatedUser();
+    await ensureTestUser(alice);
+    await ensureTestUser(bob);
+    await signIn(context, alice);
+  });
+
+  test.afterEach(async () => {
+    await cleanupTestUser(alice);
+    await cleanupTestUser(bob);
+  });
+
+  test('add from profile → appears on Home → click Trade → lands in composer', async ({ page }) => {
+    // Visit Bob's profile first.
+    await page.goto(`/u/${bob.handle}`);
+
+    // Bookmark toggle — starts unfavorited (no pressed state).
+    const bookmark = page.getByRole('button', {
+      name: new RegExp(`Add @${bob.handle} to your trading partners`, 'i'),
+    });
+    await expect(bookmark).toBeVisible({ timeout: 10_000 });
+    await expect(bookmark).toHaveAttribute('aria-pressed', 'false');
+    await bookmark.click();
+
+    // After click, aria-pressed flips; the label swaps to "Remove".
+    await expect(
+      page.getByRole('button', {
+        name: new RegExp(`Remove @${bob.handle} from your trading partners`, 'i'),
+      }),
+    ).toHaveAttribute('aria-pressed', 'true', { timeout: 5_000 });
+
+    // Navigate to Home — the Partners module renders Bob.
+    await page.goto('/');
+    const partnersModule = page.getByRole('region', { name: /your trading partners/i });
+    await expect(partnersModule).toBeVisible({ timeout: 10_000 });
+    await expect(partnersModule.getByText(`@${bob.handle}`).first()).toBeVisible();
+
+    // "Trade" button per-row → trade builder with Bob pre-filled as
+    // counterpart (from=... intent query key).
+    await partnersModule.getByRole('button', { name: 'Trade' }).click();
+    await expect(page).toHaveURL(new RegExp(`from=${bob.handle}`), { timeout: 10_000 });
+  });
+
+  test('remove from profile → Home module empty again', async ({ page }) => {
+    // Add first via profile → Home sanity check → remove → Home empty.
+    await page.goto(`/u/${bob.handle}`);
+    await page.getByRole('button', {
+      name: new RegExp(`Add @${bob.handle} to your trading partners`, 'i'),
+    }).click();
+    await expect(
+      page.getByRole('button', {
+        name: new RegExp(`Remove @${bob.handle} from your trading partners`, 'i'),
+      }),
+    ).toHaveAttribute('aria-pressed', 'true', { timeout: 5_000 });
+
+    // Remove via the same toggle (now in "remove" mode).
+    await page.getByRole('button', {
+      name: new RegExp(`Remove @${bob.handle} from your trading partners`, 'i'),
+    }).click();
+    await expect(
+      page.getByRole('button', {
+        name: new RegExp(`Add @${bob.handle} to your trading partners`, 'i'),
+      }),
+    ).toHaveAttribute('aria-pressed', 'false', { timeout: 5_000 });
+
+    // Home module shows the empty-state copy instead of Bob's row.
+    await page.goto('/');
+    const partnersModule = page.getByRole('region', { name: /your trading partners/i });
+    await expect(partnersModule).toBeVisible({ timeout: 10_000 });
+    await expect(partnersModule.getByText(/Bookmark trading partners/i)).toBeVisible();
+    await expect(partnersModule.getByText(`@${bob.handle}`)).toHaveCount(0);
+  });
+});

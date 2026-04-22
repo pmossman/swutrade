@@ -16,6 +16,7 @@ import { AppHeader } from './ui/AppHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { usePriceDataContext } from '../contexts/PriceDataContext';
+import { useFavorites } from '../hooks/useFavorites';
 
 interface ProfileUser {
   username: string;
@@ -128,6 +129,10 @@ export function ProfileView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const auth = useAuthContext();
+  // Favorites are signed-in only; gate the hook so ghosts + signed-out
+  // viewers don't 401 against /api/me/favorites on every profile
+  // visit. The toggle UI is also gated on signed-in-and-not-self below.
+  const favorites = useFavorites(!!auth.user && !auth.user.isAnonymous);
   // Captured once at mount — breadcrumbs don't change while the user
   // is reading the profile. If they navigate away and come back,
   // component re-mounts and re-reads.
@@ -265,6 +270,19 @@ export function ProfileView({
             <div className="text-sm font-bold text-gray-100 truncate">{profile.user.username}</div>
             <div className="text-[11px] text-gray-500 truncate">@{profile.user.handle}</div>
           </div>
+          {/* Favorite toggle — only shown to signed-in viewers on
+              someone else's profile (no self-favorite, no ghost
+              support). Sits adjacent to the Trade CTA so the two
+              related actions ("trade with this person" / "remember
+              this person for later") read as peers. */}
+          {auth.user && !auth.user.isAnonymous && auth.user.handle !== profile.user.handle && (
+            <FavoriteToggle
+              profileHandle={profile.user.handle}
+              isFavorite={favorites.isFavorite(profile.user.handle)}
+              onAdd={() => favorites.add(profile.user.handle)}
+              onRemove={() => favorites.remove(profile.user.handle)}
+            />
+          )}
           {tradeCta}
         </div>
 
@@ -503,5 +521,63 @@ function ProfileRow({
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * Bookmark toggle — single button that flips between "add to trading
+ * partners" and "remove from trading partners" based on the current
+ * favorite state. Optimistic via `useFavorites`; the hook updates the
+ * local list before the POST / DELETE resolves, so the toggle feels
+ * instant even on a slow network.
+ */
+function FavoriteToggle({
+  profileHandle,
+  isFavorite,
+  onAdd,
+  onRemove,
+}: {
+  profileHandle: string;
+  isFavorite: boolean;
+  onAdd: () => void;
+  onRemove: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => (isFavorite ? onRemove() : onAdd())}
+      aria-pressed={isFavorite}
+      aria-label={
+        isFavorite
+          ? `Remove @${profileHandle} from your trading partners`
+          : `Add @${profileHandle} to your trading partners`
+      }
+      title={
+        isFavorite
+          ? 'Remove from your trading partners'
+          : 'Add to your trading partners'
+      }
+      className={`flex items-center justify-center w-9 h-9 rounded-lg border transition-colors ${
+        isFavorite
+          ? 'bg-gold/20 border-gold/50 text-gold hover:bg-gold/10'
+          : 'bg-space-800/60 border-space-700 text-gray-400 hover:border-gold/40 hover:bg-space-800 hover:text-gold'
+      }`}
+    >
+      {/* Bookmark icon — filled when favorited, outline when not. The
+          visual state mirrors the aria-pressed semantic so screen-
+          reader users and sighted users see the same signal. */}
+      <svg
+        viewBox="0 0 16 16"
+        className="w-4 h-4"
+        fill={isFavorite ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <path d="M3.5 2.5h9v12l-4.5-3-4.5 3z" />
+      </svg>
+    </button>
   );
 }

@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, count, desc, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, userPeerPrefs, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
+import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
 import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
@@ -54,6 +54,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleCommunityActivity(req, res);
     case 'recent-partners':
       return handleRecentPartners(req, res);
+    case 'favorites':
+      return handleFavorites(req, res);
+    case 'favorite-delete':
+      return handleFavoriteDelete(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -975,4 +979,184 @@ export async function handleRecentPartners(req: VercelRequest, res: VercelRespon
 
   res.setHeader('Cache-Control', 'private, no-store');
   res.json({ partners });
+}
+
+// --- favorites --------------------------------------------------------------
+
+/**
+ * Explicit trading-partner bookmarks. Companion to recent-partners —
+ * RecentPartners auto-populates from completed trades; Favorites lets
+ * the viewer pin someone BEFORE trading with them (e.g. a Discord
+ * friend in no shared server). Ghost users can't be favorited — they're
+ * transient, and their row may vanish mid-session.
+ *
+ * Routes:
+ *   GET  /api/me/favorites                  → list viewer's favorites
+ *   POST /api/me/favorites { handle }       → add a favorite by handle
+ *   DELETE /api/me/favorites/:handle        → remove a favorite
+ *
+ * The DELETE is dispatched as `action=favorite-delete` via vercel.json
+ * rewrite (same pattern as `/api/sessions/:id/cancel`).
+ */
+const FavoritePostBodySchema = z.object({
+  handle: z.string().min(1).max(64),
+});
+
+export async function handleFavorites(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method === 'GET') {
+    return handleFavoritesList(req, res, session.userId);
+  }
+  if (req.method === 'POST') {
+    return handleFavoritesAdd(req, res, session.userId);
+  }
+  res.setHeader('Allow', 'GET, POST');
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+async function handleFavoritesList(
+  _req: VercelRequest,
+  res: VercelResponse,
+  viewerUserId: string,
+) {
+  const db = getDb();
+  // Join on users so we can hand back the same viewer-facing shape
+  // RecentPartners uses — the UI can reuse row chrome between the two
+  // surfaces. Most-recently-added first; note ships empty for now.
+  const rows = await db
+    .select({
+      userId: users.id,
+      handle: users.handle,
+      username: users.username,
+      avatarUrl: users.avatarUrl,
+      note: userFavoritePartners.note,
+      createdAt: userFavoritePartners.createdAt,
+    })
+    .from(userFavoritePartners)
+    .innerJoin(users, eq(users.id, userFavoritePartners.partnerUserId))
+    .where(eq(userFavoritePartners.userId, viewerUserId))
+    .orderBy(desc(userFavoritePartners.createdAt));
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.json({
+    favorites: rows.map(r => ({
+      userId: r.userId,
+      handle: r.handle,
+      username: r.username,
+      avatarUrl: r.avatarUrl,
+      note: r.note,
+      createdAt: r.createdAt.toISOString(),
+    })),
+  });
+}
+
+async function handleFavoritesAdd(
+  req: VercelRequest,
+  res: VercelResponse,
+  viewerUserId: string,
+) {
+  const parsed = FavoritePostBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'handle is required' });
+  }
+  // Normalise to lowercase: handles are stored lowercase per the user
+  // schema's convention (same as `/api/user/:handle` lookup does).
+  const handle = parsed.data.handle.toLowerCase().replace(/^@/, '');
+
+  const db = getDb();
+  const [target] = await db
+    .select({
+      id: users.id,
+      handle: users.handle,
+      username: users.username,
+      avatarUrl: users.avatarUrl,
+      isAnonymous: users.isAnonymous,
+    })
+    .from(users)
+    .where(eq(users.handle, handle))
+    .limit(1);
+
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  // Ghosts are transient — favoriting one would strand a FK that may
+  // cascade-delete later. Keep Favorites a real-user surface.
+  if (target.isAnonymous) return res.status(404).json({ error: 'User not found' });
+  // Self-favorite is meaningless and clutters the list; reject at the
+  // boundary so the UI never has to dedupe it.
+  if (target.id === viewerUserId) {
+    return res.status(400).json({ error: 'Cannot favorite yourself' });
+  }
+
+  // Idempotent insert — re-favoriting is a no-op that still returns
+  // the canonical row so callers get a stable shape.
+  await db
+    .insert(userFavoritePartners)
+    .values({
+      userId: viewerUserId,
+      partnerUserId: target.id,
+    })
+    .onConflictDoNothing();
+
+  const [row] = await db
+    .select({
+      note: userFavoritePartners.note,
+      createdAt: userFavoritePartners.createdAt,
+    })
+    .from(userFavoritePartners)
+    .where(and(
+      eq(userFavoritePartners.userId, viewerUserId),
+      eq(userFavoritePartners.partnerUserId, target.id),
+    ))
+    .limit(1);
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(200).json({
+    favorite: {
+      userId: target.id,
+      handle: target.handle,
+      username: target.username,
+      avatarUrl: target.avatarUrl,
+      note: row?.note ?? null,
+      createdAt: (row?.createdAt ?? new Date()).toISOString(),
+    },
+  });
+}
+
+export async function handleFavoriteDelete(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'DELETE') {
+    res.setHeader('Allow', 'DELETE');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const rawHandle = typeof req.query.handle === 'string' ? req.query.handle : '';
+  if (!rawHandle) return res.status(400).json({ error: 'handle is required' });
+  const handle = rawHandle.toLowerCase().replace(/^@/, '');
+
+  const db = getDb();
+  const [target] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.handle, handle))
+    .limit(1);
+  // Idempotent: if the target doesn't exist, the favorite couldn't
+  // either. Return 204 — the caller's desired end state (no favorite
+  // row for this handle) is already reached.
+  if (!target) {
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(204).end();
+  }
+
+  await db
+    .delete(userFavoritePartners)
+    .where(and(
+      eq(userFavoritePartners.userId, session.userId),
+      eq(userFavoritePartners.partnerUserId, target.id),
+    ));
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(204).end();
 }
