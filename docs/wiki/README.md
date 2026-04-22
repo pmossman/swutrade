@@ -17,7 +17,7 @@ Reference documentation for the SWUTrade codebase — one page per subsystem. Wr
 | B | [Proposals lifecycle](./b-proposals.md) | Async Discord-DM trade proposals, accept/decline/counter/edit/nudge/cancel, proposal → session promotion |
 | C | [Trade builder + balance](./c-trade-builder.md) | Two-panel calculator, URL codec, auto-balance, matchmaking composer bars, forceBalance |
 | D | [Lists / inventory / matching](./d-lists.md) | Wants + available, drawer, priority stars, popular-wants, shared-list URLs, match math, filters |
-| E | [Home, navigation, routing, contexts](./e-home-nav.md) | HomeView, GhostHomeView, AppHeader/Breadcrumbs/NavMenu/AccountMenu, view router, global contexts |
+| E | [Home, navigation, routing, contexts](./e-home-nav.md) | HomeView, AppHeader/Breadcrumbs/NavMenu/AccountMenu, view router, global contexts |
 | F | [Community / profile / settings](./f-community-profile.md) | Per-guild community pages, profile views, drill-down settings hub, handle picker |
 | G | [Auth + identity (incl. ghost users)](./g-auth.md) | Discord OAuth, iron-session cookies, ghost → real user merge, auth guards |
 | H | [Card data + pricing](./h-cards-pricing.md) | Card index, variants/enrichment, TCGPlayer prices, price refresh cron, pricing context |

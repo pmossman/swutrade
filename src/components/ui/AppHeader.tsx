@@ -44,7 +44,14 @@ export function AppHeader({
   breadcrumbs,
   slim = false,
 }: AppHeaderProps) {
-  const signedIn = !!auth.user;
+  // Two-axis auth gating for NavMenu: `hasAccount` = real Discord
+  // user (not a ghost, not signed-out); `hasAnySession` = any
+  // server-side presence including ghosts. See NavMenu for the
+  // rationale — guest/ghost collapse into a single "not signed in"
+  // chrome state while still exposing "My Trades" for ghosts with
+  // in-flight sessions.
+  const hasAccount = !!auth.user && !auth.user.isAnonymous;
+  const hasAnySession = !!auth.user;
   const showNavMenu = !slim;
   const showAccountMenu = !slim;
   // Derive the back target from the breadcrumb trail. The parent is
@@ -83,7 +90,7 @@ export function AppHeader({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 md:gap-2 shrink-0">
-        {showNavMenu && <NavMenu signedIn={signedIn} />}
+        {showNavMenu && <NavMenu hasAccount={hasAccount} hasAnySession={hasAnySession} />}
         {showAccountMenu && <AccountMenu auth={auth} />}
       </div>
     </header>

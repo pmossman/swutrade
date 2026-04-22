@@ -99,32 +99,53 @@ test.describe('Invite-someone shared session', () => {
     expectNoConsoleErrors(consoleErrors);
   });
 
-  test('ghost user lands on trade builder (not GhostHomeView) when visiting /', async ({ page }) => {
-    // Regression guard: once a ghost has been minted (via Invite
-    // someone or a QR claim), they used to land on GhostHomeView with
-    // a prominent "You're signed in as a guest" banner on every
-    // subsequent `/` visit. That banner felt noisy for returning
-    // ghosts. Routing now treats ghosts as signed-out for the
-    // HOME-vs-TRADE fallback; they reach their in-flight sessions via
-    // NavMenu → My Trades. GhostHomeView is kept as a defensive
-    // render for `?view=home`, but never the default.
+  test('ghost chrome collapses into guest UX — no sign-out, no ghost-home banner', async ({ page }) => {
+    // Regression guard for the two-state user model: ghosts (anonymous
+    // server cookie, minted by Invite someone / QR claim) used to see
+    // a real-user AccountMenu with a "Sign out" entry and a dedicated
+    // GhostHomeView with a gold "You're signed in as a guest" banner.
+    // Both confused the IA — from the user's POV there are only two
+    // states now: guest (signed-out OR ghost) vs Discord-signed-in.
     await page.goto('/');
     await page.getByRole('button', { name: /Invite someone/i }).first().click();
     await expect(page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
 
-    // Navigate back to `/` — this is the interesting state: the
-    // iron-session cookie was set by create-open, so the next
-    // request is a bona-fide ghost session.
+    // Navigate back to `/` — the iron-session cookie was set by
+    // create-open, so the next request is a bona-fide ghost.
     await page.goto('/');
-    // Trade builder: Add-cards tiles on both sides.
+    // Trade builder renders, not the old GhostHomeView.
     await expect(page.getByRole('button', { name: /Add cards to Offering/i })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('button', { name: /Add cards to Receiving/i })).toBeVisible();
-    // No ghost greeting banner anywhere.
     await expect(page.getByText(/You're signed in as a guest/i)).toHaveCount(0);
 
-    // "My Trades" still reachable from NavMenu (AppHeader treats
-    // ghost as signed-in, so the entry appears).
+    // AccountMenu shows guest variant: "Sign in with Discord" + no
+    // "Sign out". The old real-user menu (Profile / Settings / Sign
+    // out) is the tell that the UX was lying about ghost status.
+    await page.getByRole('button', { name: 'Account menu' }).click();
+    await expect(page.getByRole('link', { name: /Sign in with Discord/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Sign out$/i })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: /Public profile/i })).toHaveCount(0);
+    // Close the AccountMenu before interacting with NavMenu to avoid
+    // accidental click-outside fires closing both.
+    await page.keyboard.press('Escape');
+
+    // NavMenu still surfaces My Trades (ghost has sessions) but NOT
+    // My Communities (ghosts can't be enrolled in guilds).
     await page.getByRole('button', { name: 'Navigation menu' }).click();
     await expect(page.getByRole('link', { name: 'My Trades' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'My Communities' })).toHaveCount(0);
+  });
+
+  test('ghost visiting /?view=home falls back to trade builder', async ({ page }) => {
+    // Even an explicit `?view=home` from a ghost routes to trade
+    // builder — the home surface is real-user-only. The `home` route
+    // rule in detectViewMode narrows to routingSignedIn (which excludes
+    // ghosts), so ghost home requests fall through to 'trade'.
+    await page.goto('/');
+    await page.getByRole('button', { name: /Invite someone/i }).first().click();
+    await expect(page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
+
+    await page.goto('/?view=home');
+    await expect(page.getByRole('button', { name: /Add cards to Offering/i })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/You're signed in as a guest/i)).toHaveCount(0);
   });
 });

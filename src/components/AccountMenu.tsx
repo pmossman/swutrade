@@ -22,11 +22,20 @@ export function AccountMenu({ auth }: AccountMenuProps) {
 
   if (isLoading) return null;
 
-  if (!user) {
-    // Signed-out: anonymous-silhouette avatar that opens a short
-    // popover introducing what signing in unlocks. Keeps the trigger
-    // visually parallel to the signed-in avatar so the "this is your
-    // account" mental model holds even when there's no account yet.
+  // "Guest" is either pure signed-out OR a ghost (is_anonymous=true).
+  // Ghosts carry a server cookie for session membership, but from the
+  // user's POV they're still an unauthenticated visitor — showing them
+  // a real-user menu (Profile / Settings / Sign out) mislabels their
+  // state. Collapse into the two-state model: guest vs Discord-signed-
+  // in. Ghosts and signed-out both see "Sign in with Discord". OAuth
+  // callback handles ghost → real promotion via the merge path.
+  const isGuest = !user || user.isAnonymous;
+
+  if (isGuest) {
+    // Guest: anonymous-silhouette avatar that opens a short popover
+    // introducing what signing in unlocks. Keeps the trigger visually
+    // parallel to the signed-in avatar so the "this is your account"
+    // mental model holds even when there's no account yet.
     return (
       <Popover
         align="right"

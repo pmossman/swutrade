@@ -37,7 +37,6 @@ import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
 import { CommunityView } from './components/CommunityView';
 import { HomeView } from './components/HomeView';
-import { GhostHomeView } from './components/GhostHomeView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
@@ -493,23 +492,15 @@ function App() {
   // between views doesn't remount its internal state (active tab,
   // picker mode, editing-item id).
   const renderBody = (): React.ReactNode => {
-  // Home view — signed-in landing. Shows pending trades that need a
-  // response, the user's enrolled communities, and a primary CTA into
-  // the trade builder. Signed-out users never see it — detectViewMode
-  // falls back to 'trade' when no user is present.
+  // Home view — real-user landing only. The `home` route rule in
+  // detectViewMode requires `routingSignedIn` (which excludes ghosts),
+  // so both signed-out and ghost users fall through to the 'trade'
+  // fallback instead. No ghost-specific variant needed — the two-
+  // state user model (guest vs Discord-signed-in) collapsed the old
+  // GhostHomeView surface; ghosts see the same trade builder a pure
+  // guest sees. HomeView pulls its navigation from `useNavigation()`
+  // so the URL + intent + viewMode trio stays in lockstep.
   if (viewMode === 'home') {
-    // Ghost users (anonymous, minted by a shared-trade claim or open
-    // session) see a scoped dashboard — the full HomeView surfaces
-    // (My Communities / My Lists / My Stores) all require a real
-    // account, so rendering them as empty reads as broken. GhostHomeView
-    // nudges them to sign in and lists whatever sessions they have.
-    if (auth.user?.isAnonymous) {
-      return <GhostHomeView auth={auth} />;
-    }
-    // HomeView pulls its navigation from `useNavigation()`; no more
-    // per-callback prop drilling. A single `nav` object enforces URL
-    // + intent + viewMode lockstep so the intent-drift bug class is
-    // closed at the construction site.
     return <HomeView auth={auth} />;
   }
 

@@ -208,12 +208,14 @@ export const VIEW_ROUTES: readonly ViewRoute[] = [
   },
   {
     mode: 'home',
-    matches: ({ params, isSignedIn }) => {
-      if (params.get('view') === 'home') return true;
-      // Bare URL fallback — signed-in users land on Home; signed-out
-      // users land in the trade builder so the public share URL
-      // experience is unchanged. The trade-rule above already claimed
-      // every non-bare URL, so reaching here means "no routing params".
+    matches: ({ isSignedIn }) => {
+      // Real-signed-in-only. `isSignedIn` here is really
+      // `routingSignedIn` from App.tsx — ghosts are excluded by
+      // design, so ghost + signed-out both fall through to the
+      // `trade` fallback in detectViewMode. Even an explicit
+      // `?view=home` from a ghost / signed-out visitor lands on
+      // the trade builder; the Home surface doesn't belong to
+      // them (it pulls server-keyed data they don't have).
       return isSignedIn;
     },
     paramKeys: ['view'],

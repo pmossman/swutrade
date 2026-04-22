@@ -4,7 +4,6 @@
 >
 > Specifically:
 > - `src/components/HomeView.tsx`
-> - `src/components/GhostHomeView.tsx`
 > - `src/components/ui/AppHeader.tsx`
 > - `src/components/ui/Breadcrumbs.tsx`
 > - `src/components/ui/StatusBadge.tsx`
@@ -34,7 +33,7 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 - **`VIEW_PARAM_KEYS`** — superset at `src/routing/config.ts:52` used by `nav.toX()` methods to blow away stale view params before setting the destination's. Deliberately excludes trade-codec keys (`y`/`t`/`pct`/`pm`) and trade-intent keys (`propose`/`counter`/`edit`/`from`/`autoBalance`).
 - **`NavigationApi`** — interface at `src/contexts/NavigationContext.tsx:28`. Methods named by destination (`toHome`, `toTradesHistory`, `toSettings`), not by URL structure. Every in-app nav flows through one of these.
 - **Signed-in hint** — `localStorage` key `swu.signedInHint` at `src/hooks/useAuth.ts:41`. Pre-seeds `isSignedIn` on first render so a returning signed-in user doesn't flash the trade-builder view before `/api/auth/me` resolves. Advisory only; server remains the trust surface.
-- **Ghost user** — anonymous user minted by a shared-trade claim or open-session creation (see [`g-auth.md`](./g-auth.md)). `auth.user?.isAnonymous === true`. `HomeView` is swapped for `GhostHomeView` for this population at `src/App.tsx:432`.
+- **Ghost user** — anonymous user minted by a shared-trade claim or open-session creation (see [`g-auth.md`](./g-auth.md)). `auth.user?.isAnonymous === true`. From the user's POV, ghost === guest — the same chrome a pure signed-out visitor sees. Routing's `home` rule gates on real-user-only so ghosts land on the trade builder regardless of bare URL or `?view=home`. The separate `GhostHomeView` surface was deleted as part of the two-state user collapse (2026-04-22).
 - **Trade intent** — the five query-param signals (`propose`, `from`, `counter`, `edit`, `autoBalance`) owned by `useTradeIntent`. The `NavigationApi` mirrors them into React state whenever a nav is issued so pushState-driven nav works without a reload (see `aeb0aa2`).
 - **`STANDALONE` views** — `profile`, `settings`, `community`, `trade-detail`, `trades-history`, `session`. Defined in `isStandaloneView` at `src/routing/config.ts:239`. `useTradeUrl` bails its merge-write on these views so its trade-codec rewrites can't strip their URL params.
 - **State badge** — the trade-state palette owned by `HomeView.tsx`'s `BADGE_TONES` / `stateBadgeSpec()` (`src/components/HomeView.tsx:517`). Canonical visual language for `TradeRowState`; other areas (history, detail) use `StatusBadge` which is a parallel primitive for `TradeStatus`.
@@ -45,7 +44,6 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 ### Home surfaces
 
 **`src/components/HomeView.tsx`** — Signed-in dashboard. Four modules in a 2×2 grid (row 1: Trades / Communities, row 2: Wishlist / Binder) plus the `NeedsResponseCallout` at the top. Also exports the `BADGE_TONES` record + `stateBadgeSpec()` that map `TradeRowState → tone` (the canonical trade-state visual language other areas consume). `CommunitiesModule` was briefly deleted in UX-A4 then reinstated as a peer module in the same-day walk-back; `StoresModule` was deleted in that walk-back.
-**`src/components/GhostHomeView.tsx`** — Anonymous-user landing. Gold-bordered greeting with a `Sign in with Discord` CTA, secondary `+ New trade`, and a minimal session-only list. No Communities / Lists / Stores — ghosts can't use them, empty states would read as broken.
 
 ### Chrome
 

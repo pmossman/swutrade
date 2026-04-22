@@ -1,11 +1,15 @@
 import { Popover } from './Popover';
 
 interface NavMenuProps {
-  /** True when the viewer is signed in — enables the server-backed items
-   *  (My Trades, Community) that require an account. Wishlist + Binder
-   *  work in both states since they're localStorage-backed until sync
-   *  opts in. */
-  signedIn: boolean;
+  /** True when the viewer has a real Discord-backed account (not a
+   *  ghost, not signed-out). Gates community-scoped entries where
+   *  ghost participation doesn't make sense. */
+  hasAccount: boolean;
+  /** True when the viewer has any server-side session — real user OR
+   *  ghost with an active trade session. Gates "My Trades" so ghosts
+   *  can still reach their in-flight sessions from the hamburger
+   *  rather than having to remember the session URL. */
+  hasAnySession: boolean;
 }
 
 /**
@@ -14,14 +18,19 @@ interface NavMenuProps {
  * "where do I want to go in the app" (Home / Wishlist / Binder /
  * Trades / Community).
  *
- * The single "My Lists" entry was split into "My Wishlist" + "My
- * Binder" when the Wishlist / Binder split landed — the shared-tab
- * drawer was conflating two concepts that now have dedicated views.
- * Drawer still lives for the in-trade-builder quick-edit sidebar
- * only; it no longer has a global menu entry because the dedicated
- * views are the canonical edit surface.
+ * Two-axis gating reflects the guest-vs-real-user model:
+ *   - Always visible: Home / Wishlist / Binder (work offline-first).
+ *   - `hasAnySession`: adds "My Trades" so ghost users can reach
+ *     their in-flight sessions without remembering the URL.
+ *   - `hasAccount`: adds "My Communities" — ghosts can't be enrolled
+ *     in bot-installed guilds, so the entry would always render empty.
+ *
+ * "My Lists" was split into "My Wishlist" + "My Binder" when the
+ * Wishlist / Binder split landed. Drawer stays as a trade-builder
+ * quick-edit sidebar; it no longer has a global menu entry since the
+ * dedicated views are the canonical edit surface.
  */
-export function NavMenu({ signedIn }: NavMenuProps) {
+export function NavMenu({ hasAccount, hasAnySession }: NavMenuProps) {
   return (
     <Popover
       align="right"
@@ -43,7 +52,7 @@ export function NavMenu({ signedIn }: NavMenuProps) {
           <NavRow
             href="/"
             icon={<HomeIcon className="w-3.5 h-3.5 text-gray-400" />}
-            label={signedIn ? 'Home' : 'Trade builder'}
+            label={hasAccount ? 'Home' : 'Trade builder'}
             onClose={close}
           />
           <NavRow
@@ -58,21 +67,21 @@ export function NavMenu({ signedIn }: NavMenuProps) {
             label="My Trade Binder"
             onClose={close}
           />
-          {signedIn && (
-            <>
-              <NavRow
-                href="/?trades=1"
-                icon={<TradesIcon className="w-3.5 h-3.5 text-gray-400" />}
-                label="My Trades"
-                onClose={close}
-              />
-              <NavRow
-                href="/?community=1"
-                icon={<CommunityIcon className="w-3.5 h-3.5 text-gray-400" />}
-                label="My Communities"
-                onClose={close}
-              />
-            </>
+          {hasAnySession && (
+            <NavRow
+              href="/?trades=1"
+              icon={<TradesIcon className="w-3.5 h-3.5 text-gray-400" />}
+              label="My Trades"
+              onClose={close}
+            />
+          )}
+          {hasAccount && (
+            <NavRow
+              href="/?community=1"
+              icon={<CommunityIcon className="w-3.5 h-3.5 text-gray-400" />}
+              label="My Communities"
+              onClose={close}
+            />
           )}
         </div>
       )}

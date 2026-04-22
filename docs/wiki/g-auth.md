@@ -246,10 +246,9 @@ The hint is intentionally weak:
 
 ## UI/UX patterns
 
-- **`GhostHomeView`** (`src/components/GhostHomeView.tsx:41`) — the Home screen for a ghost. Shows a guest-greeting card and nudges them toward signing in. Full UX content is documented in [`e-home-nav.md`](./e-home-nav.md); this page owns only the "when does a ghost see this view?" answer: `auth.user?.isAnonymous === true`.
-- **`GhostSignInBanner`** (`src/components/SessionView.tsx:550`) — inside a `SessionView` rendered to a ghost, a gold banner nudges sign-in with the promise "sign in and this trade follows you." Full UX content is documented in [`a-sessions.md`](./a-sessions.md).
-- **`(guest)` counterpart badge** — when a viewer's counterpart is a ghost, the counterpart label in `SessionView` renders `(guest)` next to the username (`src/components/SessionView.tsx:611`). This is the user-facing leak of `counterpart.isAnonymous` from `getSessionForViewer`.
-- **Account menu + sign-out** — `src/components/AppHeader.tsx`'s account menu shows "Sign out" for real users; ghosts see "Sign in with Discord" instead. The menu trigger button's `aria-label` is `Account menu` in both states (that's what the e2e spec pins on).
+- **Two-state user model (2026-04-22)** — from the user's POV, SWUTrade has exactly two states: `guest` (signed-out OR ghost — same chrome in both) and `Discord-signed-in`. Ghost is an internal server concept (a cookie carrying session membership) that no longer leaks into UI. `AccountMenu` shows the "Sign in with Discord" menu whenever `!user || user.isAnonymous`. `NavMenu` splits gating into `hasAccount` (real user — gates "My Communities") + `hasAnySession` (real or ghost — gates "My Trades" so ghosts can still reach their in-flight sessions). Routing's `home` rule narrows to real-signed-in, so ghost `?view=home` falls through to the trade builder. The separate `GhostHomeView` surface was deleted.
+- **`GhostSignInBanner`** (`src/components/SessionView.tsx`) — inside a `SessionView` rendered to a ghost, a gold banner nudges sign-in with the promise "sign in and this trade follows you." Full UX content is documented in [`a-sessions.md`](./a-sessions.md). Not part of the collapsed two-state chrome — this one is scoped to the session canvas specifically because the pitch is load-bearing there ("this trade will follow you").
+- **`(guest)` counterpart badge** — when a viewer's counterpart is a ghost, the counterpart label in `SessionView` renders `(guest)` next to the username. This IS a deliberate ghost-status leak because it conveys "this counterpart won't survive closing their browser" — actionable information for the viewer.
 
 ## Tech debt + known gaps
 
@@ -300,7 +299,7 @@ The hint is intentionally weak:
 ## Cross-references
 
 - [`a-sessions.md`](./a-sessions.md) — the session primitive itself: `createOpenSession`, `claimOpenSlot`, `createOrGetActiveSession`, the `trade_sessions_active_pair_idx` partial unique index. This page owns how the auth/cookie/ghost angles plug into those flows.
-- [`e-home-nav.md`](./e-home-nav.md) — `GhostHomeView` UX content and the view-router branch that keys on `auth.user?.isAnonymous`.
+- [`e-home-nav.md`](./e-home-nav.md) — view-router's home-vs-trade fallback; the two-state user collapse that routes ghosts to the trade builder.
 - [`f-community-profile.md`](./f-community-profile.md) — profile visibility / three-axis consent / guild-membership consent flags. Sign-in initialises all of these; this page documents the init, that page documents the lifecycle.
 - [`b-proposals.md`](./b-proposals.md) — `communication_pref` (trade-thread consent) lives on `users` but belongs to the proposals lifecycle.
 - [`i-discord-bot.md`](./i-discord-bot.md) — bot-side signature verification for interaction webhooks (distinct from human OAuth). Shares zero code with this page.
