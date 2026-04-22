@@ -64,6 +64,29 @@ test.describe('Favorites / trading partners', () => {
     await expect(page).toHaveURL(new RegExp(`from=${bob.handle}`), { timeout: 10_000 });
   });
 
+  test('own profile surfaces a "Copy invite link" button', async ({ page, context }) => {
+    // Signed-in viewer lands on their own profile — the Copy-invite
+    // affordance is what powers the "share a trade-with-me URL via
+    // Discord DM" workflow for friends in no shared bot-enabled server.
+    // Button only renders on own profile, absent on someone else's.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto(`/u/${alice.handle}`);
+
+    const copyBtn = page.getByRole('button', { name: /Copy invite link/i });
+    await expect(copyBtn).toBeVisible({ timeout: 10_000 });
+    await copyBtn.click();
+    await expect(page.getByRole('button', { name: /Copied ✓/ })).toBeVisible({ timeout: 5_000 });
+
+    // Assert clipboard has the expected URL shape (relative path in
+    // case the base URL varies between local dev and preview CI).
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toMatch(new RegExp(`[?&]propose=${alice.handle}`));
+
+    // Visiting someone else's profile should NOT show the button.
+    await page.goto(`/u/${bob.handle}`);
+    await expect(page.getByRole('button', { name: /Copy invite link/i })).toHaveCount(0);
+  });
+
   test('remove from profile → Home module empty again', async ({ page }) => {
     // Add first via profile → Home sanity check → remove → Home empty.
     await page.goto(`/u/${bob.handle}`);

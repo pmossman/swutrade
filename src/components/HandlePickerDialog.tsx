@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
 import { useRecentPartners, type RecentPartner } from '../hooks/useRecentPartners';
+import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { apiGet, apiPost } from '../services/apiClient';
+import { useAuthContext } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 
 interface HandlePickerDialogProps {
@@ -34,6 +36,12 @@ const MAX_RECENT_CHIPS = 5;
  */
 export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialogProps) {
   const nav = useNavigation();
+  const auth = useAuthContext();
+  // Favorites are signed-in-only; the hook internally short-circuits
+  // for ghosts. Dialog gate (`!open`) also prevents fetching on
+  // unrelated surfaces. Reading it whether or not it populates lets
+  // the star-toggle on suggestion rows act uniformly.
+  const favoritesApi = useFavorites(!!auth.user && !auth.user.isAnonymous && open);
   const [query, setQuery] = useState('');
   const [validation, setValidation] = useState<
     | { kind: 'idle' }
@@ -101,6 +109,20 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
   const showRecent = query.length === 0
     && recentStatus === 'ready'
     && recentPartners.length > 0;
+  const showFavorites = query.length === 0
+    && favoritesApi.status === 'ready'
+    && favoritesApi.favorites.length > 0;
+
+  // Dedupe the Recent row against Favorites — a user who's both
+  // favorited and recently traded shouldn't show up in both sections.
+  // Favorites are the stronger signal (explicit), so keep them in
+  // Favorites and drop from Recent.
+  const dedupedRecents = useMemo<RecentPartner[]>(() => {
+    const favHandles = new Set(
+      favoritesApi.favorites.map(f => f.handle.toLowerCase()),
+    );
+    return recentPartners.filter(p => !favHandles.has(p.handle.toLowerCase()));
+  }, [recentPartners, favoritesApi.favorites]);
 
   if (!open) return null;
 
@@ -204,7 +226,25 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
           Pick someone, then choose to send a formal proposal or start a shared trade you can edit together.
         </p>
 
-        {showRecent && (
+        {showFavorites && (
+          <section aria-labelledby="handle-picker-favorites" className="mb-3">
+            <h3
+              id="handle-picker-favorites"
+              className="text-[10px] tracking-[0.18em] uppercase text-gold font-semibold mb-1.5"
+            >
+              Your trading partners
+            </h3>
+            <ul className="flex flex-wrap gap-1.5">
+              {favoritesApi.favorites.slice(0, MAX_RECENT_CHIPS).map(f => (
+                <li key={f.userId}>
+                  <FavoriteChip favorite={f} onPick={() => onPick(f.handle)} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {showRecent && dedupedRecents.length > 0 && (
           <section aria-labelledby="handle-picker-recent" className="mb-3">
             <h3
               id="handle-picker-recent"
@@ -213,7 +253,7 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
               Recent
             </h3>
             <ul className="flex flex-wrap gap-1.5">
-              {recentPartners.slice(0, MAX_RECENT_CHIPS).map(p => (
+              {dedupedRecents.slice(0, MAX_RECENT_CHIPS).map(p => (
                 <li key={p.userId}>
                   <RecentChip partner={p} onPick={() => onPick(p.handle)} />
                 </li>
@@ -296,23 +336,23 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             <ul className="flex flex-col gap-1 max-h-64 overflow-y-auto">
               {suggestions.map(m => (
                 <li key={m.userId}>
-                  <button
-                    type="button"
-                    onClick={() => onPick(m.handle)}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 transition-colors text-left"
-                  >
-                    <SuggestionAvatar avatarUrl={m.avatarUrl} name={m.username || m.handle} />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-medium text-gray-100 truncate">
-                        @{m.handle}
-                      </div>
-                      {m.username && m.username !== m.handle && (
-                        <div className="text-[11px] text-gray-500 truncate">
-                          {m.username}
-                        </div>
-                      )}
-                    </div>
-                  </button>
+                  <SuggestionRow
+                    member={m}
+                    onPick={() => onPick(m.handle)}
+                    isFavorite={favoritesApi.isFavorite(m.handle)}
+                    // Favoriting is signed-in only — hide the toggle
+                    // for ghosts (the hook's `enabled=false` path
+                    // leaves `add`/`remove` callable but 401-ing on
+                    // the server). Ghosts can still tap-to-pick.
+                    favoritable={!!auth.user && !auth.user.isAnonymous}
+                    onToggleFavorite={() => {
+                      if (favoritesApi.isFavorite(m.handle)) {
+                        void favoritesApi.remove(m.handle);
+                      } else {
+                        void favoritesApi.add(m.handle);
+                      }
+                    }}
+                  />
                 </li>
               ))}
             </ul>
@@ -368,6 +408,117 @@ function RecentChip({
       <SuggestionAvatar avatarUrl={partner.avatarUrl} name={partner.username || partner.handle} size="sm" />
       <span className="font-medium truncate max-w-[10ch]">@{partner.handle}</span>
     </button>
+  );
+}
+
+/**
+ * Gold-toned chip for explicit trading-partner favorites. Rendered
+ * above Recent when the viewer has any favorites; one tap jumps
+ * straight into the propose composer (same affordance as RecentChip,
+ * different colour to convey "you chose this person" vs "you happened
+ * to trade with them").
+ */
+function FavoriteChip({
+  favorite,
+  onPick,
+}: {
+  favorite: Favorite;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full bg-gold/10 border border-gold/40 hover:bg-gold/20 hover:border-gold/60 text-[12px] text-gold transition-colors"
+      title={favorite.username || favorite.handle}
+    >
+      <SuggestionAvatar avatarUrl={favorite.avatarUrl} name={favorite.username || favorite.handle} size="sm" />
+      <span className="font-medium truncate max-w-[10ch]">@{favorite.handle}</span>
+    </button>
+  );
+}
+
+/**
+ * Community-suggestion row with a nested star toggle. The primary
+ * (outer) button picks the handle and closes the dialog via `onPick`;
+ * the star toggle is a sibling button that stops propagation so the
+ * pick doesn't also fire. Favoritable is gated off for ghosts — they
+ * can still pick by tapping the identity area.
+ */
+function SuggestionRow({
+  member,
+  onPick,
+  isFavorite,
+  favoritable,
+  onToggleFavorite,
+}: {
+  member: CommunityMember;
+  onPick: () => void;
+  isFavorite: boolean;
+  favoritable: boolean;
+  onToggleFavorite: () => void;
+}) {
+  return (
+    <div className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/30 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 transition-colors">
+      <button
+        type="button"
+        onClick={onPick}
+        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+      >
+        <SuggestionAvatar avatarUrl={member.avatarUrl} name={member.username || member.handle} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-medium text-gray-100 truncate">
+            @{member.handle}
+          </div>
+          {member.username && member.username !== member.handle && (
+            <div className="text-[11px] text-gray-500 truncate">
+              {member.username}
+            </div>
+          )}
+        </div>
+      </button>
+      {favoritable && (
+        <button
+          type="button"
+          onClick={(e) => {
+            // Stop propagation defensively — the parent row is not a
+            // button anymore but nested button handlers sometimes
+            // bubble in unexpected browsers.
+            e.stopPropagation();
+            onToggleFavorite();
+          }}
+          aria-pressed={isFavorite}
+          aria-label={
+            isFavorite
+              ? `Remove @${member.handle} from your trading partners`
+              : `Add @${member.handle} to your trading partners`
+          }
+          title={
+            isFavorite
+              ? 'Remove from trading partners'
+              : 'Add to trading partners'
+          }
+          className={`shrink-0 flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
+            isFavorite
+              ? 'bg-gold/20 border border-gold/50 text-gold hover:bg-gold/10'
+              : 'bg-space-800/40 border border-space-700 text-gray-500 hover:border-gold/40 hover:text-gold'
+          }`}
+        >
+          <svg
+            viewBox="0 0 16 16"
+            className="w-3.5 h-3.5"
+            fill={isFavorite ? 'currentColor' : 'none'}
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M3.5 2.5h9v12l-4.5-3-4.5 3z" />
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 

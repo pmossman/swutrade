@@ -283,6 +283,16 @@ export function ProfileView({
               onRemove={() => favorites.remove(profile.user.handle)}
             />
           )}
+          {/* Own-profile shareable invite link — generates a
+              `/?propose=<self-handle>` URL the viewer can paste in
+              Discord (DM, group chat, community server) for friends
+              who aren't in any bot-enabled guild with them. The
+              recipient clicks the link → lands in a propose-to-this-
+              handle composer → sends a proposal back. Complements
+              HandlePickerDialog for the outbound direction. */}
+          {auth.user && auth.user.handle === profile.user.handle && (
+            <CopyInviteLinkButton handle={profile.user.handle} />
+          )}
           {tradeCta}
         </div>
 
@@ -521,6 +531,50 @@ function ProfileRow({
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * "Copy invite link" — generates an absolute `/?propose=<self-handle>`
+ * URL that lands recipients in a propose-to-me composer. Meant for
+ * pasting into any Discord channel / DM where a friend who isn't in
+ * a shared bot-enabled server can click through. Copy-to-clipboard
+ * with a transient "Copied" confirmation; falls through to a
+ * selectable-input fallback on browsers blocking the clipboard API
+ * (Safari private mode, insecure contexts).
+ */
+function CopyInviteLinkButton({ handle }: { handle: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const inviteUrl = `${window.location.origin}/?propose=${encodeURIComponent(handle)}`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+    } catch {
+      const input = document.createElement('input');
+      input.value = inviteUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title="Copy a URL to share on Discord — anyone who clicks it lands in a propose-to-you composer"
+      className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-xs font-semibold text-gray-300 hover:text-gold transition-colors"
+    >
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M6.5 8.5l3-3M5 7l-1.5 1.5a2.5 2.5 0 003.5 3.5L8.5 10.5M11 9l1.5-1.5a2.5 2.5 0 00-3.5-3.5L7.5 5.5" />
+      </svg>
+      {copied ? 'Copied ✓' : 'Copy invite link'}
+    </button>
   );
 }
 

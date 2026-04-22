@@ -231,6 +231,7 @@ export function ProposeBar({
             Proposal sent to <strong>@{recipientHandle}</strong>. They'll see it in a Discord DM.
           </span>
           <div className="flex items-center gap-2 flex-wrap">
+            {sentTradeId && <CopyTradeLinkButton tradeId={sentTradeId} prominent={false} />}
             <a
               href="/?trades=1"
               className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
@@ -247,9 +248,11 @@ export function ProposeBar({
         <>
           <span className="flex-1 min-w-0 text-amber-200">
             Proposal saved, but Discord wouldn't let us DM <strong>@{recipientHandle}</strong> —
-            they may have DMs from the bot disabled. Send them a message on Discord so they know to check.
+            they may have DMs from the bot disabled, or you may not share any bot-enabled servers.
+            Copy the link below and send it to them on Discord so they can open it directly.
           </span>
           <div className="flex items-center gap-2 flex-wrap">
+            {sentTradeId && <CopyTradeLinkButton tradeId={sentTradeId} prominent={true} />}
             <a
               href="/?trades=1"
               className="px-2.5 py-1 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 text-gray-300 hover:text-gold text-[11px] font-bold transition-colors"
@@ -728,5 +731,60 @@ function CloseIcon({ className }: { className?: string }) {
     >
       <path d="M4 4L12 12M4 12L12 4" />
     </svg>
+  );
+}
+
+/**
+ * Post-send "copy trade link" affordance. Always rendered next to
+ * "View your trades" on a successful send so the sender has a direct
+ * URL to paste in Discord / iMessage / etc. — especially load-bearing
+ * when delivery failed (no mutual bot-enabled server = no DM), less
+ * so when delivery worked. The `prominent` variant raises visual
+ * weight for the failure case; the subtle variant slips alongside
+ * "View your trades" without competing.
+ */
+function CopyTradeLinkButton({
+  tradeId,
+  prominent,
+}: {
+  tradeId: string;
+  prominent: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const url = `${window.location.origin}/?trade=${encodeURIComponent(tradeId)}`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      const input = document.createElement('input');
+      input.value = url;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const baseCls = 'flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors';
+  const tone = prominent
+    ? 'bg-gold/20 border border-gold/50 text-gold hover:bg-gold/30 hover:border-gold/70'
+    : 'bg-space-800/60 border border-space-700 text-gray-300 hover:border-gold/40 hover:text-gold';
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={`Copy ${url}`}
+      className={`${baseCls} ${tone}`}
+    >
+      <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M6.5 8.5l3-3M5 7l-1.5 1.5a2.5 2.5 0 003.5 3.5L8.5 10.5M11 9l1.5-1.5a2.5 2.5 0 00-3.5-3.5L7.5 5.5" />
+      </svg>
+      {copied ? 'Copied ✓' : prominent ? 'Copy trade link' : 'Copy link'}
+    </button>
   );
 }
