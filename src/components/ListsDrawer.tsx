@@ -81,10 +81,6 @@ export function ListsDrawer({
     return { byFamily, byFamilyAll, byProductId };
   }, [allCards]);
 
-  // Ghost-gate: ghost users get a sign-in panel instead of the tabs.
-  // Pulled out here so the handler + user read sit together.
-  const { user } = useAuthContext();
-
   const handleTabChange = (next: ListTab) => setTab(next);
   const handleOpenChange = (next: boolean) => onOpenChange(next);
 
@@ -132,9 +128,13 @@ export function ListsDrawer({
             </div>
           </div>
 
-          {user?.isAnonymous ? (
-            <GhostSignInPanel />
-          ) : (
+          {/* Wants/Available data is localStorage-backed via useWants /
+              useAvailable, so the tabs work identically for ghosts and
+              real users. The drawer used to gate-wall ghosts with a
+              GhostSignInPanel here while the dedicated WishlistView /
+              BinderView rendered the lists directly — inconsistent and
+              confusing. Removed the gate; the sign-in pitch lives in
+              the always-visible AccountMenu. */}
           <Tabs.Root
             value={tab}
             onValueChange={v => handleTabChange(v as ListTab)}
@@ -173,44 +173,9 @@ export function ListsDrawer({
               />
             </Tabs.Content>
           </Tabs.Root>
-          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-/**
- * Shown instead of the Wants / Available tabs when the viewer is a
- * ghost (anonymous) user. Ghosts have no server-side list rows — the
- * schema keys on real user ids and the OAuth merge path only rewrites
- * session refs, not list data — so showing them empty tabs would imply
- * a list exists to populate, which is false until they sign in. Same
- * pattern as `GhostHomeView`'s sign-in nudge.
- */
-function GhostSignInPanel() {
-  return (
-    <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center px-6 py-10 gap-4">
-      <div className="w-10 h-10 rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center text-gold">
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      </div>
-      <div className="max-w-[22rem] flex flex-col gap-2">
-        <div className="text-base font-semibold text-gray-100">
-          Sign in to keep a list of your cards
-        </div>
-        <div className="text-[12px] text-gray-400 leading-relaxed">
-          Your wants and available lists need a Discord account so they follow you between devices and other traders can match against them.
-        </div>
-      </div>
-      <a
-        href="/api/auth/discord"
-        className="mt-2 inline-flex items-center justify-center px-5 h-10 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
-      >
-        Continue with Discord
-      </a>
-    </div>
   );
 }
 
