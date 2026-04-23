@@ -296,9 +296,9 @@ export async function handlePropose(
       // Add both traders. Do these in parallel — sequential adds add
       // a noticeable delay to the proposer's "Send" response.
       // Promise.all fails-fast on the first rejection, which is what
-      // we want: if either add fails (e.g., recipient isn't a real
-      // Discord user, like the dev-seed fakes), we bail and fall
-      // through to DM. The catch below cleans up the partial thread.
+      // we want: if either add fails (e.g., recipient isn't in the
+      // same guild as the bot), we bail and fall through to DM. The
+      // catch below cleans up the partial thread.
       await Promise.all([
         bot.addThreadMember(thread.id, proposerFull!.discordId),
         bot.addThreadMember(thread.id, recipient.discordId),

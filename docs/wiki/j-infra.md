@@ -10,7 +10,7 @@
 > - `.github/workflows/ci.yml`, `.github/workflows/refresh-prices.yml`
 > - `.husky/pre-commit`
 > - `drizzle.config.ts`, `drizzle/**` (migrations + `meta/_journal.json`)
-> - `scripts/dev-seed-community.mjs`, `scripts/gen-fonts.ts`, `scripts/fetch-prices.ts`, `scripts/enrich-cards.ts`, `scripts/register-discord-commands.mjs`, `scripts/discord-admin.mjs`
+> - `scripts/gen-fonts.ts`, `scripts/fetch-prices.ts`, `scripts/enrich-cards.ts`, `scripts/register-discord-commands.mjs`, `scripts/discord-admin.mjs`
 >
 > Schema-level DB details (tables / columns / invariants) belong to the owning area page (sessions, trades, lists, etc.); this page documents the **mechanics** of migrations, not their content.
 
@@ -134,12 +134,6 @@ Broad filters would mask the exact CJS-interop / render error class this fixture
 
 **`scripts/gen-fonts.ts`** — Reads `scripts/fonts/inter-{400,700,900}.ttf`, base64-encodes them, writes `api/_fonts.ts` as three `export const` strings. Run after updating the font files (`npm run gen:fonts`). Inlined so the OG image function (which renders via `resvg-js`) can load fonts in all environments — including preview deploys behind Vercel auth, where a static-asset URL would 401. The alternative (fetching fonts at request time from gstatic / the same origin) fails per `project_swutrade_ogimage` — `/tmp` writes only, ESM JSON imports, never self-fetch own origin.
 
-**`scripts/dev-seed-community.mjs`** — Seeds fake Discord users for local + preview dogfooding. Two strategies:
-- `mirror` (default): fakes mirror the viewer's inventory so overlap chips display non-trivial numbers; each fake gets a disjoint slice for sort-tab variety.
-- `law-hyperspace`: each fake gets a slice of the latest set's Hyperspace / HS-Foil / Showcase printings — works even when the viewer's lists are empty.
-
-Fake ids all prefixed `dev-seed-` so cleanup is one `WHERE id LIKE 'dev-seed-%'`. Prompts for confirmation before touching the target DB; skip via `--yes`. Reads `POSTGRES_URL_NON_POOLING` from `.env.local` — the comment at line 20-22 reminds you to `vercel env pull --environment=preview --git-branch=beta` first when seeding beta.
-
 **`scripts/fetch-prices.ts` / `scripts/enrich-cards.ts`** — Build-time data pipeline. Invoked by `npm run build` before `vite build`. `FETCH_PRICES=1` / `ENRICH=1` force re-fetch bypassing their own caches. Outputs land in `public/data/` so the built SPA serves them from Vercel's CDN (not an API call). See `h-cards-pricing.md` for what they actually do.
 
 **`scripts/register-discord-commands.mjs` / `scripts/discord-admin.mjs`** — One-off Discord ops scripts. Covered by `i-discord-bot.md` — not CI-adjacent.
@@ -174,10 +168,6 @@ The first migration `0000_even_flatman.sql` shows the starting schema (`users`, 
 - `vercel env pull .env.local` (or `--environment=preview --git-branch=beta`) is the canonical way to sync envs.
 - Memory `feedback_env_vars`: when piping secrets into `vercel env add`, use `printf` not `echo` — echo appends a trailing newline that breaks signature verification.
 - Memory `feedback_vercel_env`: `vercel env add NAME preview beta --yes --force --value VALUE` for the preview scope — it requires an explicit git branch arg.
-
-### Dev seed
-
-Run `node scripts/dev-seed-community.mjs seed --viewer pmoss --guild 1494557809814142976` to get a community directory populated with fake droids. Cleanup with `cleanup`. Use `--strategy law-hyperspace` if the viewer's lists are empty and you want overlap chips to display non-zero anyway.
 
 ## State + data flow
 

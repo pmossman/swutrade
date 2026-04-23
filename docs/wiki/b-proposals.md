@@ -264,7 +264,7 @@ Two pieces fall out of this:
 
 The thread path exists because a two-sided trade conversation in separate DM windows is hostile to the actual negotiation users want to have. Putting both traders in one private thread with a shared message history is closer to how in-person trades actually work — the whole point of area B is that local/in-person trading is the mission; the proposal flow is the async-but-still-conversational prelude.
 
-Thread creation is best-effort. If the bot can't add a user (common: recipient isn't in the same guild, or is a dev-seed fake without a real `discord_id`), `Promise.all` rejects, we clean up the orphan thread (`api/trades.ts:323-327`), and fall through to DM delivery. The caller gets `deliveryStatus='delivered'` either way.
+Thread creation is best-effort. If the bot can't add a user (common: recipient isn't in the same guild as the bot, or the bot lacks the right perms), `Promise.all` rejects, we clean up the orphan thread (`api/trades.ts:323-327`), and fall through to DM delivery. The caller gets `deliveryStatus='delivered'` either way.
 
 ### Event log invariants
 

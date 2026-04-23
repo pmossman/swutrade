@@ -82,7 +82,7 @@ export async function reportError(ctx: ErrorReportContext, err: unknown): Promis
  *      Catches cases where a new test helper misses the tag convention.
  */
 export function isTestTraffic(ctx: ErrorReportContext, err: unknown): boolean {
-  const TEST_ID_PREFIXES = ['test-iso-', 'e2e-sender-', 'dev-seed-'];
+  const TEST_ID_PREFIXES = ['test-iso-', 'e2e-sender-'];
   if (ctx.tags) {
     for (const v of Object.values(ctx.tags)) {
       if (typeof v === 'string' && TEST_ID_PREFIXES.some(p => v.startsWith(p))) {

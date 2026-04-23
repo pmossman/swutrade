@@ -31,9 +31,10 @@ interface FakeBotOpts {
     parentId: string;
     /** `createPrivateThread` throws (e.g. bot perms missing). */
     failCreate?: boolean;
-    /** `addThreadMember` throws (e.g. recipient isn't a real Discord
-     *  user — like the dev-seed fakes). Exercises the orphan-cleanup
-     *  path where the thread was created but add-member failed. */
+    /** `addThreadMember` throws (e.g. recipient isn't in the same
+     *  guild as the bot, or lacks the right perms). Exercises the
+     *  orphan-cleanup path where the thread was created but
+     *  add-member failed. */
     failAddMember?: boolean;
   };
 }
@@ -490,7 +491,7 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(row.discordDmMessageId).toBe('msg-fallback');
     });
 
-    it('cleans up the orphan thread when addThreadMember fails (e.g. recipient is a dev-seed fake)', async () => {
+    it('cleans up the orphan thread when addThreadMember fails (e.g. recipient not in the guild)', async () => {
       process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
       const proposer = await createTestUser({ communicationPref: 'prefer' });
       const recipient = await createTestUser({ communicationPref: 'prefer' });

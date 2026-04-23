@@ -66,7 +66,7 @@ Three things keep this area honest: (1) signature verification happens before an
 
 ### Observability
 
-**`lib/errorReporter.ts`** — `reportError(ctx, err)`. Posts an embed to `DISCORD_ERROR_WEBHOOK_URL` (`#bot-errors`). Silent in local dev (env unset). Never throws (a failure in the reporter is swallowed — otherwise the reporter would cascade back into the catch-block it was called from). `shouldSkip` tunes out operational noise; `isTestTraffic` tunes out synthetic e2e IDs (`test-iso-*`, `e2e-sender-*`, `dev-seed-*`) plus Discord's `NUMBER_TYPE_COERCE` on `recipient_id` (the signature of "non-snowflake user id — test seeding").
+**`lib/errorReporter.ts`** — `reportError(ctx, err)`. Posts an embed to `DISCORD_ERROR_WEBHOOK_URL` (`#bot-errors`). Silent in local dev (env unset). Never throws (a failure in the reporter is swallowed — otherwise the reporter would cascade back into the catch-block it was called from). `shouldSkip` tunes out operational noise; `isTestTraffic` tunes out synthetic e2e IDs (`test-iso-*`, `e2e-sender-*`) plus Discord's `NUMBER_TYPE_COERCE` on `recipient_id` (the signature of "non-snowflake user id — test seeding").
 
 ### Guild sync
 
@@ -151,7 +151,7 @@ Self-scoped pref columns live directly on `users`. The registry's `column` field
 | `getGuild(guildId)` | `GET /guilds/{id}` | fallback when `APPLICATION_AUTHORIZED` event data lacks guild name/icon |
 | `createPrivateThread(parentChannelId, {name, autoArchive})` | `POST /channels/{id}/threads` with `type: 12, invitable: false` | both the initial `thread-immediately` path and the later approve-thread flow |
 | `addThreadMember(threadId, userId)` | `PUT /channels/{id}/thread-members/{uid}` | adds proposer + recipient to a new thread (Discord emits "X added you to a thread" system message + push) |
-| `deleteChannel(channelId)` | `DELETE /channels/{id}` | cleanup of orphaned threads when `addThreadMember` fails (e.g., the recipient is a synthetic dev-seed user Discord rejects) |
+| `deleteChannel(channelId)` | `DELETE /channels/{id}` | cleanup of orphaned threads when `addThreadMember` fails (e.g., recipient isn't in the guild or the bot lacks perms) |
 | `createGuildChannel(guildId, opts)` | `POST /guilds/{id}/channels` | auto-create `#swutrade-threads` on install |
 | `getGuildBotMember(guildId, botUserId)` | `GET /guilds/{gid}/members/{uid}` | resolve the bot's managed-integration role so we can hand it channel overwrites; Discord's `/members/@me` rejects bots with 403 so caller passes the id explicitly |
 
@@ -213,7 +213,7 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 
 - `reportError({ source, tags?, force? }, err) → Promise<void>` — fire-and-forget. `force: true` bypasses `shouldSkip` + `isTestTraffic` for the "normally-noise but actually load-bearing here" case.
 - `shouldSkip(err) → boolean` — exported for tests. Skips `RateLimitError`, `NotFoundError` with codes 10003/10008/10013, `PermissionError` with code 50007.
-- `isTestTraffic(ctx, err) → boolean` — exported for tests. Checks tag prefixes (`test-iso-`, `e2e-sender-`, `dev-seed-`) + the Discord `NUMBER_TYPE_COERCE` + `recipient_id` body signature.
+- `isTestTraffic(ctx, err) → boolean` — exported for tests. Checks tag prefixes (`test-iso-`, `e2e-sender-`) + the Discord `NUMBER_TYPE_COERCE` + `recipient_id` body signature.
 
 ## State + data flow
 

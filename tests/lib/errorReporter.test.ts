@@ -74,11 +74,10 @@ describe('shouldSkip — filter expected-noise errors', () => {
   });
 });
 
-describe('isTestTraffic — filters auth-e2e + dev-seed traffic', () => {
-  it('matches tag values with test-iso- / e2e-sender- / dev-seed- prefixes', () => {
+describe('isTestTraffic — filters auth-e2e traffic', () => {
+  it('matches tag values with test-iso- / e2e-sender- prefixes', () => {
     expect(isTestTraffic({ source: 's', tags: { recipientId: 'test-iso-8-ea940e55' } }, new Error())).toBe(true);
     expect(isTestTraffic({ source: 's', tags: { recipientId: 'e2e-sender-mo51rwye-c5ec' } }, new Error())).toBe(true);
-    expect(isTestTraffic({ source: 's', tags: { peerId: 'dev-seed-testbot-bb' } }, new Error())).toBe(true);
   });
 
   it('does NOT match real Discord snowflake ids', () => {
