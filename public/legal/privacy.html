@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — SWUTrade</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root {
+      --space-900: #0a0e1a;
+      --space-800: #111627;
+      --space-700: #1a1f2e;
+      --space-600: #262d3f;
+      --gold: #F5A623;
+      --gold-bright: #FFD700;
+      --gray-100: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(180deg, var(--space-900), var(--space-800));
+      color: var(--gray-100);
+      min-height: 100dvh;
+      line-height: 1.6;
+    }
+    header {
+      border-bottom: 1px solid var(--space-700);
+      padding: 16px 24px;
+      background: rgba(10, 14, 26, 0.8);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header a {
+      color: var(--gray-100);
+      text-decoration: none;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      font-size: 18px;
+    }
+    header a span { color: var(--gold); }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      margin: 0 0 8px;
+      color: var(--gray-100);
+    }
+    h2 {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--gold);
+      margin: 40px 0 12px;
+    }
+    p { margin: 0 0 16px; color: var(--gray-300); }
+    ul { color: var(--gray-300); padding-left: 20px; margin: 0 0 16px; }
+    li { margin-bottom: 6px; }
+    .meta {
+      color: var(--gray-500);
+      font-size: 13px;
+      margin-bottom: 32px;
+    }
+    .meta strong { color: var(--gray-400); font-weight: 600; }
+    code {
+      background: var(--space-700);
+      border: 1px solid var(--space-600);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: var(--gold-bright);
+    }
+    a { color: var(--gold); }
+    a:hover { color: var(--gold-bright); }
+    .section-card {
+      border: 1px solid var(--space-700);
+      background: var(--space-800);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .section-card h2 { margin-top: 0; }
+    footer {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px;
+      color: var(--gray-500);
+      font-size: 12px;
+      border-top: 1px solid var(--space-700);
+    }
+    footer a { color: var(--gray-400); margin-right: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/"><span>SWU</span>TRADE</a>
+  </header>
+  <main>
+    <h1>Privacy Policy</h1>
+    <div class="meta"><strong>Last updated:</strong> 2026-04-28</div>
+
+    <p>
+      SWUTrade is a free tool for trading Star Wars Unlimited cards. This page describes what we collect, why we collect it, who we share it with, and how you can delete it. We try to keep it short and honest. If something here is unclear, email <a href="mailto:hello@swutrade.com">hello@swutrade.com</a>.
+    </p>
+
+    <div class="section-card">
+      <h2>What we collect</h2>
+      <ul>
+        <li>
+          <strong>From Discord, when you sign in:</strong> your Discord user ID, handle, username, avatar URL, and the list of guilds (servers) you're a member of. Provided to us by Discord under the OAuth scopes you approve.
+        </li>
+        <li>
+          <strong>Things you create in the app:</strong> the cards you save to your wishlist or trade binder, trade proposals you send or receive, shared live trades you participate in, and any trading partners you bookmark.
+        </li>
+        <li>
+          <strong>Preferences:</strong> notification settings, privacy toggles (whether your wishlist / binder is public), and per-Discord-server enrollment choices.
+        </li>
+        <li>
+          <strong>Operational logs:</strong> server-side error reports for our own debugging. We deliberately exclude personal data from these logs; they contain stack traces, error codes, and synthetic test traffic markers.
+        </li>
+      </ul>
+
+      <p style="color: var(--gray-400); font-size: 14px;">
+        We do <strong>not</strong> collect: real names, addresses, payment information, IP-based tracking pixels, third-party analytics, or browsing history outside SWUTrade. We do not sell or rent any data. The only cookie we set is a server-side authentication cookie.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Why we collect it</h2>
+      <ul>
+        <li><strong>Discord identity</strong> — so you can sign in, send proposals to other users by handle, and have your trades follow you across devices.</li>
+        <li><strong>Guild memberships</strong> — to populate the community directory with people who share a Discord server with you, so you see relevant trade matches.</li>
+        <li><strong>Wishlist / binder / trades</strong> — so the app can render your data, run matchmaking, and deliver trade proposals.</li>
+        <li><strong>Preferences</strong> — to remember your settings between sessions.</li>
+      </ul>
+    </div>
+
+    <div class="section-card">
+      <h2>Who we share it with</h2>
+      <ul>
+        <li><strong>Neon</strong> (Postgres database host) — stores everything listed above. Our database lives in their us-east-1 region.</li>
+        <li><strong>Vercel</strong> (hosting) — runs the SWUTrade web app and serverless functions.</li>
+        <li><strong>Discord</strong> — receives outbound API calls to deliver proposals as direct messages or in private threads, and to read your guild memberships during sign-in.</li>
+        <li><strong>TCGPlayer</strong> — we read public card prices and images from their service. We do <strong>not</strong> send any user data to TCGPlayer.</li>
+      </ul>
+      <p style="color: var(--gray-400); font-size: 14px;">
+        We don't sell, rent, or share user data with advertisers, data brokers, or any party not listed above.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>How long we keep it</h2>
+      <p>
+        Until you delete it. Wishlist + binder items, trade proposals, shared trade sessions, and trading partners persist across sessions. Trade sessions automatically expire from inactivity after 14 days. Shared-trade ghost users (anonymous accounts minted when you claim a trade without signing in) are retained until you sign in or your sessions expire — whichever comes first.
+      </p>
+      <p>
+        If SWUTrade ever shuts down, we'll publish a notice with at least 30 days' lead time so you can export your data first.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Your rights</h2>
+      <ul>
+        <li><strong>Access:</strong> sign into <a href="https://swutrade.com">swutrade.com</a> to view everything we have on you. Wishlist + binder are at <code>/?view=wishlist</code> and <code>/?view=binder</code>; trades are at <code>/?trades=1</code>; settings are at <code>/?settings=1</code>.</li>
+        <li><strong>Delete account:</strong> email <a href="mailto:hello@swutrade.com">hello@swutrade.com</a> from the email associated with your Discord account and we'll delete your row + cascade-delete every record tied to it within 7 days. We'll confirm by reply.</li>
+        <li><strong>Export:</strong> the same email gets you a JSON export of everything we have on you.</li>
+        <li><strong>Object / restrict:</strong> if you want to keep your account but pause specific behaviors (e.g., stop receiving Discord DMs, hide from community directory), the in-app Settings page covers most cases. If you need more, email us.</li>
+      </ul>
+    </div>
+
+    <div class="section-card">
+      <h2>Children</h2>
+      <p>
+        SWUTrade is not directed at children under 13 (or under 16 in the EU). Discord requires its users to be 13+; we honor that requirement transitively — anyone who can sign in via Discord is, per Discord's own policy, old enough to use SWUTrade. If we discover we've collected data from someone below this age, we'll delete it.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Changes to this policy</h2>
+      <p>
+        If we make a material change to what we collect or who we share it with, we'll update the "Last updated" date at the top of this page and post a banner inside the app for at least 30 days before the change takes effect. Minor wording updates won't trigger a banner; the version history of this document lives in our public repo.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Contact</h2>
+      <p>
+        Email <a href="mailto:hello@swutrade.com">hello@swutrade.com</a>. We read every message. If you'd rather file a public issue, we accept those at <a href="https://github.com/pmossman/swutrade/issues">github.com/pmossman/swutrade/issues</a>.
+      </p>
+    </div>
+  </main>
+  <footer>
+    <a href="/">Home</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </footer>
+</body>
+</html>

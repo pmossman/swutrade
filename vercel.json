@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/privacy", "destination": "/legal/privacy.html" },
+    { "source": "/terms", "destination": "/legal/terms.html" },
     { "source": "/u/:handle", "destination": "/?profile=:handle" },
     { "source": "/u/:handle/:tab", "destination": "/?profile=:handle&tab=:tab" },
     { "source": "/s/:id", "destination": "/" },

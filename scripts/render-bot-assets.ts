@@ -25,61 +25,122 @@
  */
 
 import { Resvg } from '@resvg/resvg-js';
-import { readFileSync, writeFileSync } from 'fs';
+import { writeFileSync } from 'fs';
 import { join } from 'path';
 
 const ROOT = join(import.meta.dirname, '..');
 const PUBLIC = join(ROOT, 'public');
 
 // ---------------------------------------------------------------------------
-// 1) App icon — 1024×1024 from public/favicon.svg
+// 1) App icon — 1024×1024 stacked "SWU / TRADE" wordmark.
+//
+// Why a wordmark not the favicon's card-pair:
+//   - Discord crops avatars to a circle and renders them as small as
+//     ~24px in chat. The card-pair art is intricate at that size; the
+//     wordmark is identifiable.
+//   - Discord's app page lays the avatar OVER the banner; if both
+//     surfaces showed the card-pair the banner would just be a
+//     bigger version of the avatar. The banner now leans pure
+//     wordmark, the avatar becomes the brand monogram, and the two
+//     are visually distinct.
+//
+// SWU above (gray) / TRADE below (gold) — same colour split as the
+// inline wordmark on swutrade.com. Sized so both lines fit inside
+// Discord's safe-circle radius (≈ 440u within 1024u canvas).
 // ---------------------------------------------------------------------------
 
-const faviconSvg = readFileSync(join(PUBLIC, 'favicon.svg'), 'utf8');
+const ICON_SIZE = 1024;
+const ICON_BG = '#0a0e1a';
 
-// Wrap the favicon in a 100×100 navy fill so the rendered PNG has a
-// deliberate dark background instead of transparency. Discord crops
-// avatars to a circle, so the corner pixels get clipped — but the
-// edges of the circle land in the same space-900 fill as the banner.
-const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" fill="#0a0e1a"/>
-  ${stripOuterSvg(faviconSvg)}
+const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" height="${ICON_SIZE}" viewBox="0 0 ${ICON_SIZE} ${ICON_SIZE}">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD700" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Solid navy fill. Discord crops to a circle so corner pixels
+       fall outside the visible disc; doesn't matter that they're
+       square. -->
+  <rect width="${ICON_SIZE}" height="${ICON_SIZE}" fill="${ICON_BG}"/>
+
+  <!-- Faint gold aura behind the wordmark — same brand cue the
+       favicon uses (balance-point glow), kept subtle so the text
+       reads first. -->
+  <circle cx="${ICON_SIZE / 2}" cy="${ICON_SIZE / 2}" r="380" fill="url(#glow)"/>
+
+  <!-- SWU on top, TRADE below. Both centered horizontally via
+       text-anchor=middle. Baselines tuned by eye so the line of
+       symmetry between them sits at the canvas vertical centre.
+       Font sizes chosen so the wider word ("TRADE") fills the
+       safe-circle chord without tracking compression. -->
+  <g font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" text-anchor="middle">
+    <text x="${ICON_SIZE / 2}" y="490" font-size="280" letter-spacing="14" fill="#e5e7eb">SWU</text>
+    <text x="${ICON_SIZE / 2}" y="780" font-size="240" letter-spacing="8" fill="#F5A623">TRADE</text>
+  </g>
 </svg>`;
 
 renderPng({
   svg: avatarSvg,
-  width: 1024,
+  width: ICON_SIZE,
   outFile: 'bot-avatar.png',
 });
 
 // ---------------------------------------------------------------------------
-// 2) Banner — 680×240 (17:6) by scaling the existing public/banner.svg
-//    (which is 720×160 / 9:2) to fit the width, then centering vertically
-//    in the 240u canvas with the same dark-navy fill above and below.
-//    This way the banner stays in lockstep with the in-app header strip
-//    rather than diverging into a separately-laid-out brand surface.
+// 2) Banner — 680×240 (17:6), wordmark only.
+//
+// Discord overlays the bot avatar onto the lower-left of the banner
+// on the app page, so anything we paint there gets covered. We
+// also DON'T repeat the icon's mark in the banner — the icon IS
+// the SWU/TRADE wordmark now; doubling it would just be the same
+// thing twice. So the banner becomes a single horizontal SWUTRADE
+// wordmark with a tagline below — bigger, cleaner, more "this is
+// a brand surface" than the in-app banner.svg which is sized for
+// the cramped header strip.
 // ---------------------------------------------------------------------------
 
 const BANNER_W = 680;
 const BANNER_H = 240;
-const SOURCE_W = 720;
-const SOURCE_H = 160;
-const SCALE = BANNER_W / SOURCE_W;          // 0.9444
-const SCALED_H = SOURCE_H * SCALE;          // 151.1
-const Y_OFFSET = (BANNER_H - SCALED_H) / 2; // 44.45
+// Discord overlays the cropped bot avatar onto the banner at the
+// lower-left (~120px diameter, padded a few px from the edges). We
+// keep the wordmark vertically centered on the canvas so the
+// avatar's bottom-left footprint clips at most the descent zone of
+// the "BUILD · SHARE · …" tagline, never the wordmark itself.
+const WORDMARK_CX = BANNER_W / 2;
 
-const sourceBanner = readFileSync(join(PUBLIC, 'banner.svg'), 'utf8');
-
-// Compose: outer 680×240 navy fill, banner.svg embedded scaled +
-// translated. The inner banner.svg already paints its own #0a0e1a
-// rectangle across its 720×160 viewBox, so the scaled strip blends
-// seamlessly with the outer fill and the top/bottom bands read as
-// the same continuous surface.
 const bannerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${BANNER_W}" height="${BANNER_H}" viewBox="0 0 ${BANNER_W} ${BANNER_H}">
-  <rect width="${BANNER_W}" height="${BANNER_H}" fill="#0a0e1a"/>
-  <g transform="translate(0 ${Y_OFFSET}) scale(${SCALE})">
-    ${stripOuterSvg(sourceBanner)}
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e1a"/>
+      <stop offset="1" stop-color="#111627"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFD700" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="${BANNER_W}" height="${BANNER_H}" fill="url(#bgGrad)"/>
+  <ellipse cx="${WORDMARK_CX}" cy="${BANNER_H / 2}" rx="280" ry="100" fill="url(#glow)"/>
+
+  <!-- SWU TRADE wordmark, horizontally centered. Two contiguous text
+       elements rather than one — keeps the gray/gold split that
+       defines the brand. Sized so the full string fits well within
+       the 680px width with breathing room either side. -->
+  <g font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="68" letter-spacing="4">
+    <text x="${WORDMARK_CX - 6}" y="125" text-anchor="end" fill="#e5e7eb">SWU</text>
+    <text x="${WORDMARK_CX + 6}" y="125" text-anchor="start" fill="#F5A623">TRADE</text>
   </g>
+
+  <!-- Tagline. Smaller, muted gray, sits below the wordmark. Not
+       essential — purely a brand-finish that signals "this is a
+       coordinated thing" vs "this is a placeholder banner." -->
+  <text x="${WORDMARK_CX}" y="170" text-anchor="middle"
+        font-family="'Helvetica Neue', Arial, sans-serif" font-weight="600" font-size="15"
+        letter-spacing="3" fill="#9ca3af">
+    BUILD · SHARE · SETTLE STAR WARS UNLIMITED TRADES
+  </text>
 </svg>`;
 
 renderPng({
@@ -103,14 +164,3 @@ function renderPng(opts: { svg: string; width: number; outFile: string }): void 
   console.log(`✓ ${opts.outFile} → public/${opts.outFile} (${kb} KB)`);
 }
 
-/**
- * Strip the outer `<svg ...>...</svg>` wrapper from an SVG string so
- * the inner contents can be embedded inside a parent SVG. Used by the
- * avatar path so the favicon's defs + paths render against our own
- * navy background rect.
- */
-function stripOuterSvg(svg: string): string {
-  return svg
-    .replace(/^[\s\S]*?<svg[^>]*>/, '')
-    .replace(/<\/svg>\s*$/, '');
-}

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terms of Service — SWUTrade</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <style>
+    :root {
+      --space-900: #0a0e1a;
+      --space-800: #111627;
+      --space-700: #1a1f2e;
+      --space-600: #262d3f;
+      --gold: #F5A623;
+      --gold-bright: #FFD700;
+      --gray-100: #e5e7eb;
+      --gray-300: #d1d5db;
+      --gray-400: #9ca3af;
+      --gray-500: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(180deg, var(--space-900), var(--space-800));
+      color: var(--gray-100);
+      min-height: 100dvh;
+      line-height: 1.6;
+    }
+    header {
+      border-bottom: 1px solid var(--space-700);
+      padding: 16px 24px;
+      background: rgba(10, 14, 26, 0.8);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    header a {
+      color: var(--gray-100);
+      text-decoration: none;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      font-size: 18px;
+    }
+    header a span { color: var(--gold); }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      margin: 0 0 8px;
+      color: var(--gray-100);
+    }
+    h2 {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--gold);
+      margin: 40px 0 12px;
+    }
+    p { margin: 0 0 16px; color: var(--gray-300); }
+    ul { color: var(--gray-300); padding-left: 20px; margin: 0 0 16px; }
+    li { margin-bottom: 6px; }
+    .meta {
+      color: var(--gray-500);
+      font-size: 13px;
+      margin-bottom: 32px;
+    }
+    .meta strong { color: var(--gray-400); font-weight: 600; }
+    code {
+      background: var(--space-700);
+      border: 1px solid var(--space-600);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      color: var(--gold-bright);
+    }
+    a { color: var(--gold); }
+    a:hover { color: var(--gold-bright); }
+    .section-card {
+      border: 1px solid var(--space-700);
+      background: var(--space-800);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .section-card h2 { margin-top: 0; }
+    .section-card.warn {
+      border-color: rgba(245, 166, 35, 0.4);
+      background: rgba(245, 166, 35, 0.06);
+    }
+    footer {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 24px;
+      color: var(--gray-500);
+      font-size: 12px;
+      border-top: 1px solid var(--space-700);
+    }
+    footer a { color: var(--gray-400); margin-right: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/"><span>SWU</span>TRADE</a>
+  </header>
+  <main>
+    <h1>Terms of Service</h1>
+    <div class="meta"><strong>Last updated:</strong> 2026-04-28</div>
+
+    <p>
+      These terms describe the rules for using SWUTrade. They're plain language — we don't think clarity should require a lawyer. By using SWUTrade you agree to them. If you don't, please don't use the service.
+    </p>
+
+    <div class="section-card">
+      <h2>What SWUTrade is</h2>
+      <p>
+        SWUTrade is a free web app and Discord bot that helps players of <em>Star Wars Unlimited</em> coordinate trades. It builds and shares trade proposals, settles live shared trades between two players, surfaces matches between users in the same Discord communities, and tracks each user's wishlist and trade binder.
+      </p>
+      <p>
+        SWUTrade does <strong>not</strong> escrow cards, hold money, ship cards, or guarantee that any trade actually happens. The actual exchange of physical or digital cards always happens between the two users — we just help them coordinate.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Eligibility</h2>
+      <p>
+        You need a Discord account to use SWUTrade's authenticated features (proposals, communities, matchmaking, sync across devices). Discord requires its users to be 13 or older (16 in the EU). By signing in, you confirm you meet that requirement and that you're complying with Discord's own terms.
+      </p>
+      <p>
+        Anonymous (guest) usage doesn't require a Discord account, but the same age expectation applies — if you're below 13, please don't use SWUTrade.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Acceptable use</h2>
+      <p>You agree not to:</p>
+      <ul>
+        <li>Use SWUTrade to harass, defraud, or impersonate other users.</li>
+        <li>Use the trade proposal system to spam (bulk-send proposals to people who haven't engaged with you).</li>
+        <li>Scrape, mirror, or rebuild SWUTrade's data via automated requests against our APIs.</li>
+        <li>Attempt to bypass authentication, rate limits, or other access controls.</li>
+        <li>Reverse-engineer the bot, the web app, or the matchmaking algorithm to game results.</li>
+        <li>Interfere with the service for other users (DDoS, resource exhaustion, etc.).</li>
+        <li>Use SWUTrade to facilitate transactions that violate Discord's terms, applicable law, or the policies of any community where the bot is installed.</li>
+      </ul>
+      <p>
+        Server admins who install the bot are responsible for the conduct of the trades coordinated through their server. SWUTrade is a coordination layer, not a moderation team.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Trade execution and disputes</h2>
+      <p>
+        SWUTrade does not process payments, ship cards, or guarantee any trade. Once two users have agreed to a trade in the app, the actual exchange happens between them — by mail, in person at a local game store, or however they arrange. Disputes about the physical exchange (a card never arrived, condition was misrepresented, the other party stopped responding) are between the two users involved.
+      </p>
+      <p>
+        SWUTrade can record what was agreed (a settled trade's card list is preserved in the database) and that record can be used as a reference if you escalate to a third party. We do not act as an arbiter.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Intellectual property</h2>
+      <p>
+        <em>Star Wars Unlimited</em> is a property of Fantasy Flight Games and Asmodee, and the underlying <em>Star Wars</em> universe belongs to Lucasfilm Ltd. SWUTrade is an independent fan-made tool, not affiliated with, endorsed by, or sponsored by any of those entities. Card names, card images, set names, and other game-specific terms appear in SWUTrade for cataloguing and identification purposes only.
+      </p>
+      <p>
+        Card pricing data is sourced from publicly available TCGPlayer endpoints. SWUTrade does not claim ownership of that data; we cache it for performance and display it alongside cards as reference information.
+      </p>
+      <p>
+        SWUTrade's own code, the SWUTrade name, and the SWUTrade logo are property of the SWUTrade project. The source code is published at <a href="https://github.com/pmossman/swutrade">github.com/pmossman/swutrade</a>; consult the LICENSE file for terms of reuse.
+      </p>
+    </div>
+
+    <div class="section-card warn">
+      <h2>Disclaimer of warranties</h2>
+      <p>
+        SWUTrade is provided "as is" and "as available." We make no warranties — express, implied, or statutory — about the service. Specifically: we don't guarantee uptime, that prices are accurate at any given moment, that proposals will be delivered, that matchmaking results are exhaustive, that data won't be lost in an outage, or that the service will continue to exist.
+      </p>
+      <p>
+        Use SWUTrade at your own risk. Don't make irreversible decisions (e.g., shipping a $500 card across the country) based solely on data SWUTrade displayed without independent verification.
+      </p>
+    </div>
+
+    <div class="section-card warn">
+      <h2>Limitation of liability</h2>
+      <p>
+        To the maximum extent permitted by law, SWUTrade and its operators are not liable for any indirect, incidental, special, consequential, or punitive damages arising from your use of the service. Our total liability for any direct damages, regardless of cause, will not exceed the amount you paid us in the past 12 months — which, since SWUTrade is free, is zero.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Account termination</h2>
+      <p>
+        You can stop using SWUTrade at any time by signing out, removing the bot from your Discord servers, and (optionally) emailing us to delete your data — see the Privacy Policy for the deletion path.
+      </p>
+      <p>
+        We can suspend or terminate access for users who violate these Terms — particularly the Acceptable use section. Where reasonable, we'll send a warning first; for severe violations (harassment, fraud) we'll act immediately.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Changes to these Terms</h2>
+      <p>
+        If we change these Terms in a way that materially affects your rights, we'll update the "Last updated" date and post a banner inside the app for at least 30 days before the change takes effect. Continued use after the effective date counts as acceptance.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Governing law</h2>
+      <p>
+        These Terms are governed by the laws of the State of Washington, USA, without regard to conflict-of-law principles. Disputes will be brought in the state or federal courts located in King County, Washington, and you consent to that jurisdiction.
+      </p>
+    </div>
+
+    <div class="section-card">
+      <h2>Contact</h2>
+      <p>
+        Email <a href="mailto:hello@swutrade.com">hello@swutrade.com</a> for any question about these Terms. We try to respond within a few days.
+      </p>
+    </div>
+  </main>
+  <footer>
+    <a href="/">Home</a>
+    <a href="/privacy">Privacy</a>
+    <a href="/terms">Terms</a>
+  </footer>
+</body>
+</html>
