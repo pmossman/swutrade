@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "gen:fonts": "tsx scripts/gen-fonts.ts",
+    "render:bot-assets": "tsx scripts/render-bot-assets.ts",
     "fetch-prices": "tsx scripts/fetch-prices.ts",
     "fetch-prices:force": "FETCH_PRICES=1 tsx scripts/fetch-prices.ts",
     "enrich-cards": "tsx scripts/enrich-cards.ts",
