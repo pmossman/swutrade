@@ -13,9 +13,30 @@
  * under tests/fixtures/discord/. See PHASE4_TESTING.md.
  */
 
-import { classifyDiscordError, DiscordRateLimitError } from './discordErrors.js';
+import { classifyDiscordError, DiscordRateLimitError, DiscordServerError } from './discordErrors.js';
 
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+
+/**
+ * A real Discord snowflake is a 17–19 digit decimal string. Anything
+ * else — `test-iso-…`, `api-…`, `e2e-sender-…`, `synth-dm-…` — is a
+ * fixture id minted by our own test harness or a placeholder we
+ * synthesised in a previous short-circuited call.
+ *
+ * Production users can't have non-snowflake discordIds because we set
+ * `users.discord_id` from Discord's `/users/@me` payload at OAuth
+ * callback time. So this gate only ever fires for synthetic data,
+ * which means we can safely no-op the API call rather than waste a
+ * round-trip (or, worse, generate misleading 503s when Discord's
+ * edge is flaky).
+ */
+function isSyntheticDiscordId(id: string): boolean {
+  return !/^\d{17,19}$/.test(id);
+}
+
+function syntheticId(prefix: string): string {
+  return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export interface DiscordEmbed {
   title?: string;
@@ -143,7 +164,25 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
   const sleep = opts.sleep ?? ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
   const fetchImpl = opts.fetch ?? globalThis.fetch;
 
-  async function request(path: string, init: RequestInit): Promise<Response> {
+  /**
+   * Wrapped fetch with retry policy.
+   *
+   * - 429: always retried up to `maxRetries`, sleeping for the
+   *   header-supplied `Retry-After` (capped by `maxRetrySleepSeconds`).
+   * - 5xx: retried only when the caller marks the request `idempotent`.
+   *   The risk we're avoiding is a non-idempotent write (POST
+   *   /messages) returning 503 *after* it already created the
+   *   resource — a blind retry would dupe. Idempotent endpoints
+   *   (GET, DELETE, `POST /users/@me/channels` which returns the
+   *   existing DM, `PUT /thread-members`) don't have that risk.
+   * - everything else: surfaced as the corresponding DiscordApiError
+   *   subclass.
+   */
+  async function request(
+    path: string,
+    init: RequestInit,
+    opts: { idempotent?: boolean } = {},
+  ): Promise<Response> {
     const method = init.method ?? 'GET';
     let attempt = 0;
     // eslint-disable-next-line no-constant-condition
@@ -161,13 +200,20 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
       const bodyText = await res.text().catch(() => '');
       const err = classifyDiscordError(res.status, method, path, bodyText, res.headers);
 
-      // Auto-retry on 429 up to `maxRetries` times. We don't retry
-      // 5xx because most bot writes (POST /messages, PATCH /members)
-      // aren't idempotent and a blind retry can dupe.
       if (err instanceof DiscordRateLimitError && attempt < maxRetries) {
         attempt += 1;
         const sleepSeconds = Math.min(err.retryAfterSeconds, maxRetrySleepSeconds);
         await sleep(Math.max(0, sleepSeconds * 1000));
+        continue;
+      }
+
+      if (opts.idempotent && err instanceof DiscordServerError && attempt < maxRetries) {
+        attempt += 1;
+        // Linear backoff capped at maxRetrySleepSeconds. 5xx blips
+        // are usually edge-proxy hiccups that clear in <1s; we don't
+        // need exponential here.
+        const sleepMs = Math.min(500 * attempt, maxRetrySleepSeconds * 1000);
+        await sleep(sleepMs);
         continue;
       }
       throw err;
@@ -176,6 +222,9 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
 
   return {
     async postChannelMessage(channelId, body) {
+      if (isSyntheticDiscordId(channelId)) {
+        return { id: syntheticId('synth-msg'), channel_id: channelId };
+      }
       const res = await request(`/channels/${channelId}/messages`, {
         method: 'POST',
         body: JSON.stringify(body),
@@ -184,6 +233,7 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
     },
 
     async editChannelMessage(channelId, messageId, body) {
+      if (isSyntheticDiscordId(channelId) || isSyntheticDiscordId(messageId)) return;
       await request(`/channels/${channelId}/messages/${messageId}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
@@ -191,10 +241,16 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
     },
 
     async createDmChannel(userId) {
+      if (isSyntheticDiscordId(userId)) {
+        return { id: `synth-dm-${userId}` };
+      }
+      // POST /users/@me/channels is idempotent — Discord returns the
+      // existing DM channel for a (bot, user) pair rather than
+      // creating duplicates. Safe to retry on 5xx.
       const res = await request('/users/@me/channels', {
         method: 'POST',
         body: JSON.stringify({ recipient_id: userId }),
-      });
+      }, { idempotent: true });
       return res.json() as Promise<{ id: string }>;
     },
 
@@ -204,11 +260,17 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
     },
 
     async getGuild(guildId) {
-      const res = await request(`/guilds/${guildId}`, { method: 'GET' });
+      if (isSyntheticDiscordId(guildId)) {
+        return { id: guildId, name: 'Synthetic Guild', icon: null };
+      }
+      const res = await request(`/guilds/${guildId}`, { method: 'GET' }, { idempotent: true });
       return res.json() as Promise<{ id: string; name: string; icon: string | null }>;
     },
 
     async createPrivateThread(parentChannelId, opts) {
+      if (isSyntheticDiscordId(parentChannelId)) {
+        return { id: syntheticId('synth-thread'), parent_id: parentChannelId };
+      }
       const res = await request(`/channels/${parentChannelId}/threads`, {
         method: 'POST',
         body: JSON.stringify({
@@ -225,16 +287,23 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
     },
 
     async addThreadMember(threadId, userId) {
+      if (isSyntheticDiscordId(threadId) || isSyntheticDiscordId(userId)) return;
+      // PUT — idempotent. Adding a user already in the thread is a
+      // 204 no-op, so retrying on 5xx can't double-add.
       await request(`/channels/${threadId}/thread-members/${userId}`, {
         method: 'PUT',
-      });
+      }, { idempotent: true });
     },
 
     async deleteChannel(channelId) {
-      await request(`/channels/${channelId}`, { method: 'DELETE' });
+      if (isSyntheticDiscordId(channelId)) return;
+      await request(`/channels/${channelId}`, { method: 'DELETE' }, { idempotent: true });
     },
 
     async createGuildChannel(guildId, opts) {
+      if (isSyntheticDiscordId(guildId)) {
+        return { id: syntheticId('synth-channel'), name: opts.name };
+      }
       const res = await request(`/guilds/${guildId}/channels`, {
         method: 'POST',
         body: JSON.stringify(opts),
@@ -243,7 +312,14 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
     },
 
     async getGuildBotMember(guildId, botUserId) {
-      const res = await request(`/guilds/${guildId}/members/${botUserId}`, { method: 'GET' });
+      if (isSyntheticDiscordId(guildId)) {
+        return { roles: [], user: { id: botUserId } };
+      }
+      const res = await request(
+        `/guilds/${guildId}/members/${botUserId}`,
+        { method: 'GET' },
+        { idempotent: true },
+      );
       return res.json() as Promise<{ roles: string[]; user: { id: string } }>;
     },
   };

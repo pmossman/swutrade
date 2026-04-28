@@ -43,7 +43,7 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       sleep: async ms => { sleepCalls.push(ms); },
     });
 
-    const sent = await client.postChannelMessage('channel-1', { content: 'hi' });
+    const sent = await client.postChannelMessage('123456789012345678', { content: 'hi' });
     expect(sent.id).toBe('msg-1');
     // One retry, and we slept for the header-supplied 1 second (1000ms).
     expect(sleepCalls).toEqual([1000]);
@@ -63,7 +63,7 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       maxRetrySleepSeconds: 5,
     });
 
-    await client.postChannelMessage('channel-1', { content: 'hi' });
+    await client.postChannelMessage('123456789012345678', { content: 'hi' });
     expect(sleepCalls).toEqual([5000]);
   });
 
@@ -79,7 +79,7 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       maxRetries: 1,
     });
 
-    await expect(client.postChannelMessage('channel-1', { content: 'hi' })).rejects.toMatchObject({
+    await expect(client.postChannelMessage('123456789012345678', { content: 'hi' })).rejects.toMatchObject({
       name: 'DiscordRateLimitError',
       status: 429,
     });
@@ -99,12 +99,12 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       sleep: async () => {},
     });
 
-    await expect(client.postChannelMessage('channel-1', { content: 'hi' }))
+    await expect(client.postChannelMessage('123456789012345678', { content: 'hi' }))
       .rejects.toBeInstanceOf(DiscordValidationError);
     expect(calls).toBe(1);
   });
 
-  it('does NOT retry on 5xx — most bot writes aren\'t idempotent, a blind retry risks dupes', async () => {
+  it('does NOT retry on 5xx for non-idempotent writes — POST /messages dupes if the upstream already created the message', async () => {
     let calls = 0;
     const client = createDiscordBotClient({
       token: 'test-token',
@@ -115,9 +115,69 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       sleep: async () => {},
     });
 
-    await expect(client.postChannelMessage('channel-1', { content: 'hi' }))
+    // Real Discord-snowflake-formatted recipient so the synthetic-id
+    // short-circuit doesn't intercept; we want the 5xx path.
+    await expect(client.postChannelMessage('123456789012345678', { content: 'hi' }))
       .rejects.toBeInstanceOf(DiscordServerError);
     expect(calls).toBe(1);
+  });
+
+  it('DOES retry once on 5xx for idempotent endpoints — createDmChannel returns the existing DM, safe to re-attempt', async () => {
+    const responses = [
+      errorResponse(503, {}),
+      okResponse({ id: '987654321098765432' }),
+    ];
+    const sleepCalls: number[] = [];
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async () => responses.shift()!) as typeof fetch,
+      sleep: async ms => { sleepCalls.push(ms); },
+    });
+
+    const dm = await client.createDmChannel('123456789012345678');
+    expect(dm.id).toBe('987654321098765432');
+    expect(sleepCalls).toEqual([500]);
+    expect(responses).toHaveLength(0);
+  });
+
+  it('5xx retry on idempotent endpoint surfaces DiscordServerError after maxRetries exhausted', async () => {
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async () => errorResponse(503, {})) as typeof fetch,
+      sleep: async () => {},
+      maxRetries: 1,
+    });
+    await expect(client.createDmChannel('123456789012345678'))
+      .rejects.toBeInstanceOf(DiscordServerError);
+  });
+
+  it('short-circuits synthetic discord ids without hitting the network — fixture data minted by tests never reaches Discord', async () => {
+    let calls = 0;
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async () => {
+        calls += 1;
+        return okResponse({});
+      }) as typeof fetch,
+      sleep: async () => {},
+    });
+
+    // sendDirectMessage with a synthetic recipient: no createDm,
+    // no postMessage — both legs are short-circuited.
+    const sent = await client.sendDirectMessage('test-iso-1-abc12345', { content: 'hi' });
+    expect(sent.channel_id).toBe('synth-dm-test-iso-1-abc12345');
+    expect(sent.id).toMatch(/^synth-msg-/);
+
+    // editChannelMessage with a synthetic channelId is a no-op.
+    await client.editChannelMessage('synth-dm-test-iso-1-abc12345', 'synth-msg-xyz', { content: 'edited' });
+
+    // addThreadMember is a no-op on synthetic ids on either side.
+    await client.addThreadMember('synth-thread-x', 'test-iso-2-def');
+
+    // deleteChannel is a no-op on synthetic ids.
+    await client.deleteChannel('synth-dm-test-iso-1-abc12345');
+
+    expect(calls).toBe(0);
   });
 
   it('maxRetries=0 disables the 429 auto-retry entirely', async () => {
@@ -132,7 +192,7 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       maxRetries: 0,
     });
 
-    await expect(client.postChannelMessage('channel-1', { content: 'hi' }))
+    await expect(client.postChannelMessage('123456789012345678', { content: 'hi' }))
       .rejects.toBeInstanceOf(DiscordRateLimitError);
     expect(calls).toBe(1);
   });
@@ -144,7 +204,7 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
       fetch: (async () => okResponse({ id: 'msg-ok', channel_id: 'dm-ok' })) as typeof fetch,
       sleep: async () => { sleepCalled = true; },
     });
-    const r = await client.postChannelMessage('channel-1', { content: 'hi' });
+    const r = await client.postChannelMessage('123456789012345678', { content: 'hi' });
     expect(r.id).toBe('msg-ok');
     expect(sleepCalled).toBe(false);
   });
