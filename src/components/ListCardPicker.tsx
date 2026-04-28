@@ -35,7 +35,11 @@ export interface PickContext {
 interface ListCardPickerProps {
   listType: PickerListType;
   allCards: CardVariant[];
-  percentage: number;
+  /** Accepted but ignored — picker tile prices are always raw 100%
+   *  TCGPlayer (mkt/low). Kept on the interface for symmetry with
+   *  the trade builder's TradeSearchOverlay; both share the same
+   *  "browse the catalogue at TCGPlayer prices" contract now. */
+  percentage?: number;
   priceMode: PriceMode;
   /** Full wants API (when listType === 'wants'). Picker reads items
    *  for the saved-qty badge and uses update/remove to support
@@ -121,13 +125,15 @@ function wantsBadge(
 export function ListCardPicker({
   listType,
   allCards,
-  percentage,
   priceMode,
   wants,
   available,
   onPick,
   onClose,
 }: ListCardPickerProps) {
+  // `percentage` prop is ignored — picker tiles always show raw
+  // TCGPlayer prices. Keeping the prop signature stable so callers
+  // don't churn.
   const wantsItems = wants?.items ?? [];
   const availableItems = available?.items ?? [];
   const { query, setQuery, results, isSearching } = useCardSearch({
@@ -316,7 +322,13 @@ export function ListCardPicker({
             <PickerTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
               card={card}
-              percentage={percentage}
+              // Picker tile prices are always raw TCGPlayer (mkt/low),
+              // never the user's trade-balancer percentage. The wishlist
+              // / binder picker is a "browse the catalogue" surface;
+              // showing 80%-adjusted prices here makes cross-reference
+              // with TCGPlayer needlessly hard. The trade view applies
+              // the percentage where it actually matters.
+              percentage={100}
               priceMode={priceMode}
               landscape={ctx.leaderGroup}
               savedQty={savedQty}

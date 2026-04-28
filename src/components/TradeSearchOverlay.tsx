@@ -391,7 +391,6 @@ export function TradeSearchOverlay({
         {open && (
           <SearchResults
             results={deferredResults}
-            percentage={percentage}
             priceMode={priceMode}
             onAdd={onAdd}
             onChangeQty={onChangeQty}

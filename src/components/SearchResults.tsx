@@ -6,7 +6,6 @@ import { CardResultsGrid } from './CardResultsGrid';
 
 interface SearchResultsProps {
   results: SetSearchGroup[];
-  percentage: number;
   priceMode: PriceMode;
   onAdd: (card: CardVariant) => void;
   onChangeQty: (key: string, delta: number) => void;
@@ -18,9 +17,19 @@ interface SearchResultsProps {
 
 // Trade-side wrapper around CardResultsGrid. Renders each variant as a
 // qty-aware CardTile.
+//
+// Picker tile prices are pinned at 100% (raw TCGPlayer market/low) —
+// the user's percentage modifier (default 80%) only applies inside
+// the actual trade balancer. The mismatch was confusing: shopping
+// for cards at 80% adjusted prices made it hard to cross-reference
+// against TCGPlayer, which is the canonical source. The trade view
+// (TradeRow / TradeSide) and the trade-builder running totals still
+// use the user's percentage, so the eventual values they trade at
+// reflect their setting.
+const PICKER_PERCENTAGE = 100;
+
 export function SearchResults({
   results,
-  percentage,
   priceMode,
   onAdd,
   onChangeQty,
@@ -49,7 +58,7 @@ export function SearchResults({
             key={`${card.name}-${card.set}`}
             card={card}
             qty={qty}
-            percentage={percentage}
+            percentage={PICKER_PERCENTAGE}
             priceMode={priceMode}
             accentColor={accentColor}
             onAdd={onAdd}

@@ -1,6 +1,6 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
-import { cardImageUrl, adjustPrice, getCardPrice } from '../services/priceService';
+import { cardImageUrl, getCardPrice } from '../services/priceService';
 import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
 
@@ -271,7 +271,12 @@ function SegmentedOption({
 interface AvailableRowProps {
   item: AvailableItem;
   card: CardVariant | null;
-  percentage: number;
+  /** Accepted but ignored — binder row prices always show raw 100%
+   *  TCGPlayer (mkt/low) so they cross-reference cleanly. The trade
+   *  balancer is the only surface that applies the user's percentage
+   *  modifier; lists / pickers / profile views are all reference
+   *  surfaces, not negotiation surfaces. */
+  percentage?: number;
   priceMode: PriceMode;
   /** Count of other signed-in users who have this card's family on
    *  their public wants list. 0 or undefined hides the badge. */
@@ -283,7 +288,6 @@ interface AvailableRowProps {
 export function AvailableRow({
   item,
   card,
-  percentage,
   priceMode,
   wantCount,
   onChangeQty,
@@ -292,7 +296,7 @@ export function AvailableRow({
   const imgUrl = card?.productId ? cardImageUrl(card.productId, 'sm') : null;
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
-  const price = card ? adjustPrice(getCardPrice(card, priceMode), percentage) : null;
+  const price = card ? getCardPrice(card, priceMode) : null;
   const showWantBadge = typeof wantCount === 'number' && wantCount > 0;
 
   return (

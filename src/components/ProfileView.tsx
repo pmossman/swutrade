@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   cardImageUrl,
-  adjustPrice,
   getCardPrice,
 } from '../services/priceService';
 import {
@@ -475,18 +474,20 @@ function ProfileRow({
   qty,
   restriction,
   isPriority,
-  percentage,
   priceMode,
 }: {
   card: CardVariant;
   qty: number;
   restriction?: VariantRestriction;
   isPriority?: boolean;
-  percentage: number;
+  /** Accepted but ignored — profile list rows render at raw 100%
+   *  TCGPlayer prices, same contract as the wishlist / binder rows.
+   *  See ListRows.AvailableRow for the rationale. */
+  percentage?: number;
   priceMode: PriceMode;
 }) {
   const variant = extractVariantLabel(card.name);
-  const price = adjustPrice(getCardPrice(card, priceMode), percentage);
+  const price = getCardPrice(card, priceMode);
   const imgUrl = cardImageUrl(card.productId, 'sm');
   const display = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '');
 
