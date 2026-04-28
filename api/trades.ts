@@ -24,6 +24,7 @@ import { reportError } from '../lib/errorReporter.js';
 import { recordEvent, listEvents, lastNudgedAt } from '../lib/proposalEvents.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 import { promoteProposalToSession } from '../lib/sessions.js';
+import { resolveTradeGuild } from '../lib/tradeGuild.js';
 
 /**
  * Single dispatcher for every `/api/trades/*` endpoint.
@@ -132,6 +133,12 @@ const ProposeBodySchema = z.object({
   offeringCards: z.array(TradeCardSnapshotSchema),
   receivingCards: z.array(TradeCardSnapshotSchema),
   message: z.string().max(500).optional(),
+  // Optional. When set, the proposer is asking the trade to be
+  // hosted in this specific bot-installed guild. The server still
+  // validates membership + bot install + non-null trades channel
+  // before honouring it; an invalid value falls through to the
+  // default-pick cascade rather than 4xxing.
+  guildId: z.string().min(1).max(32).optional(),
 }).refine(
   data => data.offeringCards.length > 0 || data.receivingCards.length > 0,
   { message: 'Proposal must include at least one card' },
@@ -174,7 +181,7 @@ export async function handlePropose(
   if (!parsed.success) {
     return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
   }
-  const { recipientHandle, offeringCards, receivingCards, message } = parsed.data;
+  const { recipientHandle, offeringCards, receivingCards, message, guildId: preferredGuildId } = parsed.data;
 
   const db = getDb();
 
@@ -215,6 +222,16 @@ export async function handlePropose(
     return res.status(500).json({ error: 'Proposer user record not found' });
   }
 
+  // Resolve the host guild before insert so the row can be tagged
+  // up-front (instead of a second UPDATE round-trip after delivery).
+  // Null is fine — the proposal still saves and falls back to DM.
+  const resolvedGuild = await resolveTradeGuild(
+    db,
+    session.userId,
+    recipient.id,
+    preferredGuildId ?? null,
+  );
+
   const id = crypto.randomUUID();
   await db.insert(tradeProposals).values({
     id,
@@ -225,6 +242,7 @@ export async function handlePropose(
     receivingCards,
     message: message ?? null,
     deliveryStatus: 'pending',
+    guildId: resolvedGuild?.guildId ?? null,
   });
   await recordEvent(db, {
     proposalId: id,
@@ -274,8 +292,7 @@ export async function handlePropose(
   let threadId: string | null = null;
   let threadParentChannelId: string | null = null;
 
-  const tradesChannelId = process.env.TRADES_CHANNEL_ID;
-  const canCreateThread = !!tradesChannelId && !!proposerFull?.discordId;
+  const canCreateThread = !!resolvedGuild && !!proposerFull?.discordId;
 
   if (delivery === 'thread-immediately' && canCreateThread) {
     let createdThreadId: string | null = null;
@@ -289,7 +306,7 @@ export async function handlePropose(
         receivingCards,
         message,
       });
-      const thread = await bot.createPrivateThread(tradesChannelId!, {
+      const thread = await bot.createPrivateThread(resolvedGuild!.tradesChannelId, {
         name: threadName(proposer.handle, recipient.handle, id),
       });
       createdThreadId = thread.id;
@@ -305,7 +322,7 @@ export async function handlePropose(
       ]);
       const posted = await bot.postChannelMessage(thread.id, payload);
       threadId = thread.id;
-      threadParentChannelId = thread.parent_id ?? tradesChannelId!;
+      threadParentChannelId = thread.parent_id ?? resolvedGuild!.tradesChannelId;
       channelId = thread.id;
       messageId = posted.id;
       deliveryStatus = 'delivered';
@@ -930,6 +947,10 @@ export async function handleCounter(
     receivingCards,
     message: message ?? null,
     deliveryStatus: 'pending',
+    // Inherit the original's guild so the counter conversation
+    // continues in the same place. If the original was DM-only
+    // (guildId null), the counter stays DM-only too.
+    guildId: original.guildId,
   });
   await recordEvent(db, {
     proposalId: counterId,

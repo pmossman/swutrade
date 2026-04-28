@@ -361,13 +361,24 @@ export const tradeProposals = pgTable(
       .notNull(),
     discordDmChannelId: text('discord_dm_channel_id'),
     discordDmMessageId: text('discord_dm_message_id'),
-    // Private-thread mode (preferred when TRADES_CHANNEL_ID env is set).
-    // When a proposal lands, the bot creates a private thread in the
-    // configured parent channel, adds both users, and posts the embed
-    // there instead of per-user DMs. Both users get a push-style
-    // notification on add, and both can chat in-thread. DM columns
-    // above remain the fallback when thread creation fails (user not
-    // in the guild, perms missing, etc.).
+    // Guild scope for the proposal's thread routing. Resolved at
+    // propose-time from the (proposer, recipient) pair's mutual
+    // bot-installed guilds; null when no qualifying guild exists
+    // (DM-only delivery) or for legacy rows pre-dating this column.
+    // Counters inherit this from the original to preserve
+    // conversation continuity. The thread itself lives in
+    // `bot_installed_guilds.trades_channel_id` for this guild — we
+    // store the guild_id rather than the channel_id directly so a
+    // server admin renaming/recreating the channel doesn't orphan
+    // historical proposals.
+    guildId: text('guild_id'),
+    // Private-thread mode. When a proposal lands AND a guild is
+    // resolved, the bot creates a private thread in that guild's
+    // `#swutrade-threads` channel, adds both users, and posts the
+    // embed there instead of per-user DMs. Both users get a push-
+    // style notification on add, and both can chat in-thread. DM
+    // columns above remain the fallback when thread creation fails
+    // (user not in the guild, perms missing, etc.).
     discordThreadId: text('discord_thread_id'),
     discordThreadParentChannelId: text('discord_thread_parent_channel_id'),
     // Request-thread flow (Phase-1 consent model). When one party

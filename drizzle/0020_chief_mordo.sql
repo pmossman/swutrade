@@ -1,0 +1,1 @@
+ALTER TABLE "trade_proposals" ADD COLUMN "guild_id" text;

@@ -9,6 +9,7 @@ import type { RecipientProfile, FetchState } from '../hooks/useRecipientProfile'
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { usePricing } from '../contexts/PricingContext';
 import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
+import { useMutualBotGuilds, type MutualBotGuildOption } from '../hooks/useMutualBotGuilds';
 import { usePrimaryAction } from '../hooks/usePrimaryAction';
 import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
 
@@ -69,6 +70,22 @@ export function ProposeBar({
 
   const composer = useComposerBar({ yourCards, theirCards });
   const { message, setMessage, sendState, submit, buildSnapshot, resetSendState } = composer;
+
+  // Mutual bot-installed guilds for (viewer, recipient) — drives the
+  // confirm modal's guild picker. Null while loading or when zero
+  // candidates exist; in those cases delivery falls back to per-user
+  // DM and no picker renders.
+  const { guilds: mutualGuilds, status: guildsStatus } = useMutualBotGuilds(recipientHandle);
+  const [selectedGuildId, setSelectedGuildId] = useState<string | null>(null);
+  // When the candidate set resolves, default to the server-picked
+  // guild (the one with isDefault=true). User can override before
+  // clicking Send. Re-runs on recipient change so a switched recipient
+  // doesn't keep a now-irrelevant prior selection.
+  useEffect(() => {
+    if (guildsStatus !== 'ready') return;
+    const def = mutualGuilds.find(g => g.isDefault);
+    setSelectedGuildId(def?.guildId ?? null);
+  }, [guildsStatus, mutualGuilds]);
 
   // Build a preview for the given mode. Both modes share the same
   // overlap pool computation inside computeMatch — only the subset-
@@ -142,7 +159,13 @@ export function ProposeBar({
   const handleSend = useCallback(async () => {
     await submit({
       endpoint: '/api/trades/propose',
-      body: { recipientHandle },
+      body: {
+        recipientHandle,
+        // Only send when the user actively has a guild selected — null
+        // means "let the server pick the default" (or "no qualifying
+        // guild", which the server handles by falling back to DM).
+        ...(selectedGuildId ? { guildId: selectedGuildId } : {}),
+      },
       onSuccess: data => {
         if (data.id) setSentTradeId(data.id);
         // Close the confirm modal — the post-send banner lives in the
@@ -150,7 +173,7 @@ export function ProposeBar({
         setConfirmOpen(false);
       },
     });
-  }, [submit, recipientHandle]);
+  }, [submit, recipientHandle, selectedGuildId]);
 
   // Cancelling a draft proposal returns the user to the place they
   // arrived from (community directory or the counterpart's profile).
@@ -420,6 +443,9 @@ export function ProposeBar({
         sending={sending}
         errorMessage={sendError}
         onSend={handleSend}
+        guildOptions={mutualGuilds}
+        selectedGuildId={selectedGuildId}
+        onChangeGuild={setSelectedGuildId}
       />
     </div>
   );
@@ -447,6 +473,12 @@ interface ConfirmProposalDialogProps {
   sending: boolean;
   errorMessage: string | null;
   onSend: () => void;
+  /** Mutual bot-installed guilds for the (viewer, recipient) pair.
+   *  Empty array means "no qualifying guild" → trade is delivered as
+   *  per-user DM only and no picker renders. */
+  guildOptions: MutualBotGuildOption[];
+  selectedGuildId: string | null;
+  onChangeGuild: (next: string | null) => void;
 }
 
 /**
@@ -468,6 +500,9 @@ function ConfirmProposalDialog({
   sending,
   errorMessage,
   onSend,
+  guildOptions,
+  selectedGuildId,
+  onChangeGuild,
 }: ConfirmProposalDialogProps) {
   // Lock the modal closed while a send is in flight — preserves the
   // user's "I clicked send" mental model even if they try to Escape
@@ -549,6 +584,19 @@ function ConfirmProposalDialog({
                 enough that the number is noise. */}
             <TotalsStrip offeringTotal={offeringTotal} receivingTotal={receivingTotal} diff={diff} />
 
+            {/* Guild picker — controls where the bot creates the
+                private thread. Hidden when no mutual bot-installed
+                guild exists (delivery falls back to DM); a quiet
+                label when there's only one; a small dropdown when
+                there are 2+. */}
+            <GuildPicker
+              options={guildOptions}
+              selectedGuildId={selectedGuildId}
+              onChange={onChangeGuild}
+              recipientHandle={recipientHandle}
+              disabled={sending}
+            />
+
             {/* Optional note — the headline reason this modal exists. */}
             <div className="flex flex-col gap-1.5">
               <label
@@ -607,6 +655,91 @@ function ConfirmProposalDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * Guild picker rendered inside the confirm modal. Tells the proposer
+ * which Discord server will host the private trade thread, and lets
+ * them switch when their mutual-guild list has multiple options.
+ *
+ * Hidden when the candidate set is empty (the most common case for
+ * cross-community trades) — the proposal still goes through, just
+ * via per-user DMs instead of a thread. A single-option set renders
+ * a quiet "Trading in {Name}" label so the proposer at least knows
+ * where the conversation will live.
+ */
+function GuildPicker({
+  options,
+  selectedGuildId,
+  onChange,
+  recipientHandle,
+  disabled,
+}: {
+  options: MutualBotGuildOption[];
+  selectedGuildId: string | null;
+  onChange: (next: string | null) => void;
+  recipientHandle: string;
+  disabled: boolean;
+}) {
+  if (options.length === 0) {
+    return null;
+  }
+
+  if (options.length === 1) {
+    const only = options[0];
+    return (
+      <div
+        data-testid="propose-guild-label"
+        data-guild-id={only.guildId}
+        className="flex items-center gap-2 text-[11px] text-gray-400"
+      >
+        <ServerIcon className="w-3.5 h-3.5 text-gold/70 shrink-0" aria-hidden />
+        <span>
+          Trading in <strong className="text-gold/90">{only.guildName}</strong>
+          <span className="text-gray-500"> · @{recipientHandle} will see the proposal in a private thread there.</span>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label
+        htmlFor="propose-confirm-guild"
+        className="text-[11px] font-bold tracking-[0.1em] uppercase text-gray-400"
+      >
+        Trade in which server?
+      </label>
+      <select
+        id="propose-confirm-guild"
+        value={selectedGuildId ?? ''}
+        onChange={e => onChange(e.target.value || null)}
+        disabled={disabled}
+        data-testid="propose-guild-select"
+        className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-xs text-gray-100 focus:border-gold/50 focus:outline-none disabled:opacity-50"
+      >
+        {options.map(g => (
+          <option key={g.guildId} value={g.guildId}>
+            {g.guildName}{g.isDefault ? '  (default)' : ''}
+          </option>
+        ))}
+      </select>
+      <p className="text-[10px] text-gray-500">
+        The bot creates a private thread here that only you, @{recipientHandle}, and the bot can see.
+      </p>
+    </div>
+  );
+}
+
+function ServerIcon({ className, ...rest }: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className} {...rest}>
+      <rect x="2" y="3" width="12" height="3" rx="1" />
+      <rect x="2" y="10" width="12" height="3" rx="1" />
+      <line x1="5" y1="4.5" x2="5" y2="4.5" />
+      <line x1="5" y1="11.5" x2="5" y2="11.5" />
+    </svg>
   );
 }
 

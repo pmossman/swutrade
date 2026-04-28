@@ -216,8 +216,7 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
             />
 
             {/* Open-thread deep link — only renders when the proposal
-                went via a Discord private thread (recent proposals
-                since TRADES_CHANNEL_ID was configured). Falls back to
+                was hosted in a Discord private thread. Falls back to
                 nothing when the proposal landed as a plain DM. */}
             {trade.discordThreadId && (
               <OpenInDiscordLink threadId={trade.discordThreadId} />

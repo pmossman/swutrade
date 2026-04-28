@@ -191,12 +191,14 @@ export async function insertAvailable(userId: string, productId: string, qty = 1
 export async function installBotInGuild(guildId: string, opts: {
   guildName?: string;
   guildIcon?: string | null;
+  tradesChannelId?: string | null;
 } = {}): Promise<() => Promise<void>> {
   const db = getDb();
   await db.insert(botInstalledGuilds).values({
     guildId,
     guildName: opts.guildName ?? `Test Guild ${guildId}`,
     guildIcon: opts.guildIcon ?? null,
+    tradesChannelId: opts.tradesChannelId ?? null,
   }).onConflictDoNothing();
   return async () => {
     await db.delete(botInstalledGuilds).where(eq(botInstalledGuilds.guildId, guildId)).catch(() => {});
@@ -242,10 +244,10 @@ export async function createMutualGuildMembership(
   userA: string,
   userB: string,
   guildId: string,
-  opts: { enrolled?: boolean } = {},
+  opts: { enrolled?: boolean; tradesChannelId?: string | null } = {},
 ): Promise<() => Promise<void>> {
   const cleanups = [
-    await installBotInGuild(guildId),
+    await installBotInGuild(guildId, { tradesChannelId: opts.tradesChannelId ?? null }),
     await createGuildMembership(userA, guildId, { enrolled: opts.enrolled ?? true }),
     await createGuildMembership(userB, guildId, { enrolled: opts.enrolled ?? true }),
   ];

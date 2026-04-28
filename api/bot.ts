@@ -33,6 +33,7 @@ import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
+import { getGuildTradesChannel } from '../lib/tradeGuild.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -611,6 +612,7 @@ interface TradeRow {
   offeringCards: import('../lib/schema.js').TradeCardSnapshot[];
   receivingCards: import('../lib/schema.js').TradeCardSnapshot[];
   message: string | null;
+  guildId: string | null;
   discordDmChannelId: string | null;
   discordDmMessageId: string | null;
   discordThreadId: string | null;
@@ -724,8 +726,13 @@ async function handleThreadFlowButton(args: {
       // Counterpart has `prefer` or `auto-accept` — skip the approval
       // DM and create the thread now. Edit BOTH DMs to the "moved"
       // variant.
-      const tradesChannelId = process.env.TRADES_CHANNEL_ID;
+      const tradesChannelId = trade.guildId
+        ? await getGuildTradesChannel(getDb(), trade.guildId)
+        : null;
       if (!tradesChannelId) {
+        // Either the trade was DM-only by design (no guild_id at
+        // propose-time) or the guild was uninstalled in the meantime.
+        // Either way, can't open a thread — tell the clicker.
         res.status(200).json({
           type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
           data: {
@@ -776,6 +783,7 @@ async function handleThreadFlowButton(args: {
         trade,
         proposalCtx,
         threadId: createdThreadId,
+        threadParentChannelId: tradesChannelId,
         clickerIsProposer,
         res,
       });
@@ -863,7 +871,9 @@ async function handleThreadFlowButton(args: {
     const bot = deps.bot ?? createDiscordBotClient();
 
     if (action === 'approve-thread') {
-      const tradesChannelId = process.env.TRADES_CHANNEL_ID;
+      const tradesChannelId = trade.guildId
+        ? await getGuildTradesChannel(getDb(), trade.guildId)
+        : null;
       if (!tradesChannelId) {
         res.status(200).json({
           type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
@@ -995,10 +1005,11 @@ async function _autoApproveMoveThread(args: {
     message: string | null;
   };
   threadId: string | null;
+  threadParentChannelId: string;
   clickerIsProposer: boolean;
   res: VercelResponse;
 }): Promise<void> {
-  const { bot, trade, proposalCtx, threadId, res } = args;
+  const { bot, trade, proposalCtx, threadId, threadParentChannelId, res } = args;
   if (!threadId) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
@@ -1015,7 +1026,7 @@ async function _autoApproveMoveThread(args: {
   await db.update(tradeProposals)
     .set({
       discordThreadId: threadId,
-      discordThreadParentChannelId: process.env.TRADES_CHANNEL_ID ?? null,
+      discordThreadParentChannelId: threadParentChannelId,
       updatedAt: new Date(),
     })
     .where(eq(tradeProposals.id, trade.id));

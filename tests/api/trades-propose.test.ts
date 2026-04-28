@@ -8,6 +8,7 @@ import {
   mockResponse,
   createTestUser,
   sealTestCookie,
+  createMutualGuildMembership,
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
 import { tradeProposals, users, type TradeCardSnapshot } from '../../lib/schema.js';
@@ -123,6 +124,7 @@ function makeFakeBot(opts: FakeBotOpts = {}): FakeBot {
 describeWithDb('POST /api/trades/propose', () => {
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
   const createdProposalIds: string[] = [];
+  const guildCleanups: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
     const db = getDb();
@@ -130,9 +132,34 @@ describeWithDb('POST /api/trades/propose', () => {
       await db.delete(tradeProposals).where(eq(tradeProposals.id, id)).catch(() => {});
     }
     createdProposalIds.length = 0;
+    // Run guild cleanups before user cleanups — user cascade-delete
+    // would otherwise leave orphan user_guild_memberships rows around.
+    for (const fn of guildCleanups.reverse()) await fn();
+    guildCleanups.length = 0;
     for (const f of fixtures) await f.cleanup();
     fixtures.length = 0;
   });
+
+  let seededGuildSeq = 0;
+  /**
+   * Wrapper for the common "put proposer + recipient into a mutual
+   * bot-installed guild with a given trades channel" pattern that the
+   * thread-flow tests need. Each call mints a fresh guild id so
+   * parallel test runs don't collide.
+   */
+  async function seedTradesGuild(
+    proposerId: string,
+    recipientId: string,
+    tradesChannelId: string,
+  ): Promise<string> {
+    const guildId = `g-prop-${++seededGuildSeq}-${Math.random().toString(36).slice(2, 6)}`;
+    guildCleanups.push(
+      await createMutualGuildMembership(proposerId, recipientId, guildId, {
+        tradesChannelId,
+      }),
+    );
+    return guildId;
+  }
 
   function snapshot(productId: string, qty = 1): TradeCardSnapshot {
     return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
@@ -388,19 +415,13 @@ describeWithDb('POST /api/trades/propose', () => {
     });
   });
 
-  describe('Discord thread delivery (TRADES_CHANNEL_ID set)', () => {
-    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
-    afterEach(() => {
-      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
-      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
-    });
-
-    it('creates a private thread, adds both users, posts the embed, and stores thread ids', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
+  describe('Discord thread delivery (mutual bot-installed guild)', () => {
+    it('creates a private thread, adds both users, posts the embed, and stores thread ids + guild_id', async () => {
       // Thread-immediately needs both sides pref-opted-in.
       const proposer = await createTestUser({ communicationPref: 'prefer' });
       const recipient = await createTestUser({ communicationPref: 'prefer' });
       fixtures.push(proposer, recipient);
+      const guildId = await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-1');
 
       const bot = makeFakeBot({ thread: { id: 'thread-abc', parentId: 'parent-channel-1' } });
       const cookie = await sealTestCookie(proposer.id);
@@ -444,6 +465,7 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(row.deliveryStatus).toBe('delivered');
       expect(row.discordThreadId).toBe('thread-abc');
       expect(row.discordThreadParentChannelId).toBe('parent-channel-1');
+      expect(row.guildId).toBe(guildId);
       // Channel + message ids reflect the thread (thread id doubles as the
       // channel id for PATCH message edits on the Accept/Decline path).
       expect(row.discordDmChannelId).toBe('thread-abc');
@@ -451,10 +473,10 @@ describeWithDb('POST /api/trades/propose', () => {
     });
 
     it('falls back to DM when thread creation fails (user not in guild, bot perms missing, etc.)', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
       const proposer = await createTestUser({ communicationPref: 'prefer' });
       const recipient = await createTestUser({ communicationPref: 'prefer' });
       fixtures.push(proposer, recipient);
+      await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-1');
 
       const bot = makeFakeBot({
         thread: { id: 'ignored', parentId: 'ignored', failCreate: true },
@@ -492,10 +514,10 @@ describeWithDb('POST /api/trades/propose', () => {
     });
 
     it('cleans up the orphan thread when addThreadMember fails (e.g. recipient not in the guild)', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-channel-1';
       const proposer = await createTestUser({ communicationPref: 'prefer' });
       const recipient = await createTestUser({ communicationPref: 'prefer' });
       fixtures.push(proposer, recipient);
+      await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-1');
 
       // Thread creation succeeds, but addThreadMember fails — mirrors
       // the real "fake Discord ID" case. Must delete the orphan
@@ -533,8 +555,10 @@ describeWithDb('POST /api/trades/propose', () => {
       expect(row.discordDmChannelId).toBe('dm-cleanup');
     });
 
-    it('uses DM path when TRADES_CHANNEL_ID is unset (existing behavior preserved)', async () => {
-      delete process.env.TRADES_CHANNEL_ID;
+    it('uses DM path when no mutual bot-installed guild exists (legacy / cross-community)', async () => {
+      // Deliberately skip seedTradesGuild — proposer + recipient share
+      // no bot-installed guild, so the resolver returns null and the
+      // handler falls through to per-user DM delivery.
       const proposer = await createTestUser();
       const recipient = await createTestUser();
       fixtures.push(proposer, recipient);
@@ -594,7 +618,7 @@ describeWithDb('POST /api/trades/propose', () => {
    * pair. `deliveryForPair` is unit-tested in isolation, but this
    * table pins the INTEGRATION of the pref into the propose endpoint
    * — proving that each pair correctly:
-   *   - 'thread-immediately' → creates a thread (TRADES_CHANNEL_ID set)
+   *   - 'thread-immediately' → creates a thread (mutual guild seeded)
    *   - 'dm-with-request'   → DMs with 4 buttons (request-thread included)
    *   - 'dm-only'           → DMs with 3 buttons (no request-thread)
    *
@@ -603,12 +627,6 @@ describeWithDb('POST /api/trades/propose', () => {
    * DM send isn't invoked, so button-count assertions are N/A.
    */
   describe('communication-pref delivery matrix', () => {
-    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
-    afterEach(() => {
-      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
-      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
-    });
-
     type Expected = 'thread-immediately' | 'dm-with-request' | 'dm-only';
     const prefs: CommunicationPref[] = ['prefer', 'auto-accept', 'allow', 'dm-only'];
     const cases: Array<[CommunicationPref, CommunicationPref, Expected]> = [];
@@ -628,15 +646,14 @@ describeWithDb('POST /api/trades/propose', () => {
     it.each(cases)(
       'proposer=%s × recipient=%s → %s',
       async (proposerPref, recipientPref, expected) => {
-        // Every case runs with TRADES_CHANNEL_ID set so the
-        // thread-immediately branch is reachable; dm-with-request
-        // and dm-only cases still land in DM (matrix gates thread
-        // attempt by pref, not by env alone).
-        process.env.TRADES_CHANNEL_ID = 'parent-channel-matrix';
-
         const proposer = await createTestUser({ communicationPref: proposerPref });
         const recipient = await createTestUser({ communicationPref: recipientPref });
         fixtures.push(proposer, recipient);
+        // Every case seeds a mutual guild so the thread-immediately
+        // branch is reachable; dm-with-request and dm-only cases
+        // still land in DM (matrix gates thread attempt by pref, not
+        // by guild availability alone).
+        await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-matrix');
 
         const bot = makeFakeBot({
           thread: { id: `thread-${proposerPref}-${recipientPref}`, parentId: 'parent-channel-matrix' },
@@ -694,18 +711,11 @@ describeWithDb('POST /api/trades/propose', () => {
    * reading `users.communicationPref` directly again.
    */
   describe('communication-pref peer overrides', () => {
-    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
-    afterEach(() => {
-      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
-      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
-    });
-
     it('self=allow × self=allow + mutual peer overrides to prefer → thread-immediately', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-channel-peer-override';
-
       const proposer = await createTestUser({ communicationPref: 'allow' });
       const recipient = await createTestUser({ communicationPref: 'allow' });
       fixtures.push(proposer, recipient);
+      await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-peer-override');
 
       const { userPeerPrefs: peerPrefsTable } = await import('../../lib/schema.js');
       const db = getDb();
@@ -747,11 +757,10 @@ describeWithDb('POST /api/trades/propose', () => {
     });
 
     it('self=prefer × self=prefer + recipient peer-overrides to dm-only → dm-only', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-channel-peer-override-2';
-
       const proposer = await createTestUser({ communicationPref: 'prefer' });
       const recipient = await createTestUser({ communicationPref: 'prefer' });
       fixtures.push(proposer, recipient);
+      await seedTradesGuild(proposer.id, recipient.id, 'parent-channel-peer-override-2');
 
       const { userPeerPrefs: peerPrefsTable } = await import('../../lib/schema.js');
       const db = getDb();
@@ -801,47 +810,39 @@ describeWithDb('POST /api/trades/propose', () => {
    * side-effects.
    */
   describe('request-thread button flow', () => {
-    const ORIGINAL_ENV = process.env.TRADES_CHANNEL_ID;
-    afterEach(() => {
-      if (ORIGINAL_ENV === undefined) delete process.env.TRADES_CHANNEL_ID;
-      else process.env.TRADES_CHANNEL_ID = ORIGINAL_ENV;
-    });
-
-    /** Seed a delivered-to-DM pending proposal with the given prefs.
-     *  Temporarily clears TRADES_CHANNEL_ID for the propose itself
-     *  (so the row lands in DM with known ids), then restores it so
-     *  the subsequent request-thread click can use the env. */
+    /** Seed a pending proposal with the given prefs INSIDE a mutual
+     *  bot-installed guild whose trades channel is the supplied id.
+     *  When the prefs route to dm-with-request the row lands in DM
+     *  but `guild_id` is still set, so a subsequent request-thread
+     *  click has a guild + channel to open the thread in. */
     async function seedProposalWithPrefs(opts: {
       proposerPref: CommunicationPref;
       recipientPref: CommunicationPref;
+      tradesChannelId?: string;
     }) {
       const proposer = await createTestUser({ communicationPref: opts.proposerPref });
       const recipient = await createTestUser({ communicationPref: opts.recipientPref });
       fixtures.push(proposer, recipient);
 
-      const envBefore = process.env.TRADES_CHANNEL_ID;
-      delete process.env.TRADES_CHANNEL_ID;
-      try {
-        const bot = makeFakeBot({ channelId: 'dm-init', messageId: 'msg-init' });
-        const cookie = await sealTestCookie(proposer.id);
-        const req = mockRequest({
-          method: 'POST',
-          cookies: { swu_session: cookie },
-          body: {
-            recipientHandle: recipient.handle,
-            offeringCards: [snapshot('p-1')],
-            receivingCards: [snapshot('p-2')],
-          },
-        });
-        const res = mockResponse();
-        await handlePropose(req, res, { bot });
-        const tradeId = (res._json as { id: string }).id;
-        createdProposalIds.push(tradeId);
-        return { proposer, recipient, tradeId };
-      } finally {
-        if (envBefore === undefined) delete process.env.TRADES_CHANNEL_ID;
-        else process.env.TRADES_CHANNEL_ID = envBefore;
-      }
+      const channelId = opts.tradesChannelId ?? `parent-ch-seed-${Math.random().toString(36).slice(2, 6)}`;
+      const guildId = await seedTradesGuild(proposer.id, recipient.id, channelId);
+
+      const bot = makeFakeBot({ channelId: 'dm-init', messageId: 'msg-init' });
+      const cookie = await sealTestCookie(proposer.id);
+      const req = mockRequest({
+        method: 'POST',
+        cookies: { swu_session: cookie },
+        body: {
+          recipientHandle: recipient.handle,
+          offeringCards: [snapshot('p-1')],
+          receivingCards: [snapshot('p-2')],
+        },
+      });
+      const res = mockResponse();
+      await handlePropose(req, res, { bot });
+      const tradeId = (res._json as { id: string }).id;
+      createdProposalIds.push(tradeId);
+      return { proposer, recipient, tradeId, guildId, tradesChannelId: channelId };
     }
 
     function clickButton(tradeId: string, action: string, clickerDiscordId: string): Record<string, unknown> {
@@ -890,10 +891,10 @@ describeWithDb('POST /api/trades/propose', () => {
     });
 
     it('manual-decide → approve: creates thread, edits both DMs, populates thread ids', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-ch-approve';
       const { proposer, recipient, tradeId } = await seedProposalWithPrefs({
         proposerPref: 'allow',
         recipientPref: 'allow',
+        tradesChannelId: 'parent-ch-approve',
       });
 
       // Step 1: proposer clicks request-thread → approval DM sent.
@@ -963,10 +964,10 @@ describeWithDb('POST /api/trades/propose', () => {
     });
 
     it('auto-approve: single-click request creates thread immediately (no approval DM)', async () => {
-      process.env.TRADES_CHANNEL_ID = 'parent-ch-auto';
       const { proposer, tradeId } = await seedProposalWithPrefs({
         proposerPref: 'allow',
         recipientPref: 'auto-accept',
+        tradesChannelId: 'parent-ch-auto',
       });
 
       const bot = makeFakeBot({ thread: { id: 'thread-auto', parentId: 'parent-ch-auto' } });

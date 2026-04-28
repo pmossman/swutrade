@@ -239,7 +239,7 @@ These are decisions that affected more than one subsystem. Listed newest-first; 
 - **Iron-session cookies** — not JWT. Server owns session state; cookie is an opaque session id. See [`g-auth.md`](./g-auth.md).
 - **Function ceiling workaround** — dispatcher-per-domain + vercel.json rewrites. See [`j-infra.md`](./j-infra.md).
 - **Public defaults + auto-enroll** (beta feedback, 2026-04-17) — new accounts default public; auto-enroll into bot-installed guilds. See [`f-community-profile.md`](./f-community-profile.md).
-- **Private-thread-first proposal delivery** — when `TRADES_CHANNEL_ID` is set, proposals land in private threads not DMs. Consent-gated. See [`i-discord-bot.md`](./i-discord-bot.md) + [`b-proposals.md`](./b-proposals.md).
+- **Private-thread-first proposal delivery** — when proposer + recipient share a bot-installed guild, proposals land in a private thread inside that guild's `#swutrade-threads` channel; otherwise they fall back to per-user DMs. Consent-gated; the proposer can override the default guild via the ProposeBar picker. See [`i-discord-bot.md`](./i-discord-bot.md) + [`b-proposals.md`](./b-proposals.md).
 
 ## Where to start by question
 

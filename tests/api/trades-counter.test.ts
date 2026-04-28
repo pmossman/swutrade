@@ -57,6 +57,7 @@ describeWithDb('POST /api/trades/counter', () => {
     status?: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
     discordDmChannelId?: string | null;
     discordDmMessageId?: string | null;
+    guildId?: string | null;
   }) {
     const id = crypto.randomUUID();
     createdIds.push(id);
@@ -72,6 +73,7 @@ describeWithDb('POST /api/trades/counter', () => {
       deliveryStatus: 'delivered',
       discordDmChannelId: overrides.discordDmChannelId ?? 'dm-orig',
       discordDmMessageId: overrides.discordDmMessageId ?? 'msg-orig',
+      guildId: overrides.guildId ?? null,
     });
     return id;
   }
@@ -133,6 +135,38 @@ describeWithDb('POST /api/trades/counter', () => {
     expect(bot.sendCalls).toHaveLength(1);
     expect(bot.sendCalls[0].userId).toBe(proposer.id);
     expect(bot.sendCalls[0].body.embeds?.[0].title).toContain('Counter');
+  });
+
+  it('inherits guild_id from the original — counter conversation continues in the same guild', async () => {
+    const proposer = await createTestUser();
+    const recipient = await createTestUser();
+    fixtures.push(proposer, recipient);
+
+    const originalId = await seedOriginal({
+      proposerUserId: proposer.id,
+      recipientUserId: recipient.id,
+      guildId: 'g-original-host',
+    });
+
+    const cookie = await sealTestCookie(recipient.id);
+    const req = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: cookie },
+      body: {
+        counterOfId: originalId,
+        offeringCards: [snapshot('c-1')],
+        receivingCards: [snapshot('c-2')],
+      },
+    });
+    const res = mockResponse();
+    await handleCounter(req, res, { bot: makeFakeBot() });
+    expect(res._status).toBe(201);
+    const counterId = (res._json as { id: string }).id;
+    createdIds.push(counterId);
+
+    const db = getDb();
+    const [counterRow] = await db.select().from(tradeProposals).where(eq(tradeProposals.id, counterId)).limit(1);
+    expect(counterRow.guildId).toBe('g-original-host');
   });
 
   it('401 when unauthenticated', async () => {

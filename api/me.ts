@@ -58,6 +58,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleFavorites(req, res);
     case 'favorite-delete':
       return handleFavoriteDelete(req, res);
+    case 'mutual-bot-guilds':
+      return handleMutualBotGuilds(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -1159,4 +1161,69 @@ export async function handleFavoriteDelete(req: VercelRequest, res: VercelRespon
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.status(204).end();
+}
+
+// --- mutual bot-installed guilds -------------------------------------------
+
+/**
+ * Mutual bot-installed guilds for the (signed-in viewer, target user)
+ * pair. Powers the ProposeBar's guild picker — the proposer needs to
+ * see which guilds are eligible to host a trade thread BEFORE they
+ * click Send so they can override the default if they want.
+ *
+ * Lookup target by `?with=<handle>`. Returns:
+ *   `[{ guildId, guildName, guildIcon, isDefault }, ...]`
+ *
+ * Empty array = no qualifying guild (proposer + recipient share zero
+ * bot-installed guilds with a trades channel) → caller renders no
+ * picker and the trade is delivered via DM only.
+ */
+export async function handleMutualBotGuilds(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const handle = (req.query.with as string | undefined)?.trim();
+  if (!handle) {
+    return res.status(400).json({ error: 'Missing `with` query param (target handle)' });
+  }
+
+  const db = getDb();
+  const [target] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.handle, handle))
+    .limit(1);
+  if (!target) {
+    // Same surface as ProposeBar's existing recipient lookup —
+    // empty array, not 404. The picker fades out gracefully if the
+    // user mistypes a handle; the actual handle-validity check
+    // happens at propose time.
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(200).json([]);
+  }
+  if (target.id === session.userId) {
+    // Self-trade is blocked at propose time anyway. Return empty so
+    // the picker doesn't render with a confusing "trade with myself
+    // in guild X" entry.
+    res.setHeader('Cache-Control', 'private, no-store');
+    return res.status(200).json([]);
+  }
+
+  const { listMutualBotGuilds } = await import('../lib/tradeGuild.js');
+  const guilds = await listMutualBotGuilds(db, session.userId, target.id);
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(200).json(
+    guilds.map(g => ({
+      guildId: g.guildId,
+      guildName: g.guildName,
+      guildIcon: g.guildIcon,
+      isDefault: g.isDefault,
+    })),
+  );
 }
