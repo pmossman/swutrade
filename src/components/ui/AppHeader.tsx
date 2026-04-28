@@ -3,6 +3,7 @@ import { BetaBadge } from '../BetaBadge';
 import { AccountMenu } from '../AccountMenu';
 import { NavMenu } from '../NavMenu';
 import { Breadcrumbs, type BreadcrumbSegment } from './Breadcrumbs';
+import { useTutorialContext } from '../../contexts/TutorialContext';
 import type { AuthApi } from '../../hooks/useAuth';
 
 export type { BreadcrumbSegment };
@@ -90,10 +91,44 @@ export function AppHeader({
       )}
 
       <div className="ml-auto flex items-center gap-1.5 md:gap-2 shrink-0">
+        {!slim && <TutorialHelpButton />}
         {showNavMenu && <NavMenu hasAccount={hasAccount} hasAnySession={hasAnySession} />}
         {showAccountMenu && <AccountMenu auth={auth} />}
       </div>
     </header>
+  );
+}
+
+/**
+ * Glowing help button — opt-in tutorial entry point. Renders for every
+ * viewer who hasn't dismissed the tour yet (a hand-pulled "?" replaces
+ * the old auto-firing overlay). Once the user clicks Skip / Got it on
+ * the tour, `tutorial.hasBeenSeen` flips true and the button hides
+ * itself; the AccountMenu's "Show tutorial" entry stays as the tucked-
+ * away access for users who want to revisit.
+ *
+ * Glow is a subtle gold ring + slow pulse — visible enough to discover
+ * on first paint without distracting from the content the user came
+ * here to see.
+ */
+function TutorialHelpButton() {
+  const tutorial = useTutorialContext();
+  if (tutorial.hasBeenSeen) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => tutorial.replay()}
+      aria-label="Show tutorial"
+      title="New here? Take a quick tour."
+      className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-gold/15 border border-gold/50 text-gold hover:bg-gold/25 hover:border-gold/70 transition-colors animate-pulse"
+    >
+      <span aria-hidden className="absolute inset-0 rounded-lg ring-2 ring-gold/30 animate-ping" />
+      <svg viewBox="0 0 16 16" className="w-4 h-4 relative" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="8" cy="8" r="6.5" />
+        <path d="M6 6.5a2 2 0 1 1 2.5 1.93c-.3.08-.5.36-.5.67V9" />
+        <circle cx="8" cy="11.5" r="0.4" fill="currentColor" />
+      </svg>
+    </button>
   );
 }
 

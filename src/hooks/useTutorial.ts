@@ -1,29 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 /**
- * First-run tutorial state machine for signed-out users.
+ * First-run tutorial state machine. Opt-in only as of 2026-04-28 —
+ * auto-firing on first visit was too aggressive (auto-firing on top
+ * of a real interaction the user came here to do reads as an
+ * interrupt). Now surfaces as a glowing help icon in AppHeader that
+ * users tap when they want the tour, and tucks itself away once
+ * they've seen it.
  *
- * Gated on:
- *   - `isSignedIn` false — signed-in users have committed; the tour's
- *     "sign in with Discord to unlock more" finale is wasted on them.
- *   - `isLoading` false — auth may still be resolving on first paint
- *     and a signed-in user briefly reads as signed-out. Delaying the
- *     activation until auth has settled avoids a flash of tour on
- *     returning users.
- *   - `suppressAutoOpen` false — true when the user landed on a view
- *     that implies a specific intent (shared session via QR, shared
- *     list, trade detail, profile). Auto-firing on those overlays
- *     the user's goal; they can still invoke `replay()` from the
- *     AccountMenu entry if they want the tour later.
- *   - localStorage `swu.tour.dismissedAt` absent — user hasn't seen it.
- *     Skip / Finish both write this key so the tour never auto-resurfaces.
- *
- * `replay()` clears the key and restarts the tour for users who want
- * to see it again from the AccountMenu. Replay bypasses `suppressAutoOpen`
- * because the user is explicitly asking for the tour.
+ * Surface-level gating:
+ *   - `hasBeenSeen` derived from localStorage `swu.tour.dismissedAt`
+ *     so the AppHeader can decide whether to show the icon's glow
+ *     pulse (first-time visitors) vs hide the icon entirely
+ *     (post-dismissal). The `replay()` action stays available via
+ *     AccountMenu's "Show tutorial" entry as the tucked-away access.
+ *   - `replay()` clears `dismissedAt` and starts the tour, so a user
+ *     who wants to see it again gets the same fresh-eyes experience.
+ *   - `dismiss()` writes `dismissedAt` and stops the tour. Skip and
+ *     Finish both call dismiss.
  *
  * localStorage failures (private mode, Safari ITP, etc.) fall through
- * silently — no first-run tour is better than a broken one.
+ * silently — `hasBeenSeen` defaults to false in that case so the
+ * glowing icon stays visible (better than silently hiding the
+ * affordance).
  */
 export const TUTORIAL_STORAGE_KEY = 'swu.tour.dismissedAt';
 
@@ -31,6 +30,9 @@ export interface TutorialApi {
   isActive: boolean;
   currentStep: number;
   totalSteps: number;
+  /** True when the user has previously dismissed (skipped or finished)
+   *  the tour. Drives the AppHeader help-icon glow + visibility. */
+  hasBeenSeen: boolean;
   next: () => void;
   back: () => void;
   dismiss: () => void;
@@ -39,30 +41,22 @@ export interface TutorialApi {
 
 export function useTutorial(opts: {
   totalSteps: number;
-  isSignedIn: boolean;
-  isAuthLoading: boolean;
-  /** True when the current view implies a specific user intent (e.g.
-   *  `/s/:code` QR landing, shared-list URL, `?trade=<id>`, `/u/<handle>`).
-   *  Suppresses auto-activation only — manual `replay()` still works. */
-  suppressAutoOpen: boolean;
 }): TutorialApi {
-  const { totalSteps, isSignedIn, isAuthLoading, suppressAutoOpen } = opts;
+  const { totalSteps } = opts;
 
   const [isActive, setIsActive] = useState<boolean>(false);
   const [currentStep, setCurrentStep] = useState<number>(0);
-
-  useEffect(() => {
-    if (isAuthLoading || isSignedIn || suppressAutoOpen) return;
+  // Initialised lazily from localStorage on first render so the help
+  // icon's glow state is correct on the very first paint (not "glow,
+  // then hide a frame later"). Updated by dismiss / replay.
+  const [hasBeenSeen, setHasBeenSeen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
     try {
-      const dismissed = window.localStorage.getItem(TUTORIAL_STORAGE_KEY);
-      if (!dismissed) {
-        setIsActive(true);
-        setCurrentStep(0);
-      }
+      return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) !== null;
     } catch {
-      // localStorage unavailable — skip silently.
+      return false;
     }
-  }, [isAuthLoading, isSignedIn, suppressAutoOpen]);
+  });
 
   const next = useCallback(() => {
     setCurrentStep(s => Math.min(s + 1, totalSteps - 1));
@@ -80,6 +74,7 @@ export function useTutorial(opts: {
     }
     setIsActive(false);
     setCurrentStep(0);
+    setHasBeenSeen(true);
   }, []);
 
   const replay = useCallback(() => {
@@ -90,7 +85,12 @@ export function useTutorial(opts: {
     }
     setCurrentStep(0);
     setIsActive(true);
+    // Replay clears the seen flag so an explicit "show me again"
+    // resets the affordance state symmetrically — the icon would
+    // re-glow until the next dismiss. In practice that's fine
+    // because the tour itself is now in front of the user.
+    setHasBeenSeen(false);
   }, []);
 
-  return { isActive, currentStep, totalSteps, next, back, dismiss, replay };
+  return { isActive, currentStep, totalSteps, hasBeenSeen, next, back, dismiss, replay };
 }

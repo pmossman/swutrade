@@ -146,6 +146,22 @@ export function TradeSearchOverlay({
     });
   }, [sourceChips]);
 
+  // Auto-focus the search input every time the overlay opens. The
+  // component itself stays mounted across open/close cycles (only its
+  // SearchResults child is conditionally rendered), so the mount-time
+  // ref-focus pattern doesn't refire on a subsequent open. Gate on the
+  // `open` transition. The seed effect below handles the seeded-open
+  // case separately because it needs to fire AFTER applying the
+  // seeded query.
+  useEffect(() => {
+    if (!open) return;
+    if (seed) return; // seed effect handles its own focus on a delay
+    // Defer past the show transition / focus-trap so the focus actually
+    // lands. ~50ms matches the seed effect's timer below.
+    const t = window.setTimeout(() => inputRef.current?.focus(), 50);
+    return () => window.clearTimeout(t);
+  }, [open, seed]);
+
   // Apply parent-supplied seed once, then notify so the parent can
   // null it out. Effect re-runs whenever seed identity changes.
   useEffect(() => {
@@ -333,6 +349,13 @@ export function TradeSearchOverlay({
           selectedSets={filters.selectedSets}
           isOpen={filtersOpen}
           onToggle={() => setFiltersOpen(o => !o)}
+          onClear={() => {
+            // Wipe local source-chip state + the persisted variant /
+            // set selections together so a single tap restores the
+            // resting "All cards · Any variant · All sets" view.
+            setActiveChipIds([]);
+            filters.clearAll();
+          }}
         />
         {filtersOpen && (
           <div className="mt-2 space-y-2">
@@ -401,6 +424,7 @@ function FilterSummaryButton({
   selectedSets,
   isOpen,
   onToggle,
+  onClear,
 }: {
   visibleChips: SourceChipConfig[];
   activeChipIds: readonly string[];
@@ -408,50 +432,103 @@ function FilterSummaryButton({
   selectedSets: readonly string[];
   isOpen: boolean;
   onToggle: () => void;
+  /** Reset every filter back to default. Visible only when at least
+   *  one filter is active so the affordance never reads as "do
+   *  nothing" — clarifies why the filter row is gold-tinted. */
+  onClear: () => void;
 }) {
   const active = visibleChips.filter(c => activeChipIds.includes(c.id));
-  const chipPart = active.length === 0
-    ? 'All cards'
-    : active.length === 1
-      ? `${active[0].label}${active[0].cards.length > 0 ? ` (${active[0].cards.length})` : ''}`
-      : `${active.length} sources`;
-  const variantPart = summarizeSelection(
-    selectedVariants,
-    'Any variant',
-    (v) => variantChipLabel(v as CanonicalVariant),
-  );
-  const setPart = summarizeSelection(selectedSets, 'All sets', setSummaryLabel);
+  const chipsActive = active.length > 0;
+  const variantsActive = selectedVariants.length > 0;
+  const setsActive = selectedSets.length > 0;
+  const anyActive = chipsActive || variantsActive || setsActive;
 
-  const anyActive = activeChipIds.length > 0
-    || selectedVariants.length > 0
-    || selectedSets.length > 0;
+  // Build a pruned summary: when nothing is filtered, show the full
+  // default trio ("All cards · Any variant · All sets") so the user
+  // sees the resting state at a glance. When something IS filtered,
+  // drop the "All / Any" placeholders and surface only the actives —
+  // that way a `Special` set preset reads as `Special` instead of
+  // being buried after a misleading "All cards · Any variant ·" prefix.
+  const parts: string[] = [];
+  if (chipsActive) {
+    parts.push(
+      active.length === 1
+        ? `${active[0].label}${active[0].cards.length > 0 ? ` (${active[0].cards.length})` : ''}`
+        : `${active.length} sources`,
+    );
+  }
+  if (variantsActive) {
+    parts.push(summarizeSelection(
+      selectedVariants,
+      'Any variant',
+      (v) => variantChipLabel(v as CanonicalVariant),
+    ));
+  }
+  if (setsActive) {
+    parts.push(summarizeSelection(selectedSets, 'All sets', setSummaryLabel));
+  }
+  if (parts.length === 0) {
+    parts.push('All cards', 'Any variant', 'All sets');
+  }
 
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={isOpen}
-      className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md border text-[11px] transition-colors ${
+    <div
+      className={`w-full flex items-center gap-1 rounded-md border transition-colors ${
         anyActive
-          ? 'bg-gold/10 border-gold/30 text-gray-200 hover:border-gold/50'
-          : 'bg-space-800/60 border-space-700 text-gray-400 hover:border-gray-500'
+          ? 'bg-gold/15 border-gold/50 ring-1 ring-gold/20'
+          : 'bg-space-800/60 border-space-700'
       }`}
     >
-      <FilterIcon className="w-3.5 h-3.5 shrink-0" />
-      <span className="flex-1 text-left truncate">
-        {chipPart} <span className="text-gray-500">·</span> {variantPart} <span className="text-gray-500">·</span> {setPart}
-      </span>
-      <svg
-        className={`w-3 h-3 shrink-0 text-gray-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        viewBox="0 0 24 24"
-        aria-hidden
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        className={`flex-1 flex items-center gap-2 px-3 py-1.5 text-[11px] transition-colors ${
+          anyActive
+            ? 'text-gold hover:text-gold-bright'
+            : 'text-gray-400 hover:text-gray-200'
+        }`}
       >
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-      </svg>
-    </button>
+        <FilterIcon className="w-3.5 h-3.5 shrink-0" />
+        {anyActive && (
+          <span
+            aria-label={`${parts.length} filter${parts.length === 1 ? '' : 's'} active`}
+            className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-gold text-space-900 text-[9px] font-bold tabular-nums"
+          >
+            {parts.length}
+          </span>
+        )}
+        <span className="flex-1 text-left truncate">
+          {parts.map((p, i) => (
+            <span key={i}>
+              {i > 0 && <span className="text-gold/60"> · </span>}
+              {p}
+            </span>
+          ))}
+        </span>
+        <svg
+          className={`w-3 h-3 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''} ${anyActive ? 'text-gold/70' : 'text-gray-500'}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {anyActive && (
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Clear all filters"
+          title="Clear all filters"
+          className="shrink-0 mr-1 px-1.5 h-6 rounded text-[10px] font-bold uppercase tracking-wide text-gold hover:text-gold-bright hover:bg-gold/10 transition-colors"
+        >
+          Clear
+        </button>
+      )}
+    </div>
   );
 }
 
