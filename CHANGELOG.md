@@ -2,6 +2,110 @@
 
 Release notes for production cuts. Dates match the git tag (`v<date>-stable`) on `main`. Not every commit lands here — just the user-facing shape of each release.
 
+## v2026.04.28-stable — 2026-04-28
+
+Largest release since the foundation pass. SWUTrade is no longer a personal trade-balance calculator — it's a multi-user trading platform with shared live trades, Discord-account proposals, community discovery, and explicit trading-partner bookmarks. Twelve days of Phase 5b work + a full UX cohesion wave on top, condensed.
+
+### Live shared trades (Phase 5b)
+
+Two players can now build a trade together in the same browser session. One creates an "open invite" and shares a QR / URL; the other scans / clicks and joins immediately — no Discord account required for either side.
+
+- **QR / share-link invitations.** Tap "Invite someone" in the trade builder; a session URL is minted on the spot with a scannable QR for in-person trading at the LGS. The other player can claim as an existing SWUTrade user, an existing Discord-signed-in user, or a fresh anonymous guest.
+- **Both sides edit live.** Each player owns one half of the trade canvas. Edits sync via short polling; a cyan "@alex made changes" nudge pops if the counterpart edits while you're not watching the canvas.
+- **Confirm → settle handshake.** Both players have to tap Confirm to lock the trade in. The first confirmer's side flips read-only with a prominent "🔒 You've confirmed" strip; an explicit **Unconfirm to edit** button is the only way out so accidental qty bumps can't silently invalidate a confirmation. When the second player confirms, the session settles and the canvas locks on both sides.
+- **Cancel / expire.** Either side can cancel an active session at any time. The terminal banner now carries an escape link ("Back to your trades" for signed-in users; "Back to home" for guests) so a cancelled trade isn't a dead end.
+- **Invite by Discord handle.** Open invites can also DM the URL to a known SWUTrade user via Discord. Useful when the other player isn't physically present but you know who you want to trade with.
+- **Active sessions surface in My Trades.** Sessions and proposals share the same row chrome on the My Trades surface; the unified stream reads as one "incoming + outgoing + settled" timeline.
+
+### Wishlist / Trade Binder split
+
+The "My Lists" drawer used to conflate two distinct concepts (cards you want to acquire vs. cards you have to trade) behind shared tabs labelled with internal vocabulary ("Wants" / "Available"). Each is now its own first-class surface.
+
+- **Dedicated views.** `?view=wishlist` and `?view=binder` render full-page editors, accessible from the new Home modules and from NavMenu's "My Wishlist" / "My Trade Binder" entries.
+- **Vocabulary reconciled.** User-facing copy is **"Wishlist"** and **"Trade Binder"** everywhere — schema names (`wants` / `available`) stay internal. The drawer's tabs swapped to match.
+- **Per-list share images.** When you share just your wishlist, the image is titled **"WISHLIST"** with a single full-canvas list of the cards you're hunting (priority stars displayed). Trade Binder shares get a parallel **"TRADE BINDER"** treatment. The combined "share both" image (the drawer's button) is unchanged.
+- **In-trade-builder drawer retained.** A new "Lists" button in the trade-builder action strip opens a slim quick-edit drawer. Doesn't disrupt your in-progress composer state — the Lists drawer is the only path for "I just realized I have this card; let me add it to my binder" mid-trade.
+
+### Trading Partners (favorites)
+
+Bookmarking layer for the Discord-friend-no-shared-server case. You can now trade with anyone on SWUTrade without needing a mutual bot-installed Discord guild, and you can pin people you trade with often.
+
+- **Star toggle on every public profile.** Visit `/u/<handle>` and tap the bookmark icon to add them to your trading partners. Independent of community enrollment.
+- **"Your Trading Partners" Home module.** Up to 6 favorites with avatar + handle + a one-tap **Trade** button that lands you in a propose-to-them composer.
+- **HandlePickerDialog integration.** When you tap "Send proposal" in the trade builder, your favorites surface as a gold-accent chip row above "Recent" partners. Star toggles inside the dialog let you favorite community members in one tap without leaving the flow.
+- **Copy invite link.** Your own profile (`/u/<your-handle>`) now has a "Copy invite link" button that puts `?propose=<your-handle>` on the clipboard. Paste in any Discord channel to drop friends straight into a propose-to-you composer.
+- **Copy trade link on send.** After sending a proposal, a "Copy link" button next to "View your trades" gives you a direct trade-detail URL. When Discord DM delivery fails (recipient not in any bot-installed server with you), the affordance becomes prominent gold so the manual handoff is the obvious recovery action.
+
+### Two-state user model
+
+Anonymous "ghost" sessions used to look like a separate user state — visible "Sign out" button, gold "you're signed in as a guest" banner, ghost-specific home view. From the user's POV there are now exactly two states: **guest** (no Discord account; could be signed-out or have an internal session cookie) and **Discord-signed-in**.
+
+- **AccountMenu** shows the same guest variant for signed-out and ghost users — Sign in with Discord + Show tutorial. No Profile / Settings / Sign out.
+- **NavMenu** splits gating into two axes: "My Communities" requires a real Discord account; "My Trades" works for anyone with a session (so ghosts can still reach in-flight shared trades from the hamburger).
+- **GhostHomeView deleted.** Ghosts default to the trade builder. Even an explicit `?view=home` from a ghost falls through to the trade builder.
+- **Ghost → Discord-account merge stays seamless.** When a ghost signs in, their in-flight sessions migrate to the new account row server-side; a one-shot gold "We carried your trade with @alice over" banner confirms.
+
+### Home dashboard
+
+New 2×2 + partners layout. Replaces the prior single-column module stack.
+
+- **Row 1**: 💱 My Trades · 👥 My Communities
+- **Row 2**: ⭐ Your Wishlist · 📘 Your Trade Binder
+- **Row 3**: 🤝 Your Trading Partners
+- **Pinned at the top**: ⏰ "Needs your response" callout when there are open incoming proposals.
+
+The old "My Stores" Phase-4 placeholder was removed — reserving dim chrome for an unshipped feature wasn't earning its space.
+
+### Communities
+
+Community pages got their own structure. Visit `/?community=1` to see your enrolled servers; click in for member directory, popular wants, activity feed, and (placeholder) upcoming events.
+
+- **Per-guild member directory** with overlap chips ("You can offer 3 of 12") that quantify trade potential at a glance.
+- **Activity feed** showing recent trades + new-member events across the guild.
+- **Popular wants** aggregated from the guild's enrolled members so you can see what's in demand.
+- **Bot-install outreach.** When the SWUTrade bot lands in a new Discord server, existing members get a polished invite DM with a one-tap Enroll button.
+
+### Trade composers + proposal flow
+
+- **Single PrimaryActionBar** at the bottom of the trade builder unifies the four prior composer-bar mutexes (Edit / Counter / Propose / AutoBalance). Send / Save / Confirm always lands in the same place; the per-mode bars now carry only informational content.
+- **Response buttons regrouped.** A pending proposal's recipient-side actions split into two intent groups: "Move forward" (Accept · Edit together) in cyan; "Push back" (Counter offer · Decline) in muted gray.
+- **Counter offers flip sides automatically.** When you counter a proposal, the composer pre-loads with the offering / receiving sides swapped and a banner reminds you: "Sides are flipped — you're now offering what they asked for."
+- **Edit together promotion.** "Accept as-is" and "Edit together" sit side by side; the latter promotes a proposal into a live shared session for negotiation.
+- **Nudge** — re-DMs a pending proposal with a 24h cooldown and an optional 280-char note prepended as a gold-bordered embed.
+
+### Mobile + visual polish
+
+- **Haptics** with `prefers-reduced-motion` respect on every primary tap (Confirm, Cancel, Send proposal, Cancel session, etc.).
+- **44×44 minimum tap targets** across the trade builder, lists, and modals.
+- **Muted side-identity chrome** — `TradeSide` panel borders no longer compete with gold CTAs and state badges. Side identity reads through a thin saber bar + a pale tint chip behind the OFFERING / RECEIVING label.
+- **Origin-aware "Back" breadcrumb on profiles** — landing on `/u/<handle>` from My Trades vs Community vs a trade detail now lands you back where you came from instead of always dumping to Home.
+
+### Tutorial + onboarding
+
+- **First-run tutorial replaced auto-firing tour with an opt-in glowing help button.** The `?` icon in the header pulses for users who haven't seen the tour; tap to start. Tucks itself away after dismissal. AccountMenu's "Show tutorial" entry stays as the persistent revisit path.
+- **Three-step coachmark tour** anchored to the actual trade-builder UI: welcome / add cards / sign in with Discord.
+
+### Reliability + bug fixes
+
+- **Cancel on open-slot session now actually shows.** Cancelling a "waiting for counterpart" session used to leave the QR card on screen even though the DB row was cancelled (the openSlot flag derived purely from `userBId === null`, ignoring status). Fixed.
+- **Greeting buttons clickable on first paint.** History + "+ New trade" no longer wait for `/api/auth/me` to resolve before rendering.
+- **Picker search auto-focuses every time it opens** (not just on the very first mount of the page).
+- **Filter clarity.** The picker's collapsed filter chip stops lying about active filters — when "Special" is the active set preset, it reads "Special" instead of being buried after a misleading "All cards · Any variant ·" prefix. Active filters get a stronger gold tint, a count badge, and an inline "Clear" button.
+- **Picker / list / profile prices pinned to raw 100% TCGPlayer.** The percentage modifier (default 80%) only applies inside the actual trade balancer now. Cross-referencing card prices against TCGPlayer doesn't require mental division anymore.
+- **Forward-nav scroll reset.** Clicking "Edit trade binder →" from a scrolled Home no longer lands you mid-page on the new view. Browser Back / Forward still restores native scroll position.
+- **Share-list image with deflate-compressed URLs.** Earlier compression of share-list URLs accidentally broke the OG-image renderer's decoder; signed-out share-image previews are showing rendered cards again. New cross-boundary codec test guards against future drift.
+
+### Internal — invisible to users but worth recording
+
+- **268 commits** since `v2026.04.16-stable`.
+- **Subsystem wiki** at `docs/wiki/` — ten area pages (sessions, proposals, trade builder, lists, home/nav, community/profile, auth, cards/pricing, Discord bot, infra) plus an architecture overview. Living documentation; updated in the same commit as non-trivial changes to its area.
+- **Shared `lib/listShareCodec.ts`** — single decoder source of truth for shared-list URLs across client + server, replacing the parallel decoders that had drifted.
+- **Schema migrations 0010 → 0019** applied to Neon: shared-trade sessions table, session events, ghost-user flag, community events, user peer prefs, favorite-partner table.
+- **Drizzle journal in lockstep with `lib/schema.ts`** — `npm run db:generate` produces the SQL migration + snapshot together; `db:migrate` applies to the configured DB.
+- **`useTutorial` simplified** — auto-fire effect deleted, no more `isSignedIn` / `suppressAutoOpen` plumbing. Hook exposes `hasBeenSeen` for AppHeader to drive the help-icon glow.
+- **dev-seed-community script removed** — beta has organic users now; the synthetic droids cluttered the community directory and the reporter had to filter out their non-snowflake user IDs from `#bot-errors`. Cleanup includes the runtime filter prefix.
+- **CI**: vitest `testTimeout` bumped to 15s to absorb Neon latency spikes that flaked api integration tests at the 5s default.
+
 ## v2026.04.16-stable — 2026-04-16
 
 Foundation-hardening pass before Phase 2 (accounts + sync). No new user-facing features — the scope was code quality, data integrity, test coverage, and component architecture. Everything below is internal.
