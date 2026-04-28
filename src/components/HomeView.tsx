@@ -110,14 +110,21 @@ export function HomeView({ auth }: HomeViewProps) {
       <AppHeader auth={auth} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {user && (
-          <GreetingRow
-            user={user}
-            onOpenProfile={onOpenProfile}
-            onBuildTrade={onBuildTrade}
-            onOpenTradesHistory={onOpenTradesHistory}
-          />
-        )}
+        {/* GreetingRow renders unconditionally so the History + New
+            trade buttons are clickable on first paint, even before
+            `/api/auth/me` resolves. The user field can be null while
+            auth is in flight — the row shows a skeleton avatar +
+            "Welcome back" without a username, and the action buttons
+            don't depend on user state at all (toBuildTrade /
+            toTradesHistory just push view-mode state). The avatar
+            click target is disabled until the user lands so it
+            doesn't open `/u/null` while loading. */}
+        <GreetingRow
+          user={user}
+          onOpenProfile={onOpenProfile}
+          onBuildTrade={onBuildTrade}
+          onOpenTradesHistory={onOpenTradesHistory}
+        />
 
         {/* Needs-response callout is full-width above the grid so it
             reads as "everything else waits — deal with this first." */}
@@ -198,28 +205,52 @@ function GreetingRow({
   onBuildTrade,
   onOpenTradesHistory,
 }: {
-  user: { handle: string; username: string; avatarUrl: string | null };
+  user: { handle: string; username: string; avatarUrl: string | null } | null;
   onOpenProfile: (handle: string) => void;
   onBuildTrade: () => void;
   onOpenTradesHistory: () => void;
 }) {
-  const displayName = user.username && user.username !== user.handle ? user.username : `@${user.handle}`;
+  const displayName = user
+    ? (user.username && user.username !== user.handle ? user.username : `@${user.handle}`)
+    : null;
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <button
-        type="button"
-        onClick={() => onOpenProfile(user.handle)}
-        aria-label="Open your public profile"
-        className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-gold/60"
-      >
-        <Avatar avatarUrl={user.avatarUrl} name={user.username || user.handle} />
-      </button>
+      {/* Avatar is a button when the user is loaded (clicks through to
+          their public profile); a static placeholder while auth is
+          still resolving so we don't open `/u/null`. The dimensions
+          are identical so the row doesn't shift on auth resolution. */}
+      {user ? (
+        <button
+          type="button"
+          onClick={() => onOpenProfile(user.handle)}
+          aria-label="Open your public profile"
+          className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-gold/60"
+        >
+          <Avatar avatarUrl={user.avatarUrl} name={user.username || user.handle} />
+        </button>
+      ) : (
+        <span aria-hidden className="shrink-0">
+          <Avatar avatarUrl={null} name="?" />
+        </span>
+      )}
       <div className="min-w-0 mr-auto">
         <div className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">
           Welcome back
         </div>
-        <div className="text-lg font-semibold text-gray-100 truncate">{displayName}</div>
+        <div className="text-lg font-semibold text-gray-100 truncate">
+          {displayName ?? (
+            // Skeleton placeholder — same height as the loaded label
+            // so the layout doesn't jump when the username arrives.
+            <span aria-hidden className="inline-block w-32 h-4 my-0.5 rounded bg-space-700/60 animate-pulse" />
+          )}
+        </div>
       </div>
+      {/* History + New trade are unconditional. They don't depend on
+          user identity — they're just nav.toX() pushes — and being
+          clickable on first paint is the whole point: a user with a
+          slow `/api/auth/me` response shouldn't have to wait to start
+          a trade. Tapping "+ New trade" before auth resolves works
+          fine; the trade builder itself doesn't gate on user either. */}
       <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
