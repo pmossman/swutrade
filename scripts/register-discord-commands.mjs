@@ -13,6 +13,10 @@
  *   # Register to a specific guild (instant; use during development):
  *   node scripts/register-discord-commands.mjs guild <guild_id>
  *
+ *   # Target a specific app (otherwise reads from .env.local):
+ *   node scripts/register-discord-commands.mjs --app=prod global
+ *   node scripts/register-discord-commands.mjs --app=beta guild <guild_id>
+ *
  *   # List currently-registered commands at the given scope:
  *   node scripts/register-discord-commands.mjs list global
  *   node scripts/register-discord-commands.mjs list guild <guild_id>
@@ -20,7 +24,19 @@
  *   # Clear all commands at a scope (useful when renaming):
  *   node scripts/register-discord-commands.mjs clear guild <guild_id>
  *
- * `.env.local` must have:
+ * Credential resolution:
+ *   --app=prod  → vercel env pull --environment=production
+ *   --app=beta  → vercel env pull --environment=preview --git-branch=beta
+ *   (default)   → .env.local
+ *
+ * The --app flag pulls a fresh, scoped credentials file via the
+ * Vercel CLI so the deployed app's bot token + client id are used —
+ * avoids the foot-gun of swapping .env.local between runs and
+ * accidentally registering the prod bot's commands against the
+ * beta app or vice-versa. Requires `vercel` on PATH and a logged-in
+ * Vercel session.
+ *
+ * `.env.local` (or the pulled file) must have:
  *   DISCORD_BOT_TOKEN       — product bot token
  *   DISCORD_CLIENT_ID       — product app client id
  *
@@ -31,13 +47,60 @@
  */
 
 import { config } from 'dotenv';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-config({ path: '.env.local', quiet: true });
+// Pull --app=<X> out of argv before positional parsing; everything
+// else flows through to the verb/scope/guildId pattern unchanged.
+let appFlag = null;
+const positionalArgs = [];
+for (const arg of process.argv.slice(2)) {
+  const m = /^--app=(prod|beta)$/.exec(arg);
+  if (m) {
+    if (appFlag) {
+      console.error('multiple --app flags supplied');
+      process.exit(1);
+    }
+    appFlag = m[1];
+  } else {
+    positionalArgs.push(arg);
+  }
+}
+
+let credCleanup = null;
+if (appFlag) {
+  // Pull into a per-run tempdir so concurrent invocations can't race
+  // on the same path, and so we never leave plain-text creds on disk
+  // after the script exits.
+  const dir = mkdtempSync(join(tmpdir(), `swu-discord-${appFlag}-`));
+  const path = join(dir, '.env');
+  const args = appFlag === 'prod'
+    ? ['env', 'pull', '--environment=production', path, '--yes']
+    : ['env', 'pull', '--environment=preview', '--git-branch=beta', path, '--yes'];
+  try {
+    execFileSync('vercel', args, { stdio: ['ignore', 'inherit', 'inherit'] });
+  } catch (err) {
+    console.error(`vercel env pull failed for --app=${appFlag}:`, err.message);
+    rmSync(dir, { recursive: true, force: true });
+    process.exit(1);
+  }
+  config({ path, quiet: true });
+  credCleanup = () => rmSync(dir, { recursive: true, force: true });
+} else {
+  config({ path: '.env.local', quiet: true });
+}
 
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 if (!BOT_TOKEN || !CLIENT_ID) {
-  console.error('DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID must be set in .env.local');
+  console.error(
+    appFlag
+      ? `DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID missing from --app=${appFlag} pulled env`
+      : 'DISCORD_BOT_TOKEN + DISCORD_CLIENT_ID must be set in .env.local',
+  );
+  if (credCleanup) credCleanup();
   process.exit(1);
 }
 
@@ -97,7 +160,7 @@ function basePath(scope, guildId) {
     : `/applications/${CLIENT_ID}/guilds/${guildId}/commands`;
 }
 
-const [, , verb, scope, guildId] = process.argv;
+const [verb, scope, guildId] = positionalArgs;
 
 async function main() {
   switch (verb) {
@@ -151,7 +214,12 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(err.message);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    if (credCleanup) credCleanup();
+  })
+  .catch(err => {
+    console.error(err.message);
+    if (credCleanup) credCleanup();
+    process.exit(1);
+  });
