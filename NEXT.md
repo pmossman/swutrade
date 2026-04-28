@@ -64,6 +64,47 @@ Ordered smallest / highest-clarity first so the between-slice ritual feedback lo
 
 ---
 
+### 2. Card signals — `/looking-for` + `/offering` slash commands
+
+**Why:** SWUTrade's wishlist + binder are the long-tail "what I want / what I have" inventory; signals are the **acute** version — "I specifically need 1× Luke before Friday's draft" or "I have an extra Cassian I want to offload by tonight." Today users do this via free-text Discord channels; the bot can structure that flood, auto-add to inventory, ping matched users, and turn anonymous responders into ghost users with an inviting on-ramp into SWUTrade. Designed forward-compat for the future LGS integration (event scope is in the schema from day 1).
+
+Wireframe doc lives in conversation history (2026-04-28) — fold into a `docs/wiki/` page when implementation starts.
+
+**What ships (PR 1 — core signal lifecycle):**
+- New `card_signals` table (kind: `wanted | offering`, references the underlying `wants_items` / `available_items` row, nullable `event_id` + `lgs_id` for LGS forward-compat).
+- `trade_proposals.responding_to_signal_id` denorm column for response-thread queries + fulfillment detection.
+- `/looking-for` + `/offering` slash commands with autocomplete on card name. Both gated on enrolled membership in a bot-installed guild.
+- Public signal post in the invocation channel with embed, response counter, and Cancel button. Thread spawned under the post for visible response trail.
+- "I have this!" / "I want this!" button → Discord modal → quick-respond flow:
+  - Signed-in users → real `trade_proposals` row, posts public response in thread.
+  - Anonymous users → ghost user minted (`createGhostUser` keyed to `discord_id`), proposal still real, response posted with "Discord-only · join SWUTrade" badge, confirmation DM with soft sign-in CTA.
+- DM-ping matched users at signal-post time, gated on each match's `dm_match_alerts` pref.
+- Ghost spam limit: max 3 active responses across all signals (forces resolution or sign-in for headroom).
+
+**What ships (PR 2 — lifecycle + fulfillment):**
+- `api/cron/signals.ts` — hourly Vercel cron expires past-due signals, PATCHes their embeds (strike-through + "Expired" badge), locks their threads.
+- `lib/proposalResolve.ts` — on `accepted` transition, mark matching signal `fulfilled`, PATCH embed (green "Fulfilled by @responder" badge), lock thread.
+- `lib/discordBot.ts` — add `startThreadFromMessage` + modal-response helpers (modal interaction type is new for us).
+- `api/bot.ts` — modal-submit dispatch path for `signal-respond:*` custom_ids.
+- Re-run-same-card behavior: `/looking-for` for an already-active card bumps the existing signal's `expires_at` rather than posting a duplicate.
+- Vitest coverage in `tests/api/signals.test.ts` (upsert + match + ghost mint + fulfillment); e2e in `e2e/signals.auth.spec.ts` for the signed-in slash flow.
+
+**Done when:**
+- [ ] Both slash commands registered + functional in a test guild.
+- [ ] Anonymous click → modal → ghost-mint → real proposal + public response thread post all work end-to-end.
+- [ ] Ghost claims merge cleanly when the user later signs in via OAuth.
+- [ ] Cron expiry + fulfillment-detection PATCH the signal embed correctly.
+- [ ] DM-ping respects `dm_match_alerts`; ghost spam limit enforced.
+- [ ] `docs/wiki/` page created summarizing the feature surface.
+- [ ] Between-slice ritual passes for each PR.
+
+**Follow-ups (post-shipping, separate slices):**
+- Endorse-a-response (⭐ button the requester can click on a public response) — deferred per design discussion.
+- Bulk `/event-list <event>` aggregating all of a user's active signals into one event-scoped post once LGS lands.
+- Privacy-mode signal (DM-only response, no public thread) for users who want lower visibility — separate consent toggle.
+
+---
+
 ## Wishlist / Binder enhancement backlog
 
 Each item is a potential per-slice pickup after the **Wishlist / Binder split (foundational)** queue item lands. Nothing here is committed; they're a menu to choose from as real use warrants. Items are intentionally unsized — scope them when one is promoted to the Queue.
