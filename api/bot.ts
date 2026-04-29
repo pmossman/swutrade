@@ -833,14 +833,19 @@ async function handleAutocomplete(
   if (focused.name === 'card') {
     const query = typeof focused.value === 'string' ? focused.value : '';
     const families = autocompleteSignalFamilies(query, 25);
-    const choices = families.map(f => ({
-      // Discord caps choice name at 100 chars. Family names alone
-      // are well under, so we drop the variant suffix entirely —
-      // pick a variant via the separate `variant:` option or the
-      // post-hoc "Specify variant" button.
-      name: f.name.slice(0, 100),
-      value: f.familyId.slice(0, 100),
-    }));
+    const choices = families.map(f => {
+      // When a card name spans multiple families (primary set +
+      // promo reprints), surface a "+N printings" hint so users
+      // know alternates exist behind this collapsed entry.
+      const suffix = f.alternateCount > 0
+        ? ` (+${f.alternateCount} printing${f.alternateCount === 1 ? '' : 's'})`
+        : '';
+      return {
+        // Discord caps choice name at 100 chars; defensive truncation.
+        name: `${f.name}${suffix}`.slice(0, 100),
+        value: f.familyId.slice(0, 100),
+      };
+    });
     res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
     return;
   }

@@ -82,6 +82,15 @@ export interface SignalFamily {
   variants: Array<{ productId: string; variant: string; market: number | null }>;
 }
 
+export interface SignalFamilySearchResult extends SignalFamily {
+  /** When the same display name spans multiple families (the
+   *  primary set + 0..N promo / exclusive reprints), this carries
+   *  the count of alternates. The autocomplete uses this to surface
+   *  a "+N printings" hint so users know reprints exist behind the
+   *  collapsed entry. */
+  alternateCount: number;
+}
+
 /**
  * Resolve a productId to its full SignalCard. Returns null if the
  * id isn't in the family index — caller should treat as an unknown
@@ -115,31 +124,86 @@ export function lookupSignalFamily(familyId: string): SignalFamily | null {
 }
 
 /**
- * Family-level autocomplete for the slash `card:` arg. One entry
- * per family — collapses the variant fan-out so "luke" returns ~5
- * unique cards instead of 25 noise-y variant rows. Returns up to
- * `limit` matches, starts-with priority before substring matches.
- *
- * The slash submit handler treats the `value` as a familyId and
- * pairs it with a separate (optional) `variant:` option for users
- * who want to pin the printing.
+ * Set prefixes that mint a "secondary" family — promo printings,
+ * convention exclusives, judge / OP / gift-box / weekly-play
+ * promos. Most cards have a primary family in a main set plus 0-3
+ * of these as alternate printings. We prefer the main-set family
+ * in autocomplete + when collapsing duplicates; users who actually
+ * want the promo printing can refine via the "Specify variant"
+ * button (variants within the primary family) or pick a more
+ * specific autocomplete entry once we surface set context.
  */
-export function autocompleteSignalFamilies(query: string, limit = 25): SignalFamily[] {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) return [];
-  const startsWith: SignalFamily[] = [];
-  const contains: SignalFamily[] = [];
+const SECONDARY_SET_PATTERNS = [
+  'promo', 'exclusive', 'intro-battle', 'gift-box', 'weekly-play',
+];
+
+function isSecondaryFamily(familyId: string): boolean {
+  return SECONDARY_SET_PATTERNS.some(p => familyId.includes(p));
+}
+
+/**
+ * Pick the canonical family from a list with the same display name.
+ * Heuristic: prefer non-secondary (main set) families; if multiple
+ * main-set families share a name (rare — e.g., a card reprinted
+ * across two main sets), the alphabetically-first wins for stable
+ * ordering. Returns the primary family's full SignalFamily plus
+ * the count of total families that share this name (for "+N
+ * printings" hints in the picker).
+ */
+function pickPrimaryFamily(familyIds: string[]): { familyId: string; alternateCount: number } {
+  const sorted = [...familyIds].sort();
+  const primary = sorted.find(id => !isSecondaryFamily(id)) ?? sorted[0];
+  return { familyId: primary, alternateCount: familyIds.length - 1 };
+}
+
+/**
+ * Cached map: card display name → list of family ids sharing that
+ * name. Built once at module load. Used by the autocomplete to
+ * collapse reprints into a single entry.
+ */
+const NAME_TO_FAMILIES = (() => {
+  const m = new Map<string, string[]>();
   for (const [familyId, entries] of Object.entries(FAMS)) {
     if (entries.length === 0) continue;
     const name = entries[0].n;
+    const list = m.get(name) ?? [];
+    list.push(familyId);
+    m.set(name, list);
+  }
+  return m;
+})();
+
+/**
+ * Card-name-level autocomplete for the slash `card:` arg. One
+ * entry per unique display name — collapses BOTH the per-variant
+ * fan-out (5 variants of one family) AND the cross-set fan-out
+ * (5 promo reprints of the same card) into a single autocomplete
+ * row. The value is the primary family's id; when there are
+ * alternate printings the entry's display name appends "(+N
+ * printings)" so users know reprints exist.
+ *
+ * The slash submit handler treats the `value` as a familyId.
+ * Users who specifically want a promo printing can either type
+ * the set name into the autocomplete query (e.g., "luke promo")
+ * to surface the secondary entry, or pick the primary and refine
+ * via the variant picker.
+ */
+export function autocompleteSignalFamilies(query: string, limit = 25): SignalFamilySearchResult[] {
+  const q = query.trim().toLowerCase();
+  if (q.length === 0) return [];
+
+  // Two-pass: collapse by name first, then rank.
+  const startsWith: SignalFamilySearchResult[] = [];
+  const contains: SignalFamilySearchResult[] = [];
+  for (const [name, familyIds] of NAME_TO_FAMILIES) {
     const lower = name.toLowerCase();
     if (!lower.includes(q)) continue;
-    const variants = entries
-      .map(e => ({ productId: e.p, variant: e.v, market: e.m }))
-      .sort((a, b) => (a.market ?? Infinity) - (b.market ?? Infinity));
-    const fam: SignalFamily = { familyId, name, variants };
-    if (lower.startsWith(q)) startsWith.push(fam);
-    else contains.push(fam);
+    const { familyId, alternateCount } = pickPrimaryFamily(familyIds);
+    const family = lookupSignalFamily(familyId);
+    if (!family) continue;
+    const result: SignalFamilySearchResult = { ...family, alternateCount };
+    if (lower.startsWith(q)) startsWith.push(result);
+    else contains.push(result);
     if (startsWith.length + contains.length >= limit * 2) break;
   }
   return [...startsWith, ...contains].slice(0, limit);
