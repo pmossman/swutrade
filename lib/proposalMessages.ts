@@ -1,4 +1,4 @@
-import type { DiscordMessageBody, DiscordEmbed } from './discordBot.js';
+import type { DiscordMessageBody, DiscordEmbed, DiscordComponent } from './discordBot.js';
 import type { TradeCardSnapshot } from './schema.js';
 import type { PrefDefinition, PrefValue } from './prefsRegistry.js';
 
@@ -397,15 +397,14 @@ export function buildSelfPrefsIndexMessage(
     content:
       "**SWUTrade preferences** — choose a setting to change. " +
       "These apply globally; per-trader overrides live on `/swutrade settings user:@someone`.",
-    components: [{
-      type: COMPONENT_TYPE_ACTION_ROW,
-      components: defs.map(def => ({
+    components: chunkButtonsIntoActionRows(
+      defs.map(def => ({
         type: COMPONENT_TYPE_BUTTON,
         style: BUTTON_STYLE_SECONDARY,
         label: def.label,
         custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:open`,
       })),
-    }],
+    ),
   };
 }
 
@@ -434,16 +433,42 @@ export function buildPeerPrefsIndexMessage(
       `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
       `choose a setting to override specifically for this trader. ` +
       `"Use my default" = no override, your global setting applies.`,
-    components: [{
-      type: COMPONENT_TYPE_ACTION_ROW,
-      components: defs.map(def => ({
+    components: chunkButtonsIntoActionRows(
+      defs.map(def => ({
         type: COMPONENT_TYPE_BUTTON,
         style: BUTTON_STYLE_SECONDARY,
         label: def.label,
         custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:open`,
       })),
-    }],
+    ),
   };
+}
+
+/**
+ * Discord caps action rows at 5 components and a single message at
+ * 5 action rows (so up to 25 buttons total). The prefs index has
+ * grown past 5 buttons; chunk into rows of 5 each so the message
+ * still validates. Throws if the total exceeds the per-message cap
+ * — that's a registry-design problem we'd rather catch at build/
+ * test time than have Discord 400 in production.
+ */
+function chunkButtonsIntoActionRows(
+  buttons: DiscordComponent[],
+): DiscordComponent[] {
+  if (buttons.length === 0) return [];
+  if (buttons.length > 25) {
+    throw new Error(
+      `Too many buttons for one Discord message (${buttons.length} > 25). Split across two messages or reduce the surfaced pref count.`,
+    );
+  }
+  const rows: DiscordComponent[] = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push({
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: buttons.slice(i, i + 5),
+    });
+  }
+  return rows;
 }
 
 /**
