@@ -834,15 +834,21 @@ async function handleAutocomplete(
     const query = typeof focused.value === 'string' ? focused.value : '';
     const families = autocompleteSignalFamilies(query, 25);
     const choices = families.map(f => {
-      // When a card name spans multiple families (primary set +
-      // promo reprints), surface a "+N printings" hint so users
-      // know alternates exist behind this collapsed entry.
-      const suffix = f.alternateCount > 0
-        ? ` (+${f.alternateCount} printing${f.alternateCount === 1 ? '' : 's'})`
-        : '';
+      // Format: "Card Name [SET] (Leader) (+N printings)"
+      // Examples:
+      //   "Luke Skywalker - Faithful Friend [SOR] (Leader) (+4 printings)"
+      //   "Aggressive Negotiations [SEC]"
+      // Set code helps disambiguate when reprints exist; the
+      // (Leader) tag lets users instantly tell if the autocomplete
+      // hit a leader they meant or a same-named non-leader (e.g.
+      // when typing partial names).
+      const parts = [f.name, `[${f.setCode}]`];
+      if (f.cardType === 'Leader') parts.push('(Leader)');
+      if (f.alternateCount > 0) {
+        parts.push(`(+${f.alternateCount} printing${f.alternateCount === 1 ? '' : 's'})`);
+      }
       return {
-        // Discord caps choice name at 100 chars; defensive truncation.
-        name: `${f.name}${suffix}`.slice(0, 100),
+        name: parts.join(' ').slice(0, 100),
         value: f.familyId.slice(0, 100),
       };
     });

@@ -154,6 +154,11 @@ async function main() {
     m: number | null;     // marketPrice
     l: number | null;     // lowPrice
     n: string;            // display name (variant-stripped)
+    t?: string;           // cardType — populated when enriched
+                          // (Leader / Unit / Event / Upgrade / Base /
+                          // Token *). Optional so unenriched promo
+                          // sets that don't carry swuapi metadata
+                          // serialize without a `null` field.
   };
   const familyIndex: Record<string, FamilyEntry[]> = {};
 
@@ -214,6 +219,7 @@ async function main() {
         m: result.marketPrice,
         l: result.lowPrice,
         n: displayName,
+        ...(result.cardType ? { t: result.cardType } : {}),
       });
     }
 

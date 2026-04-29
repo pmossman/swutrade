@@ -36,11 +36,38 @@ import type { Db } from './db.js';
 // runtime self-fetch for the card index. Bumps the function bundle
 // but the index is already inlined elsewhere so the cost is amortized.
 import familyIndex from '../public/data/family-index.json' with { type: 'json' };
+import { SETS } from '../src/types/index.js';
 
-type FamilyEntry = { p: string; v: string; m: number | null; l: number | null; n: string };
+type FamilyEntry = {
+  p: string;
+  v: string;
+  m: number | null;
+  l: number | null;
+  n: string;
+  /** cardType — populated when enrichment matched the swuapi
+   *  metadata. Used to surface "(Leader)" hints in autocomplete. */
+  t?: string;
+};
 type FamilyIndex = Record<string, FamilyEntry[]>;
 
 const FAMS = familyIndex as FamilyIndex;
+
+/** Map from a family_id's set-prefix (e.g. `spark-of-rebellion`)
+ *  to the canonical set code (e.g. `SOR`). Built once at module
+ *  load from the same SETS table the rest of the app uses. */
+const SLUG_TO_CODE: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const s of SETS) m[s.slug] = s.code;
+  return m;
+})();
+
+/** Derive the set code from a family_id. Returns the slug itself
+ *  as a fallback when the prefix isn't in the SETS table — e.g.
+ *  for promo sets we haven't catalogued. */
+export function setCodeForFamily(familyId: string): string {
+  const slug = familyId.split('::')[0] ?? '';
+  return SLUG_TO_CODE[slug] ?? slug;
+}
 
 /**
  * Reverse mapping built once at module load: productId → familyId +
@@ -76,6 +103,11 @@ export interface SignalFamily {
   familyId: string;
   /** Display name shared across variants. */
   name: string;
+  /** Set code derived from the family_id prefix (e.g. "SOR"). */
+  setCode: string;
+  /** Card type — Leader / Unit / Event / Upgrade / Base etc.
+   *  Optional because some promo sets don't have enriched metadata. */
+  cardType?: string;
   /** All variants for this family, sorted by cheapest market price
    *  first (so the autocomplete "default" thumbnail is the cheapest
    *  available printing). */
@@ -120,7 +152,17 @@ export function lookupSignalFamily(familyId: string): SignalFamily | null {
     .map(e => ({ productId: e.p, variant: e.v, market: e.m }))
     // Cheapest first; nulls sink to the end.
     .sort((a, b) => (a.market ?? Infinity) - (b.market ?? Infinity));
-  return { familyId, name: entries[0].n, variants };
+  // All variants in a family share a card type — pick the first
+  // entry's `t` (the post-enrichment field) as the family's type.
+  // Falls back to undefined when this set wasn't enriched.
+  const cardType = entries.find(e => e.t)?.t;
+  return {
+    familyId,
+    name: entries[0].n,
+    setCode: setCodeForFamily(familyId),
+    cardType,
+    variants,
+  };
 }
 
 /**
