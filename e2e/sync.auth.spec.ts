@@ -34,7 +34,7 @@ test.describe('Server sync', () => {
     const tile = dialog.getByRole('button', { name: /Add Luke Skywalker.*to list/i }).first();
     await expect(tile).toBeVisible({ timeout: 5_000 });
     await tile.click();
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
 
     // Verify the row appeared.
     await expect(dialog.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible();
@@ -88,7 +88,7 @@ test.describe('Server sync', () => {
     const tile = dialog.getByRole('button', { name: /Add Luke Skywalker.*to list/i }).first();
     await expect(tile).toBeVisible({ timeout: 5_000 });
     await tile.click();
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
 
     await expect(
       dialog.getByRole('tabpanel', { name: /trade binder/i })

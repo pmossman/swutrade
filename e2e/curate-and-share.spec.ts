@@ -49,7 +49,7 @@ test.describe('Curator: build lists and share', () => {
     await lukeWantsTile.click();
 
     // Back to the wants list — row should show the Hyperspace restriction.
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
     await expect(dialog.getByRole('button', { name: 'Only Hyperspace' })).toBeVisible();
 
     // --- Available: exact productId ----------------------------------------
@@ -61,7 +61,7 @@ test.describe('Curator: build lists and share', () => {
     await expect(lukeAvailTile).toBeVisible({ timeout: 5_000 });
     await lukeAvailTile.click();
 
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
     await expect(
       dialog.getByRole('tabpanel', { name: /trade binder/i })
         .getByText('Luke Skywalker - Hero of Yavin'),
@@ -101,7 +101,7 @@ test.describe('Curator: build lists and share', () => {
     await dialog.getByRole('button', { name: /add card/i }).click();
     await dialog.getByPlaceholder('Search cards...').fill('jtl luke');
     await dialog.getByRole('button', { name: LUKE_ANY }).first().click();
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
     await expect(dialog.getByRole('button', { name: 'Any variant' })).toBeVisible();
 
     // --- Second add: Hyperspace-only restriction ---------------------------
@@ -110,7 +110,7 @@ test.describe('Curator: build lists and share', () => {
     await dialog.getByRole('button', { name: 'HYPERSPACE' }).click();
     await dialog.getByPlaceholder('Search cards...').fill('jtl luke');
     await dialog.getByRole('button', { name: LUKE_ANY }).first().click();
-    await dialog.getByRole('button', { name: /Back to list/i }).click();
+    await dialog.getByRole('button', { name: /^Done$/ }).click();
 
     // Two distinct restriction labels: "Any variant" and "Only Hyperspace".
     await expect(dialog.getByRole('button', { name: 'Any variant' })).toBeVisible();
