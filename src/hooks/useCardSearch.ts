@@ -8,6 +8,24 @@ function parseCardNumber(num: string): number {
   return match ? parseInt(match[1], 10) : 9999;
 }
 
+/**
+ * Sort key for a card group within its set. Uses the *minimum* card
+ * number across every printing, which is reliably the Standard
+ * (base-set) number — non-Standard printings (Hyperspace, Prestige,
+ * Showcase, Serialized) carry sequential collector numbers that run
+ * far past the Standard 1-N range. Reading from `variants[0]` alone
+ * sorted by whichever printing happened to come first in the source
+ * data, which silently demoted any card whose first-iterated variant
+ * wasn't Standard. */
+function groupSortNumber(variants: readonly CardVariant[]): number {
+  let min = 9999;
+  for (const v of variants) {
+    const n = parseCardNumber(v.number ?? '');
+    if (n < min) min = n;
+  }
+  return min;
+}
+
 // Browse order: main sets first (latest main at the top — LAW before
 // JTL before LOF ... before SOR), then promo sets in declaration order.
 // This is the order users expect when scrolling the catalog — the
@@ -48,7 +66,7 @@ export function browseAllGroups(allCards: CardVariant[]): SetSearchGroup[] {
       const aLeader = isLeaderOrBaseGroup(a.variants) ? 1 : 0;
       const bLeader = isLeaderOrBaseGroup(b.variants) ? 1 : 0;
       if (aLeader !== bLeader) return aLeader - bLeader;
-      return parseCardNumber(a.variants[0]?.number ?? '') - parseCardNumber(b.variants[0]?.number ?? '');
+      return groupSortNumber(a.variants) - groupSortNumber(b.variants);
     });
     result.push({
       setSlug: slug,

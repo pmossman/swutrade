@@ -138,6 +138,25 @@ describe('browseAllGroups', () => {
     expect(baseNames).toEqual(['Card A', 'Card B', 'Card C']);
   });
 
+  it("uses the canonical (lowest) card number across a group's printings, not the first-iterated variant", () => {
+    // Repro for the LAW Bossk-vs-Cad-Bane bug. Bossk's Standard
+    // printing is #31; in the source data the Prestige printing
+    // (#786) appears before the Standard. Cad Bane's Standard is
+    // #32 with no earlier printings. Sorting by `variants[0].number`
+    // would put Bossk at 786, demoting it past Cad Bane. The fix
+    // takes the min across all variants.
+    const cards = [
+      // Bossk: Prestige (786) loaded before Standard (31).
+      card('jump-to-lightspeed', 'Bossk', { cardType: 'Unit' as CardType, number: '786', variant: 'Prestige', name: 'Bossk (Prestige)' }),
+      card('jump-to-lightspeed', 'Bossk', { cardType: 'Unit' as CardType, number: '31', variant: 'Standard', name: 'Bossk' }),
+      // Cad Bane: only Standard (32).
+      card('jump-to-lightspeed', 'Cad Bane', { cardType: 'Unit' as CardType, number: '32', variant: 'Standard', name: 'Cad Bane' }),
+    ];
+    const result = browseAllGroups(cards);
+    const baseNames = result[0].groups.map(g => g.baseName);
+    expect(baseNames).toEqual(['Bossk', 'Cad Bane']);
+  });
+
   it('skips sets unknown to SETS instead of throwing', () => {
     const cards = [
       card('this-set-does-not-exist', 'Mystery'),
