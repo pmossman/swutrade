@@ -202,10 +202,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
 
   function handlePick(card: CardVariant, ctx: { acceptedVariants?: string[] }) {
     const familyId = cardFamilyId(card);
-    if (!familyMap.has(familyId)) {
-      setPickerOpen(false);
-      return;
-    }
+    if (!familyMap.has(familyId)) return;
     // The picker's variant filter (acceptedVariants) drives the
     // pinned printing — same wiring WantsPanel uses. Empty filter
     // → 'any'. Single value → that variant. Multiple values left
@@ -213,14 +210,18 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     // today.
     const accepted = ctx.acceptedVariants ?? [];
     const variant = accepted.length === 1 ? accepted[0] : null;
+    // Picker stays open across taps — same UX as the wishlist /
+    // binder pickers, so the user can batch-add and hit Done when
+    // they're satisfied. Tapping a card already in the draft bumps
+    // its qty up to 99 instead of silently no-op'ing, mirroring how
+    // wants.add() bumps an existing entry's qty.
     setCards(prev => {
-      // Skip duplicates by familyId — adding the same card twice is
-      // almost always an accident; the user can change variant on
-      // the existing entry instead.
-      if (prev.some(c => c.familyId === familyId)) return prev;
+      const existing = prev.findIndex(c => c.familyId === familyId);
+      if (existing >= 0) {
+        return prev.map((c, i) => i === existing ? { ...c, qty: Math.min(99, c.qty + 1) } : c);
+      }
       return [...prev, { familyId, variant, qty: 1, maxPrice: null }];
     });
-    setPickerOpen(false);
   }
 
   function updateCard(index: number, patch: Partial<SignalCardEntry>) {
