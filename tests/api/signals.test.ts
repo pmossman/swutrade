@@ -3,7 +3,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { dispatchBotPayload } from '../../api/bot.js';
 import {
-  mockRequest,
   mockResponse,
   createTestUser,
   createMutualGuildMembership,
@@ -20,21 +19,21 @@ import {
 import { createBaseFakeBot, type RecordingFakeBot, type PostCall, type SendCall, type EditCall } from './discordFakes.js';
 
 /**
- * Integration coverage for `/looking-for` + `/offering` slash
- * commands and the `signal:cancel` button. Drives the deferred-
- * followup pattern: dispatch → synchronous type-5 ack → followup
- * does the side effects + PATCHes the @original message via the
- * captured fetchImpl.
+ * Integration coverage for the multi-card slash + preview/confirm
+ * flow. Slash commands now create `draft` signals + ephemeral
+ * preview; the public post lands only when the author clicks
+ * Confirm. Match listings live in the post itself (no auto-DMs).
  *
- * The slash `card:` option takes a family id (autocomplete returns
- * families). `STABLE_FAMILY_ID` is Luke Skywalker - Hero of Yavin,
- * stable across many e2e specs. `STABLE_PRODUCT_ID` is its Standard
- * printing — used for seeding available_items when we want the
- * matcher to fire.
+ * STABLE_FAMILY_ID is Luke Skywalker - Hero of Yavin (jump-to-
+ * lightspeed). STABLE_PRODUCT_ID is its Standard product.
+ * Used as a stable card across many e2e specs.
  */
 
 const STABLE_FAMILY_ID = 'jump-to-lightspeed::luke-skywalker-hero-of-yavin';
 const STABLE_PRODUCT_ID = '617180';
+// Second canonical family for multi-card tests — Aggressive
+// Negotiations from Secrets of Power.
+const SECONDARY_FAMILY_ID = 'secrets-of-power::aggressive-negotiations';
 
 interface FollowupCall {
   url: string;
@@ -86,9 +85,9 @@ function buildSignalPayload(opts: {
   guildId: string;
   channelId: string;
   clickerDiscordId: string;
-  /** Family id for the slash `card:` arg. */
   familyId: string;
-  /** Optional pinned variant. When omitted, signal defaults to "any". */
+  /** Additional family ids → become card2..card5. */
+  additionalFamilyIds?: string[];
   variant?: string;
   qty?: number;
   note?: string;
@@ -97,6 +96,9 @@ function buildSignalPayload(opts: {
   const options: Array<{ name: string; type: number; value: unknown }> = [
     { name: 'card', type: 3, value: opts.familyId },
   ];
+  for (let i = 0; i < (opts.additionalFamilyIds?.length ?? 0); i++) {
+    options.push({ name: `card${i + 2}`, type: 3, value: opts.additionalFamilyIds![i] });
+  }
   if (opts.variant != null) options.push({ name: 'variant', type: 3, value: opts.variant });
   if (opts.qty != null) options.push({ name: 'qty', type: 4, value: opts.qty });
   if (opts.note != null) options.push({ name: 'note', type: 3, value: opts.note });
@@ -116,30 +118,27 @@ function buildSignalPayload(opts: {
   };
 }
 
-describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => {
+describeWithDb('signals: slash + preview + confirm/cancel + variant', () => {
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
   const guildCleanups: Array<() => Promise<void>> = [];
-  const signalIds: string[] = [];
+  const groupIds: string[] = [];
 
   afterEach(async () => {
     const db = getDb();
-    for (const id of signalIds) {
-      await db.delete(cardSignals).where(eq(cardSignals.id, id)).catch(() => {});
+    for (const id of groupIds) {
+      await db.delete(cardSignals).where(eq(cardSignals.groupId, id)).catch(() => {});
     }
-    signalIds.length = 0;
+    groupIds.length = 0;
     for (const fn of guildCleanups.reverse()) await fn();
     guildCleanups.length = 0;
     for (const f of fixtures) await f.cleanup();
     fixtures.length = 0;
   });
 
-  describe('/looking-for — slash submission', () => {
-    it('happy path: inserts wants_items + card_signals, posts embed, returns "Posted!" ephemeral', async () => {
+  describe('slash creates draft + returns preview ephemeral', () => {
+    it('happy path: inserts draft signal + preview embed contains card + Confirm/Cancel buttons (no public post yet)', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
-      // Map the synthetic users.id ↔ users.discord_id is the same in
-      // createTestUser; the slash needs the signaler's discord_id to
-      // resolve back to their SWUTrade user row.
       const guildId = `g-sig-${Math.random().toString(36).slice(2, 8)}`;
       const channelId = `ch-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
@@ -163,76 +162,111 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
         { bot, fetchImpl, awaitFollowup: true },
       );
 
-      // Synchronous response is the deferred ack.
+      // Sync response is the deferred ack.
       expect(res._status).toBe(200);
       expect((res._json as { type: number }).type).toBe(5);
 
-      // Bot posted the public embed in the channel.
-      expect(bot.postCalls).toHaveLength(1);
-      expect(bot.postCalls[0].channelId).toBe(channelId);
-      const embed = bot.postCalls[0].body.embeds?.[0];
-      expect(embed?.title).toMatch(/Looking for/);
+      // Ephemeral preview followup — no public post yet.
+      expect(bot.postCalls).toHaveLength(0);
+      expect(calls).toHaveLength(1);
+      const preview = calls[0].body as {
+        flags?: number;
+        embeds?: Array<{ title?: string; description?: string }>;
+        components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }>;
+      };
+      expect(preview.flags).toBe(64);
+      // Title + description reflect the slash inputs.
+      expect(preview.embeds?.[0]?.title).toMatch(/Looking for/);
+      expect(preview.embeds?.[0]?.description).toContain('2×');
+      expect(preview.embeds?.[0]?.description).toMatch(/for Friday's draft/);
+      // Confirm + Cancel buttons present.
+      const buttons = preview.components?.[0]?.components ?? [];
+      const labels = buttons.map(b => b.label);
+      expect(labels).toContain('Confirm & post');
+      expect(labels).toContain('Cancel');
+      // Confirm button's custom_id carries the groupId.
+      const confirmBtn = buttons.find(b => b.label === 'Confirm & post');
+      expect(confirmBtn?.custom_id).toMatch(/^signal:[^:]+:confirm-draft$/);
+      const groupId = confirmBtn!.custom_id!.split(':')[1];
+      groupIds.push(groupId);
 
-      // wants_items row created for the signaler.
+      // Draft row exists.
       const db = getDb();
-      const [wantsRow] = await db
-        .select()
-        .from(wantsItems)
-        .where(eq(wantsItems.userId, signaler.id))
-        .limit(1);
-      expect(wantsRow).toBeTruthy();
-      expect(wantsRow.qty).toBe(2);
-
-      // card_signals row created.
-      const [signalRow] = await db
+      const drafts = await db
         .select()
         .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      expect(signalRow).toBeTruthy();
-      expect(signalRow.kind).toBe('wanted');
-      expect(signalRow.guildId).toBe(guildId);
-      expect(signalRow.channelId).toBe(channelId);
-      expect(signalRow.signalNote).toBe('for Friday\'s draft');
-      expect(signalRow.status).toBe('active');
-      signalIds.push(signalRow.id);
-
-      // Followup ack body confirms post.
-      expect(calls).toHaveLength(1);
-      expect((calls[0].body as { content?: string }).content).toMatch(/Posted/);
+        .where(eq(cardSignals.groupId, groupId));
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0].status).toBe('draft');
+      expect(drafts[0].kind).toBe('wanted');
+      expect(drafts[0].guildId).toBe(guildId);
+      expect(drafts[0].messageId).toBeNull();  // not posted yet
     });
 
-    it('rejects when called outside a guild (DMs)', async () => {
+    it('multi-card: card + card2 + card3 → 3 draft rows in one group', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
+      const guildId = `g-mc-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
       const bot = makeSignalBot();
       const { calls, fetchImpl } = captureFollowup();
-      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-mc',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+          additionalFamilyIds: [SECONDARY_FAMILY_ID],
+        }),
+        mockResponse(),
+        { bot, fetchImpl, awaitFollowup: true },
+      );
+
+      const preview = calls[0].body as {
+        components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }>;
+      };
+      const groupId = preview.components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1];
+      expect(groupId).toBeTruthy();
+      groupIds.push(groupId!);
+
+      const db = getDb();
+      const drafts = await db
+        .select()
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId!));
+      expect(drafts).toHaveLength(2);
+      expect(drafts.every(d => d.status === 'draft')).toBe(true);
+      expect(drafts.every(d => d.groupId === groupId)).toBe(true);
+    });
+
+    it('rejects when not in a guild (DM context)', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const { calls, fetchImpl } = captureFollowup();
       await dispatchBotPayload(
         'interactions',
         {
           type: 2,
           application_id: 'app-test',
           token: 'tok-test',
-          // no guild_id → DM context
           channel_id: 'ch-dm',
           user: { id: signaler.id },
-          data: { type: 1, name: 'looking-for', options: [{ name: 'card', type: 3, value: STABLE_PRODUCT_ID }] },
+          data: { type: 1, name: 'looking-for', options: [{ name: 'card', type: 3, value: STABLE_FAMILY_ID }] },
         },
-        res,
-        { bot, fetchImpl, awaitFollowup: true },
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
-      expect(calls).toHaveLength(1);
       expect((calls[0].body as { content?: string }).content).toMatch(/only work inside a server/i);
-      expect(bot.postCalls).toHaveLength(0);
     });
 
     it('rejects when bot is not installed in the guild', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
-      const bot = makeSignalBot();
       const { calls, fetchImpl } = captureFollowup();
-      const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
@@ -242,19 +276,16 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           clickerDiscordId: signaler.id,
           familyId: STABLE_FAMILY_ID,
         }),
-        res,
-        { bot, fetchImpl, awaitFollowup: true },
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
       expect((calls[0].body as { content?: string }).content).toMatch(/SWUTrade isn't installed/i);
-      expect(bot.postCalls).toHaveLength(0);
     });
 
     it('rejects when slash author isn\'t a SWUTrade user', async () => {
       const guildId = `g-noauth-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
-      const bot = makeSignalBot();
       const { calls, fetchImpl } = captureFollowup();
-      const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
@@ -264,315 +295,406 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           clickerDiscordId: 'discord-id-without-swutrade-account',
           familyId: STABLE_FAMILY_ID,
         }),
-        res,
-        { bot, fetchImpl, awaitFollowup: true },
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
       expect((calls[0].body as { content?: string }).content).toMatch(/Sign in with Discord/i);
     });
   });
 
-  describe('/offering — slash submission', () => {
-    it('happy path: inserts available_items + card_signals, posts embed', async () => {
+  describe('confirm-draft button', () => {
+    it('owner can confirm: posts public message, flips drafts to active, replaces ephemeral with link', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
-      const guildId = `g-off-${Math.random().toString(36).slice(2, 8)}`;
+      const guildId = `g-cd-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
       guildCleanups.push(await createGuildMembership(signaler.id, guildId));
 
-      const bot = makeSignalBot();
-      const { fetchImpl } = captureFollowup();
-      const res = mockResponse();
-      await dispatchBotPayload(
-        'interactions',
-        buildSignalPayload({
-          command: 'offering',
-          guildId,
-          channelId: 'ch-off',
-          clickerDiscordId: signaler.id,
-          familyId: STABLE_FAMILY_ID,
-          qty: 1,
-          maxPrice: 8,
-        }),
-        res,
-        { bot, fetchImpl, awaitFollowup: true },
-      );
-
-      const db = getDb();
-      const [availRow] = await db
-        .select()
-        .from(availableItems)
-        .where(eq(availableItems.userId, signaler.id))
-        .limit(1);
-      expect(availRow).toBeTruthy();
-      expect(availRow.productId).toBe(STABLE_PRODUCT_ID);
-
-      const [signalRow] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      expect(signalRow.kind).toBe('offering');
-      expect(signalRow.maxUnitPrice).toBe('8');
-      signalIds.push(signalRow.id);
-
-      const embed = bot.postCalls[0].body.embeds?.[0];
-      expect(embed?.title).toMatch(/Offering/);
-    });
-  });
-
-  describe('signal:<id>:cancel button', () => {
-    it('owner can cancel — sets status=cancelled and PATCHes embed via type-7', async () => {
-      const signaler = await createTestUser();
-      fixtures.push(signaler);
-      const guildId = `g-can-${Math.random().toString(36).slice(2, 8)}`;
-      guildCleanups.push(await installBotInGuild(guildId));
-      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
-
-      // Send /looking-for so a signal exists.
+      // Slash → draft.
       const bot1 = makeSignalBot();
-      const { fetchImpl } = captureFollowup();
+      const { calls, fetchImpl } = captureFollowup();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
           command: 'looking-for',
           guildId,
-          channelId: 'ch-cancel',
+          channelId: 'ch-cd',
           clickerDiscordId: signaler.id,
           familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot: bot1, fetchImpl, awaitFollowup: true },
       );
-      const db = getDb();
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
 
-      // Click Cancel as the signaler.
+      // Confirm button click.
+      const bot2 = makeSignalBot({ postId: 'public-post-1' });
       const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         {
-          type: 3, // MESSAGE_COMPONENT
-          data: { custom_id: `signal:${signal.id}:cancel` },
+          type: 3,
+          data: { custom_id: `signal:${groupId}:confirm-draft` },
           member: { user: { id: signaler.id } },
         },
         res,
+        { bot: bot2 },
       );
 
-      expect(res._status).toBe(200);
-      expect((res._json as { type: number }).type).toBe(7); // UPDATE_MESSAGE
+      // Bot posted the public embed.
+      expect(bot2.postCalls).toHaveLength(1);
+      expect(bot2.postCalls[0].channelId).toBe('ch-cd');
 
-      const [after] = await db
-        .select({ status: cardSignals.status, cancelledAt: cardSignals.cancelledAt })
+      // Ephemeral was replaced with a "Posted!" body via type-7.
+      expect(res._status).toBe(200);
+      expect((res._json as { type: number }).type).toBe(7);
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/Posted!/);
+
+      // DB row is now active + has messageId.
+      const db = getDb();
+      const [signal] = await db
+        .select()
         .from(cardSignals)
-        .where(eq(cardSignals.id, signal.id))
+        .where(eq(cardSignals.groupId, groupId))
         .limit(1);
-      expect(after.status).toBe('cancelled');
-      expect(after.cancelledAt).not.toBeNull();
+      expect(signal.status).toBe('active');
+      expect(signal.messageId).toBe('public-post-1');
     });
 
-    it('non-owner cannot cancel — gets ephemeral error', async () => {
+    it('non-owner cannot confirm — gets ephemeral error', async () => {
       const signaler = await createTestUser();
       const stranger = await createTestUser();
       fixtures.push(signaler, stranger);
-      const guildId = `g-noc-${Math.random().toString(36).slice(2, 8)}`;
+      const guildId = `g-cdno-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
       guildCleanups.push(await createGuildMembership(signaler.id, guildId));
 
-      const { fetchImpl } = captureFollowup();
+      const { calls, fetchImpl } = captureFollowup();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
           command: 'looking-for',
           guildId,
-          channelId: 'ch-noc',
+          channelId: 'ch-cdno',
           clickerDiscordId: signaler.id,
           familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
-      const db = getDb();
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
 
+      const bot = makeSignalBot();
       const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         {
           type: 3,
-          data: { custom_id: `signal:${signal.id}:cancel` },
+          data: { custom_id: `signal:${groupId}:confirm-draft` },
           member: { user: { id: stranger.id } },
         },
         res,
+        { bot },
       );
 
-      expect(res._status).toBe(200);
-      const body = res._json as { type: number; data?: { content?: string } };
-      expect(body.type).toBe(4); // CHANNEL_MESSAGE — ephemeral error
-      expect(body.data?.content).toMatch(/Only the post's author/i);
+      expect(bot.postCalls).toHaveLength(0);
+      expect((res._json as { type: number }).type).toBe(4);
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/Only the post's author/i);
 
-      // Status unchanged.
-      const [after] = await db
-        .select({ status: cardSignals.status })
-        .from(cardSignals)
-        .where(eq(cardSignals.id, signal.id))
-        .limit(1);
-      expect(after.status).toBe('active');
-    });
-  });
-
-  describe('variant flow', () => {
-    it('slash with variant arg pins the wants_items restriction up-front', async () => {
-      const signaler = await createTestUser();
-      fixtures.push(signaler);
-      const guildId = `g-var-${Math.random().toString(36).slice(2, 8)}`;
-      guildCleanups.push(await installBotInGuild(guildId));
-      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
-
-      const bot = makeSignalBot();
-      const { fetchImpl } = captureFollowup();
-      await dispatchBotPayload(
-        'interactions',
-        buildSignalPayload({
-          command: 'looking-for',
-          guildId,
-          channelId: 'ch-var',
-          clickerDiscordId: signaler.id,
-          familyId: STABLE_FAMILY_ID,
-          variant: 'Hyperspace',
-        }),
-        mockResponse(),
-        { bot, fetchImpl, awaitFollowup: true },
-      );
-
+      // Draft still in draft state.
       const db = getDb();
-      const [wantsRow] = await db
-        .select()
-        .from(wantsItems)
-        .where(eq(wantsItems.userId, signaler.id))
-        .limit(1);
-      expect(wantsRow.restrictionMode).toBe('restricted');
-      expect(wantsRow.restrictionVariants).toEqual(['Hyperspace']);
-
       const [signal] = await db
         .select()
         .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
+        .where(eq(cardSignals.groupId, groupId))
         .limit(1);
-      signalIds.push(signal.id);
+      expect(signal.status).toBe('draft');
     });
+  });
 
-    it('signal:<id>:variant-open opens an ephemeral picker (owner-only)', async () => {
+  describe('cancel-draft button', () => {
+    it('owner can discard: deletes drafts, edits ephemeral to "Cancelled"', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
-      const guildId = `g-vo-${Math.random().toString(36).slice(2, 8)}`;
+      const guildId = `g-xd-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
       guildCleanups.push(await createGuildMembership(signaler.id, guildId));
 
-      const { fetchImpl } = captureFollowup();
+      const { calls, fetchImpl } = captureFollowup();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
           command: 'looking-for',
           guildId,
-          channelId: 'ch-vo',
+          channelId: 'ch-xd',
           clickerDiscordId: signaler.id,
           familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
-      const db = getDb();
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
 
       const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         {
           type: 3,
-          data: { custom_id: `signal:${signal.id}:variant-open` },
+          data: { custom_id: `signal:${groupId}:cancel-draft` },
           member: { user: { id: signaler.id } },
         },
         res,
       );
 
-      expect(res._status).toBe(200);
-      const body = res._json as {
-        type: number;
-        data?: { content?: string; flags?: number; components?: Array<{ components?: Array<{ type: number; options?: unknown[] }> }> };
-      };
-      expect(body.type).toBe(4);
-      expect(body.data?.flags).toBe(64);
-      expect(body.data?.content).toMatch(/Specify the variant/i);
-      // String-select with variant options.
-      const select = body.data?.components?.[0]?.components?.[0];
-      expect(select?.type).toBe(3);
-      expect((select?.options ?? []).length).toBeGreaterThan(0);
-    });
+      expect((res._json as { type: number }).type).toBe(7);
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/Cancelled/i);
 
-    it('signal:<id>:variant-pick narrows the wants_items restriction + responds with confirmation', async () => {
+      // Drafts deleted.
+      const db = getDb();
+      const remaining = await db
+        .select()
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId));
+      expect(remaining).toHaveLength(0);
+    });
+  });
+
+  describe('cancel (live post) button — group-aware', () => {
+    it('owner can cancel a live group: every row → cancelled, embed PATCHed via type-7', async () => {
       const signaler = await createTestUser();
       fixtures.push(signaler);
-      const guildId = `g-vp-${Math.random().toString(36).slice(2, 8)}`;
+      const guildId = `g-cl-${Math.random().toString(36).slice(2, 8)}`;
       guildCleanups.push(await installBotInGuild(guildId));
       guildCleanups.push(await createGuildMembership(signaler.id, guildId));
 
-      const { fetchImpl } = captureFollowup();
+      // Slash → draft → confirm to live.
+      const { calls, fetchImpl } = captureFollowup();
       await dispatchBotPayload(
         'interactions',
         buildSignalPayload({
           command: 'looking-for',
           guildId,
-          channelId: 'ch-vp',
+          channelId: 'ch-cl',
           clickerDiscordId: signaler.id,
           familyId: STABLE_FAMILY_ID,
+          additionalFamilyIds: [SECONDARY_FAMILY_ID],
         }),
         mockResponse(),
         { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
       );
-      const db = getDb();
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
 
-      // The variant-pick handler PATCHes the public post via the
-      // bot client to reflect the new variant. Inject a fake so
-      // the test doesn't need DISCORD_BOT_TOKEN at module init.
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:confirm-draft` },
+          member: { user: { id: signaler.id } },
+        },
+        mockResponse(),
+        { bot: makeSignalBot({ postId: 'live-post-1' }) },
+      );
+
+      // Click Cancel post on the live group.
       const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
         {
           type: 3,
-          data: { custom_id: `signal:${signal.id}:variant-pick`, values: ['Hyperspace'] },
+          data: { custom_id: `signal:${groupId}:cancel` },
           member: { user: { id: signaler.id } },
         },
         res,
         { bot: makeSignalBot() },
       );
 
-      expect(res._status).toBe(200);
-      // Type 7 — UPDATE_MESSAGE — replaces the ephemeral picker
-      // with a confirmation.
       expect((res._json as { type: number }).type).toBe(7);
+      const db = getDb();
+      const rows = await db
+        .select({ status: cardSignals.status })
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId));
+      expect(rows).toHaveLength(2);
+      for (const r of rows) expect(r.status).toBe('cancelled');
+    });
+  });
 
-      // The wants_items row should now have restricted variant.
+  describe('match listing in preview + post', () => {
+    it('preview lists guild members who match the signal (no DM-pings)', async () => {
+      const signaler = await createTestUser();
+      const matcher = await createTestUser();
+      fixtures.push(signaler, matcher);
+      const guildId = `g-mlp-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await createMutualGuildMembership(signaler.id, matcher.id, guildId));
+
+      // Seed the matcher's available row.
+      const db = getDb();
+      const availId = `a-test-${matcher.id}`;
+      await db.insert(availableItems).values({
+        id: availId,
+        userId: matcher.id,
+        productId: STABLE_PRODUCT_ID,
+        qty: 1,
+        addedAt: Date.now(),
+      });
+
+      const bot = makeSignalBot();
+      const { calls, fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-mlp',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+        }),
+        mockResponse(),
+        { bot, fetchImpl, awaitFollowup: true },
+      );
+
+      // No DMs sent — matches are public surface only.
+      expect(bot.sendCalls).toHaveLength(0);
+
+      // Preview embed mentions the matcher.
+      const preview = calls[0].body as { embeds?: Array<{ description?: string }> };
+      expect(preview.embeds?.[0]?.description).toContain(`<@${matcher.id}>`);
+
+      // Cleanup.
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
+      await db.delete(availableItems).where(eq(availableItems.id, availId));
+    });
+  });
+
+  describe('variant flow (single-card live post only)', () => {
+    it('variant button only renders when single-card + variant=any', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-vbtn-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      // Slash → preview → confirm to live (single-card, variant=any).
+      const { calls, fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-vbtn',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+        }),
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
+      );
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
+
+      const confirmBot = makeSignalBot({ postId: 'live-vbtn' });
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:confirm-draft` },
+          member: { user: { id: signaler.id } },
+        },
+        mockResponse(),
+        { bot: confirmBot },
+      );
+
+      // The public post embed has BOTH Specify variant + Cancel post buttons.
+      const liveEmbed = confirmBot.postCalls[0].body as {
+        components?: Array<{ components?: Array<{ label?: string; custom_id?: string }> }>;
+      };
+      const liveButtons = (liveEmbed.components?.[0]?.components ?? []).map(b => b.label);
+      expect(liveButtons).toContain('Specify variant');
+      expect(liveButtons).toContain('Cancel post');
+    });
+
+    it('multi-card group does NOT show Specify variant button', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-mcv-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      const { calls, fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-mcv',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+          additionalFamilyIds: [SECONDARY_FAMILY_ID],
+        }),
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
+      );
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
+
+      const confirmBot = makeSignalBot({ postId: 'live-mcv' });
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:confirm-draft` },
+          member: { user: { id: signaler.id } },
+        },
+        mockResponse(),
+        { bot: confirmBot },
+      );
+
+      const liveEmbed = confirmBot.postCalls[0].body as {
+        components?: Array<{ components?: Array<{ label?: string }> }>;
+      };
+      const liveButtons = (liveEmbed.components?.[0]?.components ?? []).map(b => b.label);
+      expect(liveButtons).not.toContain('Specify variant');
+      expect(liveButtons).toContain('Cancel post');
+    });
+  });
+
+  describe('initial slash with variant arg pins the wants_items restriction up-front', () => {
+    it('variant=Hyperspace produces a restricted wants row', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-vfront-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      const { calls, fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-vfront',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+          variant: 'Hyperspace',
+        }),
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
+      );
+      const groupId = (calls[0].body as { components?: Array<{ components?: Array<{ custom_id?: string; label?: string }> }> })
+        .components?.[0]?.components?.find(b => b.label === 'Confirm & post')?.custom_id?.split(':')[1]!;
+      groupIds.push(groupId);
+
+      const db = getDb();
       const [wantsRow] = await db
         .select()
         .from(wantsItems)
@@ -580,104 +702,6 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
         .limit(1);
       expect(wantsRow.restrictionMode).toBe('restricted');
       expect(wantsRow.restrictionVariants).toEqual(['Hyperspace']);
-    });
-  });
-
-  describe('match-ping integration', () => {
-    it('DMs a guild member who has the wanted card available, gated on dmMatchAlerts', async () => {
-      const signaler = await createTestUser();
-      const matcher = await createTestUser();
-      fixtures.push(signaler, matcher);
-      const guildId = `g-match-${Math.random().toString(36).slice(2, 8)}`;
-      guildCleanups.push(await createMutualGuildMembership(signaler.id, matcher.id, guildId));
-
-      // Seed the matcher's available list with the product the
-      // signal will be looking for.
-      const db = getDb();
-      const availId = `a-test-${matcher.id}`;
-      await db.insert(availableItems).values({
-        id: availId,
-        userId: matcher.id,
-        productId: STABLE_PRODUCT_ID,
-        qty: 1,
-        addedAt: Date.now(),
-      });
-
-      // Enable match alerts on the matcher.
-      await db.update(users)
-        .set({ dmMatchAlerts: true })
-        .where(eq(users.id, matcher.id));
-
-      const bot = makeSignalBot();
-      const { fetchImpl } = captureFollowup();
-      await dispatchBotPayload(
-        'interactions',
-        buildSignalPayload({
-          command: 'looking-for',
-          guildId,
-          channelId: 'ch-match',
-          clickerDiscordId: signaler.id,
-          familyId: STABLE_FAMILY_ID,
-        }),
-        mockResponse(),
-        { bot, fetchImpl, awaitFollowup: true },
-      );
-
-      expect(bot.sendCalls).toHaveLength(1);
-      expect(bot.sendCalls[0].userId).toBe(matcher.id);
-      expect(bot.sendCalls[0].body.content).toMatch(/looking for/i);
-
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
-      await db.delete(availableItems).where(eq(availableItems.id, availId));
-    });
-
-    it('does NOT DM when matcher has dmMatchAlerts off (default)', async () => {
-      const signaler = await createTestUser();
-      const matcher = await createTestUser();
-      fixtures.push(signaler, matcher);
-      const guildId = `g-noping-${Math.random().toString(36).slice(2, 8)}`;
-      guildCleanups.push(await createMutualGuildMembership(signaler.id, matcher.id, guildId));
-
-      const db = getDb();
-      const availId = `a-test-${matcher.id}`;
-      await db.insert(availableItems).values({
-        id: availId,
-        userId: matcher.id,
-        productId: STABLE_PRODUCT_ID,
-        qty: 1,
-        addedAt: Date.now(),
-      });
-      // dmMatchAlerts defaults to false — don't enable.
-
-      const bot = makeSignalBot();
-      const { fetchImpl } = captureFollowup();
-      await dispatchBotPayload(
-        'interactions',
-        buildSignalPayload({
-          command: 'looking-for',
-          guildId,
-          channelId: 'ch-noping',
-          clickerDiscordId: signaler.id,
-          familyId: STABLE_FAMILY_ID,
-        }),
-        mockResponse(),
-        { bot, fetchImpl, awaitFollowup: true },
-      );
-
-      expect(bot.sendCalls).toHaveLength(0);
-
-      const [signal] = await db
-        .select()
-        .from(cardSignals)
-        .where(eq(cardSignals.userId, signaler.id))
-        .limit(1);
-      signalIds.push(signal.id);
-      await db.delete(availableItems).where(eq(availableItems.id, availId));
     });
   });
 });

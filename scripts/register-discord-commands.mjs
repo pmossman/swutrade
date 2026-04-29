@@ -116,6 +116,12 @@ const headers = {
 // Shared option set for /looking-for and /offering. The two
 // commands are symmetric — same shape, just inverse semantics —
 // so the option list lives in one place to keep them in lockstep.
+// Multi-card support: card2..card5 are optional and autocomplete
+// the same way card does. Each becomes its own card_signals row
+// in the resulting group; the public post lists them as bullets.
+// 5 max per slash invocation — Discord allows 25 options total per
+// command, but the slash UI gets unwieldy past 5 cards. "Add
+// another card" button on the post will lift this limit later.
 const SIGNAL_OPTIONS = [
   {
     type: 3, // STRING
@@ -132,9 +138,37 @@ const SIGNAL_OPTIONS = [
     autocomplete: true,
   },
   {
+    type: 3, // STRING
+    name: 'card2',
+    description: 'Add a second card to this signal (optional)',
+    required: false,
+    autocomplete: true,
+  },
+  {
+    type: 3, // STRING
+    name: 'card3',
+    description: 'Add a third card (optional)',
+    required: false,
+    autocomplete: true,
+  },
+  {
+    type: 3, // STRING
+    name: 'card4',
+    description: 'Add a fourth card (optional)',
+    required: false,
+    autocomplete: true,
+  },
+  {
+    type: 3, // STRING
+    name: 'card5',
+    description: 'Add a fifth card (optional)',
+    required: false,
+    autocomplete: true,
+  },
+  {
     type: 4, // INTEGER
     name: 'qty',
-    description: 'How many copies (default 1)',
+    description: 'How many copies of each card (default 1; applies to all cards in this signal)',
     required: false,
     min_value: 1,
     max_value: 99,

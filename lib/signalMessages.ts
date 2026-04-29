@@ -1,97 +1,116 @@
 /**
  * Discord embed builders for `/looking-for` + `/offering` signal posts.
  *
- * In PR 1 the signal post is the public surface (channel message
- * with embed + Cancel button). PR 2 adds a thread + response button;
- * the embed shape is forward-compatible — the response counter is
- * already there, just shows 0 today.
+ * Multi-card aware: a signal can be a single card or a group of up
+ * to 5. The embed format flexes for both — single-card stays tight,
+ * multi-card becomes a bulleted list with per-card match listings.
+ *
+ * Match listings are public — the post lists which guild members
+ * have the inventory the signaler is looking for / offering, gated
+ * on those members' `appearInQueries=true` consent. Mentions are
+ * rendered with `allowed_mentions: { parse: [] }` so listed users
+ * aren't pinged automatically; the signaler can manually @ them in
+ * a reply if they want to nudge.
  */
 
 import type { DiscordMessageBody, DiscordComponent } from './discordBot.js';
 import type { CardSignalKind, CardSignalStatus } from './schema.js';
 import type { VariantSpec } from './signalMatching.js';
 
-/** Custom-id prefix for signal-related button interactions. The
- *  bot's component dispatcher branches on this prefix the same way
- *  it branches on `trade-proposal:*`, `pref:*`, etc. */
+/** Custom-id prefix for signal-related button interactions. */
 export const SIGNAL_CUSTOM_ID_PREFIX = 'signal';
 
 const COMPONENT_TYPE_ACTION_ROW = 1;
 const COMPONENT_TYPE_BUTTON = 2;
 const COMPONENT_TYPE_STRING_SELECT = 3;
+const BUTTON_STYLE_PRIMARY = 1;
 const BUTTON_STYLE_SECONDARY = 2;
 const BUTTON_STYLE_DANGER = 4;
 
 // Brand palette: blue for "wanted" (one side of a trade), emerald
 // for "offering" (the other side). Matches the trade builder's
-// reserved colours so the visual cue carries across surfaces.
+// reserved colours.
 const COLOR_WANTED = 0x3B82F6;
 const COLOR_OFFERING = 0x10B981;
-// Strike-through tone for cancelled / expired states. Muted so the
-// post doesn't compete visually with active signals.
+// Strike-through tone for cancelled / expired states.
 const COLOR_INACTIVE = 0x6b7280;
+// Preview state — gold-ish to signal "not yet posted".
+const COLOR_PREVIEW = 0xF5A623;
 
-export interface SignalEmbedContext {
+/** Cap on rendered match mentions per card before truncating to "+N more". */
+const MATCH_RENDER_LIMIT = 5;
+
+export interface MatchedMember {
+  discordId: string;
+  handle: string;
+  qty?: number;
+}
+
+export interface SignalEmbedCard {
+  /** card_signals row id — used for per-row buttons (variant
+   *  picker) when the group is single-card. */
   signalId: string;
-  kind: CardSignalKind;
-  /** Status drives the colour + badge. PR 1 only ever calls with
-   *  'active' or 'cancelled' / 'expired'; 'fulfilled' lands in PR 3. */
-  status: CardSignalStatus;
-  card: {
-    /** Family-level display name (variant suffix stripped). */
-    name: string;
-    /** Representative TCGPlayer product id — used to fetch the
-     *  thumbnail. When `variantSpec.mode === 'any'`, this is the
-     *  cheapest variant in the family. */
-    productId: string;
-    /** Representative variant label for the thumbnail. Used as a
-     *  display fallback when no specific variant is pinned. */
-    variant: string;
-    /** Set name for the description line. Optional — passes through
-     *  to the embed if present. */
-    setName?: string;
-  };
-  /** Whether the signaler has pinned a specific printing. `any`
-   *  shows "any printing" + a "Specify variant" button; restricted
-   *  shows the variant labels and omits the button. */
+  /** Family-level display name. */
+  name: string;
+  /** Set code, e.g. "JTL". */
+  setCode: string;
+  /** Card type, e.g. "Leader". Optional. */
+  cardType?: string;
+  /** Representative TCGPlayer product id — used for the embed
+   *  thumbnail (single-card mode only; multi-card drops the
+   *  thumbnail to make room for the list). */
+  productId: string;
   variantSpec: VariantSpec;
   qty: number;
-  /** Inline note from the signaler. Up to ~50 chars in the slash. */
+  /** Guild members who have the inverse inventory listed. */
+  matchedUsers: MatchedMember[];
+}
+
+export interface SignalEmbedContext {
+  /** Group id — same as the single row's id for 1-card signals. */
+  groupId: string;
+  kind: CardSignalKind;
+  status: CardSignalStatus;
+  /** Either preview (Confirm + Cancel buttons) or live (Cancel +
+   *  optional Specify variant for single-card / variant=any). */
+  mode: 'preview' | 'live';
+  cards: SignalEmbedCard[];
   note?: string | null;
-  /** Optional max unit price the signaler is willing to pay /
-   *  accept for this signal. Surfaced under the qty line. */
   maxUnitPrice?: number | null;
   requester: {
-    /** Discord user id — used for the @mention. */
     discordId: string | null;
-    /** SWUTrade handle. */
     handle: string;
-    /** Avatar url — optional, used as embed author icon if present. */
     avatarUrl?: string | null;
   };
-  /** Number of responders so far. PR 1 always shows 0; PR 2 PATCHes
-   *  the embed to bump this when a response lands. */
-  responseCount: number;
-  /** Friendly relative-time hint, e.g. "Expires in 6 days". The
-   *  caller computes this so the builder stays pure. */
+  /** Friendly relative-time hint, e.g. "Expires in 6 days". */
   expiryHint: string;
 }
 
 /**
- * The public signal post. Posts in the channel where the user typed
- * the slash; the bot's `application_id` owns the message so we can
- * PATCH it later (status transitions, response-count bumps, etc.).
+ * The signal embed. Used for both the public live post and the
+ * preview ephemeral. Same embed body in both cases; the action row
+ * differs (Confirm/Cancel vs Cancel/Specify-variant).
+ *
+ * Multi-card collapses each card into a bullet:
+ *   • 3× Luke Skywalker — Hero of Yavin [JTL] (Leader) · any printing
+ *     📦 In this server: <@123>, <@456>
+ *
+ * Single-card uses a tighter layout with the thumbnail and a
+ * single match-list line.
  */
 export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   const isActive = ctx.status === 'active';
+  const isPreview = ctx.mode === 'preview' && ctx.status === 'draft';
   const titleVerb = ctx.kind === 'wanted' ? '🔍 Looking for' : '💱 Offering';
-  const color = !isActive
-    ? COLOR_INACTIVE
-    : ctx.kind === 'wanted'
-      ? COLOR_WANTED
-      : COLOR_OFFERING;
+
+  const color = (() => {
+    if (isPreview) return COLOR_PREVIEW;
+    if (!isActive) return COLOR_INACTIVE;
+    return ctx.kind === 'wanted' ? COLOR_WANTED : COLOR_OFFERING;
+  })();
 
   const statusBadge = (() => {
+    if (isPreview) return '*Preview · not yet posted*';
     switch (ctx.status) {
       case 'cancelled': return '· **Cancelled**';
       case 'expired':   return '· **Expired**';
@@ -100,45 +119,55 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
     }
   })();
 
-  // Variant display: when the signaler pinned a printing, show
-  // it explicitly. Otherwise say "any printing" so responders
-  // know not to worry about a specific variant — they can also
-  // see (and use) the "Specify variant" button if they're the
-  // signaler and want to narrow down.
-  const variantLabel = ctx.variantSpec.mode === 'restricted'
-    ? `${ctx.variantSpec.variants.join(' / ')} only`
-    : 'Any printing';
-
-  const lines: string[] = [
-    `**${ctx.qty}×** · ${variantLabel}${ctx.card.setName ? ` · ${ctx.card.setName}` : ''}`,
-  ];
-  if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
-    const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
-    lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
+  // Build the description block. Layout differs between single-
+  // and multi-card.
+  const lines: string[] = [];
+  if (ctx.cards.length === 1) {
+    const c = ctx.cards[0];
+    lines.push(`**${c.qty}×** · ${formatCardLabel(c)}`);
+    if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
+      const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
+      lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
+    }
+    lines.push(formatMatchLine(c.matchedUsers, ctx.kind));
+  } else {
+    for (const c of ctx.cards) {
+      lines.push(`• **${c.qty}×** ${c.name} \`[${c.setCode}]\`${c.cardType === 'Leader' ? ' (Leader)' : ''}`);
+      if (c.variantSpec.mode === 'restricted') {
+        lines.push(`  ${c.variantSpec.variants.join(' / ')} only`);
+      }
+      lines.push(`  ${formatMatchLine(c.matchedUsers, ctx.kind)}`);
+      lines.push('');
+    }
+    if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
+      const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
+      lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
+    }
   }
   if (ctx.note) {
-    // Single-line quote — Discord renders `>` as a blockquote.
     lines.push(`> ${ctx.note}`);
   }
   lines.push('');
-  if (isActive) {
-    lines.push(`💬 **${ctx.responseCount}** ${ctx.responseCount === 1 ? 'response' : 'responses'}`);
+  if (isPreview) {
+    lines.push('Click **Confirm & post** to publish in this channel, or **Cancel** to discard.');
+  } else if (isActive) {
     lines.push(`⏱ ${ctx.expiryHint}`);
   } else if (statusBadge) {
     lines.push(statusBadge);
   }
 
-  // The wordmark title style mirrors trade proposals. Strike-through
-  // applied to inactive signals via Discord's `~~text~~` syntax so
-  // the post visually retires without disappearing from the channel.
-  const titleText = `${titleVerb} · ${ctx.card.name}`;
-  const title = isActive ? titleText : `~~${titleText}~~`;
+  // Title — single-card uses the card name; multi-card uses a
+  // generic "N cards" header so the title doesn't pretend the
+  // first card is the only one.
+  const titleText = ctx.cards.length === 1
+    ? `${titleVerb} · ${ctx.cards[0].name}`
+    : `${titleVerb} · ${ctx.cards.length} cards`;
+  const title = !isActive && !isPreview ? `~~${titleText}~~` : titleText;
 
-  // Card thumbnail from TCGPlayer's CDN (same source the trade
-  // builder uses). Skip when productId is empty — defensive against
-  // a future code path that posts without a real card.
-  const thumbnail = ctx.card.productId
-    ? { url: `https://product-images.tcgplayer.com/fit-in/200x279/${ctx.card.productId}.jpg` }
+  // Thumbnail: only for single-card. Multi-card has no thumbnail
+  // — the bullet list is the focal element.
+  const thumbnail = ctx.cards.length === 1 && ctx.cards[0].productId
+    ? { url: `https://product-images.tcgplayer.com/fit-in/200x279/${ctx.cards[0].productId}.jpg` }
     : undefined;
 
   return {
@@ -153,41 +182,96 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
       },
       footer: { text: 'SWUTrade · /looking-for or /offering to post your own' },
     }],
-    components: isActive ? [buildActionRow(ctx)] : [],
-  };
+    components: buildActionRow(ctx),
+    // Suppress automatic pings for the listed mentions — the post
+    // is a discovery surface, not a notification firehose. The
+    // author can manually @ matched users in a reply if they want
+    // to nudge specific people.
+    allowed_mentions: { parse: [] },
+  } as DiscordMessageBody;
 }
 
-/** PR 1: Cancel button + (when no specific variant is pinned)
- *  a "Specify variant" button so the signaler can narrow the
- *  printing post-hoc. PR 2 will add "I have this!" / "I want
- *  this!" buttons alongside. */
-function buildActionRow(ctx: SignalEmbedContext): DiscordComponent {
+function formatCardLabel(c: SignalEmbedCard): string {
+  const variantLabel = c.variantSpec.mode === 'restricted'
+    ? `${c.variantSpec.variants.join(' / ')} only`
+    : 'any printing';
+  const leader = c.cardType === 'Leader' ? ' (Leader)' : '';
+  return `\`[${c.setCode}]\`${leader} · ${variantLabel}`;
+}
+
+function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string {
+  if (matches.length === 0) {
+    return kind === 'wanted'
+      ? '📦 No one in this server has it listed yet'
+      : '📦 No one in this server wants it yet';
+  }
+  const verb = kind === 'wanted' ? 'In this server' : 'Wanted by';
+  const visible = matches.slice(0, MATCH_RENDER_LIMIT);
+  const overflow = matches.length - visible.length;
+  const mentions = visible.map(m => {
+    const qtySuffix = m.qty != null && m.qty > 1 ? ` (${m.qty}×)` : '';
+    return `<@${m.discordId}>${qtySuffix}`;
+  });
+  if (overflow > 0) mentions.push(`+${overflow} more`);
+  return `📦 ${verb}: ${mentions.join(', ')}`;
+}
+
+function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {
+  const isActive = ctx.status === 'active';
+  const isPreview = ctx.mode === 'preview' && ctx.status === 'draft';
+  if (!isActive && !isPreview) return [];
+
+  if (isPreview) {
+    // Preview: Confirm + Cancel only. Per-card variant flow runs
+    // post-confirm via the same Specify-variant button on the
+    // live post (single-card only).
+    return [{
+      type: COMPONENT_TYPE_ACTION_ROW,
+      components: [
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: BUTTON_STYLE_PRIMARY,
+          label: 'Confirm & post',
+          custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:confirm-draft`,
+        },
+        {
+          type: COMPONENT_TYPE_BUTTON,
+          style: BUTTON_STYLE_SECONDARY,
+          label: 'Cancel',
+          custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:cancel-draft`,
+        },
+      ],
+    }];
+  }
+
+  // Live: Cancel post + (single-card with variant=any) Specify
+  // variant. Multi-card defers per-card variant pinning to a
+  // follow-up.
   const buttons: DiscordComponent[] = [];
-  if (ctx.variantSpec.mode === 'any') {
+  if (ctx.cards.length === 1 && ctx.cards[0].variantSpec.mode === 'any') {
     buttons.push({
       type: COMPONENT_TYPE_BUTTON,
       style: BUTTON_STYLE_SECONDARY,
       label: 'Specify variant',
-      custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.signalId}:variant-open`,
+      custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.cards[0].signalId}:variant-open`,
     });
   }
   buttons.push({
     type: COMPONENT_TYPE_BUTTON,
     style: BUTTON_STYLE_DANGER,
     label: 'Cancel post',
-    custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.signalId}:cancel`,
+    custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:cancel`,
   });
-  return {
+  return [{
     type: COMPONENT_TYPE_ACTION_ROW,
     components: buttons,
-  };
+  }];
 }
 
 /**
  * Ephemeral message body shown to the signaler after they click
  * "Specify variant". A string-select listing every variant in the
- * family — pick one, the dispatcher updates the signal's
- * restriction + PATCHes the public embed.
+ * family.
  */
 export function buildVariantPickerEphemeral(args: {
   signalId: string;
@@ -216,54 +300,7 @@ export function buildVariantPickerEphemeral(args: {
   };
 }
 
-export interface MatchPingContext {
-  kind: CardSignalKind;
-  card: { name: string; variant: string };
-  /** Whether the signaler pinned a specific printing. The DM body
-   *  flips between "looking for any printing of X" vs "looking for
-   *  Hyperspace X specifically" based on this. */
-  variantSpec: VariantSpec;
-  signalerHandle: string;
-  qty: number;
-  /** Deep link into the signal post in the channel. Built by the
-   *  caller from guildId + channelId + messageId. */
-  signalUrl: string;
-  /** Optional note from the signaler. */
-  note?: string | null;
-}
-
-/**
- * DM body sent to a matched user when a signal posts. Brief —
- * the signal post itself is where the action happens; the DM is a
- * tap-to-jump notification. Settings buttons piggyback on the DM
- * so the matched user can opt out of future match alerts in one
- * click.
- */
-export function buildMatchAlertDm(ctx: MatchPingContext): DiscordMessageBody {
-  const variantPhrase = ctx.variantSpec.mode === 'restricted'
-    ? `${ctx.variantSpec.variants.join('/')} only`
-    : 'any printing';
-  const intro = ctx.kind === 'wanted'
-    ? `@${ctx.signalerHandle} is **looking for ${ctx.qty}× ${ctx.card.name}** (${variantPhrase}) — and SWUTrade noticed you have it listed.`
-    : `@${ctx.signalerHandle} is **offering ${ctx.qty}× ${ctx.card.name}** (${variantPhrase}) — and SWUTrade noticed you want it.`;
-
-  const lines = [intro];
-  if (ctx.note) lines.push(`> ${ctx.note}`);
-  lines.push('');
-  lines.push(`[Open the post →](${ctx.signalUrl})`);
-  lines.push('');
-  lines.push('— Don\'t want match alerts? `/swutrade settings` → Match alerts.');
-
-  return {
-    content: lines.join('\n'),
-    // No buttons — keep the DM lightweight; user can act from the
-    // public post itself in PR 2.
-  };
-}
-
-/** Friendly "Expires in N days/hours" string from a future date.
- *  Pure helper kept colocated with the embed builder so the wording
- *  stays consistent across the post + any followup PATCHes. */
+/** Friendly "Expires in N days/hours" string. */
 export function formatExpiryHint(expiresAt: Date, now: Date = new Date()): string {
   const ms = expiresAt.getTime() - now.getTime();
   if (ms <= 0) return 'Expired';

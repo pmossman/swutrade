@@ -712,7 +712,14 @@ export const sessionEvents = pgTable(
 export const cardSignalKinds = ['wanted', 'offering'] as const;
 export type CardSignalKind = typeof cardSignalKinds[number];
 
-export const cardSignalStatuses = ['active', 'cancelled', 'fulfilled', 'expired'] as const;
+// `draft` — slash submitted, ephemeral preview shown to author,
+//           awaiting confirm. Cron sweeps drafts older than 1h.
+// `active` — confirmed; public post is live.
+// `cancelled` — author cancelled (from preview OR live post).
+// `fulfilled` — accepted trade landed for this card with the
+//               signaler. PR 3 fulfillment detection lights this up.
+// `expired` — past `expires_at`; daily cron flips + PATCHes embed.
+export const cardSignalStatuses = ['draft', 'active', 'cancelled', 'fulfilled', 'expired'] as const;
 export type CardSignalStatus = typeof cardSignalStatuses[number];
 
 export const cardSignals = pgTable(
@@ -723,6 +730,14 @@ export const cardSignals = pgTable(
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
     kind: text('kind', { enum: cardSignalKinds }).notNull(),
+
+    // Group id for multi-card signals — `/looking-for card:Luke
+    // card2:Dedra card3:Cassian` produces three rows that share a
+    // groupId. The public post embeds all rows in one message;
+    // Cancel + Confirm act on the whole group. Single-card
+    // signals can leave this null OR set it to their own id (the
+    // slash handler does the latter for query symmetry).
+    groupId: text('group_id'),
 
     // Exactly one is non-null (enforced by DB CHECK constraint added
     // in the migration). Cascade-delete from the inventory side so a
@@ -773,7 +788,10 @@ export const cardSignals = pgTable(
     index('card_signals_active_match_idx').on(t.guildId, t.kind, t.status),
     // "My active signals" view in the web app.
     index('card_signals_user_kind_idx').on(t.userId, t.kind),
-    // Cron sweep: walk active signals past expires_at.
+    // Cron sweep: walk active signals past expires_at + draft sweep.
     index('card_signals_expiry_idx').on(t.status, t.expiresAt),
+    // Group lookups — confirm-draft / cancel-draft / cancel buttons
+    // need to load all rows in a group by id.
+    index('card_signals_group_idx').on(t.groupId),
   ],
 );
