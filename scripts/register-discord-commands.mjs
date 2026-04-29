@@ -125,6 +125,13 @@ const SIGNAL_OPTIONS = [
     autocomplete: true,
   },
   {
+    type: 3, // STRING
+    name: 'variant',
+    description: 'Restrict to a specific printing (autocompletes from the chosen card)',
+    required: false,
+    autocomplete: true,
+  },
+  {
     type: 4, // INTEGER
     name: 'qty',
     description: 'How many copies (default 1)',

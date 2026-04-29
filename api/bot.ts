@@ -37,14 +37,18 @@ import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 import { getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
 import {
-  autocompleteSignalCards,
+  autocompleteSignalFamilies,
   findMatches,
   lookupSignalCard,
+  lookupSignalFamily,
   type SignalCard,
+  type SignalFamily,
+  type VariantSpec,
 } from '../lib/signalMatching.js';
 import {
   buildMatchAlertDm,
   buildSignalPost,
+  buildVariantPickerEphemeral,
   formatExpiryHint,
   SIGNAL_CUSTOM_ID_PREFIX,
 } from '../lib/signalMessages.js';
@@ -545,14 +549,41 @@ async function handleSignalSlashFollowup(
   if (!cardOpt || typeof cardOpt.value !== 'string') {
     return { content: 'Pick a card from the autocomplete list.', flags: MESSAGE_FLAG_EPHEMERAL };
   }
-  const productId = cardOpt.value;
-  const card = lookupSignalCard(productId);
-  if (!card) {
+  // The `card` autocomplete returns family ids (deduped across
+  // variants). Resolve the family + pick a representative product
+  // for the embed thumbnail.
+  const familyId = cardOpt.value;
+  const family = lookupSignalFamily(familyId);
+  if (!family) {
     return {
       content: `Couldn't find that card in the SWUTrade index. Pick one from the autocomplete list.`,
       flags: MESSAGE_FLAG_EPHEMERAL,
     };
   }
+
+  // Optional `variant` arg: when provided, narrow the signal to a
+  // specific printing. When absent, default to "any" — the post
+  // gets a "Specify variant" button so the author can pin it after
+  // the fact.
+  const variantOpt = opts.find(o => o.name === 'variant');
+  const requestedVariant = typeof variantOpt?.value === 'string' && variantOpt.value.length > 0
+    ? variantOpt.value
+    : null;
+  // Validate the variant exists for this family — if a stale
+  // autocomplete cached a variant string the family doesn't have,
+  // fall back to "any" silently rather than 4xxing the slash.
+  const variantSpec: VariantSpec = requestedVariant && family.variants.some(v => v.variant === requestedVariant)
+    ? { mode: 'restricted', variants: [requestedVariant] }
+    : { mode: 'any' };
+  // Pick the productId for the embed thumbnail + the offering's
+  // available_items row. When a variant is specified, use its
+  // product; otherwise the cheapest in the family.
+  const representativeProductId = variantSpec.mode === 'restricted'
+    ? family.variants.find(v => v.variant === variantSpec.variants[0])!.productId
+    : family.variants[0].productId;
+  const representativeVariant = variantSpec.mode === 'restricted'
+    ? variantSpec.variants[0]
+    : family.variants[0].variant;
 
   const qty = Math.max(1, Math.min(99, Number(opts.find(o => o.name === 'qty')?.value ?? 1) || 1));
   const note = (() => {
@@ -598,19 +629,22 @@ async function handleSignalSlashFollowup(
 
   let inventoryRowId: string;
   if (kind === 'wanted') {
-    // Upsert wants_items by (user, family, restriction). We match
-    // 'any' since the slash commits to a specific product but the
-    // wants row should be flexible for future overlap-based
-    // matchmaking.
+    // Upsert wants_items by (user, family, restriction). The
+    // restriction mirrors the user's variant choice: 'any' when
+    // they didn't pick a specific printing, 'restricted' to a
+    // single variant when they did. The "Specify variant" button
+    // can update this row's restriction later.
     const wantsId = `w-${randomUUID().slice(0, 12)}`;
-    const restriction = { mode: 'any' as const };
+    const restriction = variantSpec.mode === 'any'
+      ? { mode: 'any' as const }
+      : { mode: 'restricted' as const, variants: variantSpec.variants };
     await db.insert(wantsItemsTable).values({
       id: wantsId,
       userId: signaler.id,
-      familyId: card.familyId,
+      familyId: family.familyId,
       qty,
       restrictionMode: restriction.mode,
-      restrictionVariants: null,
+      restrictionVariants: restriction.mode === 'restricted' ? restriction.variants : null,
       restrictionKey: restrictionKey(restriction),
       maxUnitPrice: maxUnitPrice != null ? String(maxUnitPrice) : null,
       isPriority: true,
@@ -630,18 +664,22 @@ async function handleSignalSlashFollowup(
       .from(wantsItemsTable)
       .where(and(
         eq(wantsItemsTable.userId, signaler.id),
-        eq(wantsItemsTable.familyId, card.familyId),
+        eq(wantsItemsTable.familyId, family.familyId),
         eq(wantsItemsTable.restrictionKey, restrictionKey(restriction)),
       ))
       .limit(1);
     inventoryRowId = row.id;
   } else {
-    // Upsert available_items by (user, product).
+    // Upsert available_items by (user, product). Use the
+    // representative productId — for offering signals the
+    // available_items row is product-specific, so we anchor on
+    // whichever variant the slash picked (or the cheapest if no
+    // variant was specified).
     const availId = `a-${randomUUID().slice(0, 12)}`;
     await db.insert(availableItemsTable).values({
       id: availId,
       userId: signaler.id,
-      productId: card.productId,
+      productId: representativeProductId,
       qty,
       addedAt: now.getTime(),
     }).onConflictDoUpdate({
@@ -656,7 +694,7 @@ async function handleSignalSlashFollowup(
       .from(availableItemsTable)
       .where(and(
         eq(availableItemsTable.userId, signaler.id),
-        eq(availableItemsTable.productId, card.productId),
+        eq(availableItemsTable.productId, representativeProductId),
       ))
       .limit(1);
     inventoryRowId = row.id;
@@ -681,7 +719,8 @@ async function handleSignalSlashFollowup(
     signalId,
     kind,
     status: 'active',
-    card: { name: card.name, productId: card.productId, variant: card.variant },
+    card: { name: family.name, productId: representativeProductId, variant: representativeVariant },
+    variantSpec,
     qty,
     note,
     maxUnitPrice,
@@ -712,7 +751,8 @@ async function handleSignalSlashFollowup(
   // Find matched users + DM-ping (gated on dm_match_alerts).
   const matches = await findMatches(db, {
     kind,
-    card,
+    family,
+    variant: variantSpec,
     guildId,
     requesterUserId: signaler.id,
     eventId: null,
@@ -728,7 +768,8 @@ async function handleSignalSlashFollowup(
       if (matchPref !== true) continue;
       await bot.sendDirectMessage(match.discordId, buildMatchAlertDm({
         kind,
-        card: { name: card.name, variant: card.variant },
+        card: { name: family.name, variant: representativeVariant },
+        variantSpec,
         signalerHandle: signaler.handle,
         qty,
         signalUrl,
@@ -749,7 +790,7 @@ async function handleSignalSlashFollowup(
     ? 'No one in this server has matching inventory yet.'
     : `Pinged **${pinged}** ${pinged === 1 ? 'user' : 'users'} who match (${matches.length} total ${matches.length === 1 ? 'has' : 'have'} matching cards${matches.length !== pinged ? `, but ${matches.length - pinged} have match alerts off` : ''}).`;
   return {
-    content: `Posted — ${verb} **${qty}× ${card.name}**. ${matchesText}`,
+    content: `Posted — ${verb} **${qty}× ${family.name}**${variantSpec.mode === 'restricted' ? ` (${variantSpec.variants.join('/')} only)` : ''}. ${matchesText}`,
     flags: MESSAGE_FLAG_EPHEMERAL,
   };
 }
@@ -791,12 +832,43 @@ async function handleAutocomplete(
 
   if (focused.name === 'card') {
     const query = typeof focused.value === 'string' ? focused.value : '';
-    const cards = autocompleteSignalCards(query, 25);
-    const choices = cards.map(c => ({
-      // Discord caps choice name at 100 chars. Fits comfortably for
-      // most cards; defensive truncation in case of edge-case names.
-      name: `${c.name} · ${c.variant}`.slice(0, 100),
-      value: c.productId,
+    const families = autocompleteSignalFamilies(query, 25);
+    const choices = families.map(f => ({
+      // Discord caps choice name at 100 chars. Family names alone
+      // are well under, so we drop the variant suffix entirely —
+      // pick a variant via the separate `variant:` option or the
+      // post-hoc "Specify variant" button.
+      name: f.name.slice(0, 100),
+      value: f.familyId.slice(0, 100),
+    }));
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
+    return;
+  }
+
+  if (focused.name === 'variant') {
+    // Variant autocomplete is contextual: read the user's already-
+    // picked `card:` value (a family id) and return only the
+    // variants that family actually has. Discord includes ALL
+    // currently-filled options on the autocomplete payload, so we
+    // can drill into the sibling `card:` arg without state.
+    const cardOpt = data?.options?.find(o => o.name === 'card');
+    const familyId = typeof cardOpt?.value === 'string' ? cardOpt.value : null;
+    if (!familyId) {
+      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+      return;
+    }
+    const family = lookupSignalFamily(familyId);
+    if (!family) {
+      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+      return;
+    }
+    const query = typeof focused.value === 'string' ? focused.value.toLowerCase() : '';
+    const filtered = query.length === 0
+      ? family.variants
+      : family.variants.filter(v => v.variant.toLowerCase().includes(query));
+    const choices = filtered.slice(0, 25).map(v => ({
+      name: v.market != null ? `${v.variant} · ~$${v.market.toFixed(2)}` : v.variant,
+      value: v.variant,
     }));
     res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
     return;
@@ -819,7 +891,11 @@ async function handleSignalButton(
   res: VercelResponse,
   _deps: BotDeps,
 ): Promise<void> {
-  const data = payload.data as { custom_id?: string } | undefined;
+  const data = payload.data as {
+    custom_id?: string;
+    values?: string[];
+    component_type?: number;
+  } | undefined;
   const parts = (data?.custom_id ?? '').split(':');
   // signal:<signalId>:<action>
   if (parts.length < 3 || parts[0] !== SIGNAL_CUSTOM_ID_PREFIX) {
@@ -829,13 +905,7 @@ async function handleSignalButton(
   const signalId = parts[1];
   const action = parts[2];
 
-  if (action !== 'cancel') {
-    // PR 1 only handles cancel. PR 2 will add 'respond' (the
-    // "I have this!" / "I want this!" button).
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
+  // Auth + signal lookup are shared across all actions.
   const clickerDiscordId =
     (payload.member as { user?: { id?: string } } | undefined)?.user?.id
     ?? (payload.user as { id?: string } | undefined)?.id;
@@ -868,15 +938,24 @@ async function handleSignalButton(
     return;
   }
 
+  // Owner-only: every signal:* action so far is owner-scoped.
   const [clicker] = await db
     .select({ id: users.id })
     .from(users)
     .where(eq(users.discordId, clickerDiscordId))
     .limit(1);
   if (!clicker || clicker.id !== signaler.id) {
+    const labels: Record<string, string> = {
+      cancel: 'cancel it',
+      'variant-open': 'change the variant',
+      'variant-pick': 'change the variant',
+    };
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'Only the post\'s author can cancel it.', flags: MESSAGE_FLAG_EPHEMERAL },
+      data: {
+        content: `Only the post's author can ${labels[action] ?? 'modify it'}.`,
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      },
     });
     return;
   }
@@ -889,61 +968,217 @@ async function handleSignalButton(
     return;
   }
 
-  await db.update(cardSignals)
-    .set({ status: 'cancelled', cancelledAt: new Date() })
-    .where(eq(cardSignals.id, signalId));
+  switch (action) {
+    case 'cancel':
+      return handleSignalCancel(signal, signaler, res);
+    case 'variant-open':
+      return handleVariantOpen(signal, res);
+    case 'variant-pick': {
+      // String-select submits a `values` array — pick the first.
+      const picked = data?.values?.[0];
+      if (!picked) {
+        res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+        return;
+      }
+      return handleVariantPick(signal, signaler, picked, res);
+    }
+    default:
+      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+  }
+}
 
-  // Resolve the card from the inventory row to render the cancelled
-  // embed. We cached the productId via the wants_items / available_
-  // items row.
-  let cardForEmbed: SignalCard | null = null;
+/** Family lookup helper for signal-flow handlers — resolves the
+ *  family attached to either a wants_items or available_items row. */
+async function resolveSignalFamily(
+  signal: typeof cardSignals.$inferSelect,
+): Promise<SignalFamily | null> {
+  const db = getDb();
+  if (signal.kind === 'wanted' && signal.wantsItemId) {
+    const [row] = await db
+      .select({ familyId: wantsItemsTable.familyId })
+      .from(wantsItemsTable)
+      .where(eq(wantsItemsTable.id, signal.wantsItemId))
+      .limit(1);
+    return row ? lookupSignalFamily(row.familyId) : null;
+  }
   if (signal.kind === 'offering' && signal.availableItemId) {
     const [row] = await db
       .select({ productId: availableItemsTable.productId })
       .from(availableItemsTable)
       .where(eq(availableItemsTable.id, signal.availableItemId))
       .limit(1);
-    if (row) cardForEmbed = lookupSignalCard(row.productId);
-  } else if (signal.kind === 'wanted' && signal.wantsItemId) {
-    // For wanted signals the inventory row has familyId, not a
-    // specific product. We don't store the picked product on the
-    // signal directly — fall back to the first product in the
-    // family for the cancelled embed thumbnail.
+    if (!row) return null;
+    const card = lookupSignalCard(row.productId);
+    return card ? lookupSignalFamily(card.familyId) : null;
+  }
+  return null;
+}
+
+/** Compute the current variantSpec from a signal's underlying
+ *  inventory row. For wanted: read wants_items.restriction_mode +
+ *  variants. For offering: always 'restricted' to the chosen
+ *  product's variant (since available_items is product-keyed). */
+async function resolveVariantSpec(
+  signal: typeof cardSignals.$inferSelect,
+): Promise<VariantSpec> {
+  const db = getDb();
+  if (signal.kind === 'wanted' && signal.wantsItemId) {
     const [row] = await db
-      .select({ familyId: wantsItemsTable.familyId })
+      .select({
+        restrictionMode: wantsItemsTable.restrictionMode,
+        restrictionVariants: wantsItemsTable.restrictionVariants,
+      })
       .from(wantsItemsTable)
       .where(eq(wantsItemsTable.id, signal.wantsItemId))
       .limit(1);
-    if (row) {
-      // Pick any product in the family for display; the cancel
-      // embed is informational, not actionable.
-      const { default: familyIndex } = await import('../public/data/family-index.json', { with: { type: 'json' } }) as { default: Record<string, Array<{ p: string; v: string; n: string }>> };
-      const fam = familyIndex[row.familyId];
-      if (fam && fam.length > 0) {
-        cardForEmbed = { familyId: row.familyId, productId: fam[0].p, variant: fam[0].v, name: fam[0].n };
-      }
-    }
+    if (!row || row.restrictionMode === 'any') return { mode: 'any' };
+    return { mode: 'restricted', variants: row.restrictionVariants ?? [] };
   }
+  if (signal.kind === 'offering' && signal.availableItemId) {
+    const [row] = await db
+      .select({ productId: availableItemsTable.productId })
+      .from(availableItemsTable)
+      .where(eq(availableItemsTable.id, signal.availableItemId))
+      .limit(1);
+    if (!row) return { mode: 'any' };
+    const card = lookupSignalCard(row.productId);
+    return card ? { mode: 'restricted', variants: [card.variant] } : { mode: 'any' };
+  }
+  return { mode: 'any' };
+}
 
-  // PATCH the embed in place.
-  const cancelledEmbed = buildSignalPost({
-    signalId,
-    kind: signal.kind,
-    status: 'cancelled',
-    card: cardForEmbed
-      ? { name: cardForEmbed.name, productId: cardForEmbed.productId, variant: cardForEmbed.variant }
-      : { name: 'Cancelled', productId: '', variant: '' },
-    qty: 0,
-    note: signal.signalNote,
-    maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
-    requester: { discordId: null, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
-    responseCount: 0,
-    expiryHint: '',
-  });
+async function handleSignalCancel(
+  signal: typeof cardSignals.$inferSelect,
+  signaler: { handle: string; avatarUrl: string | null },
+  res: VercelResponse,
+): Promise<void> {
+  const db = getDb();
+  await db.update(cardSignals)
+    .set({ status: 'cancelled', cancelledAt: new Date() })
+    .where(eq(cardSignals.id, signal.id));
+
+  const family = await resolveSignalFamily(signal);
+  const variantSpec = await resolveVariantSpec(signal);
+  const representative = family?.variants[0];
 
   res.status(200).json({
     type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-    data: cancelledEmbed,
+    data: buildSignalPost({
+      signalId: signal.id,
+      kind: signal.kind,
+      status: 'cancelled',
+      card: {
+        name: family?.name ?? 'Cancelled',
+        productId: representative?.productId ?? '',
+        variant: representative?.variant ?? '',
+      },
+      variantSpec,
+      qty: 0,
+      note: signal.signalNote,
+      maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
+      requester: { discordId: null, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
+      responseCount: 0,
+      expiryHint: '',
+    }),
+  });
+}
+
+async function handleVariantOpen(
+  signal: typeof cardSignals.$inferSelect,
+  res: VercelResponse,
+): Promise<void> {
+  const family = await resolveSignalFamily(signal);
+  if (!family) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: 'Couldn\'t resolve this signal\'s card.', flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+    data: buildVariantPickerEphemeral({
+      signalId: signal.id,
+      familyName: family.name,
+      variants: family.variants,
+    }),
+  });
+}
+
+async function handleVariantPick(
+  signal: typeof cardSignals.$inferSelect,
+  signaler: { handle: string; avatarUrl: string | null },
+  pickedVariant: string,
+  res: VercelResponse,
+): Promise<void> {
+  const family = await resolveSignalFamily(signal);
+  if (!family || !family.variants.some(v => v.variant === pickedVariant)) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: 'That variant doesn\'t exist for this card.', flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  const db = getDb();
+
+  // Update the underlying wants_items / available_items row to
+  // narrow its variant. For wanted: flip restriction to
+  // 'restricted' with the picked variant. For offering: re-point
+  // available_items.product_id to the picked variant's product.
+  if (signal.kind === 'wanted' && signal.wantsItemId) {
+    const newRestriction = { mode: 'restricted' as const, variants: [pickedVariant] };
+    await db.update(wantsItemsTable)
+      .set({
+        restrictionMode: newRestriction.mode,
+        restrictionVariants: newRestriction.variants,
+        restrictionKey: restrictionKey(newRestriction),
+        updatedAt: new Date(),
+      })
+      .where(eq(wantsItemsTable.id, signal.wantsItemId));
+  } else if (signal.kind === 'offering' && signal.availableItemId) {
+    const product = family.variants.find(v => v.variant === pickedVariant)!;
+    await db.update(availableItemsTable)
+      .set({ productId: product.productId, updatedAt: new Date() })
+      .where(eq(availableItemsTable.id, signal.availableItemId));
+  }
+
+  // PATCH the public signal post with the new variant baked in.
+  // Need a separate API call (PATCH /channels/:id/messages/:id)
+  // because the response to a string-select interaction can only
+  // update the EPHEMERAL message that contained the select, not
+  // the public post. We send that PATCH via the bot client.
+  const bot = createDiscordBotClient();
+  if (signal.messageId) {
+    const newVariantSpec: VariantSpec = { mode: 'restricted', variants: [pickedVariant] };
+    const product = family.variants.find(v => v.variant === pickedVariant)!;
+    try {
+      await bot.editChannelMessage(signal.channelId, signal.messageId, buildSignalPost({
+        signalId: signal.id,
+        kind: signal.kind,
+        status: 'active',
+        card: { name: family.name, productId: product.productId, variant: product.variant },
+        variantSpec: newVariantSpec,
+        qty: 1,  // qty is captured in the inventory row, not the embed re-render
+        note: signal.signalNote,
+        maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
+        requester: { discordId: null, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
+        responseCount: 0,
+        expiryHint: '',  // expiry hint is purely informational
+      }));
+    } catch (err) {
+      console.error('handleVariantPick: editChannelMessage failed', err);
+    }
+  }
+
+  // Edit the ephemeral picker into a confirmation.
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: {
+      content: `Pinned to **${pickedVariant}**. The post above has been updated.`,
+      flags: MESSAGE_FLAG_EPHEMERAL,
+      components: [],
+    },
   });
 }
 

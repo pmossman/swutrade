@@ -23,7 +23,7 @@
  * call sites don't need to change when LGS lands.
  */
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   availableItems,
   cardSignalKinds,
@@ -72,6 +72,16 @@ export interface SignalCard {
   name: string;
 }
 
+export interface SignalFamily {
+  familyId: string;
+  /** Display name shared across variants. */
+  name: string;
+  /** All variants for this family, sorted by cheapest market price
+   *  first (so the autocomplete "default" thumbnail is the cheapest
+   *  available printing). */
+  variants: Array<{ productId: string; variant: string; market: number | null }>;
+}
+
 /**
  * Resolve a productId to its full SignalCard. Returns null if the
  * id isn't in the family index — caller should treat as an unknown
@@ -89,28 +99,48 @@ export function lookupSignalCard(productId: string): SignalCard | null {
 }
 
 /**
- * Autocomplete candidates for the slash `card:` arg. Returns up to
- * `limit` cards whose name (or its variant suffix) contains the
- * query, ordered by simple "name starts with query" first, then
- * substring matches. Results carry the productId for the slash
- * submission.
- *
- * Discord caps autocomplete at 25 entries.
+ * Resolve a familyId to its display name + variants. Returns null
+ * when the family doesn't exist. Caller picks `variants[0]` as the
+ * representative thumbnail (cheapest), or filters by a specific
+ * variant label when the user supplied one.
  */
-export function autocompleteSignalCards(query: string, limit = 25): SignalCard[] {
+export function lookupSignalFamily(familyId: string): SignalFamily | null {
+  const entries = FAMS[familyId];
+  if (!entries || entries.length === 0) return null;
+  const variants = entries
+    .map(e => ({ productId: e.p, variant: e.v, market: e.m }))
+    // Cheapest first; nulls sink to the end.
+    .sort((a, b) => (a.market ?? Infinity) - (b.market ?? Infinity));
+  return { familyId, name: entries[0].n, variants };
+}
+
+/**
+ * Family-level autocomplete for the slash `card:` arg. One entry
+ * per family — collapses the variant fan-out so "luke" returns ~5
+ * unique cards instead of 25 noise-y variant rows. Returns up to
+ * `limit` matches, starts-with priority before substring matches.
+ *
+ * The slash submit handler treats the `value` as a familyId and
+ * pairs it with a separate (optional) `variant:` option for users
+ * who want to pin the printing.
+ */
+export function autocompleteSignalFamilies(query: string, limit = 25): SignalFamily[] {
   const q = query.trim().toLowerCase();
   if (q.length === 0) return [];
-  const startsWith: SignalCard[] = [];
-  const contains: SignalCard[] = [];
+  const startsWith: SignalFamily[] = [];
+  const contains: SignalFamily[] = [];
   for (const [familyId, entries] of Object.entries(FAMS)) {
-    for (const e of entries) {
-      const lower = e.n.toLowerCase();
-      const card: SignalCard = { familyId, productId: e.p, variant: e.v, name: e.n };
-      if (lower.startsWith(q)) startsWith.push(card);
-      else if (lower.includes(q)) contains.push(card);
-      if (startsWith.length + contains.length >= limit * 4) break;
-    }
-    if (startsWith.length + contains.length >= limit * 4) break;
+    if (entries.length === 0) continue;
+    const name = entries[0].n;
+    const lower = name.toLowerCase();
+    if (!lower.includes(q)) continue;
+    const variants = entries
+      .map(e => ({ productId: e.p, variant: e.v, market: e.m }))
+      .sort((a, b) => (a.market ?? Infinity) - (b.market ?? Infinity));
+    const fam: SignalFamily = { familyId, name, variants };
+    if (lower.startsWith(q)) startsWith.push(fam);
+    else contains.push(fam);
+    if (startsWith.length + contains.length >= limit * 2) break;
   }
   return [...startsWith, ...contains].slice(0, limit);
 }
@@ -123,21 +153,37 @@ export interface MatchedUser {
 }
 
 /**
+ * Variant scope for a signal at match time. `any` means the
+ * signaler hasn't pinned a printing — match all variants of the
+ * family. `restricted` carries the specific variant label(s) the
+ * signaler accepts (or, for offering signals, the variant they
+ * actually have on hand).
+ */
+export type VariantSpec =
+  | { mode: 'any' }
+  | { mode: 'restricted'; variants: string[] };
+
+/**
  * Find users in `guildId` whose inventory matches the given signal.
  *
- *   kind='wanted'   → who has `productId` listed as available?
- *   kind='offering' → who lists this card's family in their wants
- *                     with a restriction that accepts this variant?
+ *   kind='wanted'   → who has any variant of this family listed as
+ *                     available, filtered to the variants the
+ *                     signaler accepts?
+ *   kind='offering' → who lists this family in their wants with a
+ *                     restriction that accepts the signaler's
+ *                     offered variant(s)?
  *
  * Filters out the signaler + non-enrolled / non-query-visible
- * members. Returns up to `limit` matches (default 25 — the bot
+ * members + ghost users (null discord_id; they can't receive the
+ * DM ping). Returns up to `limit` matches (default 25 — the bot
  * shouldn't blast hundreds of DMs from one signal).
  */
 export async function findMatches(
   db: Db,
   opts: {
     kind: typeof cardSignalKinds[number];
-    card: SignalCard;
+    family: SignalFamily;
+    variant: VariantSpec;
     guildId: string;
     requesterUserId: string;
     eventId?: string | null;
@@ -147,9 +193,20 @@ export async function findMatches(
   const limit = opts.limit ?? 25;
 
   if (opts.kind === 'wanted') {
-    // Other users in this guild who have THIS specific product listed
-    // as available. Exact product_id match — no family-fanout, since
-    // the slash explicitly picked one variant.
+    // Compute the set of productIds matching the variant restriction.
+    // `any` → every variant in the family. `restricted` → just the
+    // variants the signaler accepts. We do the fan-out here because
+    // available_items is keyed by productId only (no family/variant
+    // columns), so SQL has to ask "is this productId in the allowed
+    // set?" rather than join through a card-index table.
+    const allowedProducts = opts.variant.mode === 'any'
+      ? opts.family.variants.map(v => v.productId)
+      : opts.family.variants
+          .filter(v => opts.variant.mode === 'restricted'
+            && opts.variant.variants.includes(v.variant))
+          .map(v => v.productId);
+    if (allowedProducts.length === 0) return [];
+
     const rows = await db
       .select({
         userId: users.id,
@@ -168,26 +225,38 @@ export async function findMatches(
         ),
       )
       .where(and(
-        eq(availableItems.productId, opts.card.productId),
+        inArray(availableItems.productId, allowedProducts),
         sql`${availableItems.userId} != ${opts.requesterUserId}`,
-        // We need to DM matches; ghosts (null discord_id) can't
-        // receive DMs. Filter at the SQL layer so the row count
-        // reported back to the slash matches what we actually
-        // pinged.
         sql`${users.discordId} IS NOT NULL`,
       ))
       .limit(limit);
     return rows.map(r => ({ ...r, discordId: r.discordId! }));
   }
 
-  // kind === 'offering': find users in this guild whose wants_items
-  // contain THIS family with a restriction that accepts the offered
-  // variant. The restriction model:
-  //   - mode='any'        → accept all variants
-  //   - mode='restricted' → only accept variants in restriction_variants[]
-  // We translate to SQL by either matching all rows for the family
-  // (when mode='any') or a row whose variants array contains the
-  // signal's variant label.
+  // kind === 'offering': match wants_items where the family lines up
+  // and the wants' own restriction accepts at least one of the
+  // variants the signaler is offering.
+  //   - signal variant=any              → match wants with restriction='any'
+  //                                        only (over-restrictive
+  //                                        folks won't ping; we'd
+  //                                        rather under-ping than
+  //                                        spam wishes the offer
+  //                                        can't fulfill).
+  //   - signal variant=['Hyperspace']   → match wants with
+  //                                        restriction='any' OR a
+  //                                        restriction that includes
+  //                                        Hyperspace.
+  let restrictionPredicate;
+  if (opts.variant.mode === 'any') {
+    restrictionPredicate = sql`${wantsItems.restrictionMode} = 'any'`;
+  } else {
+    const offered = opts.variant.variants;
+    restrictionPredicate = sql`(
+      ${wantsItems.restrictionMode} = 'any'
+      OR ${wantsItems.restrictionVariants} && ARRAY[${sql.join(offered.map(v => sql`${v}`), sql`, `)}]::text[]
+    )`;
+  }
+
   const rows = await db
     .select({
       userId: users.id,
@@ -206,13 +275,10 @@ export async function findMatches(
       ),
     )
     .where(and(
-      eq(wantsItems.familyId, opts.card.familyId),
+      eq(wantsItems.familyId, opts.family.familyId),
       sql`${wantsItems.userId} != ${opts.requesterUserId}`,
       sql`${users.discordId} IS NOT NULL`,
-      sql`(
-        ${wantsItems.restrictionMode} = 'any'
-        OR ${opts.card.variant} = ANY(${wantsItems.restrictionVariants})
-      )`,
+      restrictionPredicate,
     ))
     .limit(limit);
   return rows.map(r => ({ ...r, discordId: r.discordId! }));

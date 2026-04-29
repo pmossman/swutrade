@@ -26,11 +26,14 @@ import { createBaseFakeBot, type RecordingFakeBot, type PostCall, type SendCall,
  * does the side effects + PATCHes the @original message via the
  * captured fetchImpl.
  *
- * Picks one card-index productId that's stable in the inlined
- * family-index. `617180` (Luke Skywalker — Hero of Yavin, Jump to
- * Lightspeed) shows up in many other e2e specs as a known stable id.
+ * The slash `card:` option takes a family id (autocomplete returns
+ * families). `STABLE_FAMILY_ID` is Luke Skywalker - Hero of Yavin,
+ * stable across many e2e specs. `STABLE_PRODUCT_ID` is its Standard
+ * printing — used for seeding available_items when we want the
+ * matcher to fire.
  */
 
+const STABLE_FAMILY_ID = 'jump-to-lightspeed::luke-skywalker-hero-of-yavin';
 const STABLE_PRODUCT_ID = '617180';
 
 interface FollowupCall {
@@ -83,14 +86,18 @@ function buildSignalPayload(opts: {
   guildId: string;
   channelId: string;
   clickerDiscordId: string;
-  productId: string;
+  /** Family id for the slash `card:` arg. */
+  familyId: string;
+  /** Optional pinned variant. When omitted, signal defaults to "any". */
+  variant?: string;
   qty?: number;
   note?: string;
   maxPrice?: number;
 }) {
   const options: Array<{ name: string; type: number; value: unknown }> = [
-    { name: 'card', type: 3, value: opts.productId },
+    { name: 'card', type: 3, value: opts.familyId },
   ];
+  if (opts.variant != null) options.push({ name: 'variant', type: 3, value: opts.variant });
   if (opts.qty != null) options.push({ name: 'qty', type: 4, value: opts.qty });
   if (opts.note != null) options.push({ name: 'note', type: 3, value: opts.note });
   if (opts.maxPrice != null) options.push({ name: 'max_price', type: 10, value: opts.maxPrice });
@@ -148,7 +155,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId,
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
           qty: 2,
           note: 'for Friday\'s draft',
         }),
@@ -233,7 +240,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId: 'g-uninstalled',
           channelId: 'ch-1',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         res,
         { bot, fetchImpl, awaitFollowup: true },
@@ -255,7 +262,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-1',
           clickerDiscordId: 'discord-id-without-swutrade-account',
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         res,
         { bot, fetchImpl, awaitFollowup: true },
@@ -282,7 +289,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-off',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
           qty: 1,
           maxPrice: 8,
         }),
@@ -331,7 +338,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-cancel',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot: bot1, fetchImpl, awaitFollowup: true },
@@ -384,7 +391,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-noc',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
@@ -423,6 +430,155 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
     });
   });
 
+  describe('variant flow', () => {
+    it('slash with variant arg pins the wants_items restriction up-front', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-var-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      const bot = makeSignalBot();
+      const { fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-var',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+          variant: 'Hyperspace',
+        }),
+        mockResponse(),
+        { bot, fetchImpl, awaitFollowup: true },
+      );
+
+      const db = getDb();
+      const [wantsRow] = await db
+        .select()
+        .from(wantsItems)
+        .where(eq(wantsItems.userId, signaler.id))
+        .limit(1);
+      expect(wantsRow.restrictionMode).toBe('restricted');
+      expect(wantsRow.restrictionVariants).toEqual(['Hyperspace']);
+
+      const [signal] = await db
+        .select()
+        .from(cardSignals)
+        .where(eq(cardSignals.userId, signaler.id))
+        .limit(1);
+      signalIds.push(signal.id);
+    });
+
+    it('signal:<id>:variant-open opens an ephemeral picker (owner-only)', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-vo-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      const { fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-vo',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+        }),
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
+      );
+      const db = getDb();
+      const [signal] = await db
+        .select()
+        .from(cardSignals)
+        .where(eq(cardSignals.userId, signaler.id))
+        .limit(1);
+      signalIds.push(signal.id);
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${signal.id}:variant-open` },
+          member: { user: { id: signaler.id } },
+        },
+        res,
+      );
+
+      expect(res._status).toBe(200);
+      const body = res._json as {
+        type: number;
+        data?: { content?: string; flags?: number; components?: Array<{ components?: Array<{ type: number; options?: unknown[] }> }> };
+      };
+      expect(body.type).toBe(4);
+      expect(body.data?.flags).toBe(64);
+      expect(body.data?.content).toMatch(/Specify the variant/i);
+      // String-select with variant options.
+      const select = body.data?.components?.[0]?.components?.[0];
+      expect(select?.type).toBe(3);
+      expect((select?.options ?? []).length).toBeGreaterThan(0);
+    });
+
+    it('signal:<id>:variant-pick narrows the wants_items restriction + responds with confirmation', async () => {
+      const signaler = await createTestUser();
+      fixtures.push(signaler);
+      const guildId = `g-vp-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId));
+      guildCleanups.push(await createGuildMembership(signaler.id, guildId));
+
+      const { fetchImpl } = captureFollowup();
+      await dispatchBotPayload(
+        'interactions',
+        buildSignalPayload({
+          command: 'looking-for',
+          guildId,
+          channelId: 'ch-vp',
+          clickerDiscordId: signaler.id,
+          familyId: STABLE_FAMILY_ID,
+        }),
+        mockResponse(),
+        { bot: makeSignalBot(), fetchImpl, awaitFollowup: true },
+      );
+      const db = getDb();
+      const [signal] = await db
+        .select()
+        .from(cardSignals)
+        .where(eq(cardSignals.userId, signaler.id))
+        .limit(1);
+      signalIds.push(signal.id);
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${signal.id}:variant-pick`, values: ['Hyperspace'] },
+          member: { user: { id: signaler.id } },
+        },
+        res,
+      );
+
+      expect(res._status).toBe(200);
+      // Type 7 — UPDATE_MESSAGE — replaces the ephemeral picker
+      // with a confirmation.
+      expect((res._json as { type: number }).type).toBe(7);
+
+      // The wants_items row should now have restricted variant.
+      const [wantsRow] = await db
+        .select()
+        .from(wantsItems)
+        .where(eq(wantsItems.userId, signaler.id))
+        .limit(1);
+      expect(wantsRow.restrictionMode).toBe('restricted');
+      expect(wantsRow.restrictionVariants).toEqual(['Hyperspace']);
+    });
+  });
+
   describe('match-ping integration', () => {
     it('DMs a guild member who has the wanted card available, gated on dmMatchAlerts', async () => {
       const signaler = await createTestUser();
@@ -457,7 +613,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-match',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot, fetchImpl, awaitFollowup: true },
@@ -503,7 +659,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           guildId,
           channelId: 'ch-noping',
           clickerDiscordId: signaler.id,
-          productId: STABLE_PRODUCT_ID,
+          familyId: STABLE_FAMILY_ID,
         }),
         mockResponse(),
         { bot, fetchImpl, awaitFollowup: true },
