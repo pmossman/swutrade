@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, eq } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
 import { botInstalledGuilds, tradeProposals, userGuildMemberships, userPeerPrefs, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
@@ -35,6 +36,20 @@ import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 import { getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
+import {
+  autocompleteSignalCards,
+  findMatches,
+  lookupSignalCard,
+  type SignalCard,
+} from '../lib/signalMatching.js';
+import {
+  buildMatchAlertDm,
+  buildSignalPost,
+  formatExpiryHint,
+  SIGNAL_CUSTOM_ID_PREFIX,
+} from '../lib/signalMessages.js';
+import { availableItems as availableItemsTable, cardSignals, wantsItems as wantsItemsTable } from '../lib/schema.js';
+import { restrictionKey } from '../lib/shared.js';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -92,17 +107,24 @@ export function resolveTestPublicKey(env: {
 const INTERACTION_TYPE_PING = 1;
 const INTERACTION_TYPE_APPLICATION_COMMAND = 2;
 const INTERACTION_TYPE_MESSAGE_COMPONENT = 3;
+const INTERACTION_TYPE_APPLICATION_COMMAND_AUTOCOMPLETE = 4;
 // Application command types — slash commands are type 1, user-context
 // menu commands are type 2, message-context menu commands are type 3.
 const APPLICATION_COMMAND_TYPE_SLASH = 1;
 const APPLICATION_COMMAND_TYPE_USER = 2;
-// Option types inside slash command payloads: SUB_COMMAND = 1, USER = 6.
+// Option types inside slash command payloads.
 const OPTION_TYPE_SUB_COMMAND = 1;
+const OPTION_TYPE_STRING = 3;
+const OPTION_TYPE_INTEGER = 4;
 const OPTION_TYPE_USER = 6;
+const OPTION_TYPE_NUMBER = 10;
 const INTERACTION_RESPONSE_TYPE_PONG = 1;
 // Type 4 = CHANNEL_MESSAGE_WITH_SOURCE (post a new reply, visible
 // to the user who clicked via `flags: 64` ephemeral bit).
 const INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE = 4;
+// Type 8 = APPLICATION_COMMAND_AUTOCOMPLETE_RESULT — Discord shows
+// the returned `choices` array as the autocomplete dropdown.
+const INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE = 8;
 // Type 5 = DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE — "thinking…"
 // indicator. We have 15 minutes to follow up via webhook PATCH
 // instead of the 3-second window for synchronous responses. Used
@@ -117,6 +139,15 @@ const MESSAGE_FLAG_EPHEMERAL = 64;
 // --- dispatcher -------------------------------------------------------------
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Cron requests arrive on `?action=cron-*` paths with a Vercel-
+  // injected `Authorization: Bearer <CRON_SECRET>` header. They are
+  // NOT signed by Discord — branch out before the signature gate so
+  // we don't 401 our own scheduled jobs.
+  const action = (req.query.action as string | undefined) ?? '';
+  if (action.startsWith('cron-')) {
+    return handleCronRequest(req, res, action);
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -162,7 +193,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Invalid JSON' });
   }
 
-  const action = (req.query.action as string | undefined) ?? '';
   // Derive the site's public origin from the request so deep-links
   // (e.g., `/?counter=<id>` returned when a user clicks Counter in
   // their DM) route back to whichever deployment served the DM.
@@ -233,6 +263,10 @@ async function handleInteraction(
     return handleApplicationCommand(payload, res, deps);
   }
 
+  if (type === INTERACTION_TYPE_APPLICATION_COMMAND_AUTOCOMPLETE) {
+    return handleAutocomplete(payload, res);
+  }
+
   if (type === INTERACTION_TYPE_MESSAGE_COMPONENT) {
     const data = payload.data as { custom_id?: string } | undefined;
     const customId = data?.custom_id ?? '';
@@ -247,6 +281,9 @@ async function handleInteraction(
     }
     if (customId.startsWith(`${SERVER_INVITE_CUSTOM_ID_PREFIX}:`)) {
       return handleServerInviteButton(payload, res);
+    }
+    if (customId.startsWith(`${SIGNAL_CUSTOM_ID_PREFIX}:`)) {
+      return handleSignalButton(payload, res, deps);
     }
   }
 
@@ -300,7 +337,7 @@ async function handleApplicationCommand(
   // response stream.
   const followupWork = (async () => {
     try {
-      const body = await buildApplicationCommandFollowup(payload);
+      const body = await buildApplicationCommandFollowup(payload, deps);
       await sendDeferredFollowup({
         applicationId,
         token,
@@ -332,6 +369,7 @@ async function handleApplicationCommand(
  */
 async function buildApplicationCommandFollowup(
   payload: Record<string, unknown>,
+  deps: BotDeps,
 ): Promise<Record<string, unknown>> {
   const data = payload.data as {
     name?: string;
@@ -342,6 +380,20 @@ async function buildApplicationCommandFollowup(
   } | undefined;
 
   const commandType = data?.type ?? APPLICATION_COMMAND_TYPE_SLASH;
+  const commandName = data?.name;
+
+  // /looking-for and /offering land here; both are slash commands
+  // (type 1) but with their OWN command name, not a sub-command of
+  // /swutrade. Branch by command name first so we don't try to
+  // interpret a top-level option as a /swutrade subcommand.
+  if (commandType === APPLICATION_COMMAND_TYPE_SLASH
+      && (commandName === 'looking-for' || commandName === 'offering')) {
+    return handleSignalSlashFollowup(
+      payload,
+      commandName === 'looking-for' ? 'wanted' : 'offering',
+      deps,
+    );
+  }
 
   let peerDiscordId: string | undefined;
   let peerUsername: string | undefined;
@@ -431,6 +483,597 @@ async function sendDeferredFollowup(opts: {
     const text = await res.text().catch(() => '');
     throw new Error(`Discord followup PATCH ${res.status}: ${text.slice(0, 200)}`);
   }
+}
+
+// --- /looking-for + /offering slash handlers -------------------------------
+
+/** Days a signal stays active before the cron sweep marks it
+ *  expired. Wanted signals linger longer (your wishlist; not as
+ *  urgent) while offering signals turn over fast (cards on hand at
+ *  events). User can cancel either at any time. */
+const SIGNAL_TTL_DAYS: Record<'wanted' | 'offering', number> = {
+  wanted: 7,
+  offering: 3,
+};
+
+/**
+ * Handle the followup body for `/looking-for` or `/offering`.
+ *
+ * Side effects (in order):
+ *   1. Validate the card from autocomplete payload + the guild
+ *      context (must be in a guild, bot must be installed).
+ *   2. Upsert the underlying inventory row (`wants_items` for wanted
+ *      signals, `available_items` for offering).
+ *   3. Insert the `card_signals` row.
+ *   4. Post the public signal embed in the channel via the bot
+ *      client; UPDATE the signal with the message_id.
+ *   5. Find guild matches; DM each (gated on dm_match_alerts).
+ *
+ * Returns the ephemeral followup body for the slash itself —
+ * "Posted! N matches pinged." or an error explanation.
+ */
+async function handleSignalSlashFollowup(
+  payload: Record<string, unknown>,
+  kind: 'wanted' | 'offering',
+  deps: BotDeps,
+): Promise<Record<string, unknown>> {
+  const guildId = payload.guild_id as string | undefined;
+  if (!guildId) {
+    return {
+      content: '`/looking-for` and `/offering` only work inside a server (not in DMs).',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const channelId = payload.channel_id as string | undefined;
+  if (!channelId) {
+    return { content: 'Discord didn\'t supply a channel id.', flags: MESSAGE_FLAG_EPHEMERAL };
+  }
+
+  const clickerDiscordId =
+    (payload.member as { user?: { id?: string } } | undefined)?.user?.id
+    ?? (payload.user as { id?: string } | undefined)?.id;
+  if (!clickerDiscordId) {
+    return { content: 'Couldn\'t identify the user from the interaction.', flags: MESSAGE_FLAG_EPHEMERAL };
+  }
+
+  const data = payload.data as {
+    options?: Array<{ name: string; type: number; value?: unknown }>;
+  } | undefined;
+  const opts = data?.options ?? [];
+  const cardOpt = opts.find(o => o.name === 'card');
+  if (!cardOpt || typeof cardOpt.value !== 'string') {
+    return { content: 'Pick a card from the autocomplete list.', flags: MESSAGE_FLAG_EPHEMERAL };
+  }
+  const productId = cardOpt.value;
+  const card = lookupSignalCard(productId);
+  if (!card) {
+    return {
+      content: `Couldn't find that card in the SWUTrade index. Pick one from the autocomplete list.`,
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const qty = Math.max(1, Math.min(99, Number(opts.find(o => o.name === 'qty')?.value ?? 1) || 1));
+  const note = (() => {
+    const v = opts.find(o => o.name === 'note')?.value;
+    return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+  })();
+  const maxPriceRaw = opts.find(o => o.name === 'max_price')?.value;
+  const maxUnitPrice = typeof maxPriceRaw === 'number' && maxPriceRaw > 0 ? maxPriceRaw : null;
+
+  const db = getDb();
+
+  // Resolve the SWUTrade user from the Discord id. Slash commands
+  // require the user to be signed in to SWUTrade so we can attribute
+  // the inventory row + future trade proposals.
+  const [signaler] = await db
+    .select({ id: users.id, handle: users.handle, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!signaler) {
+    return {
+      content: 'Sign in with Discord at <https://swutrade.com> first — your post needs to attach to a SWUTrade account.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  // Ensure the bot is installed in this guild.
+  const [installRow] = await db
+    .select({ guildId: botInstalledGuilds.guildId })
+    .from(botInstalledGuilds)
+    .where(eq(botInstalledGuilds.guildId, guildId))
+    .limit(1);
+  if (!installRow) {
+    return {
+      content: 'SWUTrade isn\'t installed in this server.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const expiresAt = new Date(Date.now() + SIGNAL_TTL_DAYS[kind] * 24 * 60 * 60 * 1000);
+  const signalId = randomUUID();
+  const now = new Date();
+
+  let inventoryRowId: string;
+  if (kind === 'wanted') {
+    // Upsert wants_items by (user, family, restriction). We match
+    // 'any' since the slash commits to a specific product but the
+    // wants row should be flexible for future overlap-based
+    // matchmaking.
+    const wantsId = `w-${randomUUID().slice(0, 12)}`;
+    const restriction = { mode: 'any' as const };
+    await db.insert(wantsItemsTable).values({
+      id: wantsId,
+      userId: signaler.id,
+      familyId: card.familyId,
+      qty,
+      restrictionMode: restriction.mode,
+      restrictionVariants: null,
+      restrictionKey: restrictionKey(restriction),
+      maxUnitPrice: maxUnitPrice != null ? String(maxUnitPrice) : null,
+      isPriority: true,
+      addedAt: now.getTime(),
+    }).onConflictDoUpdate({
+      target: [wantsItemsTable.userId, wantsItemsTable.familyId, wantsItemsTable.restrictionKey],
+      set: {
+        qty: sql`GREATEST(${wantsItemsTable.qty}, ${qty})`,
+        isPriority: true,
+        updatedAt: now,
+      },
+    });
+    // Re-select to get the canonical id (insert may have hit the
+    // existing row).
+    const [row] = await db
+      .select({ id: wantsItemsTable.id })
+      .from(wantsItemsTable)
+      .where(and(
+        eq(wantsItemsTable.userId, signaler.id),
+        eq(wantsItemsTable.familyId, card.familyId),
+        eq(wantsItemsTable.restrictionKey, restrictionKey(restriction)),
+      ))
+      .limit(1);
+    inventoryRowId = row.id;
+  } else {
+    // Upsert available_items by (user, product).
+    const availId = `a-${randomUUID().slice(0, 12)}`;
+    await db.insert(availableItemsTable).values({
+      id: availId,
+      userId: signaler.id,
+      productId: card.productId,
+      qty,
+      addedAt: now.getTime(),
+    }).onConflictDoUpdate({
+      target: [availableItemsTable.userId, availableItemsTable.productId],
+      set: {
+        qty: sql`GREATEST(${availableItemsTable.qty}, ${qty})`,
+        updatedAt: now,
+      },
+    });
+    const [row] = await db
+      .select({ id: availableItemsTable.id })
+      .from(availableItemsTable)
+      .where(and(
+        eq(availableItemsTable.userId, signaler.id),
+        eq(availableItemsTable.productId, card.productId),
+      ))
+      .limit(1);
+    inventoryRowId = row.id;
+  }
+
+  await db.insert(cardSignals).values({
+    id: signalId,
+    userId: signaler.id,
+    kind,
+    wantsItemId: kind === 'wanted' ? inventoryRowId : null,
+    availableItemId: kind === 'offering' ? inventoryRowId : null,
+    guildId,
+    channelId,
+    expiresAt,
+    signalNote: note,
+    maxUnitPrice: maxUnitPrice != null ? String(maxUnitPrice) : null,
+  });
+
+  // Post the public signal embed.
+  const bot = deps.bot ?? createDiscordBotClient();
+  const embedBody = buildSignalPost({
+    signalId,
+    kind,
+    status: 'active',
+    card: { name: card.name, productId: card.productId, variant: card.variant },
+    qty,
+    note,
+    maxUnitPrice,
+    requester: { discordId: clickerDiscordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
+    responseCount: 0,
+    expiryHint: formatExpiryHint(expiresAt, now),
+  });
+  let postedMessageId: string | null = null;
+  try {
+    const posted = await bot.postChannelMessage(channelId, embedBody);
+    postedMessageId = posted.id;
+    await db.update(cardSignals).set({ messageId: posted.id }).where(eq(cardSignals.id, signalId));
+  } catch (err) {
+    console.error('handleSignalSlash: postChannelMessage failed', err);
+    await reportError({
+      source: 'bot.signal-slash.post',
+      tags: { signalId, guildId, channelId, kind },
+    }, err);
+    return {
+      content: 'Saved your signal but couldn\'t post it in this channel — I might be missing permissions to send messages here.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  // Build a deep-link URL to the message for the match-alert DM.
+  const signalUrl = `https://discord.com/channels/${guildId}/${channelId}/${postedMessageId}`;
+
+  // Find matched users + DM-ping (gated on dm_match_alerts).
+  const matches = await findMatches(db, {
+    kind,
+    card,
+    guildId,
+    requesterUserId: signaler.id,
+    eventId: null,
+  });
+
+  let pinged = 0;
+  for (const match of matches) {
+    try {
+      const matchPref = await resolvePref({
+        key: 'dmMatchAlerts',
+        viewerUserId: match.userId,
+      });
+      if (matchPref !== true) continue;
+      await bot.sendDirectMessage(match.discordId, buildMatchAlertDm({
+        kind,
+        card: { name: card.name, variant: card.variant },
+        signalerHandle: signaler.handle,
+        qty,
+        signalUrl,
+        note,
+      }));
+      pinged += 1;
+    } catch (err) {
+      // Don't fail the whole slash on one user's DM failure (DMs
+      // disabled, blocked the bot, etc.). Log, continue.
+      console.error('handleSignalSlash: match DM failed', { matchUserId: match.userId, err });
+    }
+  }
+
+  // Slash followup: ephemeral confirmation. The public surface is
+  // the embed in the channel; this just acks for the slash author.
+  const verb = kind === 'wanted' ? 'looking for' : 'offering';
+  const matchesText = matches.length === 0
+    ? 'No one in this server has matching inventory yet.'
+    : `Pinged **${pinged}** ${pinged === 1 ? 'user' : 'users'} who match (${matches.length} total ${matches.length === 1 ? 'has' : 'have'} matching cards${matches.length !== pinged ? `, but ${matches.length - pinged} have match alerts off` : ''}).`;
+  return {
+    content: `Posted — ${verb} **${qty}× ${card.name}**. ${matchesText}`,
+    flags: MESSAGE_FLAG_EPHEMERAL,
+  };
+}
+
+// --- autocomplete handler --------------------------------------------------
+
+/**
+ * Discord-side autocomplete for /looking-for and /offering. Returns
+ * up to 25 cards whose name matches the focused option's value.
+ *
+ * Synchronous response (Discord requires <3s; autocomplete doesn't
+ * support deferral). The card index is in-memory after first load
+ * so warm calls are sub-ms; cold start has the same Vercel cold-
+ * start risk as everything else but autocomplete doesn't show the
+ * "didn't respond in time" error — Discord just shows an empty
+ * dropdown, which the user can retype to retrigger.
+ */
+async function handleAutocomplete(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+): Promise<void> {
+  const data = payload.data as {
+    name?: string;
+    options?: Array<{ name: string; type: number; value?: unknown; focused?: boolean }>;
+  } | undefined;
+
+  const focused = data?.options?.find(o => o.focused);
+  if (!focused) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+    return;
+  }
+
+  // `event` autocomplete is reserved for LGS — empty until the
+  // events table exists.
+  if (focused.name === 'event') {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+    return;
+  }
+
+  if (focused.name === 'card') {
+    const query = typeof focused.value === 'string' ? focused.value : '';
+    const cards = autocompleteSignalCards(query, 25);
+    const choices = cards.map(c => ({
+      // Discord caps choice name at 100 chars. Fits comfortably for
+      // most cards; defensive truncation in case of edge-case names.
+      name: `${c.name} · ${c.variant}`.slice(0, 100),
+      value: c.productId,
+    }));
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
+    return;
+  }
+
+  // Unknown focused option — empty choices (Discord renders nothing).
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+}
+
+// --- signal: button handler ------------------------------------------------
+
+/**
+ * Cancel button on a signal post (`signal:<id>:cancel`). Owner-only.
+ * Responds with type 7 UPDATE_MESSAGE so the embed flips to the
+ * cancelled state in place — same pattern as the trade-proposal
+ * resolved-message PATCH.
+ */
+async function handleSignalButton(
+  payload: Record<string, unknown>,
+  res: VercelResponse,
+  _deps: BotDeps,
+): Promise<void> {
+  const data = payload.data as { custom_id?: string } | undefined;
+  const parts = (data?.custom_id ?? '').split(':');
+  // signal:<signalId>:<action>
+  if (parts.length < 3 || parts[0] !== SIGNAL_CUSTOM_ID_PREFIX) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+  const signalId = parts[1];
+  const action = parts[2];
+
+  if (action !== 'cancel') {
+    // PR 1 only handles cancel. PR 2 will add 'respond' (the
+    // "I have this!" / "I want this!" button).
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const clickerDiscordId =
+    (payload.member as { user?: { id?: string } } | undefined)?.user?.id
+    ?? (payload.user as { id?: string } | undefined)?.id;
+  if (!clickerDiscordId) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const db = getDb();
+  const [signal] = await db
+    .select()
+    .from(cardSignals)
+    .where(eq(cardSignals.id, signalId))
+    .limit(1);
+  if (!signal) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: 'This signal post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  const [signaler] = await db
+    .select({ id: users.id, handle: users.handle, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.id, signal.userId))
+    .limit(1);
+  if (!signaler) {
+    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+    return;
+  }
+
+  const [clicker] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!clicker || clicker.id !== signaler.id) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: 'Only the post\'s author can cancel it.', flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  if (signal.status !== 'active') {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: `This signal is already ${signal.status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  await db.update(cardSignals)
+    .set({ status: 'cancelled', cancelledAt: new Date() })
+    .where(eq(cardSignals.id, signalId));
+
+  // Resolve the card from the inventory row to render the cancelled
+  // embed. We cached the productId via the wants_items / available_
+  // items row.
+  let cardForEmbed: SignalCard | null = null;
+  if (signal.kind === 'offering' && signal.availableItemId) {
+    const [row] = await db
+      .select({ productId: availableItemsTable.productId })
+      .from(availableItemsTable)
+      .where(eq(availableItemsTable.id, signal.availableItemId))
+      .limit(1);
+    if (row) cardForEmbed = lookupSignalCard(row.productId);
+  } else if (signal.kind === 'wanted' && signal.wantsItemId) {
+    // For wanted signals the inventory row has familyId, not a
+    // specific product. We don't store the picked product on the
+    // signal directly — fall back to the first product in the
+    // family for the cancelled embed thumbnail.
+    const [row] = await db
+      .select({ familyId: wantsItemsTable.familyId })
+      .from(wantsItemsTable)
+      .where(eq(wantsItemsTable.id, signal.wantsItemId))
+      .limit(1);
+    if (row) {
+      // Pick any product in the family for display; the cancel
+      // embed is informational, not actionable.
+      const { default: familyIndex } = await import('../public/data/family-index.json', { with: { type: 'json' } }) as { default: Record<string, Array<{ p: string; v: string; n: string }>> };
+      const fam = familyIndex[row.familyId];
+      if (fam && fam.length > 0) {
+        cardForEmbed = { familyId: row.familyId, productId: fam[0].p, variant: fam[0].v, name: fam[0].n };
+      }
+    }
+  }
+
+  // PATCH the embed in place.
+  const cancelledEmbed = buildSignalPost({
+    signalId,
+    kind: signal.kind,
+    status: 'cancelled',
+    card: cardForEmbed
+      ? { name: cardForEmbed.name, productId: cardForEmbed.productId, variant: cardForEmbed.variant }
+      : { name: 'Cancelled', productId: '', variant: '' },
+    qty: 0,
+    note: signal.signalNote,
+    maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
+    requester: { discordId: null, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
+    responseCount: 0,
+    expiryHint: '',
+  });
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: cancelledEmbed,
+  });
+}
+
+// --- cron handlers ----------------------------------------------------------
+
+/**
+ * Cron entrypoints. Authorization is `Bearer <CRON_SECRET>` —
+ * Vercel injects this header on scheduled cron invocations using
+ * the `CRON_SECRET` env var that the platform manages.
+ */
+async function handleCronRequest(
+  req: VercelRequest,
+  res: VercelResponse,
+  action: string,
+): Promise<void> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    console.error(`cron: CRON_SECRET not set — refusing ${action}`);
+    res.status(500).json({ error: 'cron not configured' });
+    return;
+  }
+  const auth = req.headers.authorization;
+  if (auth !== `Bearer ${cronSecret}`) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+
+  if (action === 'cron-signals') {
+    return runSignalExpirySweep(res);
+  }
+
+  res.status(404).json({ error: `unknown cron action ${action}` });
+}
+
+/**
+ * Find active signals past `expires_at`, mark them expired, and
+ * PATCH each post's embed so the channel reflects the state. Best-
+ * effort per-signal — a single PATCH failure is logged but doesn't
+ * abort the sweep.
+ */
+async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
+  const db = getDb();
+  const now = new Date();
+  const overdue = await db
+    .select()
+    .from(cardSignals)
+    .where(and(
+      eq(cardSignals.status, 'active'),
+      sql`${cardSignals.expiresAt} < now()`,
+    ));
+
+  if (overdue.length === 0) {
+    res.status(200).json({ ok: true, expired: 0 });
+    return;
+  }
+
+  const bot = createDiscordBotClient();
+  let expired = 0;
+  let patchFailures = 0;
+
+  for (const signal of overdue) {
+    // Set status FIRST so a flaky Discord PATCH doesn't keep us
+    // re-sweeping the same row each hour. The embed update is a
+    // best-effort visual sync; the database is the source of truth.
+    await db.update(cardSignals)
+      .set({ status: 'expired' })
+      .where(eq(cardSignals.id, signal.id));
+    expired += 1;
+
+    if (!signal.messageId) continue;
+
+    // Resolve the card for the embed thumbnail. Same fallback
+    // pattern as the cancel button handler.
+    let cardForEmbed: SignalCard | null = null;
+    if (signal.kind === 'offering' && signal.availableItemId) {
+      const [row] = await db
+        .select({ productId: availableItemsTable.productId })
+        .from(availableItemsTable)
+        .where(eq(availableItemsTable.id, signal.availableItemId))
+        .limit(1);
+      if (row) cardForEmbed = lookupSignalCard(row.productId);
+    } else if (signal.kind === 'wanted' && signal.wantsItemId) {
+      const [row] = await db
+        .select({ familyId: wantsItemsTable.familyId })
+        .from(wantsItemsTable)
+        .where(eq(wantsItemsTable.id, signal.wantsItemId))
+        .limit(1);
+      if (row) {
+        const { default: familyIndex } = await import('../public/data/family-index.json', { with: { type: 'json' } }) as { default: Record<string, Array<{ p: string; v: string; n: string }>> };
+        const fam = familyIndex[row.familyId];
+        if (fam && fam.length > 0) {
+          cardForEmbed = { familyId: row.familyId, productId: fam[0].p, variant: fam[0].v, name: fam[0].n };
+        }
+      }
+    }
+
+    const [signaler] = await db
+      .select({ handle: users.handle, avatarUrl: users.avatarUrl })
+      .from(users)
+      .where(eq(users.id, signal.userId))
+      .limit(1);
+
+    const expiredEmbed = buildSignalPost({
+      signalId: signal.id,
+      kind: signal.kind,
+      status: 'expired',
+      card: cardForEmbed
+        ? { name: cardForEmbed.name, productId: cardForEmbed.productId, variant: cardForEmbed.variant }
+        : { name: 'Expired', productId: '', variant: '' },
+      qty: 0,
+      note: signal.signalNote,
+      maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
+      requester: { discordId: null, handle: signaler?.handle ?? '?', avatarUrl: signaler?.avatarUrl ?? null },
+      responseCount: 0,
+      expiryHint: '',
+    });
+
+    try {
+      await bot.editChannelMessage(signal.channelId, signal.messageId, expiredEmbed);
+    } catch (err) {
+      patchFailures += 1;
+      console.error('cron-signals: editChannelMessage failed', { signalId: signal.id, err });
+      await reportError({
+        source: 'bot.cron-signals.embed-patch',
+        tags: { signalId: signal.id },
+      }, err);
+    }
+  }
+
+  res.status(200).json({ ok: true, expired, patchFailures });
 }
 
 /**
