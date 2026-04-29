@@ -1,30 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CardVariant } from '../types';
+import { SETS } from '../types';
 import type { AuthApi } from '../hooks/useAuth';
 import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
 import { AppHeader } from './ui/AppHeader';
-import {
-  searchSignalFamilies,
-  lookupFamilyClient,
-  type SignalSearchResult,
-} from '../lib/signalCardSearch';
+import { ListCardPicker } from './ListCardPicker';
+import { cardFamilyId } from '../variants';
 import { apiPost } from '../services/apiClient';
 
 /**
  * Web Signal Builder — replaces the deprecated Discord
  * `/looking-for` and `/offering` slash commands. Lets the user
- * compose a multi-card signal with autocomplete-driven card
- * picking, per-card variant + qty + max-price, an optional note,
- * a chosen target guild, and a live preview before posting. On
- * submit, calls `/api/signals` which inserts the rows + posts the
- * embed via the bot client.
+ * compose a multi-card signal with the shared card picker, per-card
+ * variant + qty + max-price, an optional note, a chosen target
+ * guild, and a live preview before posting. On submit, calls
+ * `/api/signals` which inserts the rows + posts the embed via the
+ * bot client.
  */
 
 interface SignalBuilderViewProps {
   auth: AuthApi;
   allCards: CardVariant[];
-  /** Wants list — used by the "Pull from priorities" empty-state
+  /** Wants list — used by the "Use my starred wishlist" empty-state
    *  shortcut to seed the card list with priority-starred wants. */
   wants: WantsApi;
 }
@@ -32,6 +30,9 @@ interface SignalBuilderViewProps {
 type SignalKind = 'wanted' | 'offering';
 
 interface SignalCardEntry {
+  /** Family-level id (`<set-slug>::<name-slug>`). The /api/signals
+   *  contract is family-keyed; per-printing pinning is the variant
+   *  field. */
   familyId: string;
   /** null = "any printing" (default); otherwise a specific variant
    *  label that exists for this family. */
@@ -39,8 +40,18 @@ interface SignalCardEntry {
   qty: number;
   /** null = no ceiling. */
   maxPrice: number | null;
-  /** Cached for display; never sent to the server. */
-  display: SignalSearchResult;
+}
+
+interface FamilyDisplay {
+  /** Display name (variant suffix stripped). */
+  name: string;
+  /** Set code, e.g. "JTL", "SOR". */
+  setCode: string;
+  /** Card type (Leader / Unit / Event / etc) — optional, depends on
+   *  whether the family was enriched. */
+  cardType?: string;
+  /** Variants in this family, sorted cheapest-first. */
+  variants: Array<{ productId: string; variant: string; market: number | null }>;
 }
 
 type PostedResult = {
@@ -65,6 +76,43 @@ function readIntentParams(): { kind: SignalKind; prefillPriorities: boolean } {
   };
 }
 
+/** Build a familyId → FamilyDisplay lookup from the catalog. Memoized
+ *  on `allCards` reference so the cost is paid once per catalog
+ *  reload, not per render. Pulled into the view so per-row rendering
+ *  doesn't have to filter the full card array on every paint. */
+function buildFamilyMap(allCards: CardVariant[]): Map<string, FamilyDisplay> {
+  const groups = new Map<string, CardVariant[]>();
+  for (const c of allCards) {
+    const fid = cardFamilyId(c);
+    const list = groups.get(fid) ?? [];
+    list.push(c);
+    groups.set(fid, list);
+  }
+  const setCodeBySlug = new Map(SETS.map(s => [s.slug, s.code]));
+  const out = new Map<string, FamilyDisplay>();
+  for (const [familyId, cards] of groups) {
+    const variants = cards
+      .map(c => ({
+        productId: c.productId ?? '',
+        variant: c.variant || 'Standard',
+        market: c.marketPrice ?? null,
+      }))
+      .filter(v => v.productId.length > 0)
+      .sort((a, b) => (a.market ?? Infinity) - (b.market ?? Infinity));
+    if (variants.length === 0) continue;
+    const primary = cards[0];
+    const display = primary.displayName ?? primary.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const setSlug = familyId.split('::')[0];
+    out.set(familyId, {
+      name: display,
+      setCode: setCodeBySlug.get(setSlug) ?? setSlug.slice(0, 4).toUpperCase(),
+      cardType: cards.find(c => c.cardType)?.cardType,
+      variants,
+    });
+  }
+  return out;
+}
+
 export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewProps) {
   // Pull intent off the URL once on mount. Capturing in a ref-style
   // useState initializer (vs reading inside a useEffect) means the
@@ -80,6 +128,8 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   const [postError, setPostError] = useState<string | null>(null);
   const [posted, setPosted] = useState<PostedResult | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const familyMap = useMemo(() => buildFamilyMap(allCards), [allCards]);
 
   const { enrollable, status: guildsStatus } = useGuildMemberships();
   const eligibleGuilds = useMemo(
@@ -101,8 +151,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     const seeded: SignalCardEntry[] = [];
     for (const w of wants.items) {
       if (!w.isPriority) continue;
-      const family = lookupFamilyClient(allCards, w.familyId);
-      if (!family) continue;
+      if (!familyMap.has(w.familyId)) continue;
       // Priority wishlist entries map cleanly onto a Looking-for
       // signal — restriction translates to variant pin.
       const variant = w.restriction.mode === 'restricted' && w.restriction.variants.length === 1
@@ -113,7 +162,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         variant,
         qty: w.qty,
         maxPrice: w.maxUnitPrice ?? null,
-        display: family,
       });
     }
     setCards(seeded.slice(0, 20));
@@ -141,18 +189,25 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wants.items]);
 
-  function addCardFromSearch(result: SignalSearchResult) {
+  function handlePick(card: CardVariant, ctx: { acceptedVariants?: string[] }) {
+    const familyId = cardFamilyId(card);
+    if (!familyMap.has(familyId)) {
+      setPickerOpen(false);
+      return;
+    }
+    // The picker's variant filter (acceptedVariants) drives the
+    // pinned printing — same wiring WantsPanel uses. Empty filter
+    // → 'any'. Single value → that variant. Multiple values left
+    // as 'any' since the API only takes one variant pin per card
+    // today.
+    const accepted = ctx.acceptedVariants ?? [];
+    const variant = accepted.length === 1 ? accepted[0] : null;
     setCards(prev => {
       // Skip duplicates by familyId — adding the same card twice is
-      // almost always an accident.
-      if (prev.some(c => c.familyId === result.familyId)) return prev;
-      return [...prev, {
-        familyId: result.familyId,
-        variant: null,
-        qty: 1,
-        maxPrice: null,
-        display: result,
-      }];
+      // almost always an accident; the user can change variant on
+      // the existing entry instead.
+      if (prev.some(c => c.familyId === familyId)) return prev;
+      return [...prev, { familyId, variant, qty: 1, maxPrice: null }];
     });
     setPickerOpen(false);
   }
@@ -237,154 +292,172 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
 
   const canPost = cards.length > 0 && !!guildId && !posting;
 
-  return (
-    <PageChrome auth={auth}>
-    <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100">
-      <header className="mb-5">
-        <h1 className="text-2xl font-bold text-gold tracking-wide">Post to your server</h1>
-        <p className="text-sm text-gray-400 mt-1">
-          Tell a Discord server which cards you're looking for or have to trade. SWUTrade lists the people in that server who can help — quietly, no auto-pings.
-        </p>
-      </header>
-
-      <div className="flex gap-2 mb-5" role="tablist">
-        <KindButton active={kind === 'wanted'} onClick={() => setKind('wanted')}>
-          🔍 Looking for
-        </KindButton>
-        <KindButton active={kind === 'offering'} onClick={() => setKind('offering')}>
-          💱 Offering
-        </KindButton>
-      </div>
-
-      <section className="mb-5">
-        <div className="flex items-baseline justify-between mb-2">
-          <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400">Cards</h2>
-          {cards.length > 0 && <span className="text-xs text-gray-500">{cards.length} / 20</span>}
-        </div>
-
-        {cards.length === 0 ? (
-          <EmptyState
-            kind={kind}
-            onAddClick={() => setPickerOpen(true)}
-            onPullPriorities={pullFromPriorities}
-            hasPriorities={wants.items.some(w => w.isPriority)}
-          />
-        ) : (
-          <ul className="space-y-2">
-            {cards.map((card, i) => (
-              <CardRow
-                key={card.familyId}
-                card={card}
-                onChange={patch => updateCard(i, patch)}
-                onRemove={() => removeCard(i)}
-              />
-            ))}
-            {cards.length < 20 && (
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setPickerOpen(true)}
-                  className="w-full px-3 py-2 rounded-md border border-dashed border-space-700 text-sm text-gray-400 hover:border-gold/40 hover:text-gold transition-colors"
-                >
-                  + Add another card
-                </button>
-              </li>
-            )}
-          </ul>
-        )}
-      </section>
-
-      <section className="mb-5">
-        <label htmlFor="signal-note" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-          Note (optional)
-        </label>
-        <textarea
-          id="signal-note"
-          value={note}
-          onChange={e => setNote(e.target.value.slice(0, 500))}
-          placeholder="for Friday's draft @ Mox · DM me to coordinate"
-          className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm placeholder-gray-500 focus:border-gold/50 focus:outline-none resize-y min-h-[60px]"
-          rows={2}
-        />
-        <div className="text-right text-xs text-gray-500 mt-0.5">
-          {500 - note.length} characters left
-        </div>
-      </section>
-
-      <section className="mb-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label htmlFor="signal-expiry" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-            Expires
-          </label>
-          <select
-            id="signal-expiry"
-            value={expiresInDays}
-            onChange={e => setExpiresInDays(Number(e.target.value))}
-            className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
-          >
-            <option value={3}>3 days</option>
-            <option value={7}>7 days</option>
-            <option value={14}>14 days</option>
-            <option value={30}>30 days</option>
-          </select>
-        </div>
-        <div>
-          <label htmlFor="signal-guild" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-            Post to
-          </label>
-          {guildsStatus === 'loading' ? (
-            <div className="text-sm text-gray-500 italic px-3 py-2">Loading your servers…</div>
-          ) : eligibleGuilds.length === 0 ? (
-            <div className="text-sm text-gray-400 px-3 py-2 border border-amber-500/40 bg-amber-500/10 rounded-md">
-              You haven't joined SWUTrade in any servers yet. Open the Communities page to join one.
-            </div>
-          ) : (
-            <select
-              id="signal-guild"
-              value={guildId ?? ''}
-              onChange={e => setGuildId(e.target.value || null)}
-              className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
-            >
-              {eligibleGuilds.map(g => (
-                <option key={g.guildId} value={g.guildId}>{g.guildName}</option>
-              ))}
-            </select>
-          )}
-        </div>
-      </section>
-
-      {cards.length > 0 && (
-        <section className="mb-5">
-          <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-2">Preview</h2>
-          <PreviewPane kind={kind} cards={cards} note={note} />
-        </section>
-      )}
-
-      {postError && (
-        <div role="alert" className="mb-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-300">
-          {postError}
-        </div>
-      )}
-
-      <div className="sticky bottom-0 bg-space-900/95 backdrop-blur-sm pt-3 pb-2 -mx-4 sm:-mx-6 px-4 sm:px-6 border-t border-space-800">
-        <button
-          type="button"
-          onClick={postSignal}
-          disabled={!canPost}
-          className="w-full px-4 py-3 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 hover:border-gold/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {posting ? 'Posting…' : `Post to Discord`}
-        </button>
-      </div>
-
-      {pickerOpen && (
-        <CardSearchModal
+  if (pickerOpen) {
+    // The picker's listType controls visual cues (saved-qty badges,
+    // tap-to-decrement). We deliberately omit `wants` / `available`
+    // so the picker stays in pure-search mode — the Signal Builder
+    // composes a draft list and only mutates inventory on submit
+    // via /api/signals. Mapping kind→listType keeps the variant
+    // filter UX consistent with how the user thinks about the side:
+    // 'wanted' → wants picker, 'offering' → binder picker.
+    return (
+      <PageChrome auth={auth}>
+        <ListCardPicker
+          listType={kind === 'wanted' ? 'wants' : 'available'}
           allCards={allCards}
-          onPick={addCardFromSearch}
+          priceMode="market"
+          onPick={handlePick}
           onClose={() => setPickerOpen(false)}
         />
-      )}
-    </div>
+      </PageChrome>
+    );
+  }
+
+  return (
+    <PageChrome auth={auth}>
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100 w-full">
+        <header className="mb-5">
+          <h1 className="text-2xl font-bold text-gold tracking-wide">Post to your server</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Tell a Discord server which cards you're looking for or have to trade. SWUTrade lists the people in that server who can help — quietly, no auto-pings.
+          </p>
+        </header>
+
+        <div className="flex gap-2 mb-5" role="tablist">
+          <KindButton active={kind === 'wanted'} onClick={() => setKind('wanted')}>
+            🔍 Looking for
+          </KindButton>
+          <KindButton active={kind === 'offering'} onClick={() => setKind('offering')}>
+            💱 Offering
+          </KindButton>
+        </div>
+
+        <section className="mb-5">
+          <div className="flex items-baseline justify-between mb-2">
+            <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400">Cards</h2>
+            {cards.length > 0 && <span className="text-xs text-gray-500">{cards.length} / 20</span>}
+          </div>
+
+          {cards.length === 0 ? (
+            <EmptyState
+              kind={kind}
+              onAddClick={() => setPickerOpen(true)}
+              onPullPriorities={pullFromPriorities}
+              hasPriorities={wants.items.some(w => w.isPriority)}
+            />
+          ) : (
+            <ul className="space-y-2">
+              {cards.map((card, i) => {
+                const family = familyMap.get(card.familyId);
+                if (!family) return null;
+                return (
+                  <CardRow
+                    key={card.familyId}
+                    card={card}
+                    family={family}
+                    onChange={patch => updateCard(i, patch)}
+                    onRemove={() => removeCard(i)}
+                  />
+                );
+              })}
+              {cards.length < 20 && (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(true)}
+                    className="w-full px-3 py-2 rounded-md border border-dashed border-space-700 text-sm text-gray-400 hover:border-gold/40 hover:text-gold transition-colors"
+                  >
+                    + Add another card
+                  </button>
+                </li>
+              )}
+            </ul>
+          )}
+        </section>
+
+        <section className="mb-5">
+          <label htmlFor="signal-note" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
+            Note (optional)
+          </label>
+          <textarea
+            id="signal-note"
+            value={note}
+            onChange={e => setNote(e.target.value.slice(0, 500))}
+            placeholder="for Friday's draft @ Mox · DM me to coordinate"
+            className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm placeholder-gray-500 focus:border-gold/50 focus:outline-none resize-y min-h-[60px]"
+            rows={2}
+          />
+          <div className="text-right text-xs text-gray-500 mt-0.5">
+            {500 - note.length} characters left
+          </div>
+        </section>
+
+        <section className="mb-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="signal-expiry" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
+              Expires
+            </label>
+            <select
+              id="signal-expiry"
+              value={expiresInDays}
+              onChange={e => setExpiresInDays(Number(e.target.value))}
+              className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
+            >
+              <option value={3}>3 days</option>
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="signal-guild" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
+              Post to
+            </label>
+            {guildsStatus === 'loading' ? (
+              <div className="text-sm text-gray-500 italic px-3 py-2">Loading your servers…</div>
+            ) : eligibleGuilds.length === 0 ? (
+              <div className="text-sm text-gray-400 px-3 py-2 border border-amber-500/40 bg-amber-500/10 rounded-md">
+                You haven't joined SWUTrade in any servers yet. Open the Communities page to join one.
+              </div>
+            ) : (
+              <select
+                id="signal-guild"
+                value={guildId ?? ''}
+                onChange={e => setGuildId(e.target.value || null)}
+                className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
+              >
+                {eligibleGuilds.map(g => (
+                  <option key={g.guildId} value={g.guildId}>{g.guildName}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </section>
+
+        {cards.length > 0 && (
+          <section className="mb-5">
+            <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-2">Preview</h2>
+            <PreviewPane kind={kind} cards={cards} familyMap={familyMap} note={note} />
+          </section>
+        )}
+
+        {postError && (
+          <div role="alert" className="mb-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-300">
+            {postError}
+          </div>
+        )}
+
+        <div className="sticky bottom-0 bg-space-900/95 backdrop-blur-sm pt-3 pb-2 -mx-4 sm:-mx-6 px-4 sm:px-6 border-t border-space-800">
+          <button
+            type="button"
+            onClick={postSignal}
+            disabled={!canPost}
+            className="w-full px-4 py-3 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 hover:border-gold/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {posting ? 'Posting…' : `Post to Discord`}
+          </button>
+        </div>
+      </div>
     </PageChrome>
   );
 }
@@ -471,25 +544,26 @@ function EmptyState({
 
 function CardRow({
   card,
+  family,
   onChange,
   onRemove,
 }: {
   card: SignalCardEntry;
+  family: FamilyDisplay;
   onChange: (patch: Partial<SignalCardEntry>) => void;
   onRemove: () => void;
 }) {
   return (
     <li className="flex items-stretch gap-2 p-2 rounded-md bg-space-800/40 border border-space-700">
       <img
-        src={`https://product-images.tcgplayer.com/fit-in/100x140/${card.display.variants[0].productId}.jpg`}
+        src={`https://product-images.tcgplayer.com/fit-in/100x140/${family.variants[0].productId}.jpg`}
         alt=""
         className="w-12 h-16 object-cover rounded shrink-0"
       />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold truncate">{card.display.name}</div>
+        <div className="text-sm font-semibold truncate">{family.name}</div>
         <div className="text-[11px] text-gray-500">
-          [{card.display.setCode}]{card.display.cardType === 'Leader' && ' (Leader)'}
-          {card.display.alternateCount > 0 && ` · +${card.display.alternateCount} reprint${card.display.alternateCount === 1 ? '' : 's'}`}
+          [{family.setCode}]{family.cardType === 'Leader' && ' (Leader)'}
         </div>
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <label className="text-[11px] text-gray-400">
@@ -511,7 +585,7 @@ function CardRow({
               className="ml-1 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs"
             >
               <option value="">Any printing</option>
-              {card.display.variants.map(v => (
+              {family.variants.map(v => (
                 <option key={v.productId} value={v.variant}>
                   {v.variant}{v.market != null ? ` · ~$${v.market.toFixed(2)}` : ''}
                 </option>
@@ -547,23 +621,40 @@ function CardRow({
   );
 }
 
-function PreviewPane({ kind, cards, note }: { kind: SignalKind; cards: SignalCardEntry[]; note: string }) {
+function PreviewPane({
+  kind,
+  cards,
+  familyMap,
+  note,
+}: {
+  kind: SignalKind;
+  cards: SignalCardEntry[];
+  familyMap: Map<string, FamilyDisplay>;
+  note: string;
+}) {
   const titleVerb = kind === 'wanted' ? '🔍 Looking for' : '💱 Offering';
+  const headerName = cards.length === 1
+    ? familyMap.get(cards[0].familyId)?.name ?? '—'
+    : `${cards.length} cards`;
   return (
     <div className="rounded-md border border-space-700 bg-space-800/40 p-3 text-sm">
       <div className="font-bold text-gold mb-2">
-        {titleVerb} · {cards.length === 1 ? cards[0].display.name : `${cards.length} cards`}
+        {titleVerb} · {headerName}
       </div>
       <ul className="space-y-1 text-gray-300">
-        {cards.map(c => (
-          <li key={c.familyId}>
-            • <span className="font-semibold">{c.qty}×</span> {c.display.name} <code className="text-xs text-gray-500">[{c.display.setCode}]</code>
-            {c.display.cardType === 'Leader' && <span className="text-xs text-gray-500"> (Leader)</span>}
-            {c.variant && <span className="text-xs text-gray-400"> · {c.variant} only</span>}
-            {!c.variant && <span className="text-xs text-gray-500"> · any printing</span>}
-            {c.maxPrice != null && <span className="text-xs text-gray-400"> · max ${c.maxPrice.toFixed(2)}</span>}
-          </li>
-        ))}
+        {cards.map(c => {
+          const family = familyMap.get(c.familyId);
+          if (!family) return null;
+          return (
+            <li key={c.familyId}>
+              • <span className="font-semibold">{c.qty}×</span> {family.name} <code className="text-xs text-gray-500">[{family.setCode}]</code>
+              {family.cardType === 'Leader' && <span className="text-xs text-gray-500"> (Leader)</span>}
+              {c.variant && <span className="text-xs text-gray-400"> · {c.variant} only</span>}
+              {!c.variant && <span className="text-xs text-gray-500"> · any printing</span>}
+              {c.maxPrice != null && <span className="text-xs text-gray-400"> · max ${c.maxPrice.toFixed(2)}</span>}
+            </li>
+          );
+        })}
       </ul>
       {note && (
         <blockquote className="mt-2 pl-3 border-l-2 border-gold/40 text-xs text-gray-300">
@@ -572,95 +663,6 @@ function PreviewPane({ kind, cards, note }: { kind: SignalKind; cards: SignalCar
       )}
       <div className="mt-2 text-[10px] text-gray-500 italic">
         People in your server who can help will be listed here when you post.
-      </div>
-    </div>
-  );
-}
-
-function CardSearchModal({
-  allCards,
-  onPick,
-  onClose,
-}: {
-  allCards: CardVariant[];
-  onPick: (result: SignalSearchResult) => void;
-  onClose: () => void;
-}) {
-  const [query, setQuery] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { inputRef.current?.focus(); }, []);
-
-  const results = useMemo(
-    () => searchSignalFamilies(allCards, query, 25),
-    [allCards, query],
-  );
-
-  // Esc closes.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-[10vh] px-4">
-      <div className="w-full max-w-md bg-space-900 border border-space-700 rounded-lg shadow-2xl flex flex-col max-h-[80vh]">
-        <div className="p-3 border-b border-space-800 flex items-center gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search for a card by name…"
-            className="flex-1 bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-100"
-          >
-            ×
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {query.trim().length === 0 ? (
-            <div className="p-6 text-center text-sm text-gray-500">
-              Start typing a card name. Different printings of the same card are grouped — pick once and you can narrow the printing on the next screen.
-            </div>
-          ) : results.length === 0 ? (
-            <div className="p-6 text-center text-sm text-gray-500">
-              No matches for "{query}".
-            </div>
-          ) : (
-            <ul className="divide-y divide-space-800">
-              {results.map(r => (
-                <li key={r.familyId}>
-                  <button
-                    type="button"
-                    onClick={() => onPick(r)}
-                    className="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-space-800/60 transition-colors"
-                  >
-                    <img
-                      src={`https://product-images.tcgplayer.com/fit-in/60x84/${r.variants[0].productId}.jpg`}
-                      alt=""
-                      className="w-8 h-11 object-cover rounded shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold truncate">{r.name}</div>
-                      <div className="text-[11px] text-gray-500">
-                        [{r.setCode}]{r.cardType === 'Leader' && ' (Leader)'}
-                        {r.alternateCount > 0 && ` · +${r.alternateCount} printing${r.alternateCount === 1 ? '' : 's'}`}
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
       </div>
     </div>
   );
