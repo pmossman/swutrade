@@ -44,6 +44,7 @@ import { TradeDetailView } from './components/TradeDetailView';
 import { TradesHistoryView } from './components/TradesHistoryView';
 import { WishlistView } from './components/WishlistView';
 import { BinderView } from './components/BinderView';
+import { SignalBuilderView } from './components/SignalBuilderView';
 import { SessionView } from './components/SessionView';
 import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
@@ -544,6 +545,16 @@ function App() {
         allCards={allLoadedCards}
         percentage={percentage}
         priceMode={priceMode}
+      />
+    );
+  }
+
+  if (viewMode === 'signal-builder') {
+    return (
+      <SignalBuilderView
+        auth={auth}
+        allCards={allLoadedCards}
+        wants={wants}
       />
     );
   }

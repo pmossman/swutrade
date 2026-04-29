@@ -33,7 +33,8 @@ export type ViewMode =
   | 'trades-history'
   | 'session'
   | 'wishlist'
-  | 'binder';
+  | 'binder'
+  | 'signal-builder';
 
 /** Params that a trade-composer URL carries. Any of them → trade view. */
 const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance'] as const;
@@ -58,6 +59,7 @@ export const VIEW_PARAM_KEYS = [
   'trade',
   'trades',
   'profile',
+  'signals',
   // Drill-down params owned by settings + community — listed here so
   // toHome() / toTradesHistory() / toProfile() etc. clear them on the
   // way out.
@@ -176,6 +178,13 @@ export const VIEW_ROUTES: readonly ViewRoute[] = [
     paramKeys: ['view'],
   },
   {
+    mode: 'signal-builder',
+    // `?signals=new` — the web Signal Builder. Replaces the
+    // deprecated /looking-for + /offering Discord slash commands.
+    matches: ({ params }) => params.get('signals') === 'new',
+    paramKeys: ['signals'],
+  },
+  {
     mode: 'list',
     matches: ({ params }) => {
       // Explicit `view=list` takes precedence over implicit `w`/`a`
@@ -263,6 +272,7 @@ export function isStandaloneView(parts: RouteParts): boolean {
     'session',
     'wishlist',
     'binder',
+    'signal-builder',
   ]);
   for (const route of VIEW_ROUTES) {
     if (!STANDALONE.has(route.mode)) continue;
