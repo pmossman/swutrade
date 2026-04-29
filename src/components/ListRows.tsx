@@ -3,28 +3,17 @@ import type { WantsItem, AvailableItem, VariantRestriction } from '../persistenc
 import { cardImageUrl, getCardPrice } from '../services/priceService';
 import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
+import { NumberStepper } from './ui/NumberStepper';
 
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
-    <div className="flex items-center gap-1 shrink-0">
-      <button
-        type="button"
-        aria-label="Decrease quantity"
-        onClick={() => onChangeQty(Math.max(1, qty - 1))}
-        className="hit-area-44 w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
-      >
-        −
-      </button>
-      <span className="w-6 text-center text-sm font-bold text-gray-200">{qty}</span>
-      <button
-        type="button"
-        aria-label="Increase quantity"
-        onClick={() => onChangeQty(Math.min(99, qty + 1))}
-        className="hit-area-44 w-6 h-6 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 transition-colors flex items-center justify-center"
-      >
-        +
-      </button>
-    </div>
+    <NumberStepper
+      value={qty}
+      onChange={n => onChangeQty(n ?? 1)}
+      min={1}
+      max={99}
+      ariaLabel="Quantity"
+    />
   );
 }
 

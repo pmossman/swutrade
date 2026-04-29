@@ -6,6 +6,7 @@ import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
 import { useNavigation } from '../contexts/NavigationContext';
 import { AppHeader } from './ui/AppHeader';
+import { NumberStepper } from './ui/NumberStepper';
 import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId } from '../variants';
 import { apiPost } from '../services/apiClient';
@@ -668,19 +669,14 @@ function CardRow({
         className="w-8 h-11 object-cover rounded shrink-0 mt-0.5"
       />
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-1.5 flex-wrap text-sm">
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
+        <div className="flex items-center gap-1.5 flex-wrap text-sm">
+          <NumberStepper
             value={card.qty}
-            onChange={e => {
-              const digits = e.target.value.replace(/\D/g, '');
-              const n = digits === '' ? 1 : parseInt(digits, 10);
-              onChange({ qty: Math.max(1, Math.min(99, n)) });
-            }}
-            aria-label="Quantity"
-            className="w-9 text-center bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs font-bold focus:border-gold/50 focus:outline-none"
+            onChange={n => onChange({ qty: n ?? 1 })}
+            min={1}
+            max={99}
+            ariaLabel="Quantity"
+            size="compact"
           />
           <span className="text-gray-500">×</span>
           <span className="font-semibold text-gray-100 truncate">{family.name}</span>
@@ -702,23 +698,21 @@ function CardRow({
             ))}
           </select>
           <span className="text-gray-600">·</span>
-          <label className="flex items-center gap-1">
+          <span className="flex items-center gap-1">
             max&nbsp;$
-            <input
-              type="text"
-              inputMode="decimal"
-              value={card.maxPrice ?? ''}
-              onChange={e => {
-                const cleaned = e.target.value.replace(/[^0-9.]/g, '');
-                if (cleaned === '') { onChange({ maxPrice: null }); return; }
-                const v = Number(cleaned);
-                onChange({ maxPrice: !isNaN(v) ? Math.min(10000, Math.max(0, v)) : null });
-              }}
-              placeholder="—"
-              aria-label="Max price"
-              className="w-14 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 focus:border-gold/50 focus:outline-none"
+            <NumberStepper
+              value={card.maxPrice}
+              onChange={n => onChange({ maxPrice: n })}
+              min={0}
+              max={10000}
+              step={0.5}
+              decimal
+              allowEmpty
+              ariaLabel="Max price"
+              size="compact"
+              inputClassName="w-12"
             />
-          </label>
+          </span>
         </div>
       </div>
       <button
