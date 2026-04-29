@@ -837,13 +837,37 @@ describeWithDb('/api/bot dispatcher', () => {
     });
 
     describe('application commands (/swutrade settings + user context menu)', () => {
-      it('slash /swutrade settings (no user) returns self-prefs index ephemeral with one button per Discord-surfaced self pref', async () => {
+      // Application commands ACK with type-5 (deferred ephemeral)
+      // immediately and PATCH the actual content via Discord's
+      // webhook endpoint. Tests inject `fetchImpl` to capture the
+      // PATCH and assert on its body. `awaitFollowup: true` lets
+      // the test observe the followup synchronously instead of via
+      // Vercel's `waitUntil` background path.
+      function captureFollowup() {
+        const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+        const fetchImpl: typeof fetch = (input, init) => {
+          calls.push({
+            url: typeof input === 'string' ? input : (input as URL).toString(),
+            body: JSON.parse(String(init?.body ?? '{}')),
+          });
+          return Promise.resolve(new Response('', { status: 200 }));
+        };
+        return { calls, fetchImpl };
+      }
+
+      const APP_ID = 'app-test-1';
+      const TOKEN = 'tok-test-1';
+
+      it('slash /swutrade settings (no user) defers and follows up with self-prefs index ephemeral', async () => {
         const user = await createTestUser();
         const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
         await dispatchBotPayload(
           'interactions',
           {
             type: 2, // APPLICATION_COMMAND
+            application_id: APP_ID,
+            token: TOKEN,
             data: {
               type: 1, // CHAT_INPUT
               name: 'swutrade',
@@ -858,17 +882,22 @@ describeWithDb('/api/bot dispatcher', () => {
             user: { id: user.id },
           },
           res,
+          { fetchImpl, awaitFollowup: true },
         );
 
+        // Synchronous response is the deferred ack.
         expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { flags?: number; content?: string; components?: Array<{ components?: Array<{ label?: string; custom_id?: string }> }> };
+        expect((res._json as { type: number }).type).toBe(5);
+
+        // Followup PATCHed @original with the self-prefs body.
+        expect(calls).toHaveLength(1);
+        expect(calls[0].url).toMatch(new RegExp(`/webhooks/${APP_ID}/${TOKEN}/messages/@original$`));
+        const followup = calls[0].body as {
+          flags?: number;
+          components?: Array<{ components?: Array<{ custom_id?: string }> }>;
         };
-        expect(body.type).toBe(4);
-        expect(body.data?.flags).toBe(64);
-        const buttons = body.data?.components?.[0]?.components ?? [];
-        // Each Discord-surfaced self pref gets a button that opens its selector.
+        expect(followup.flags).toBe(64);
+        const buttons = followup.components?.[0]?.components ?? [];
         const customIds = buttons.map(b => b.custom_id ?? '');
         expect(customIds.some(c => c === 'pref:communicationPref:open')).toBe(true);
         expect(customIds.every(c => c.startsWith('pref:') && c.endsWith(':open'))).toBe(true);
@@ -876,15 +905,18 @@ describeWithDb('/api/bot dispatcher', () => {
         await user.cleanup();
       });
 
-      it('slash /swutrade settings user:@peer returns peer-prefs index ephemeral keyed to the peer id', async () => {
+      it('slash /swutrade settings user:@peer follows up with peer-prefs index keyed to the peer id', async () => {
         const viewer = await createTestUser();
         const peer = await createTestUser();
 
         const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
         await dispatchBotPayload(
           'interactions',
           {
             type: 2,
+            application_id: APP_ID,
+            token: TOKEN,
             data: {
               type: 1,
               name: 'swutrade',
@@ -906,18 +938,21 @@ describeWithDb('/api/bot dispatcher', () => {
             user: { id: viewer.id },
           },
           res,
+          { fetchImpl, awaitFollowup: true },
         );
 
         expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { flags?: number; content?: string; components?: Array<{ components?: Array<{ custom_id?: string }> }> };
+        expect((res._json as { type: number }).type).toBe(5);
+
+        expect(calls).toHaveLength(1);
+        const followup = calls[0].body as {
+          flags?: number;
+          content?: string;
+          components?: Array<{ components?: Array<{ custom_id?: string }> }>;
         };
-        expect(body.type).toBe(4);
-        expect(body.data?.flags).toBe(64);
-        expect(body.data?.content).toMatch(/preferences for/i);
-        const buttons = body.data?.components?.[0]?.components ?? [];
-        // At least one button exists + they all carry the peer id + :open action.
+        expect(followup.flags).toBe(64);
+        expect(followup.content).toMatch(/preferences for/i);
+        const buttons = followup.components?.[0]?.components ?? [];
         expect(buttons.length).toBeGreaterThan(0);
         for (const b of buttons) {
           expect(b.custom_id).toMatch(new RegExp(`^pref:peer:${peer.id}:[^:]+:open$`));
@@ -927,14 +962,17 @@ describeWithDb('/api/bot dispatcher', () => {
         await peer.cleanup();
       });
 
-      it('slash with an unknown Discord id returns a helpful "not on SWUTrade" message', async () => {
+      it('slash with an unknown Discord id follows up with a helpful "not on SWUTrade" message', async () => {
         const viewer = await createTestUser();
 
         const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
         await dispatchBotPayload(
           'interactions',
           {
             type: 2,
+            application_id: APP_ID,
+            token: TOKEN,
             data: {
               type: 1,
               name: 'swutrade',
@@ -951,25 +989,29 @@ describeWithDb('/api/bot dispatcher', () => {
             user: { id: viewer.id },
           },
           res,
+          { fetchImpl, awaitFollowup: true },
         );
 
         expect(res._status).toBe(200);
-        const body = res._json as { type: number; data?: { content?: string } };
-        expect(body.type).toBe(4);
-        expect(body.data?.content).toMatch(/isn't on SWUTrade yet/i);
+        expect((res._json as { type: number }).type).toBe(5);
+        expect(calls).toHaveLength(1);
+        expect((calls[0].body as { content?: string }).content).toMatch(/isn't on SWUTrade yet/i);
 
         await viewer.cleanup();
       });
 
-      it('user context menu (type 2 command) returns the same peer-prefs index', async () => {
+      it('user context menu (type 2 command) follows up with the same peer-prefs index', async () => {
         const viewer = await createTestUser();
         const peer = await createTestUser();
 
         const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
         await dispatchBotPayload(
           'interactions',
           {
             type: 2,
+            application_id: APP_ID,
+            token: TOKEN,
             data: {
               type: 2, // USER context menu
               name: 'SWUTrade prefs',
@@ -983,12 +1025,13 @@ describeWithDb('/api/bot dispatcher', () => {
             user: { id: viewer.id },
           },
           res,
+          { fetchImpl, awaitFollowup: true },
         );
 
         expect(res._status).toBe(200);
-        const body = res._json as { type: number; data?: { content?: string } };
-        expect(body.type).toBe(4);
-        expect(body.data?.content).toMatch(/preferences for/i);
+        expect((res._json as { type: number }).type).toBe(5);
+        expect(calls).toHaveLength(1);
+        expect((calls[0].body as { content?: string }).content).toMatch(/preferences for/i);
 
         await viewer.cleanup();
         await peer.cleanup();
@@ -998,10 +1041,13 @@ describeWithDb('/api/bot dispatcher', () => {
         const viewer = await createTestUser();
 
         const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
         await dispatchBotPayload(
           'interactions',
           {
             type: 2,
+            application_id: APP_ID,
+            token: TOKEN,
             data: {
               type: 1,
               name: 'swutrade',
@@ -1016,10 +1062,13 @@ describeWithDb('/api/bot dispatcher', () => {
             user: { id: viewer.id },
           },
           res,
+          { fetchImpl, awaitFollowup: true },
         );
 
         expect(res._status).toBe(200);
-        expect((res._json as { data?: { content?: string } }).data?.content)
+        expect((res._json as { type: number }).type).toBe(5);
+        expect(calls).toHaveLength(1);
+        expect((calls[0].body as { content?: string }).content)
           .toMatch(/can't set per-trader prefs for yourself/i);
 
         await viewer.cleanup();

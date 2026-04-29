@@ -34,6 +34,7 @@ import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 import { getGuildTradesChannel } from '../lib/tradeGuild.js';
+import { waitUntil } from '@vercel/functions';
 
 /**
  * Single entry point for Discord's signed webhooks.
@@ -102,6 +103,11 @@ const INTERACTION_RESPONSE_TYPE_PONG = 1;
 // Type 4 = CHANNEL_MESSAGE_WITH_SOURCE (post a new reply, visible
 // to the user who clicked via `flags: 64` ephemeral bit).
 const INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE = 4;
+// Type 5 = DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE — "thinking…"
+// indicator. We have 15 minutes to follow up via webhook PATCH
+// instead of the 3-second window for synchronous responses. Used
+// when cold-start latency makes 3s tight.
+const INTERACTION_RESPONSE_TYPE_DEFERRED_CHANNEL_MESSAGE = 5;
 // Type 6 = DEFERRED_UPDATE_MESSAGE (ack w/o visible change).
 const INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE = 6;
 // Type 7 = UPDATE_MESSAGE (update the message that had the button).
@@ -172,6 +178,14 @@ export interface BotDeps {
   /** Absolute origin (scheme + host) used for deep-links embedded
    *  in interaction responses. Supplied by the top-level handler. */
   origin?: string;
+  /** Injected fetch for the deferred-followup PATCH path. Tests
+   *  capture invocations to assert the followup body without
+   *  hitting Discord's API. */
+  fetchImpl?: typeof fetch;
+  /** When true, callers (tests) await the deferred followup
+   *  synchronously rather than via waitUntil. Lets unit tests
+   *  observe the followup PATCH within the same await. */
+  awaitFollowup?: boolean;
 }
 
 /**
@@ -216,7 +230,7 @@ async function handleInteraction(
   }
 
   if (type === INTERACTION_TYPE_APPLICATION_COMMAND) {
-    return handleApplicationCommand(payload, res);
+    return handleApplicationCommand(payload, res, deps);
   }
 
   if (type === INTERACTION_TYPE_MESSAGE_COMPONENT) {
@@ -258,7 +272,67 @@ async function handleInteraction(
 async function handleApplicationCommand(
   payload: Record<string, unknown>,
   res: VercelResponse,
+  deps: BotDeps = {},
 ): Promise<void> {
+  // ACK immediately with a deferred ephemeral. Discord shows a
+  // "thinking…" indicator and gives us 15 minutes to PATCH the
+  // followup, instead of the 3-second window for synchronous
+  // responses. Critical because Vercel cold-starts on this big
+  // function bundle (~700KB) regularly push past 3s, and
+  // intermittently produced "The application did not respond"
+  // errors even though the function eventually succeeded.
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_DEFERRED_CHANNEL_MESSAGE,
+    data: { flags: MESSAGE_FLAG_EPHEMERAL },
+  });
+
+  const applicationId = payload.application_id as string | undefined;
+  const token = payload.token as string | undefined;
+  if (!applicationId || !token) {
+    console.error('handleApplicationCommand: missing application_id or token in payload');
+    return;
+  }
+
+  // Build the followup payload (the actual user-visible content)
+  // and PATCH the deferred message in place. Wrapped in waitUntil
+  // so Vercel's runtime keeps the function alive for the followup
+  // even after the deferred ACK has already been written to the
+  // response stream.
+  const followupWork = (async () => {
+    try {
+      const body = await buildApplicationCommandFollowup(payload);
+      await sendDeferredFollowup({
+        applicationId,
+        token,
+        body,
+        fetchImpl: deps.fetchImpl,
+      });
+    } catch (err) {
+      console.error('handleApplicationCommand: followup failed', err);
+      await reportError({
+        source: 'bot.application-command.followup',
+        tags: { applicationId },
+      }, err);
+    }
+  })();
+  waitUntil(followupWork);
+  // Tests can opt into awaiting the followup synchronously by
+  // passing `deps.awaitFollowup = true`. Production paths skip this
+  // — the response has already been written.
+  if (deps.awaitFollowup) await followupWork;
+}
+
+/**
+ * Compute the body of the deferred followup for an application
+ * command. Returns the `data` portion of an interaction response
+ * (no `type` wrapper — webhook PATCH endpoint doesn't use it).
+ *
+ * Split out from `handleApplicationCommand` so the ACK can fire
+ * before any of the body computation runs.
+ */
+async function buildApplicationCommandFollowup(
+  payload: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const data = payload.data as {
     name?: string;
     type?: number;
@@ -269,9 +343,6 @@ async function handleApplicationCommand(
 
   const commandType = data?.type ?? APPLICATION_COMMAND_TYPE_SLASH;
 
-  // Identify the peer target:
-  //   - User context menu → payload.data.target_id
-  //   - `/swutrade settings user:@alice` → options[0].options[?name=user].value
   let peerDiscordId: string | undefined;
   let peerUsername: string | undefined;
 
@@ -280,8 +351,6 @@ async function handleApplicationCommand(
     const resolved = data?.resolved?.users?.[peerDiscordId ?? ''];
     peerUsername = resolved?.global_name ?? resolved?.username;
   } else if (commandType === APPLICATION_COMMAND_TYPE_SLASH) {
-    // For `/swutrade settings`, data.name = "swutrade" and
-    // options[0] is the "settings" subcommand. Drill through.
     const subcommand = data?.options?.find(o => o.type === OPTION_TYPE_SUB_COMMAND);
     if (subcommand?.name === 'settings') {
       const userOpt = subcommand.options?.find(o => o.type === OPTION_TYPE_USER && o.name === 'user');
@@ -291,35 +360,22 @@ async function handleApplicationCommand(
         peerUsername = resolved?.global_name ?? resolved?.username;
       }
     } else {
-      // Unknown subcommand — respond with a note rather than silently
-      // dropping so the caller sees what happened.
-      res.status(200).json({
-        type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-        data: {
-          content: 'Unknown command. Try `/swutrade settings`.',
-          flags: MESSAGE_FLAG_EPHEMERAL,
-        },
-      });
-      return;
+      return {
+        content: 'Unknown command. Try `/swutrade settings`.',
+        flags: MESSAGE_FLAG_EPHEMERAL,
+      };
     }
   } else {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
+    return { content: '', flags: MESSAGE_FLAG_EPHEMERAL };
   }
 
-  // No peer → self-prefs index.
   if (!peerDiscordId) {
     const selfDefs = PREF_DEFINITIONS.filter(
       d => d.scope.kind === 'self' && d.surfaces.includes('discord'),
     );
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { ...buildSelfPrefsIndexMessage(selfDefs), flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
+    return { ...buildSelfPrefsIndexMessage(selfDefs), flags: MESSAGE_FLAG_EPHEMERAL };
   }
 
-  // Peer flow: map the target Discord id to a SWUTrade user id.
   const db = getDb();
   const [peerRow] = await db
     .select({ id: users.id, handle: users.handle })
@@ -327,41 +383,54 @@ async function handleApplicationCommand(
     .where(eq(users.discordId, peerDiscordId))
     .limit(1);
   if (!peerRow) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: {
-        content: `<@${peerDiscordId}>${peerUsername ? ` (@${peerUsername})` : ''} isn't on SWUTrade yet — no per-trader settings to set.`,
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      },
-    });
-    return;
+    return {
+      content: `<@${peerDiscordId}>${peerUsername ? ` (@${peerUsername})` : ''} isn't on SWUTrade yet — no per-trader settings to set.`,
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
   }
 
-  // Reject self-override — peer prefs are for OTHER users.
   const maybeMember = payload.member as { user?: { id?: string } } | undefined;
   const maybeUser = payload.user as { id?: string } | undefined;
   const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
   if (clickerDiscordId && clickerDiscordId === peerDiscordId) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: {
-        content: "You can't set per-trader prefs for yourself. Use `/swutrade settings` (no target user) for your global defaults.",
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      },
-    });
-    return;
+    return {
+      content: "You can't set per-trader prefs for yourself. Use `/swutrade settings` (no target user) for your global defaults.",
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
   }
 
   const peerDefs = PREF_DEFINITIONS.filter(
     d => d.scope.kind === 'peer' && d.surfaces.includes('discord'),
   );
-  res.status(200).json({
-    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-    data: {
-      ...buildPeerPrefsIndexMessage(peerDefs, peerRow.id, peerRow.handle),
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    },
+  return {
+    ...buildPeerPrefsIndexMessage(peerDefs, peerRow.id, peerRow.handle),
+    flags: MESSAGE_FLAG_EPHEMERAL,
+  };
+}
+
+/**
+ * PATCH the deferred response message with the actual user-facing
+ * content. Auth is the interaction `token`, not a bot token —
+ * webhook routes are pre-authorized via the token Discord generated
+ * for this specific interaction.
+ */
+async function sendDeferredFollowup(opts: {
+  applicationId: string;
+  token: string;
+  body: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  const url = `https://discord.com/api/v10/webhooks/${opts.applicationId}/${opts.token}/messages/@original`;
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
+  const res = await fetchImpl(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts.body),
   });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Discord followup PATCH ${res.status}: ${text.slice(0, 200)}`);
+  }
 }
 
 /**

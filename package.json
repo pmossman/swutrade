@@ -33,6 +33,7 @@
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/react-virtual": "^3.13.23",
+    "@vercel/functions": "^3.4.4",
     "arctic": "^3.7.0",
     "cookie": "^1.1.1",
     "dotenv": "^17.4.2",
