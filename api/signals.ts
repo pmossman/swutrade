@@ -342,6 +342,7 @@ export async function handleCreate(
     requester: { discordId: signaler.discordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
     expiryHint: formatExpiryHint(expiresAt, now),
     imageUrl,
+    origin,
   });
 
   // Post the public embed.

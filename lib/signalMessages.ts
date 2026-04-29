@@ -86,6 +86,10 @@ export interface SignalEmbedContext {
    *  Cancelled / expired posts drop this so the retired state reads
    *  cleanly. */
   imageUrl?: string;
+  /** Origin to use when generating clickable signup links in the
+   *  embed (e.g. `https://swutrade.com`). Falls back to a hard-
+   *  coded production origin when omitted. */
+  origin?: string;
 }
 
 /**
@@ -123,14 +127,16 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
       const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
       lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
     }
-    lines.push(formatMatchLine(c.matchedUsers, ctx.kind));
+    const matchLine = formatMatchLine(c.matchedUsers, ctx.kind);
+    if (matchLine) lines.push(matchLine);
   } else {
     for (const c of ctx.cards) {
       lines.push(`• **${c.qty}×** ${c.name} \`[${c.setCode}]\`${c.cardType === 'Leader' ? ' (Leader)' : ''}`);
       if (c.variantSpec.mode === 'restricted') {
         lines.push(`  ${c.variantSpec.variants.join(' / ')} only`);
       }
-      lines.push(`  ${formatMatchLine(c.matchedUsers, ctx.kind)}`);
+      const matchLine = formatMatchLine(c.matchedUsers, ctx.kind);
+      if (matchLine) lines.push(`  ${matchLine}`);
       lines.push('');
     }
     if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
@@ -144,6 +150,13 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   lines.push('');
   if (isActive) {
     lines.push(`⏱ ${ctx.expiryHint}`);
+    // Clickable sign-up CTA — Discord viewers who aren't on
+    // SWUTrade yet can tap straight into the OAuth flow without
+    // hunting for the link. The Discord link-unfurl shows the
+    // OAuth handshake's redirect target so it reads as friendly
+    // ("Sign in with Discord on swutrade.com").
+    const origin = ctx.origin ?? 'https://swutrade.com';
+    lines.push(`✨ [Join SWUTrade with Discord →](${origin}/api/auth/discord)`);
   } else if (statusBadge) {
     lines.push(statusBadge);
   }
@@ -173,6 +186,10 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   return {
     embeds: [{
       title,
+      // url makes the title clickable in Discord — points at the
+      // sign-up flow so a tap from a curious onlooker lands on the
+      // OAuth-with-Discord screen, not a generic landing page.
+      url: isActive ? `${ctx.origin ?? 'https://swutrade.com'}/api/auth/discord` : undefined,
       description: lines.join('\n'),
       color,
       thumbnail,
@@ -200,12 +217,12 @@ function formatCardLabel(c: SignalEmbedCard): string {
   return `\`[${c.setCode}]\`${leader} · ${variantLabel}`;
 }
 
-function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string {
-  if (matches.length === 0) {
-    return kind === 'wanted'
-      ? '📦 Nobody here has it yet'
-      : '📦 Nobody here is looking for it yet';
-  }
+/** Render the per-card "people in this server who can help" line.
+ *  Returns `null` (omit the line entirely) when there are no
+ *  matches — the empty-state copy was noisy in posts where most
+ *  cards have no matches yet. */
+function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string | null {
+  if (matches.length === 0) return null;
   const verb = kind === 'wanted' ? 'Has it' : 'Wants it';
   const visible = matches.slice(0, MATCH_RENDER_LIMIT);
   const overflow = matches.length - visible.length;
@@ -214,7 +231,7 @@ function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string
     return `<@${m.discordId}>${qtySuffix}`;
   });
   if (overflow > 0) mentions.push(`+${overflow} more`);
-  return `📦 ${verb}: ${mentions.join(', ')}`;
+  return `${verb}: ${mentions.join(', ')}`;
 }
 
 function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {

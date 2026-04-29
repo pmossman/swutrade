@@ -1111,7 +1111,7 @@ async function renderSignalImage(
   // Tile layout — 4 cols × 3 rows fits the cap with breathing room.
   const COLS = visible.length <= 4 ? Math.max(1, visible.length) : visible.length <= 8 ? 4 : 6;
   const ROWS = Math.ceil(visible.length / COLS);
-  const HEADER_BOTTOM = 110;
+  const HEADER_BOTTOM = 84;
   const FOOTER_TOP = 600;
   const GRID_TOP_Y = HEADER_BOTTOM + 20;
   const GRID_BOTTOM_Y = FOOTER_TOP - 10;
@@ -1172,12 +1172,13 @@ async function renderSignalImage(
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
 
-  <!-- Header: brandmark + kind verb + handle -->
-  <text x="36" y="56" font-size="32" font-weight="900" letter-spacing="3" fill="#e5e7eb">SWU<tspan fill="#F5A623">TRADE</tspan></text>
-  <rect x="36" y="78" width="3" height="20" rx="1.5" fill="${accent}"/>
-  <text x="48" y="94" font-size="18" font-weight="800" letter-spacing="3" fill="${accent}">${verbLabel}</text>
-  <text x="${48 + verbLabel.length * 11 + 14}" y="94" font-size="14" font-weight="700" fill="#9ca3af">· @${escapeXml(handle)}</text>
-  <line x1="36" y1="110" x2="1164" y2="110" stroke="#1a1f2e" stroke-width="2"/>
+  <!-- Header: brandmark on the left, kind verb + handle on the right.
+       Use a single flowing <text> for the verb+handle so the handle
+       can't collide with the verb label regardless of how wide
+       "LOOKING FOR" / "OFFERING" renders at 18pt+letter-spacing=3. -->
+  <text x="36" y="60" font-size="32" font-weight="900" letter-spacing="3" fill="#e5e7eb">SWU<tspan fill="#F5A623">TRADE</tspan></text>
+  <text x="1164" y="60" font-size="14" font-weight="700" letter-spacing="2" fill="${accent}" text-anchor="end">${verbLabel}<tspan fill="#9ca3af" font-weight="600" letter-spacing="0" dx="10">· @${escapeXml(handle)}</tspan></text>
+  <line x1="36" y1="84" x2="1164" y2="84" stroke="#1a1f2e" stroke-width="2"/>
 
   ${tiles}
 
