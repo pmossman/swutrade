@@ -82,6 +82,11 @@ export function HomeView({ auth }: HomeViewProps) {
     () => guilds.enrollable.filter(g => g.enrolled),
     [guilds.enrollable],
   );
+  // "Post to a server" CTAs are only useful for real accounts in at
+  // least one bot-enabled server they've enrolled in. Ghosts can't
+  // be enrolled and signed-out viewers can't auth — gating here
+  // keeps the affordance from teasing.
+  const canPostToServer = !!user && !user.isAnonymous && enrolledGuilds.length > 0;
   // Explicit trading-partner bookmarks. Independent of community
   // enrollment — lets users pin Discord friends who aren't in any
   // bot-enabled server. Signed-in only; the server endpoint 401s
@@ -171,11 +176,13 @@ export function HomeView({ auth }: HomeViewProps) {
             wants={wants.items}
             cardByFamily={byFamily}
             onEditWishlist={nav.toWishlist}
+            canPostToServer={canPostToServer}
           />
           <BinderModule
             available={available.items}
             cardByProductId={byProductId}
             onEditBinder={nav.toBinder}
+            canPostToServer={canPostToServer}
           />
         </div>
 
@@ -608,10 +615,14 @@ function WishlistModule({
   wants,
   cardByFamily,
   onEditWishlist,
+  canPostToServer,
 }: {
   wants: WantsItem[];
   cardByFamily: Map<string, CardVariant>;
   onEditWishlist: () => void;
+  /** True when the viewer is signed in (real account) and could
+   *  reach the Signal Builder. Gates the "Post to a server" CTA. */
+  canPostToServer: boolean;
 }) {
   const priorityCount = useMemo(() => wants.filter(w => w.isPriority).length, [wants]);
   // Priorities pinned first, then everything else by newest-added.
@@ -642,15 +653,25 @@ function WishlistModule({
         </button>
       }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
-        <span className="text-gray-200 font-semibold">{wants.length}</span>
-        {wants.length === 1 ? ' card' : ' cards'}
-        {priorityCount > 0 && (
-          <>
-            {' · '}
-            <span className="text-gold font-semibold">{priorityCount}</span>
-            {' priority'}
-          </>
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex items-center justify-between gap-2">
+        <span>
+          <span className="text-gray-200 font-semibold">{wants.length}</span>
+          {wants.length === 1 ? ' card' : ' cards'}
+          {priorityCount > 0 && (
+            <>
+              {' · '}
+              <span className="text-gold font-semibold">{priorityCount}</span>
+              {' priority'}
+            </>
+          )}
+        </span>
+        {canPostToServer && wants.length > 0 && (
+          <a
+            href={priorityCount > 0 ? '/?signals=new&prefill=priorities' : '/?signals=new'}
+            className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
+          >
+            Post to a server →
+          </a>
         )}
       </div>
 
@@ -695,10 +716,12 @@ function BinderModule({
   available,
   cardByProductId,
   onEditBinder,
+  canPostToServer,
 }: {
   available: AvailableItem[];
   cardByProductId: Map<string, CardVariant>;
   onEditBinder: () => void;
+  canPostToServer: boolean;
 }) {
   // Binder has no priority concept — newest additions float to the top
   // (most likely to be what the viewer is actively thinking about;
@@ -723,9 +746,19 @@ function BinderModule({
         </button>
       }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
-        <span className="text-gray-200 font-semibold">{available.length}</span>
-        {available.length === 1 ? ' card available' : ' cards available'}
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex items-center justify-between gap-2">
+        <span>
+          <span className="text-gray-200 font-semibold">{available.length}</span>
+          {available.length === 1 ? ' card available' : ' cards available'}
+        </span>
+        {canPostToServer && available.length > 0 && (
+          <a
+            href="/?signals=new&kind=offering"
+            className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
+          >
+            Post to a server →
+          </a>
+        )}
       </div>
 
       {available.length === 0 && (

@@ -77,6 +77,14 @@ export function NavMenu({ hasAccount, hasAnySession }: NavMenuProps) {
           )}
           {hasAccount && (
             <NavRow
+              href="/?signals=new"
+              icon={<MegaphoneIcon className="w-3.5 h-3.5 text-gray-400" />}
+              label="Post to a server"
+              onClose={close}
+            />
+          )}
+          {hasAccount && (
+            <NavRow
               href="/?community=1"
               icon={<CommunityIcon className="w-3.5 h-3.5 text-gray-400" />}
               label="My Communities"
@@ -171,6 +179,16 @@ function CommunityIcon({ className }: { className?: string }) {
       <path d="M1.75 13.25a4.25 4.25 0 0 1 8.5 0" />
       <circle cx="11.25" cy="6.25" r="1.75" />
       <path d="M10 11a3.25 3.25 0 0 1 4.5 1.75" />
+    </svg>
+  );
+}
+
+function MegaphoneIcon({ className }: { className?: string }) {
+  // Megaphone — broadcasting a card list to a server.
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6.5h2.5L11 3v10L5.5 9.5H3a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1Z" />
+      <path d="M5.5 9.5v3" />
     </svg>
   );
 }

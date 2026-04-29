@@ -79,9 +79,16 @@ export function useGuildMemberships(): GuildMembershipsApi {
     enrollable: GuildMembershipSummary[];
     other: GuildMembershipSummary[];
   }) => {
-    cache.set({ enrollable: data.enrollable, other: data.other });
-    setEnrollable(data.enrollable);
-    setOther(data.other);
+    // Defensive `?? []` against malformed payloads — happens in local
+    // dev when Vite returns the SPA HTML for unproxied `/api/*` calls,
+    // which apiClient lifts to `{ ok: true, data: {} }`. Without these
+    // guards `setEnrollable(undefined)` corrupts state and any caller
+    // that does `.filter()` on it crashes the view.
+    const enrollable = data.enrollable ?? [];
+    const other = data.other ?? [];
+    cache.set({ enrollable, other });
+    setEnrollable(enrollable);
+    setOther(other);
   }, []);
 
   const loadLocal = useCallback(async () => {

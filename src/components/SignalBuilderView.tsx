@@ -3,6 +3,7 @@ import type { CardVariant } from '../types';
 import type { AuthApi } from '../hooks/useAuth';
 import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
+import { AppHeader } from './ui/AppHeader';
 import {
   searchSignalFamilies,
   lookupFamilyClient,
@@ -48,8 +49,29 @@ type PostedResult = {
   matchSummary: Array<{ familyId: string; matchCount: number }>;
 };
 
+/** Read intent params off the current URL on initial render. The
+ *  Home Wishlist + Binder CTAs deep-link with `?prefill=priorities`
+ *  or `?kind=offering` so the builder lands in the right state for
+ *  the user's intent. Falls back to safe defaults on SSR / no window. */
+function readIntentParams(): { kind: SignalKind; prefillPriorities: boolean } {
+  if (typeof window === 'undefined') {
+    return { kind: 'wanted', prefillPriorities: false };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const kindParam = params.get('kind');
+  return {
+    kind: kindParam === 'offering' ? 'offering' : 'wanted',
+    prefillPriorities: params.get('prefill') === 'priorities',
+  };
+}
+
 export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewProps) {
-  const [kind, setKind] = useState<SignalKind>('wanted');
+  // Pull intent off the URL once on mount. Capturing in a ref-style
+  // useState initializer (vs reading inside a useEffect) means the
+  // first render already reflects the chosen kind — no flicker from
+  // 'wanted' → 'offering' on the initial paint.
+  const intent = useRef(readIntentParams()).current;
+  const [kind, setKind] = useState<SignalKind>(intent.kind);
   const [cards, setCards] = useState<SignalCardEntry[]>([]);
   const [note, setNote] = useState('');
   const [expiresInDays, setExpiresInDays] = useState(7);
@@ -97,6 +119,27 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     setCards(seeded.slice(0, 20));
     setKind('wanted');
   }
+
+  // Honour `?prefill=priorities` from the deep-link CTAs. Wants is
+  // loaded synchronously from localStorage, but a freshly-signed-in
+  // user might have empty local state until server sync runs — so
+  // we re-check on `wants.items` change and bail early once the
+  // prefill has fired or once the user starts editing manually.
+  const prefillRan = useRef(false);
+  useEffect(() => {
+    if (prefillRan.current) return;
+    if (!intent.prefillPriorities) return;
+    if (cards.length > 0) return;
+    if (!wants.items.some(w => w.isPriority)) return;
+    prefillRan.current = true;
+    pullFromPriorities();
+    // Strip the prefill param from the URL so a refresh doesn't
+    // re-seed (which would clobber any cards the user just removed).
+    const url = new URL(window.location.href);
+    url.searchParams.delete('prefill');
+    window.history.replaceState({}, '', url.toString());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wants.items]);
 
   function addCardFromSearch(result: SignalSearchResult) {
     setCards(prev => {
@@ -150,47 +193,52 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   // (routing guards), but defensive belt-and-suspenders.
   if (!auth.user) {
     return (
-      <div className="max-w-xl mx-auto p-6 text-gray-300">
-        <h1 className="text-xl font-bold text-gold mb-3">Sign in to post</h1>
-        <p>This posts to a Discord server you've joined SWUTrade in. Sign in with Discord to continue.</p>
-      </div>
+      <PageChrome auth={auth}>
+        <div className="max-w-xl mx-auto p-6 text-gray-300">
+          <h1 className="text-xl font-bold text-gold mb-3">Sign in to post</h1>
+          <p>Posts go to a Discord server where you've joined SWUTrade. Sign in with Discord to continue.</p>
+        </div>
+      </PageChrome>
     );
   }
 
   if (posted) {
     const matchCount = posted.matchSummary.reduce((acc, m) => acc + m.matchCount, 0);
     return (
-      <div className="max-w-xl mx-auto p-6 text-center">
-        <h1 className="text-2xl font-bold text-gold mb-3">Posted!</h1>
-        <p className="text-gray-300 mb-4">
-          Your post is live in Discord.
-          {matchCount > 0 && (
-            <> {matchCount === 1 ? 'One person' : `${matchCount} people`} in that server can help — they're listed under the post (we don't ping them automatically; reply in the channel if you want to nudge).</>
-          )}
-        </p>
-        <a
-          href={posted.messageUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-block px-4 py-2 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30"
-        >
-          Open in Discord →
-        </a>
-        <div className="mt-6 text-sm text-gray-500">
-          <button
-            onClick={() => { setPosted(null); setCards([]); setNote(''); }}
-            className="underline hover:text-gray-300"
+      <PageChrome auth={auth}>
+        <div className="max-w-xl mx-auto p-6 text-center">
+          <h1 className="text-2xl font-bold text-gold mb-3">Posted!</h1>
+          <p className="text-gray-300 mb-4">
+            Your post is live in Discord.
+            {matchCount > 0 && (
+              <> {matchCount === 1 ? 'One person' : `${matchCount} people`} in that server can help — they're listed under the post (we don't ping them automatically; reply in the channel if you want to nudge).</>
+            )}
+          </p>
+          <a
+            href={posted.messageUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-block px-4 py-2 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30"
           >
-            Post another
-          </button>
+            Open in Discord →
+          </a>
+          <div className="mt-6 text-sm text-gray-500">
+            <button
+              onClick={() => { setPosted(null); setCards([]); setNote(''); }}
+              className="underline hover:text-gray-300"
+            >
+              Post another
+            </button>
+          </div>
         </div>
-      </div>
+      </PageChrome>
     );
   }
 
   const canPost = cards.length > 0 && !!guildId && !posting;
 
   return (
+    <PageChrome auth={auth}>
     <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100">
       <header className="mb-5">
         <h1 className="text-2xl font-bold text-gold tracking-wide">Post to your server</h1>
@@ -336,6 +384,29 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
           onClose={() => setPickerOpen(false)}
         />
       )}
+    </div>
+    </PageChrome>
+  );
+}
+
+/**
+ * Standard page chrome — header + main wrapper. Same shape as
+ * BinderView / ProfileView / SettingsView use, so the Signal Builder
+ * page reads as a first-class app surface and not a floating dialog.
+ */
+function PageChrome({ auth, children }: { auth: AuthApi; children: React.ReactNode }) {
+  return (
+    <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
+      <AppHeader
+        auth={auth}
+        breadcrumbs={[
+          { label: 'Home', href: '/' },
+          { label: 'Post to a server' },
+        ]}
+      />
+      <main className="flex-1 flex flex-col w-full">
+        {children}
+      </main>
     </div>
   );
 }
