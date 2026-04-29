@@ -318,30 +318,102 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     );
   }
 
+  // Mirror the live embed's palette so the form's left edge / header
+  // accent flips colour the moment the user toggles kind. Source of
+  // truth: lib/signalMessages.ts COLOR_WANTED / COLOR_OFFERING.
+  const accent = kind === 'wanted' ? 'blue' : 'emerald';
+  const accentBorder = accent === 'blue' ? 'border-l-blue-500' : 'border-l-emerald-500';
+  const accentBg = accent === 'blue' ? 'bg-blue-500/10' : 'bg-emerald-500/10';
+  const accentText = accent === 'blue' ? 'text-blue-300' : 'text-emerald-300';
+  const verb = kind === 'wanted' ? '🔍 Looking for' : '💱 Offering';
+  const titleSuffix = cards.length === 0
+    ? <span className="text-gray-500 italic">add a card to start…</span>
+    : cards.length === 1
+      ? familyMap.get(cards[0].familyId)?.name ?? '—'
+      : `${cards.length} cards`;
+
   return (
     <PageChrome auth={auth}>
-      <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100 w-full">
-        <header className="mb-5">
-          <h1 className="text-2xl font-bold text-gold tracking-wide">Post to your server</h1>
-          <p className="text-sm text-gray-400 mt-1">
-            Tell a Discord server which cards you're looking for or have to trade. SWUTrade lists the people in that server who can help — quietly, no auto-pings.
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100 w-full pb-24">
+        <header className="mb-4">
+          <h1 className="text-xl font-bold text-gold tracking-wide">Post to your server</h1>
+          <p className="text-xs text-gray-400 mt-0.5">
+            What you fill out below is what your server will see.
           </p>
         </header>
 
-        <div className="flex gap-2 mb-5" role="tablist">
-          <KindButton active={kind === 'wanted'} onClick={() => setKind('wanted')}>
-            🔍 Looking for
-          </KindButton>
-          <KindButton active={kind === 'offering'} onClick={() => setKind('offering')}>
-            💱 Offering
-          </KindButton>
+        {/* Post settings — metadata about the post itself (which side,
+            where it goes, when it expires). Lives in a slim strip
+            outside the embed-styled body so the body can read 1-to-1
+            with the rendered Discord post. */}
+        <div className="mb-4 rounded-md border border-space-700 bg-space-800/40 p-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+          <div className="flex items-center gap-1" role="tablist">
+            <span className="text-gray-500 font-semibold uppercase tracking-wide pr-1">Kind</span>
+            <KindPill active={kind === 'wanted'} accent="blue" onClick={() => setKind('wanted')}>
+              🔍 Looking
+            </KindPill>
+            <KindPill active={kind === 'offering'} accent="emerald" onClick={() => setKind('offering')}>
+              💱 Offering
+            </KindPill>
+          </div>
+          <label className="flex items-center gap-2">
+            <span className="text-gray-500 font-semibold uppercase tracking-wide">To</span>
+            {guildsStatus === 'loading' ? (
+              <span className="text-gray-500 italic flex-1">Loading…</span>
+            ) : eligibleGuilds.length === 0 ? (
+              <span className="text-amber-400 flex-1">No enrolled servers</span>
+            ) : (
+              <select
+                value={guildId ?? ''}
+                onChange={e => setGuildId(e.target.value || null)}
+                className="flex-1 min-w-0 bg-space-900/70 border border-space-700 rounded px-2 py-1 text-xs focus:border-gold/50 focus:outline-none"
+              >
+                {eligibleGuilds.map(g => (
+                  <option key={g.guildId} value={g.guildId}>{g.guildName}</option>
+                ))}
+              </select>
+            )}
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-gray-500 font-semibold uppercase tracking-wide">For</span>
+            <select
+              value={expiresInDays}
+              onChange={e => setExpiresInDays(Number(e.target.value))}
+              className="flex-1 bg-space-900/70 border border-space-700 rounded px-2 py-1 text-xs focus:border-gold/50 focus:outline-none"
+            >
+              <option value={3}>3 days</option>
+              <option value={7}>7 days</option>
+              <option value={14}>14 days</option>
+              <option value={30}>30 days</option>
+            </select>
+          </label>
         </div>
 
-        <section className="mb-5">
-          <div className="flex items-baseline justify-between mb-2">
-            <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400">Cards</h2>
-            {cards.length > 0 && <span className="text-xs text-gray-500">{cards.length} / 20</span>}
+        {eligibleGuilds.length === 0 && guildsStatus !== 'loading' && (
+          <div className="mb-4 text-xs text-gray-300 px-3 py-2 border border-amber-500/40 bg-amber-500/10 rounded-md">
+            You haven't joined SWUTrade in any servers yet. Open the Communities page to join one.
           </div>
+        )}
+
+        {/* Embed-styled body — what the user is composing IS the post.
+            Colored left edge matches the live Discord embed (blue for
+            wanted, emerald for offering). Author + title block reads
+            top-to-bottom like the rendered embed. The Preview section
+            is gone; this body is the preview. */}
+        <article className={`rounded-md border border-space-700 ${accentBg} border-l-4 ${accentBorder} pl-4 pr-3 py-3`}>
+          <div className="flex items-center gap-2 mb-2">
+            {auth.user?.avatarUrl ? (
+              <img src={auth.user.avatarUrl} alt="" className="w-5 h-5 rounded-full" />
+            ) : (
+              <div className="w-5 h-5 rounded-full bg-space-700" />
+            )}
+            <span className={`text-xs font-semibold ${accentText}`}>@{auth.user?.handle ?? 'you'}</span>
+          </div>
+
+          <h2 className="text-base font-bold text-gold mb-3 leading-tight">
+            <span className="mr-1">{verb} ·</span>
+            {titleSuffix}
+          </h2>
 
           {cards.length === 0 ? (
             <EmptyState
@@ -370,89 +442,52 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
                   <button
                     type="button"
                     onClick={() => setPickerOpen(true)}
-                    className="w-full px-3 py-2 rounded-md border border-dashed border-space-700 text-sm text-gray-400 hover:border-gold/40 hover:text-gold transition-colors"
+                    className="w-full px-3 py-1.5 rounded border border-dashed border-space-600 text-xs text-gray-400 hover:border-gold/40 hover:text-gold transition-colors"
                   >
-                    + Add another card
+                    + Add another card{cards.length >= 1 ? ` (${cards.length} / 20)` : ''}
                   </button>
                 </li>
               )}
             </ul>
           )}
-        </section>
 
-        <section className="mb-5">
-          <label htmlFor="signal-note" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-            Note (optional)
-          </label>
-          <textarea
-            id="signal-note"
-            value={note}
-            onChange={e => setNote(e.target.value.slice(0, 500))}
-            placeholder="for Friday's draft @ Mox · DM me to coordinate"
-            className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm placeholder-gray-500 focus:border-gold/50 focus:outline-none resize-y min-h-[60px]"
-            rows={2}
-          />
-          <div className="text-right text-xs text-gray-500 mt-0.5">
-            {500 - note.length} characters left
-          </div>
-        </section>
-
-        <section className="mb-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label htmlFor="signal-expiry" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-              Expires
-            </label>
-            <select
-              id="signal-expiry"
-              value={expiresInDays}
-              onChange={e => setExpiresInDays(Number(e.target.value))}
-              className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
-            >
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
-              <option value={30}>30 days</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="signal-guild" className="block text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-1">
-              Post to
-            </label>
-            {guildsStatus === 'loading' ? (
-              <div className="text-sm text-gray-500 italic px-3 py-2">Loading your servers…</div>
-            ) : eligibleGuilds.length === 0 ? (
-              <div className="text-sm text-gray-400 px-3 py-2 border border-amber-500/40 bg-amber-500/10 rounded-md">
-                You haven't joined SWUTrade in any servers yet. Open the Communities page to join one.
-              </div>
-            ) : (
-              <select
-                id="signal-guild"
-                value={guildId ?? ''}
-                onChange={e => setGuildId(e.target.value || null)}
-                className="w-full bg-space-800/60 border border-space-700 rounded-md px-3 py-2 text-sm focus:border-gold/50 focus:outline-none"
-              >
-                {eligibleGuilds.map(g => (
-                  <option key={g.guildId} value={g.guildId}>{g.guildName}</option>
-                ))}
-              </select>
+          {/* Note rendered as a blockquote-styled inline editor — the
+              live embed shows it as `> note` text, so we mirror that
+              shape rather than a labelled form field. */}
+          <div className="mt-3">
+            <textarea
+              id="signal-note"
+              value={note}
+              onChange={e => setNote(e.target.value.slice(0, 500))}
+              placeholder="Add a note (optional) — e.g. for Friday's draft @ Mox"
+              className="w-full bg-transparent border-l-2 border-gold/30 pl-3 text-xs text-gray-300 placeholder-gray-600 focus:border-gold/60 focus:outline-none resize-y min-h-[40px]"
+              rows={1}
+            />
+            {note.length > 400 && (
+              <div className="text-right text-[10px] text-gray-500">{500 - note.length} characters left</div>
             )}
           </div>
-        </section>
 
-        {cards.length > 0 && (
-          <section className="mb-5">
-            <h2 className="text-sm font-bold tracking-[0.1em] uppercase text-gray-400 mb-2">Preview</h2>
-            <PreviewPane kind={kind} cards={cards} familyMap={familyMap} note={note} />
-          </section>
-        )}
+          {/* Footer: expiry + match-listing placeholder. Mirrors the
+              live embed's `⏱ Expires in N days` line + the `📦 …` line
+              that lists matched users when posted. */}
+          <div className="mt-3 pt-2 border-t border-space-700/50 text-[11px] text-gray-400 space-y-0.5">
+            <div>⏱ Expires in {expiresInDays} {expiresInDays === 1 ? 'day' : 'days'}</div>
+            <div className="text-gray-500 italic">📦 People in your server who can help will be listed here when you post.</div>
+          </div>
+        </article>
 
         {postError && (
-          <div role="alert" className="mb-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-300">
+          <div role="alert" className="mt-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-300">
             {postError}
           </div>
         )}
+      </div>
 
-        <div className="sticky bottom-0 bg-space-900/95 backdrop-blur-sm pt-3 pb-2 -mx-4 sm:-mx-6 px-4 sm:px-6 border-t border-space-800">
+      {/* Sticky bottom Post button — lives outside the scrollable
+          content so it stays anchored on long signal drafts. */}
+      <div className="sticky bottom-0 bg-space-900/95 backdrop-blur-sm border-t border-space-800">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3">
           <button
             type="button"
             onClick={postSignal}
@@ -491,17 +526,31 @@ function PageChrome({ auth, children }: { auth: AuthApi; children: React.ReactNo
 
 // ---- Subcomponents -------------------------------------------------------
 
-function KindButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/** Compact pill toggle for the kind row. Picks up the side's accent
+ *  colour (blue for wanted, emerald for offering) when active so the
+ *  selection state hints at the embed colour the post will carry. */
+function KindPill({
+  active,
+  accent,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  accent: 'blue' | 'emerald';
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const activeCls = accent === 'blue'
+    ? 'bg-blue-500/15 border-blue-500/50 text-blue-200'
+    : 'bg-emerald-500/15 border-emerald-500/50 text-emerald-200';
   return (
     <button
       type="button"
       role="tab"
       aria-selected={active}
       onClick={onClick}
-      className={`flex-1 px-4 py-2 rounded-md text-sm font-bold border transition-colors ${
-        active
-          ? 'bg-gold/15 border-gold/50 text-gold'
-          : 'bg-space-800/40 border-space-700 text-gray-400 hover:border-gold/30 hover:text-gold/80'
+      className={`px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors ${
+        active ? activeCls : 'bg-space-900/40 border-space-700 text-gray-400 hover:border-gold/30 hover:text-gold/80'
       }`}
     >
       {children}
@@ -509,6 +558,9 @@ function KindButton({ active, onClick, children }: { active: boolean; onClick: (
   );
 }
 
+/** Empty-state shown inside the embed body when no cards have been
+ *  added yet. Sits where the bullet list will eventually go so the
+ *  user reads the embed shape from the very first paint. */
 function EmptyState({
   kind,
   onAddClick,
@@ -521,23 +573,23 @@ function EmptyState({
   hasPriorities: boolean;
 }) {
   return (
-    <div className="text-center py-8 px-4 border border-dashed border-space-700 rounded-md">
-      <p className="text-gray-400 text-sm mb-4">
-        Add the cards you {kind === 'wanted' ? 'want' : 'have to trade'}. Up to 20 cards.
+    <div className="py-4 text-sm">
+      <p className="text-gray-400 mb-3">
+        • Pick the cards you {kind === 'wanted' ? 'want' : 'have to trade'} (up to 20).
       </p>
-      <div className="flex flex-col sm:flex-row gap-2 justify-center">
+      <div className="flex flex-col sm:flex-row gap-2">
         <button
           type="button"
           onClick={onAddClick}
-          className="px-4 py-2 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 transition-colors"
+          className="px-3 py-1.5 rounded bg-gold/20 border border-gold/50 text-gold text-xs font-bold hover:bg-gold/30 transition-colors"
         >
-          Add a card
+          + Add a card
         </button>
         {kind === 'wanted' && hasPriorities && (
           <button
             type="button"
             onClick={onPullPriorities}
-            className="px-4 py-2 rounded-md bg-space-800/40 border border-space-700 text-gray-300 hover:border-gold/40 hover:text-gold transition-colors text-sm"
+            className="px-3 py-1.5 rounded bg-space-900/40 border border-space-700 text-gray-300 hover:border-gold/40 hover:text-gold transition-colors text-xs"
           >
             ★ Use my starred wishlist
           </button>
@@ -547,6 +599,19 @@ function EmptyState({
   );
 }
 
+/**
+ * One bullet in the embed body. Reads top-to-bottom like the live
+ * Discord embed:
+ *
+ *   • 2× Luke Skywalker — Hero of Yavin [JTL] (Leader) · any printing
+ *
+ * The qty / variant / max-price controls render inline as small
+ * editable chips so the user is *editing the rendered post*, not
+ * filling out a labelled form. A small thumbnail anchors the row
+ * (matches the live embed's single-card thumbnail; multi-card posts
+ * drop the embed thumbnail but the form keeps a small one as a
+ * recognition cue).
+ */
 function CardRow({
   card,
   family,
@@ -559,46 +624,46 @@ function CardRow({
   onRemove: () => void;
 }) {
   return (
-    <li className="flex items-stretch gap-2 p-2 rounded-md bg-space-800/40 border border-space-700">
+    <li className="flex items-start gap-2 group">
+      <span className="text-gray-500 select-none text-sm leading-6">•</span>
       <img
         src={`https://product-images.tcgplayer.com/fit-in/100x140/${family.variants[0].productId}.jpg`}
         alt=""
-        className="w-12 h-16 object-cover rounded shrink-0"
+        className="w-8 h-11 object-cover rounded shrink-0 mt-0.5"
       />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold truncate">{family.name}</div>
-        <div className="text-[11px] text-gray-500">
-          [{family.setCode}]{family.cardType === 'Leader' && ' (Leader)'}
+        <div className="flex items-baseline gap-1.5 flex-wrap text-sm">
+          <input
+            type="number"
+            min={1}
+            max={99}
+            value={card.qty}
+            onChange={e => onChange({ qty: Math.max(1, Math.min(99, Number(e.target.value) || 1)) })}
+            aria-label="Quantity"
+            className="w-10 bg-space-900/70 border border-space-700 rounded px-1 py-0 text-xs font-bold focus:border-gold/50 focus:outline-none"
+          />
+          <span className="text-gray-500">×</span>
+          <span className="font-semibold text-gray-100 truncate">{family.name}</span>
+          <code className="text-[11px] text-gray-500">[{family.setCode}]</code>
+          {family.cardType === 'Leader' && <span className="text-[11px] text-gray-500">(Leader)</span>}
         </div>
-        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-          <label className="text-[11px] text-gray-400">
-            Qty
-            <input
-              type="number"
-              min={1}
-              max={99}
-              value={card.qty}
-              onChange={e => onChange({ qty: Math.max(1, Math.min(99, Number(e.target.value) || 1)) })}
-              className="w-14 ml-1 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs"
-            />
-          </label>
-          <label className="text-[11px] text-gray-400">
-            Variant
-            <select
-              value={card.variant ?? ''}
-              onChange={e => onChange({ variant: e.target.value || null })}
-              className="ml-1 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs"
-            >
-              <option value="">Any printing</option>
-              {family.variants.map(v => (
-                <option key={v.productId} value={v.variant}>
-                  {v.variant}{v.market != null ? ` · ~$${v.market.toFixed(2)}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="text-[11px] text-gray-400">
-            Max $
+        <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[11px] text-gray-400">
+          <select
+            value={card.variant ?? ''}
+            onChange={e => onChange({ variant: e.target.value || null })}
+            aria-label="Variant"
+            className="bg-space-900/70 border border-space-700 rounded px-1 py-0.5 focus:border-gold/50 focus:outline-none"
+          >
+            <option value="">any printing</option>
+            {family.variants.map(v => (
+              <option key={v.productId} value={v.variant}>
+                {v.variant}{v.market != null ? ` · ~$${v.market.toFixed(2)}` : ''}
+              </option>
+            ))}
+          </select>
+          <span className="text-gray-600">·</span>
+          <label className="flex items-center gap-1">
+            max&nbsp;$
             <input
               type="number"
               min={0}
@@ -609,7 +674,8 @@ function CardRow({
                 onChange({ maxPrice: typeof v === 'number' && !isNaN(v) ? v : null });
               }}
               placeholder="—"
-              className="w-16 ml-1 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs"
+              aria-label="Max price"
+              className="w-14 bg-space-900/70 border border-space-700 rounded px-1 py-0.5 focus:border-gold/50 focus:outline-none"
             />
           </label>
         </div>
@@ -618,57 +684,10 @@ function CardRow({
         type="button"
         onClick={onRemove}
         aria-label="Remove card"
-        className="px-2 text-gray-500 hover:text-red-400 transition-colors text-lg shrink-0"
+        className="px-1.5 text-gray-600 hover:text-red-400 transition-colors text-base shrink-0"
       >
         ×
       </button>
     </li>
-  );
-}
-
-function PreviewPane({
-  kind,
-  cards,
-  familyMap,
-  note,
-}: {
-  kind: SignalKind;
-  cards: SignalCardEntry[];
-  familyMap: Map<string, FamilyDisplay>;
-  note: string;
-}) {
-  const titleVerb = kind === 'wanted' ? '🔍 Looking for' : '💱 Offering';
-  const headerName = cards.length === 1
-    ? familyMap.get(cards[0].familyId)?.name ?? '—'
-    : `${cards.length} cards`;
-  return (
-    <div className="rounded-md border border-space-700 bg-space-800/40 p-3 text-sm">
-      <div className="font-bold text-gold mb-2">
-        {titleVerb} · {headerName}
-      </div>
-      <ul className="space-y-1 text-gray-300">
-        {cards.map(c => {
-          const family = familyMap.get(c.familyId);
-          if (!family) return null;
-          return (
-            <li key={c.familyId}>
-              • <span className="font-semibold">{c.qty}×</span> {family.name} <code className="text-xs text-gray-500">[{family.setCode}]</code>
-              {family.cardType === 'Leader' && <span className="text-xs text-gray-500"> (Leader)</span>}
-              {c.variant && <span className="text-xs text-gray-400"> · {c.variant} only</span>}
-              {!c.variant && <span className="text-xs text-gray-500"> · any printing</span>}
-              {c.maxPrice != null && <span className="text-xs text-gray-400"> · max ${c.maxPrice.toFixed(2)}</span>}
-            </li>
-          );
-        })}
-      </ul>
-      {note && (
-        <blockquote className="mt-2 pl-3 border-l-2 border-gold/40 text-xs text-gray-300">
-          {note}
-        </blockquote>
-      )}
-      <div className="mt-2 text-[10px] text-gray-500 italic">
-        People in your server who can help will be listed here when you post.
-      </div>
-    </div>
   );
 }
