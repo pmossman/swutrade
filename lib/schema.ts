@@ -394,6 +394,15 @@ export const tradeProposals = pgTable(
     // to whichever party DIDN'T click Request.
     threadApprovalDmChannelId: text('thread_approval_dm_channel_id'),
     threadApprovalDmMessageId: text('thread_approval_dm_message_id'),
+    // Set when this proposal was created in response to a
+    // `card_signals` post (someone clicked "I have this!" / "I want
+    // this!" on a /looking-for or /offering signal). Lets the
+    // signal's response thread render in one query and lets
+    // fulfillment detection mark the source signal as `fulfilled`
+    // when this proposal transitions to `accepted`. ON DELETE SET
+    // NULL so cancelling a signal doesn't cascade through to its
+    // response proposals — the conversations stay alive.
+    respondingToSignalId: text('responding_to_signal_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     respondedAt: timestamp('responded_at', { withTimezone: true }),
@@ -408,6 +417,10 @@ export const tradeProposals = pgTable(
     index('trade_proposals_status_idx').on(t.status),
     index('trade_proposals_proposer_updated_idx').on(t.proposerUserId, t.updatedAt.desc()),
     index('trade_proposals_recipient_updated_idx').on(t.recipientUserId, t.updatedAt.desc()),
+    // Hot path: render a signal's response thread (find proposals
+    // where responding_to_signal_id = X) + fulfillment detection
+    // on accept transitions. Partial — most rows have a NULL value.
+    index('trade_proposals_signal_idx').on(t.respondingToSignalId),
   ],
 );
 
@@ -665,5 +678,102 @@ export const sessionEvents = pgTable(
   },
   (t) => [
     index('session_events_session_created_idx').on(t.sessionId, t.createdAt),
+  ],
+);
+
+/**
+ * Acute "I want this card NOW" / "I have this card to offload NOW"
+ * broadcasts surfaced via `/looking-for` + `/offering` slash commands.
+ *
+ * Distinct from a user's standing wishlist (`wants_items`) and binder
+ * (`available_items`) — those are the long-tail inventory; signals
+ * are the high-priority subset the user wants to call attention to
+ * for an upcoming event or quick turnaround.
+ *
+ * The signal IS the public surface of an inventory row, NOT a copy.
+ * The slash handler upserts the underlying wants/available row first,
+ * then inserts a signal row pointing at it. Cascade-delete from the
+ * inventory side: if the user removes the card from their list, the
+ * signal post becomes meaningless and gets retired automatically.
+ *
+ * Lifecycle:
+ *   active     — broadcast live; matched users have been DM-pinged
+ *   cancelled  — owner clicked Cancel on the post
+ *   fulfilled  — a trade between requester + responder for this card
+ *                landed `accepted` (PR 3 detection)
+ *   expired    — past `expires_at`; cron sweep marks + PATCHes embed
+ *
+ * Forward-compat for LGS integration:
+ *   `event_id` / `lgs_id` are nullable today (no events table yet).
+ *   When LGS ships, the slash command grows an `event:` autocomplete,
+ *   matching gets a same-event-attendee boost, and these columns
+ *   start carrying values without a schema change.
+ */
+export const cardSignalKinds = ['wanted', 'offering'] as const;
+export type CardSignalKind = typeof cardSignalKinds[number];
+
+export const cardSignalStatuses = ['active', 'cancelled', 'fulfilled', 'expired'] as const;
+export type CardSignalStatus = typeof cardSignalStatuses[number];
+
+export const cardSignals = pgTable(
+  'card_signals',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .references(() => users.id, { onDelete: 'cascade' })
+      .notNull(),
+    kind: text('kind', { enum: cardSignalKinds }).notNull(),
+
+    // Exactly one is non-null (enforced by DB CHECK constraint added
+    // in the migration). Cascade-delete from the inventory side so a
+    // standing-list mutation retires the signal automatically.
+    wantsItemId: text('wants_item_id')
+      .references(() => wantsItems.id, { onDelete: 'cascade' }),
+    availableItemId: text('available_item_id')
+      .references(() => availableItems.id, { onDelete: 'cascade' }),
+
+    // Discord post anchors. Cascade from the guild row so an
+    // uninstall sweeps the signals it scoped.
+    guildId: text('guild_id')
+      .references(() => botInstalledGuilds.guildId, { onDelete: 'cascade' })
+      .notNull(),
+    channelId: text('channel_id').notNull(),
+    // message_id is set after the bot.postChannelMessage call returns;
+    // null briefly between INSERT and UPDATE in the slash handler.
+    messageId: text('message_id'),
+
+    // PR 2 stores the response thread id here. Reserved for forward
+    // compatibility so the column exists at PR 1 time and PR 2 just
+    // populates it.
+    threadId: text('thread_id'),
+
+    // Forward-compat for LGS. Both nullable today.
+    eventId: text('event_id'),
+    lgsId: text('lgs_id'),
+
+    status: text('status', { enum: cardSignalStatuses })
+      .default('active')
+      .notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    fulfilledAt: timestamp('fulfilled_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+
+    // Signal-specific overrides layered over the inventory row's own
+    // note / max-price. Lets a user say "normally I'd take $5 max
+    // but for THIS post I'd pay $8 to grab one fast" without
+    // mutating their standing wishlist's ceiling.
+    signalNote: text('signal_note'),
+    maxUnitPrice: numeric('max_unit_price'),
+  },
+  (t) => [
+    // Match query — find active signals in a guild by kind. Partial
+    // index on status='active' so the cron expiry sweep can scan the
+    // small live set without filtering through cancelled/fulfilled.
+    index('card_signals_active_match_idx').on(t.guildId, t.kind, t.status),
+    // "My active signals" view in the web app.
+    index('card_signals_user_kind_idx').on(t.userId, t.kind),
+    // Cron sweep: walk active signals past expires_at.
+    index('card_signals_expiry_idx').on(t.status, t.expiresAt),
   ],
 );

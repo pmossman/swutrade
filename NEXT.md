@@ -32,7 +32,27 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-*(none currently — pick next from the queue)*
+### Card signals — PR 1: foundation + signaler side
+
+**Cut from queue item #2 (re-scoped 2026-04-28).** Three-PR cut for this slice; PR 1 ships only the broadcast side (no response surface yet — that's PR 2).
+
+**What ships in PR 1:**
+- `card_signals` table + `trade_proposals.responding_to_signal_id` denorm.
+- `/looking-for` + `/offering` slash commands with autocomplete on card name (+ forward-compat optional `event` arg).
+- Public signal post in invocation channel — embed with card image, card name + variant, qty, optional max-price/note, expiry hint. Cancel button only (no response surface yet).
+- DM-ping matched users at signal-post time, gated on `dm_match_alerts`.
+- Hourly Vercel cron expires past-due signals + PATCHes their embeds.
+- Vitest coverage: signal upsert, match query, cancel button auth, cron transitions.
+
+**Done when:**
+- [ ] Schema migration applied to Neon.
+- [ ] `/looking-for` + `/offering` registered against the beta app, autocomplete returns matches against the card index.
+- [ ] Slash → embed posts in channel; matched users get DM (test in beta guild).
+- [ ] Cancel button works (owner-only enforcement).
+- [ ] Cron job runs and expires.
+- [ ] Tests green; between-slice ritual passes.
+
+PR 2 (next) — response surface: thread under signal post, "I have this!" / "I want this!" button → modal → public response. PR 3 — ghost flow + fulfillment detection.
 
 ---
 
