@@ -264,17 +264,27 @@ export function ListCardPicker({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* The active tab above already shows Wants vs Available, so we
-          don't need a redundant "Add to X" title here — just a minimal
-          back affordance for touch users (desktop can use Esc). */}
-      <div className="px-3 py-2 border-b border-space-800 shrink-0">
+      {/* Top bar: subtle back chevron on the left for spatial-context
+          users, prominent "Done" pill on the right so it reads as a
+          clear "I'm finished picking" affordance — matches every call
+          site's mental model (composing a list, then closing it).
+          Both fire the same onClose; keeping two affordances makes the
+          dismissal discoverable from either edge of the screen. */}
+      <div className="px-3 py-2 border-b border-space-800 shrink-0 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={onClose}
           className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-gray-200 transition-colors"
         >
           <BackIcon className="w-3.5 h-3.5" />
-          Back to list
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-xs font-bold tracking-wide hover:bg-gold/30 hover:border-gold/70 transition-colors"
+        >
+          Done
         </button>
       </div>
 

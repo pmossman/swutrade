@@ -300,15 +300,20 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     // via /api/signals. Mapping kind→listType keeps the variant
     // filter UX consistent with how the user thinks about the side:
     // 'wanted' → wants picker, 'offering' → binder picker.
+    // Wrapped in the same max-w-3xl column the form uses so the
+    // picker tile grid keeps a sensible thumbnail size on wide
+    // screens — matches WishlistView/BinderView's chrome.
     return (
       <PageChrome auth={auth}>
-        <ListCardPicker
-          listType={kind === 'wanted' ? 'wants' : 'available'}
-          allCards={allCards}
-          priceMode="market"
-          onPick={handlePick}
-          onClose={() => setPickerOpen(false)}
-        />
+        <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
+          <ListCardPicker
+            listType={kind === 'wanted' ? 'wants' : 'available'}
+            allCards={allCards}
+            priceMode="market"
+            onPick={handlePick}
+            onClose={() => setPickerOpen(false)}
+          />
+        </div>
       </PageChrome>
     );
   }
