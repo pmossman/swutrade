@@ -1,0 +1,1 @@
+ALTER TABLE "bot_installed_guilds" ADD COLUMN "signals_channel_id" text;

@@ -45,6 +45,9 @@
     { "source": "/api/sessions/:id/claim", "destination": "/api/sessions?action=claim&id=:id" },
     { "source": "/api/sessions/:id/invite-handle", "destination": "/api/sessions?action=invite-handle&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
+    { "source": "/api/signals/mine", "destination": "/api/signals?action=mine" },
+    { "source": "/api/signals/:groupId/cancel", "destination": "/api/signals?action=cancel&groupId=:groupId" },
+    { "source": "/api/signals", "destination": "/api/signals?action=create" },
     { "source": "/api/(.*)", "destination": "/api/$1" }
   ],
   "crons": [

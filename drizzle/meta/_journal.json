@@ -162,6 +162,13 @@
       "when": 1777440568309,
       "tag": "0022_gifted_wild_child",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1777482179285,
+      "tag": "0023_aromatic_blob",
+      "breakpoints": true
     }
   ]
 }

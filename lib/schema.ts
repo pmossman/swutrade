@@ -193,6 +193,14 @@ export const botInstalledGuilds = pgTable('bot_installed_guilds', {
    * null until remedied.
    */
   tradesChannelId: text('trades_channel_id'),
+  /**
+   * Channel where /looking-for and /offering signal posts land.
+   * Defaults to `trades_channel_id` at read time when null — server
+   * admins can override via the web app's guild settings page when
+   * they want signals separated from the private trade-thread
+   * parent channel (e.g., a dedicated #swu-lfg channel).
+   */
+  signalsChannelId: text('signals_channel_id'),
 });
 
 /**
