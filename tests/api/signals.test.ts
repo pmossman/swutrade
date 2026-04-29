@@ -552,6 +552,9 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
         .limit(1);
       signalIds.push(signal.id);
 
+      // The variant-pick handler PATCHes the public post via the
+      // bot client to reflect the new variant. Inject a fake so
+      // the test doesn't need DISCORD_BOT_TOKEN at module init.
       const res = mockResponse();
       await dispatchBotPayload(
         'interactions',
@@ -561,6 +564,7 @@ describeWithDb('signals: /looking-for + /offering slash + cancel + cron', () => 
           member: { user: { id: signaler.id } },
         },
         res,
+        { bot: makeSignalBot() },
       );
 
       expect(res._status).toBe(200);

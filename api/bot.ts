@@ -889,7 +889,7 @@ async function handleAutocomplete(
 async function handleSignalButton(
   payload: Record<string, unknown>,
   res: VercelResponse,
-  _deps: BotDeps,
+  deps: BotDeps,
 ): Promise<void> {
   const data = payload.data as {
     custom_id?: string;
@@ -980,7 +980,7 @@ async function handleSignalButton(
         res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
         return;
       }
-      return handleVariantPick(signal, signaler, picked, res);
+      return handleVariantPick(signal, signaler, picked, res, deps);
     }
     default:
       res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
@@ -1110,6 +1110,7 @@ async function handleVariantPick(
   signaler: { handle: string; avatarUrl: string | null },
   pickedVariant: string,
   res: VercelResponse,
+  deps: BotDeps,
 ): Promise<void> {
   const family = await resolveSignalFamily(signal);
   if (!family || !family.variants.some(v => v.variant === pickedVariant)) {
@@ -1147,8 +1148,9 @@ async function handleVariantPick(
   // Need a separate API call (PATCH /channels/:id/messages/:id)
   // because the response to a string-select interaction can only
   // update the EPHEMERAL message that contained the select, not
-  // the public post. We send that PATCH via the bot client.
-  const bot = createDiscordBotClient();
+  // the public post. Use the injected bot client when available
+  // (tests inject a fake to avoid the real-Discord token gate).
+  const bot = deps.bot ?? createDiscordBotClient();
   if (signal.messageId) {
     const newVariantSpec: VariantSpec = { mode: 'restricted', variants: [pickedVariant] };
     const product = family.variants.find(v => v.variant === pickedVariant)!;
