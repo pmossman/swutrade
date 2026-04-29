@@ -34,7 +34,7 @@ import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
-import { getGuildTradesChannel } from '../lib/tradeGuild.js';
+import { ensureTradesChannel, getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
 import {
   findMatches,
@@ -2308,47 +2308,7 @@ async function handleApplicationAuthorized(
 
   try {
     const bot = deps.bot ?? createDiscordBotClient();
-    // Discord rejects `/guilds/:id/members/@me` for bots — we have to
-    // supply the bot's user id, which for applications is identical
-    // to the OAuth client id.
-    const botUserId = process.env.DISCORD_CLIENT_ID;
-    if (!botUserId) {
-      throw new Error('DISCORD_CLIENT_ID not set — cannot resolve bot member');
-    }
-    const botMember = await bot.getGuildBotMember(guildId, botUserId);
-    const botRoleId = botMember.roles[0];
-    if (!botRoleId) {
-      throw new Error('bot has no roles in guild — cannot grant channel perms');
-    }
-    // The `@everyone` role id in Discord always equals the guild id.
-    const everyoneRoleId = guildId;
-    const channel = await bot.createGuildChannel(guildId, {
-      name: 'swutrade-threads',
-      type: 0,
-      topic:
-        'SWUTrade trade proposal threads. The bot creates a private thread per proposal; only the traders see the contents.',
-      permission_overwrites: [
-        {
-          id: everyoneRoleId,
-          type: 0,
-          // VIEW_CHANNEL so members can see the channel + the system
-          // "bot started a thread" pings. No deny — private threads
-          // are invisible regardless of server-wide defaults.
-          allow: '1024',
-        },
-        {
-          id: botRoleId,
-          type: 0,
-          // Full set from BOT_INSTALL_PERMISSIONS so the bot works
-          // regardless of server defaults on the channel.
-          allow: '360777255952',
-        },
-      ],
-    });
-    await db
-      .update(botInstalledGuilds)
-      .set({ tradesChannelId: channel.id })
-      .where(eq(botInstalledGuilds.guildId, guildId));
+    await ensureTradesChannel(db, guildId, bot);
   } catch (err) {
     console.error('discord-bot: auto-create channel failed', err);
     await reportError({

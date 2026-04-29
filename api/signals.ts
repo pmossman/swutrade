@@ -47,6 +47,7 @@ import {
   formatExpiryHint,
 } from '../lib/signalMessages.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
+import { ensureTradesChannel } from '../lib/tradeGuild.js';
 import { reportError } from '../lib/errorReporter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -138,13 +139,26 @@ export async function handleCreate(
     return res.status(403).json({ error: 'SWUTrade isn\'t set up in that server yet.' });
   }
   // Channel resolution: server admin's signals_channel_id wins;
-  // falls back to the auto-created trades_channel_id; if both
-  // null, no channel is provisioned and we 4xx.
-  const channelId = installRow.signalsChannelId ?? installRow.tradesChannelId;
+  // falls back to the auto-created trades_channel_id. When both are
+  // null (install pre-dated auto-create OR the install-time auto-
+  // create failed silently), try to create the channel right now —
+  // most users hit this on first signal post and the recovery is
+  // identical to what the install handler does.
+  let channelId = installRow.signalsChannelId ?? installRow.tradesChannelId;
   if (!channelId) {
-    return res.status(409).json({
-      error: 'No channel is set up for posts in this server. Ask an admin to pick one in SWUTrade settings.',
-    });
+    try {
+      const bot = deps.bot ?? createDiscordBotClient();
+      channelId = await ensureTradesChannel(db, body.guildId, bot);
+    } catch (err) {
+      console.error('handleCreate: ensureTradesChannel failed', err);
+      await reportError({
+        source: 'signals.create.ensure-channel',
+        tags: { guildId: body.guildId, kind: body.kind },
+      }, err);
+      return res.status(409).json({
+        error: 'SWUTrade couldn\'t create a posts channel in this server. The bot may need the Manage Channels permission — re-invite it from SWUTrade home and try again.',
+      });
+    }
   }
 
   const [signaler] = await db
