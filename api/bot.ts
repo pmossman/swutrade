@@ -554,6 +554,14 @@ async function handleSignalSlashFollowup(
   for (const key of cardKeys) {
     const opt = opts.find(o => o.name === key);
     if (opt && typeof opt.value === 'string' && opt.value.length > 0) {
+      // Sentinel — the user submitted the slash with the autocomplete
+      // hint row still selected (didn't actually pick a card).
+      if (opt.value === '__signal-hint__') {
+        return {
+          content: `The \`${key}\` slot needs a real card — type to search the autocomplete.`,
+          flags: MESSAGE_FLAG_EPHEMERAL,
+        };
+      }
       familyIds.push({ key, familyId: opt.value });
     }
   }
@@ -563,9 +571,14 @@ async function handleSignalSlashFollowup(
 
   // Resolve each family + the primary's variant.
   const variantOpt = opts.find(o => o.name === 'variant');
-  const requestedVariant = typeof variantOpt?.value === 'string' && variantOpt.value.length > 0
-    ? variantOpt.value
-    : null;
+  const variantOptValue = typeof variantOpt?.value === 'string' ? variantOpt.value : null;
+  if (variantOptValue === '__signal-hint__') {
+    return {
+      content: 'The `variant` slot needs a real printing — type to search the autocomplete.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+  const requestedVariant = variantOptValue && variantOptValue.length > 0 ? variantOptValue : null;
 
   type ResolvedCard = {
     family: ReturnType<typeof lookupSignalFamily>;
@@ -804,9 +817,29 @@ async function handleAutocomplete(
     return;
   }
 
-  if (focused.name === 'card') {
+  // `card`, `card2`, `card3`, `card4`, `card5` all share the
+  // family-level autocomplete — the slash handler resolves each
+  // independently, but the dropdown logic is identical.
+  if (focused.name === 'card' || /^card[2-5]$/.test(focused.name ?? '')) {
     const query = typeof focused.value === 'string' ? focused.value : '';
+    // Empty input → render a single hint choice so the dropdown
+    // isn't a blank box. The slash handler rejects the sentinel
+    // value with a friendly error if the user somehow submits it.
+    if (query.trim().length === 0) {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
+        data: { choices: [{ name: 'Start typing to search SWUTrade\'s card index…', value: '__signal-hint__' }] },
+      });
+      return;
+    }
     const families = autocompleteSignalFamilies(query, 25);
+    if (families.length === 0) {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
+        data: { choices: [{ name: `No matches for "${query}". Try a partial name (e.g., "luke").`, value: '__signal-hint__' }] },
+      });
+      return;
+    }
     const choices = families.map(f => {
       // Format: "Card Name [SET] (Leader) (+N printings)"
       // Examples:
@@ -838,13 +871,19 @@ async function handleAutocomplete(
     // can drill into the sibling `card:` arg without state.
     const cardOpt = data?.options?.find(o => o.name === 'card');
     const familyId = typeof cardOpt?.value === 'string' ? cardOpt.value : null;
-    if (!familyId) {
-      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+    if (!familyId || familyId === '__signal-hint__') {
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
+        data: { choices: [{ name: 'Pick a card first, then come back to specify a variant.', value: '__signal-hint__' }] },
+      });
       return;
     }
     const family = lookupSignalFamily(familyId);
     if (!family) {
-      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
+      res.status(200).json({
+        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
+        data: { choices: [{ name: 'Couldn\'t find that card — repick from the autocomplete.', value: '__signal-hint__' }] },
+      });
       return;
     }
     const query = typeof focused.value === 'string' ? focused.value.toLowerCase() : '';
