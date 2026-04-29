@@ -10,9 +10,15 @@
  * `api/bot.ts`'s button + cron handlers.
  *
  * Routes (via vercel.json action rewrites):
- *   POST   /api/signals               → create + post (action=create)
- *   DELETE /api/signals/:groupId      → cancel a group  (action=cancel)
- *   GET    /api/signals/mine          → list viewer's active signals (action=mine)
+ *   POST   /api/signals/create         → create + post (action=create)
+ *   DELETE /api/signals/:groupId/cancel → cancel a group (action=cancel)
+ *   GET    /api/signals/mine           → list viewer's active signals (action=mine)
+ *
+ * Note: Vercel's filesystem routing matches `/api/signals` directly to
+ * this file BEFORE checking vercel.json rewrites, which means a bare
+ * `/api/signals` URL hits the action dispatcher with no `?action=` and
+ * 404s. Front-door URLs must be subpaths (e.g. `/create`, `/mine`)
+ * so the rewrite layer fires.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';

@@ -237,7 +237,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     if (!guildId || cards.length === 0 || posting) return;
     setPosting(true);
     setPostError(null);
-    const result = await apiPost<PostedResult>('/api/signals', {
+    const result = await apiPost<PostedResult>('/api/signals/create', {
       kind,
       cards: cards.map(c => ({
         familyId: c.familyId,
