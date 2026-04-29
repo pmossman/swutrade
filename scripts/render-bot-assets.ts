@@ -1,21 +1,21 @@
 /**
  * Renders Discord-ready PNG assets for the SWUTrade bot's app page.
  *
- * - `public/bot-avatar.png` (1024×1024, 1:1) — drag into the
- *   Developer Portal as the App Icon. Discord crops bot avatars to a
- *   circle; design fits within the safe-circle area.
- * - `public/bot-banner.png` (680×240, 17:6) — drag into the
- *   Developer Portal as the App Banner.
+ * Two variants per asset, distinguished by accent palette so users
+ * looking at install dialogs / chat avatars can tell which app
+ * they're dealing with at a glance:
  *
- * Both render at full-bleed `#0a0e1a` (the app's `space-900`) so the
- * Discord install dialog and app page read as part of the same
- * brand surface as swutrade.com.
+ *   prod  — gold accent. Goes on app `1494200525778976871` (last
+ *           three digits 871). The "real" SWUTrade.
+ *   beta  — cyan accent + "BETA" badge on the icon. Goes on app
+ *           `1494556915198590996` (last three digits 996). The
+ *           dev/staging app pointed at beta.swutrade.com.
  *
- * The avatar reuses `public/favicon.svg` directly (its 100×100 viewBox
- * scales cleanly to 1024). The banner is purpose-built inline here
- * because `public/banner.svg` is 9:2 (designed for an in-app header
- * strip) — Discord wants 17:6, so we re-lay-out the same logo + word-
- * mark with breathing room.
+ * Outputs:
+ *   public/bot-avatar.png       (1024×1024) — prod icon
+ *   public/bot-banner.png       (680×240)   — prod banner
+ *   public/bot-avatar-beta.png  (1024×1024) — beta icon
+ *   public/bot-banner-beta.png  (680×240)   — beta banner
  *
  * Run: `npm run render:bot-assets`
  *
@@ -32,6 +32,49 @@ const ROOT = join(import.meta.dirname, '..');
 const PUBLIC = join(ROOT, 'public');
 
 // ---------------------------------------------------------------------------
+// Variant palettes.
+//
+// `prod` is the canonical SWUTrade look. `beta` shifts the warm
+// gold accents to cool cyan so the two surfaces are unambiguous in
+// any side-by-side context — Discord install picker, server member
+// list, chat avatars at 24px. The "BETA" badge on the icon adds a
+// second redundant signal at sizes large enough to read it.
+//
+// Star Wars Unlimited's official palette stays gold; we deliberately
+// step outside it for the beta variant because that's exactly the
+// vibe — "this isn't the real one." Cyan is also distinct from the
+// reserved emerald/blue (one side of a trade) and gold/amber/crimson
+// (balance) palettes, so it can't be confused with an in-app role.
+// ---------------------------------------------------------------------------
+
+interface Palette {
+  /** Hex for the bright "balance point" core dot in the banner +
+   *  the brighter inner stop of the icon's aura gradient. */
+  bright: string;
+  /** Hex for the wordmark accent (TRADE) and the focal glow. */
+  accent: string;
+  /** Hex for the side-glow on the warmer half of the banner. */
+  warmGlow: string;
+  /** Hex for the side-glow on the cooler half. Always cool. */
+  coolGlow: string;
+}
+
+const PALETTES: Record<'prod' | 'beta', Palette> = {
+  prod: {
+    bright:  '#FFD700',  // gold-bright
+    accent:  '#F5A623',  // gold (the SWU primary chrome)
+    warmGlow: '#F5A623',
+    coolGlow: '#10b981', // emerald — hint of "trade sides"
+  },
+  beta: {
+    bright:  '#67e8f9',  // cyan-300 — bright dev signal
+    accent:  '#06b6d4',  // cyan-500 — readable at 24px
+    warmGlow: '#06b6d4', // mirrored cyan, no warm tone in beta
+    coolGlow: '#3b82f6', // blue — leans into the "cool, in-progress" feel
+  },
+};
+
+// ---------------------------------------------------------------------------
 // 1) App icon — 1024×1024 stacked "SWU / TRADE" wordmark.
 //
 // Why a wordmark not the favicon's card-pair:
@@ -44,19 +87,37 @@ const PUBLIC = join(ROOT, 'public');
 //     wordmark, the avatar becomes the brand monogram, and the two
 //     are visually distinct.
 //
-// SWU above (gray) / TRADE below (gold) — same colour split as the
-// inline wordmark on swutrade.com. Sized so both lines fit inside
-// Discord's safe-circle radius (≈ 440u within 1024u canvas).
+// SWU above (gray) / TRADE below (accent). Sized so both lines fit
+// inside Discord's safe-circle radius (≈ 440u within 1024u canvas).
+// Beta variant adds a small "BETA" ribbon in the bottom-right corner;
+// it falls outside the safe circle so it doesn't compete with the
+// wordmark, but a portion peeks through at large render sizes.
 // ---------------------------------------------------------------------------
 
 const ICON_SIZE = 1024;
 const ICON_BG = '#0a0e1a';
 
-const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" height="${ICON_SIZE}" viewBox="0 0 ${ICON_SIZE} ${ICON_SIZE}">
+function buildAvatarSvg(variant: 'prod' | 'beta'): string {
+  const p = PALETTES[variant];
+  // The "BETA" ribbon. Lives just inside the bottom-right safe-circle
+  // chord (~ 760, 760). Rendered as a rotated rounded-rect with text
+  // so it reads as a "tag" applied to the icon, not part of the
+  // brand mark itself. Empty string for prod.
+  const betaBadge = variant === 'beta' ? `
+    <g transform="translate(820, 920) rotate(-12)">
+      <rect x="-110" y="-32" width="220" height="64" rx="6"
+            fill="#06b6d4" opacity="0.92"/>
+      <text x="0" y="14" text-anchor="middle"
+            font-family="'Helvetica Neue', Arial, sans-serif"
+            font-weight="900" font-size="44" letter-spacing="6"
+            fill="#0a0e1a">BETA</text>
+    </g>` : '';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" height="${ICON_SIZE}" viewBox="0 0 ${ICON_SIZE} ${ICON_SIZE}">
   <defs>
     <radialGradient id="glow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#FFD700" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+      <stop offset="0%" stop-color="${p.bright}" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="${p.accent}" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
@@ -65,7 +126,7 @@ const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" 
        square. -->
   <rect width="${ICON_SIZE}" height="${ICON_SIZE}" fill="${ICON_BG}"/>
 
-  <!-- Faint gold aura behind the wordmark — same brand cue the
+  <!-- Faint accent aura behind the wordmark — same brand cue the
        favicon uses (balance-point glow), kept subtle so the text
        reads first. -->
   <circle cx="${ICON_SIZE / 2}" cy="${ICON_SIZE / 2}" r="380" fill="url(#glow)"/>
@@ -77,38 +138,19 @@ const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_SIZE}" 
        safe-circle chord without tracking compression. -->
   <g font-family="'Helvetica Neue', Arial, sans-serif" font-weight="900" text-anchor="middle">
     <text x="${ICON_SIZE / 2}" y="490" font-size="280" letter-spacing="14" fill="#e5e7eb">SWU</text>
-    <text x="${ICON_SIZE / 2}" y="780" font-size="240" letter-spacing="8" fill="#F5A623">TRADE</text>
-  </g>
+    <text x="${ICON_SIZE / 2}" y="780" font-size="240" letter-spacing="8" fill="${p.accent}">TRADE</text>
+  </g>${betaBadge}
 </svg>`;
-
-renderPng({
-  svg: avatarSvg,
-  width: ICON_SIZE,
-  outFile: 'bot-avatar.png',
-});
+}
 
 // ---------------------------------------------------------------------------
 // 2) Banner — 680×240 (17:6), wordless brand surface.
 //
-// The icon already carries the SWU/TRADE wordmark, and Discord
-// overlays the cropped icon onto the banner's lower-left on the app
-// page — so any text on the banner would (a) duplicate the icon and
-// (b) risk being clipped by the avatar overlay. Instead we paint a
-// purely graphical surface that reads as "SWUTrade aesthetic"
-// without saying anything:
-//
-//   - Deep-navy field (matches space-900 / favicon background).
-//   - A scattered starfield — subtle, just enough to evoke the
-//     Star Wars setting without literally using SW iconography.
-//   - A warm gold "balance point" glow centered slightly right of
-//     middle. The balance metaphor is the app's core: two sides
-//     converging on a single equilibrium. The glow lives where the
-//     avatar overlay won't touch it, so the icon-on-banner
-//     composition keeps both pieces legible.
-//   - Two faint side-glows (cool-left, warm-right) hinting at the
-//     two sides of a trade meeting at the balance point. These are
-//     dim enough to read as "atmosphere" rather than "two
-//     competing focal points."
+// Stays wordless across both variants — the icon carries the SWU/
+// TRADE text, and Discord overlays the cropped icon onto the
+// banner's lower-left on the app page so any text would risk being
+// clipped. The accent-color shift carries the "this is the beta
+// app" signal without copy.
 // ---------------------------------------------------------------------------
 
 const BANNER_W = 680;
@@ -142,7 +184,9 @@ const STARS: Array<{ x: number; y: number; r: number; o: number }> = [
   { x: 30,  y: 110, r: 0.9, o: 0.40 },
 ];
 
-const bannerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${BANNER_W}" height="${BANNER_H}" viewBox="0 0 ${BANNER_W} ${BANNER_H}">
+function buildBannerSvg(variant: 'prod' | 'beta'): string {
+  const p = PALETTES[variant];
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${BANNER_W}" height="${BANNER_H}" viewBox="0 0 ${BANNER_W} ${BANNER_H}">
   <defs>
     <!-- Subtle vertical gradient: top space-900, bottom slightly
          lifted to space-800. Keeps the dark surface from feeling
@@ -152,28 +196,23 @@ const bannerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${BANNER_W}" h
       <stop offset="1" stop-color="#111627"/>
     </linearGradient>
 
-    <!-- The balance-point glow — warm gold that fades to fully
+    <!-- The balance-point glow — variant-accent that fades to fully
          transparent. Higher inner opacity than the icon's glow
          since it's the only focal element on this canvas. -->
     <radialGradient id="focal" cx="50%" cy="50%" r="50%">
-      <stop offset="0%"  stop-color="#FFD700" stop-opacity="0.42"/>
-      <stop offset="35%" stop-color="#F5A623" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+      <stop offset="0%"  stop-color="${p.bright}" stop-opacity="0.42"/>
+      <stop offset="35%" stop-color="${p.accent}" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="${p.accent}" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Cool side-glow (left): emerald-tinted. Reserved palette
-         for "one side of a trade" per design invariants. Kept
-         very dim so it reads as atmospheric, not as a competing
-         focal. -->
     <radialGradient id="leftGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#10b981" stop-opacity="0.08"/>
-      <stop offset="100%" stop-color="#10b981" stop-opacity="0"/>
+      <stop offset="0%" stop-color="${p.coolGlow}" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="${p.coolGlow}" stop-opacity="0"/>
     </radialGradient>
 
-    <!-- Warm side-glow (right): mirrored gold. Also dim. -->
     <radialGradient id="rightGlow" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#F5A623" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="#F5A623" stop-opacity="0"/>
+      <stop offset="0%" stop-color="${p.warmGlow}" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="${p.warmGlow}" stop-opacity="0"/>
     </radialGradient>
   </defs>
 
@@ -194,22 +233,24 @@ const bannerSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${BANNER_W}" h
        small enough to feel like a point of light, not a wash. -->
   <ellipse cx="${FOCAL_X}" cy="${FOCAL_Y}" rx="260" ry="120" fill="url(#focal)"/>
 
-  <!-- Tiny bright core at the focal point — single pixel of
-       gold-bright (#FFD700) at full opacity. This is the
+  <!-- Tiny bright core at the focal point — single pixel of the
+       variant's bright accent at full opacity. This is the
        "balance point" itself; everything else is the glow
        around it. -->
-  <circle cx="${FOCAL_X}" cy="${FOCAL_Y}" r="2.5" fill="#FFD700" opacity="0.95"/>
+  <circle cx="${FOCAL_X}" cy="${FOCAL_Y}" r="2.5" fill="${p.bright}" opacity="0.95"/>
 </svg>`;
-
-renderPng({
-  svg: bannerSvg,
-  width: BANNER_W,
-  outFile: 'bot-banner.png',
-});
+}
 
 // ---------------------------------------------------------------------------
-// helpers
+// Render both variants. Output names match the existing prod files
+// (so the Discord portal upload path is unchanged for prod) plus a
+// `-beta` suffix for the dev variant.
 // ---------------------------------------------------------------------------
+
+renderPng({ svg: buildAvatarSvg('prod'), width: ICON_SIZE,  outFile: 'bot-avatar.png' });
+renderPng({ svg: buildBannerSvg('prod'), width: BANNER_W,   outFile: 'bot-banner.png' });
+renderPng({ svg: buildAvatarSvg('beta'), width: ICON_SIZE,  outFile: 'bot-avatar-beta.png' });
+renderPng({ svg: buildBannerSvg('beta'), width: BANNER_W,   outFile: 'bot-banner-beta.png' });
 
 function renderPng(opts: { svg: string; width: number; outFile: string }): void {
   const resvg = new Resvg(opts.svg, {
@@ -221,4 +262,3 @@ function renderPng(opts: { svg: string; width: number; outFile: string }): void 
   const kb = (png.length / 1024).toFixed(1);
   console.log(`✓ ${opts.outFile} → public/${opts.outFile} (${kb} KB)`);
 }
-
