@@ -634,13 +634,17 @@ function CardRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5 flex-wrap text-sm">
           <input
-            type="number"
-            min={1}
-            max={99}
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
             value={card.qty}
-            onChange={e => onChange({ qty: Math.max(1, Math.min(99, Number(e.target.value) || 1)) })}
+            onChange={e => {
+              const digits = e.target.value.replace(/\D/g, '');
+              const n = digits === '' ? 1 : parseInt(digits, 10);
+              onChange({ qty: Math.max(1, Math.min(99, n)) });
+            }}
             aria-label="Quantity"
-            className="w-10 bg-space-900/70 border border-space-700 rounded px-1 py-0 text-xs font-bold focus:border-gold/50 focus:outline-none"
+            className="w-9 text-center bg-space-900/70 border border-space-700 rounded px-1 py-0.5 text-xs font-bold focus:border-gold/50 focus:outline-none"
           />
           <span className="text-gray-500">×</span>
           <span className="font-semibold text-gray-100 truncate">{family.name}</span>
@@ -665,13 +669,14 @@ function CardRow({
           <label className="flex items-center gap-1">
             max&nbsp;$
             <input
-              type="number"
-              min={0}
-              step={0.5}
+              type="text"
+              inputMode="decimal"
               value={card.maxPrice ?? ''}
               onChange={e => {
-                const v = e.target.value === '' ? null : Number(e.target.value);
-                onChange({ maxPrice: typeof v === 'number' && !isNaN(v) ? v : null });
+                const cleaned = e.target.value.replace(/[^0-9.]/g, '');
+                if (cleaned === '') { onChange({ maxPrice: null }); return; }
+                const v = Number(cleaned);
+                onChange({ maxPrice: !isNaN(v) ? Math.min(10000, Math.max(0, v)) : null });
               }}
               placeholder="—"
               aria-label="Max price"
