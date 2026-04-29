@@ -80,6 +80,12 @@ export interface SignalEmbedContext {
   };
   /** Friendly relative-time hint, e.g. "Expires in 6 days". */
   expiryHint: string;
+  /** Absolute URL to the OG-style composite card image rendered by
+   *  `api/og.ts?signal=<groupId>`. When provided + status is 'active',
+   *  the embed gets a poster-style image header showing every card.
+   *  Cancelled / expired posts drop this so the retired state reads
+   *  cleanly. */
+  imageUrl?: string;
 }
 
 /**
@@ -150,11 +156,19 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
     : `${titleVerb} · ${ctx.cards.length} cards`;
   const title = !isActive ? `~~${titleText}~~` : titleText;
 
-  // Thumbnail: only for single-card. Multi-card has no thumbnail
-  // — the bullet list is the focal element.
-  const thumbnail = ctx.cards.length === 1 && ctx.cards[0].productId
+  // Thumbnail: only when there's no image header AND we're a single-
+  // card post. The big poster image (when present) is doing the
+  // visual identification work; doubling up a thumbnail makes the
+  // embed noisy. Multi-card without an image still has no thumbnail
+  // since the bullet list is the focal element there.
+  const thumbnail = !ctx.imageUrl && ctx.cards.length === 1 && ctx.cards[0].productId
     ? { url: `https://product-images.tcgplayer.com/fit-in/200x279/${ctx.cards[0].productId}.jpg` }
     : undefined;
+
+  // Poster image header — only on active posts. Retired posts drop
+  // the field so the status badge + strike-through title carry the
+  // visual cue rather than competing with a colourful poster.
+  const image = ctx.imageUrl && isActive ? { url: ctx.imageUrl } : undefined;
 
   return {
     embeds: [{
@@ -162,6 +176,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
       description: lines.join('\n'),
       color,
       thumbnail,
+      image,
       author: {
         name: `@${ctx.requester.handle}`,
         ...(ctx.requester.avatarUrl ? { icon_url: ctx.requester.avatarUrl } : {}),

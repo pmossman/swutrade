@@ -17,6 +17,10 @@ import {
 // (potentially auth-walled) origin to resolve card names/prices.
 import productIndex from '../public/data/product-index.json' with { type: 'json' };
 import familyIndex from '../public/data/family-index.json' with { type: 'json' };
+import { eq } from 'drizzle-orm';
+import { getDb } from '../lib/db.js';
+import { cardSignals, wantsItems, availableItems, users } from '../lib/schema.js';
+import { lookupSignalFamily, lookupSignalCard, type SignalFamily } from '../lib/signalMatching.js';
 
 // resvg-js@2.6.2 only accepts font *file paths* (not buffers), so we write
 // the inlined base64 fonts to /tmp on cold start and hand the paths to Resvg.
@@ -287,8 +291,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const t = (req.query.t as string) || '';
   const w = (req.query.w as string) || '';
   const a = (req.query.a as string) || '';
+  const signalGroupId = (req.query.signal as string) || '';
   const pct = parseInt((req.query.pct as string) || '80', 10);
   const pm = req.query.pm === 'l' ? 'low' : 'market';
+
+  // Signal-post unfurl: composite card-image header for a signal
+  // group, referenced from the embed's `image.url`. Discord fetches
+  // it once per unique URL — status changes (cancel / expire) just
+  // drop the field rather than re-render here.
+  if (signalGroupId) {
+    return renderSignalImage(req, res, signalGroupId);
+  }
 
   // List mode: render a list image when there's no active trade.
   // Three variants:
@@ -968,4 +981,231 @@ function renderListRows(
   });
 
   return svg;
+}
+
+
+// ---- Signal post unfurl image ------------------------------------------
+//
+// Composite header image referenced from a signal embed's `image.url`.
+// Discord caches by URL, so status changes (cancel / expire) drop the
+// image entry from the embed rather than re-rendering this. Layout:
+//
+//   ┌──────────────────────────────────────────────────────────┐
+//   │ SWUTRADE [accent saber] LOOKING FOR · @handle    ⏱ 7 days │
+//   │──────────────────────────────────────────────────────────│
+//   │ ┌────┐ ┌────┐ ┌────┐ ┌────┐                               │
+//   │ │card│ │card│ │card│ │card│   (auto-flow grid)            │
+//   │ │ ×2 │ │ ×1 │ │ ×3 │ │ ×1 │                               │
+//   │ └────┘ └────┘ └────┘ └────┘                               │
+//   │ Name [SET] · variant   ← caption per tile                 │
+//   └──────────────────────────────────────────────────────────┘
+
+interface ResolvedSignalCard {
+  productId: string;
+  name: string;
+  setCode: string;
+  cardType?: string;
+  qty: number;
+  variant: string | null; // null = any printing
+  imageDataUri: string | null;
+}
+
+async function renderSignalImage(
+  req: VercelRequest,
+  res: VercelResponse,
+  groupId: string,
+) {
+  const db = getDb();
+
+  // Pull the signal rows + signaler. One DB roundtrip; group rows
+  // share userId so the join would be redundant.
+  const rows = await db
+    .select()
+    .from(cardSignals)
+    .where(eq(cardSignals.groupId, groupId));
+  if (rows.length === 0) {
+    res.status(404).send(signal not found);
+    return;
+  }
+  const [signaler] = await db
+    .select({ handle: users.handle, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.id, rows[0].userId))
+    .limit(1);
+
+  // Resolve each row's family + variant. Same pattern as
+  // api/bot.ts's resolveSignalFamily / resolveVariantSpec, inlined
+  // here so we can keep this in og.ts (function-count ceiling forces
+  // consolidation).
+  const resolved: ResolvedSignalCard[] = [];
+  for (const row of rows) {
+    let family: SignalFamily | null = null;
+    let variant: string | null = null;
+    let qty = 1;
+    if (row.kind === 'wanted' && row.wantsItemId) {
+      const [w] = await db
+        .select({ familyId: wantsItems.familyId, qty: wantsItems.qty, mode: wantsItems.restrictionMode, variants: wantsItems.restrictionVariants })
+        .from(wantsItems)
+        .where(eq(wantsItems.id, row.wantsItemId))
+        .limit(1);
+      if (!w) continue;
+      family = lookupSignalFamily(w.familyId);
+      qty = w.qty;
+      variant = w.mode === 'restricted' && w.variants && w.variants.length === 1 ? w.variants[0] : null;
+    } else if (row.kind === 'offering' && row.availableItemId) {
+      const [a] = await db
+        .select({ productId: availableItems.productId, qty: availableItems.qty })
+        .from(availableItems)
+        .where(eq(availableItems.id, row.availableItemId))
+        .limit(1);
+      if (!a) continue;
+      const card = lookupSignalCard(a.productId);
+      if (card) {
+        family = lookupSignalFamily(card.familyId);
+        variant = card.variant;
+      }
+      qty = a.qty;
+    }
+    if (!family) continue;
+    const productId = variant
+      ? family.variants.find(v => v.variant === variant)?.productId ?? family.variants[0].productId
+      : family.variants[0].productId;
+    resolved.push({
+      productId,
+      name: family.name,
+      setCode: family.setCode,
+      cardType: family.cardType,
+      qty,
+      variant,
+      imageDataUri: null,
+    });
+  }
+
+  if (resolved.length === 0) {
+    res.status(404).send(signal cards could not be resolved);
+    return;
+  }
+
+  // Cap the rendered cards. The signal API allows up to 20 cards, but
+  // the image gets unreadable past ~12 — beyond that we just show
+  // "+N more" text and the post embed itself lists everything.
+  const RENDER_CAP = 12;
+  const visible = resolved.slice(0, RENDER_CAP);
+  const overflow = resolved.length - visible.length;
+
+  // Fetch images in parallel.
+  const imageMap = new Map<string, string | null>();
+  await Promise.all(
+    Array.from(new Set(visible.map(c => c.productId))).map(async id => {
+      imageMap.set(id, await fetchCardImage(id));
+    }),
+  );
+  for (const c of visible) c.imageDataUri = imageMap.get(c.productId) ?? null;
+
+  // Side palette mirrors the embed accent.
+  const kind = rows[0].kind;
+  const accent = kind === 'wanted' ? '#60a5fa' : '#34d399'; // blue : emerald
+  const verbLabel = kind === 'wanted' ? 'LOOKING FOR' : 'OFFERING';
+  const handle = signaler?.handle ?? '?';
+
+  // Tile layout — 4 cols × 3 rows fits the cap with breathing room.
+  const COLS = visible.length <= 4 ? Math.max(1, visible.length) : visible.length <= 8 ? 4 : 6;
+  const ROWS = Math.ceil(visible.length / COLS);
+  const HEADER_BOTTOM = 110;
+  const FOOTER_TOP = 600;
+  const GRID_TOP_Y = HEADER_BOTTOM + 20;
+  const GRID_BOTTOM_Y = FOOTER_TOP - 10;
+  const SIDE_PAD = 36;
+  const COL_GAP = 12;
+  const ROW_GAP = 14;
+  const gridW = 1200 - SIDE_PAD * 2;
+  const tileW = (gridW - COL_GAP * (COLS - 1)) / COLS;
+  // Tile = card image (5:7) + caption strip beneath.
+  const captionH = 38;
+  const imgH_uncapped = tileW * 1.4;
+  const totalRowH_uncapped = imgH_uncapped + captionH + ROW_GAP;
+  const availableH = GRID_BOTTOM_Y - GRID_TOP_Y;
+  // Scale down if the natural row height overflows.
+  const scale = Math.min(1, availableH / (totalRowH_uncapped * ROWS - ROW_GAP));
+  const imgH = imgH_uncapped * scale;
+  const imgW = tileW * scale;
+  const tileImgX_offset = (tileW - imgW) / 2;
+  const rowH = imgH + captionH + ROW_GAP;
+
+  const tiles = visible.map((card, i) => {
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    const x = SIDE_PAD + col * (tileW + COL_GAP);
+    const y = GRID_TOP_Y + row * rowH;
+    const imgX = x + tileImgX_offset;
+    const captionY = y + imgH + 4;
+    const variantLabel = card.variant ?? 'any printing';
+    const setBadge = card.cardType === 'Leader' ? ' (Leader)' : '';
+    const nameTrunc = truncate(card.name, Math.max(14, Math.floor(tileW / 7)));
+    return `
+    <g>
+      ${card.imageDataUri
+        ? `<image href="${card.imageDataUri}" x="${imgX}" y="${y}" width="${imgW}" height="${imgH}" preserveAspectRatio="xMidYMid meet"/>`
+        : `<rect x="${imgX}" y="${y}" width="${imgW}" height="${imgH}" fill="#1f2937" rx="6"/>`}
+      ${card.qty > 1
+        ? `<g>
+             <rect x="${imgX + imgW - 38}" y="${y + 6}" width="32" height="22" rx="4" fill="#0a0e1a" fill-opacity="0.85" stroke="${accent}" stroke-width="1.5"/>
+             <text x="${imgX + imgW - 22}" y="${y + 22}" fill="${accent}" font-size="14" font-weight="900" text-anchor="middle">×${card.qty}</text>
+           </g>`
+        : ''}
+      <text x="${x + tileW / 2}" y="${captionY + 14}" fill="#e5e7eb" font-size="12" font-weight="700" text-anchor="middle">${escapeXml(nameTrunc)}</text>
+      <text x="${x + tileW / 2}" y="${captionY + 28}" fill="#9ca3af" font-size="10" font-weight="600" text-anchor="middle">[${escapeXml(card.setCode)}]${escapeXml(setBadge)} · ${escapeXml(variantLabel)}</text>
+    </g>`;
+  }).join('\n');
+
+  const overflowFooter = overflow > 0
+    ? `<text x="600" y="${FOOTER_TOP + 18}" fill="#9ca3af" font-size="13" font-weight="700" text-anchor="middle">+${overflow} more in the post</text>`
+    : '';
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e1a"/>
+      <stop offset="1" stop-color="#111627"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Header: brandmark + kind verb + handle -->
+  <text x="36" y="56" font-size="32" font-weight="900" letter-spacing="3" fill="#e5e7eb">SWU<tspan fill="#F5A623">TRADE</tspan></text>
+  <rect x="36" y="78" width="3" height="20" rx="1.5" fill="${accent}"/>
+  <text x="48" y="94" font-size="18" font-weight="800" letter-spacing="3" fill="${accent}">${verbLabel}</text>
+  <text x="${48 + verbLabel.length * 11 + 14}" y="94" font-size="14" font-weight="700" fill="#9ca3af">· @${escapeXml(handle)}</text>
+  <line x1="36" y1="110" x2="1164" y2="110" stroke="#1a1f2e" stroke-width="2"/>
+
+  ${tiles}
+
+  <line x1="36" y1="${FOOTER_TOP - 6}" x2="1164" y2="${FOOTER_TOP - 6}" stroke="#1a1f2e" stroke-width="1"/>
+  ${overflowFooter}
+  <text x="600" y="618" font-size="11" font-weight="600" fill="#6b7280" text-anchor="middle">swutrade.com</text>
+</svg>`;
+
+  if (req.query.format === 'svg') {
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.status(200).send(svg);
+    return;
+  }
+
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: 'width', value: 2400 },
+    font: {
+      fontFiles: fontPaths,
+      loadSystemFonts: false,
+      defaultFontFamily: 'Inter',
+    },
+  });
+  const png = resvg.render().asPng();
+  res.setHeader('Content-Type', 'image/png');
+  // Long s-maxage — Discord caches embed images by URL, so we want
+  // the CDN to also serve repeat fetches without round-tripping the
+  // function. The image content is stable for the life of the signal
+  // (status changes drop the image rather than re-render here).
+  res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
+  res.status(200).send(Buffer.from(png));
 }

@@ -303,6 +303,15 @@ export async function handleCreate(
     return acc == null ? d.maxPrice : Math.max(acc, d.maxPrice);
   }, null);
 
+  // Absolute URL for the OG composite image referenced by the embed.
+  // Discord caches embed images by URL, so we include the groupId in
+  // the path; status changes (cancel / expire) just drop the embed's
+  // image field rather than re-rendering this URL.
+  const origin = req.headers.host
+    ? `https://${req.headers.host}`
+    : process.env.SWUTRADE_PUBLIC_URL ?? 'https://swutrade.com';
+  const imageUrl = `${origin}/api/og?signal=${encodeURIComponent(groupId)}`;
+
   const embedBody = buildSignalPost({
     groupId,
     kind: body.kind,
@@ -312,6 +321,7 @@ export async function handleCreate(
     maxUnitPrice: groupMaxPrice,
     requester: { discordId: signaler.discordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
     expiryHint: formatExpiryHint(expiresAt, now),
+    imageUrl,
   });
 
   // Post the public embed.
