@@ -4,6 +4,7 @@ import { SETS } from '../types';
 import type { AuthApi } from '../hooks/useAuth';
 import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
+import { useNavigation } from '../contexts/NavigationContext';
 import { AppHeader } from './ui/AppHeader';
 import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId } from '../variants';
@@ -130,6 +131,16 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const familyMap = useMemo(() => buildFamilyMap(allCards), [allCards]);
+  const nav = useNavigation();
+
+  // Cancel: bail back to Home. If the user has typed anything into
+  // the draft, give them a quick confirm so an accidental tap
+  // doesn't blow away a multi-card signal mid-compose.
+  function cancelDraft() {
+    const dirty = cards.length > 0 || note.length > 0;
+    if (dirty && !window.confirm('Discard this draft and return home?')) return;
+    nav.toHome();
+  }
 
   const { enrollable, status: guildsStatus } = useGuildMemberships();
   const eligibleGuilds = useMemo(
@@ -484,15 +495,25 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         )}
       </div>
 
-      {/* Sticky bottom Post button — lives outside the scrollable
+      {/* Sticky bottom action bar — Post (primary) + Cancel (secondary)
+          paired side-by-side so the abandon path is one tap from the
+          submit path, not buried in chrome. Lives outside the scrollable
           content so it stays anchored on long signal drafts. */}
       <div className="sticky bottom-0 bg-space-900/95 backdrop-blur-sm border-t border-space-800">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3 flex gap-2">
+          <button
+            type="button"
+            onClick={cancelDraft}
+            disabled={posting}
+            className="px-4 py-3 rounded-md bg-space-800/40 border border-space-700 text-gray-300 font-semibold hover:border-gray-500 hover:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={postSignal}
             disabled={!canPost}
-            className="w-full px-4 py-3 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 hover:border-gold/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="flex-1 px-4 py-3 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 hover:border-gold/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {posting ? 'Posting…' : `Post to Discord`}
           </button>
