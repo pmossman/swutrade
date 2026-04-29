@@ -69,6 +69,28 @@ jobs:
           echo "SESSION_SECRET=$SESSION_SECRET" >> .env.local
           echo "POSTGRES_URL=$POSTGRES_URL" >> .env.local
 
+      # Card-index files (`public/data/*.json`) are produced by
+      # enrich-cards.ts during build. `lib/signalMatching.ts` imports
+      # family-index.json at build time so tsc needs the file to
+      # exist. Reuse the same weekly cache the e2e-anonymous job
+      # uses so the network fetch only runs once a week across all
+      # CI jobs.
+      - id: weekkey
+        run: echo "key=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+      - name: Cache card data
+        id: datacache
+        uses: actions/cache@v4
+        with:
+          path: |
+            public/data
+            scripts/cache
+          key: card-data-${{ steps.weekkey.outputs.key }}
+      - name: Fetch + enrich card data (cache miss only)
+        if: steps.datacache.outputs.cache-hit != 'true'
+        run: |
+          FETCH_PRICES=1 npm run fetch-prices
+          ENRICH=1 npm run enrich-cards
+
       - name: TypeScript
         run: npx tsc -b --force
 
