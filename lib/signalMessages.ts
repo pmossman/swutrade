@@ -188,10 +188,10 @@ function formatCardLabel(c: SignalEmbedCard): string {
 function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string {
   if (matches.length === 0) {
     return kind === 'wanted'
-      ? '📦 No one in this server has it listed yet'
-      : '📦 No one in this server wants it yet';
+      ? '📦 Nobody here has it yet'
+      : '📦 Nobody here is looking for it yet';
   }
-  const verb = kind === 'wanted' ? 'In this server' : 'Wanted by';
+  const verb = kind === 'wanted' ? 'Has it' : 'Wants it';
   const visible = matches.slice(0, MATCH_RENDER_LIMIT);
   const overflow = matches.length - visible.length;
   const mentions = visible.map(m => {
@@ -213,7 +213,7 @@ function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {
     buttons.push({
       type: COMPONENT_TYPE_BUTTON,
       style: BUTTON_STYLE_SECONDARY,
-      label: 'Specify variant',
+      label: 'Pick a printing',
       custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.cards[0].signalId}:variant-open`,
     });
   }
@@ -230,13 +230,14 @@ function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {
 }
 
 /**
- * Ephemeral message body shown to the signaler after they click
- * "Specify variant". A string-select listing every variant in the
+ * Ephemeral message body shown to the author after they click
+ * "Pick a printing". A string-select listing every variant in the
  * family.
  */
 export function buildVariantPickerEphemeral(args: {
   signalId: string;
   familyName: string;
+  kind: CardSignalKind;
   variants: Array<{ productId: string; variant: string; market: number | null }>;
 }): Record<string, unknown> {
   const options = args.variants.slice(0, 25).map(v => ({
@@ -244,8 +245,11 @@ export function buildVariantPickerEphemeral(args: {
     value: v.variant.slice(0, 100),
     description: v.market != null ? `~$${v.market.toFixed(2)}` : undefined,
   }));
+  const prompt = args.kind === 'wanted'
+    ? `Which printing of **${args.familyName}** are you after?`
+    : `Which printing of **${args.familyName}** do you have?`;
   return {
-    content: `Specify the variant for **${args.familyName}**. Pick one to pin the printing; only matching inventory will get pinged.`,
+    content: `${prompt} Only that printing will count for matches.`,
     flags: 64,
     components: [{
       type: COMPONENT_TYPE_ACTION_ROW,

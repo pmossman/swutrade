@@ -152,7 +152,7 @@ describeWithDb('POST /api/signals?action=create', () => {
       res,
     );
     expect(res._status).toBe(403);
-    expect((res._json as { error: string }).error).toMatch(/enroll/i);
+    expect((res._json as { error: string }).error).toMatch(/join SWUTrade/i);
   });
 
   it('rejects when bot is not installed in the chosen guild', async () => {
@@ -176,7 +176,7 @@ describeWithDb('POST /api/signals?action=create', () => {
       res,
     );
     expect(res._status).toBe(403);
-    expect((res._json as { error: string }).error).toMatch(/isn't installed/i);
+    expect((res._json as { error: string }).error).toMatch(/isn't set up/i);
   });
 
   it('happy path: creates wants_items + 1 active signal row + posts the embed', async () => {

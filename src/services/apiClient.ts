@@ -22,7 +22,12 @@ function failure(
   status: number,
   body: Record<string, unknown> | null,
 ): Extract<ActionResult, { ok: false }> {
-  const detail = typeof body?.detail === 'string' ? body.detail : undefined;
+  // Most endpoints return `{ error: "..." }`; a few legacy ones return
+  // `{ detail: "..." }`. Read either so the UI can show the server-
+  // provided message regardless of which convention the endpoint follows.
+  const detail = typeof body?.detail === 'string'
+    ? body.detail
+    : typeof body?.error === 'string' ? body.error : undefined;
   if (status === 409) return { ok: false, reason: 'already-resolved', detail };
   if (status === 429) {
     const nextAvailableAt =

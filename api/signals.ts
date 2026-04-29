@@ -116,7 +116,7 @@ export async function handleCreate(
     return res.status(403).json({ error: 'You\'re not a member of that server.' });
   }
   if (!enrollment.enrolled) {
-    return res.status(403).json({ error: 'Enroll in this server\'s SWUTrade community first.' });
+    return res.status(403).json({ error: 'Join SWUTrade in this server first.' });
   }
 
   const [installRow] = await db
@@ -129,7 +129,7 @@ export async function handleCreate(
     .where(eq(botInstalledGuilds.guildId, body.guildId))
     .limit(1);
   if (!installRow) {
-    return res.status(403).json({ error: 'SWUTrade bot isn\'t installed in that server.' });
+    return res.status(403).json({ error: 'SWUTrade isn\'t set up in that server yet.' });
   }
   // Channel resolution: server admin's signals_channel_id wins;
   // falls back to the auto-created trades_channel_id; if both
@@ -137,7 +137,7 @@ export async function handleCreate(
   const channelId = installRow.signalsChannelId ?? installRow.tradesChannelId;
   if (!channelId) {
     return res.status(409).json({
-      error: 'No signals channel is configured for this server. A server admin needs to set one in SWUTrade settings.',
+      error: 'No channel is set up for posts in this server. Ask an admin to pick one in SWUTrade settings.',
     });
   }
 
@@ -333,7 +333,7 @@ export async function handleCreate(
       tags: { groupId, channelId, kind: body.kind },
     }, err);
     return res.status(502).json({
-      error: 'Bot couldn\'t post the signal in the channel — it might be missing send-message permissions there.',
+      error: 'Couldn\'t post in the channel — SWUTrade might not have permission to send messages there.',
     });
   }
 
@@ -384,7 +384,7 @@ export async function handleCancel(
     .from(cardSignals)
     .where(eq(cardSignals.groupId, groupId));
   if (groupRows.length === 0) {
-    return res.status(404).json({ error: 'Signal group not found' });
+    return res.status(404).json({ error: 'Post not found.' });
   }
   if (groupRows[0].userId !== session.userId) {
     return res.status(403).json({ error: 'Only the post\'s author can cancel it' });

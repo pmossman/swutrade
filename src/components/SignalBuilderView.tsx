@@ -140,7 +140,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     });
     setPosting(false);
     if (!result.ok) {
-      setPostError(result.detail ?? 'Failed to post signal');
+      setPostError(result.detail ?? 'Couldn\'t post — try again.');
       return;
     }
     setPosted(result.data);
@@ -151,20 +151,21 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   if (!auth.user) {
     return (
       <div className="max-w-xl mx-auto p-6 text-gray-300">
-        <h1 className="text-xl font-bold text-gold mb-3">Sign in to post a signal</h1>
-        <p>Signals are posted on your behalf to a Discord server you've enrolled in. Sign in with Discord to continue.</p>
+        <h1 className="text-xl font-bold text-gold mb-3">Sign in to post</h1>
+        <p>This posts to a Discord server you've joined SWUTrade in. Sign in with Discord to continue.</p>
       </div>
     );
   }
 
   if (posted) {
+    const matchCount = posted.matchSummary.reduce((acc, m) => acc + m.matchCount, 0);
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
-        <h1 className="text-2xl font-bold text-gold mb-3">Signal posted</h1>
+        <h1 className="text-2xl font-bold text-gold mb-3">Posted!</h1>
         <p className="text-gray-300 mb-4">
-          Your {kind === 'wanted' ? 'looking-for' : 'offering'} post is live in Discord.
-          {posted.matchSummary.some(m => m.matchCount > 0) && (
-            <> Matched users are listed in the post — they aren't auto-pinged, so reply in the channel to nudge any of them.</>
+          Your post is live in Discord.
+          {matchCount > 0 && (
+            <> {matchCount === 1 ? 'One person' : `${matchCount} people`} in that server can help — they're listed under the post (we don't ping them automatically; reply in the channel if you want to nudge).</>
           )}
         </p>
         <a
@@ -180,7 +181,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             onClick={() => { setPosted(null); setCards([]); setNote(''); }}
             className="underline hover:text-gray-300"
           >
-            Post another signal
+            Post another
           </button>
         </div>
       </div>
@@ -192,9 +193,9 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   return (
     <div className="max-w-3xl mx-auto p-4 sm:p-6 text-gray-100">
       <header className="mb-5">
-        <h1 className="text-2xl font-bold text-gold tracking-wide">New Signal</h1>
+        <h1 className="text-2xl font-bold text-gold tracking-wide">Post to your server</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Post a card hunt or offload list to one of your enrolled Discord servers. Other SWUTrade users in that server who match your signal will be listed in the post — they aren't auto-pinged.
+          Tell a Discord server which cards you're looking for or have to trade. SWUTrade lists the people in that server who can help — quietly, no auto-pings.
         </p>
       </header>
 
@@ -287,7 +288,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             <div className="text-sm text-gray-500 italic px-3 py-2">Loading your servers…</div>
           ) : eligibleGuilds.length === 0 ? (
             <div className="text-sm text-gray-400 px-3 py-2 border border-amber-500/40 bg-amber-500/10 rounded-md">
-              You're not enrolled in any SWUTrade-installed servers. Visit the community page to enroll.
+              You haven't joined SWUTrade in any servers yet. Open the Communities page to join one.
             </div>
           ) : (
             <select
@@ -324,7 +325,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
           disabled={!canPost}
           className="w-full px-4 py-3 rounded-md bg-gold/20 border border-gold/50 text-gold font-bold hover:bg-gold/30 hover:border-gold/70 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {posting ? 'Posting…' : `Post signal to Discord`}
+          {posting ? 'Posting…' : `Post to Discord`}
         </button>
       </div>
 
@@ -373,7 +374,7 @@ function EmptyState({
   return (
     <div className="text-center py-8 px-4 border border-dashed border-space-700 rounded-md">
       <p className="text-gray-400 text-sm mb-4">
-        Add the cards you're {kind === 'wanted' ? 'hunting for' : 'offloading'}. Up to 20 per signal.
+        Add the cards you {kind === 'wanted' ? 'want' : 'have to trade'}. Up to 20 cards.
       </p>
       <div className="flex flex-col sm:flex-row gap-2 justify-center">
         <button
@@ -389,7 +390,7 @@ function EmptyState({
             onClick={onPullPriorities}
             className="px-4 py-2 rounded-md bg-space-800/40 border border-space-700 text-gray-300 hover:border-gold/40 hover:text-gold transition-colors text-sm"
           >
-            ★ Pull from wishlist priorities
+            ★ Use my starred wishlist
           </button>
         )}
       </div>
@@ -499,7 +500,7 @@ function PreviewPane({ kind, cards, note }: { kind: SignalKind; cards: SignalCar
         </blockquote>
       )}
       <div className="mt-2 text-[10px] text-gray-500 italic">
-        Matched users in your server will appear here as <code>@user</code> mentions when posted.
+        People in your server who can help will be listed here when you post.
       </div>
     </div>
   );
@@ -556,7 +557,7 @@ function CardSearchModal({
         <div className="flex-1 overflow-y-auto">
           {query.trim().length === 0 ? (
             <div className="p-6 text-center text-sm text-gray-500">
-              Start typing a card name. Reprints across promo sets collapse into one entry — pick the canonical printing.
+              Start typing a card name. Different printings of the same card are grouped — pick once and you can narrow the printing on the next screen.
             </div>
           ) : results.length === 0 ? (
             <div className="p-6 text-center text-sm text-gray-500">

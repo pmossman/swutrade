@@ -576,21 +576,21 @@ async function handleSignalButton(
   if (!signal) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'This signal post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: 'This post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
   if (signal.userId !== clicker.id) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: `Only the post's author can change the variant.`, flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: `Only the post's author can change the printing.`, flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
   if (signal.status !== 'active') {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: `This signal is already ${signal.status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: `This post is already ${signal.status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
@@ -646,7 +646,7 @@ async function handleSignalGroupAction(args: {
   if (groupRows.length === 0) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'This signal post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: 'This post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
@@ -683,7 +683,7 @@ async function handleCancelLive(
   if (groupRows.some(r => r.status !== 'active')) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: `This signal is already ${groupRows[0].status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: `This post is already ${groupRows[0].status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
@@ -812,7 +812,7 @@ async function handleVariantOpen(
   if (!family) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'Couldn\'t resolve this signal\'s card.', flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: 'Couldn\'t find the card for this post.', flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
@@ -821,6 +821,7 @@ async function handleVariantOpen(
     data: buildVariantPickerEphemeral({
       signalId: signal.id,
       familyName: family.name,
+      kind: signal.kind,
       variants: family.variants,
     }),
   });
@@ -837,7 +838,7 @@ async function handleVariantPick(
   if (!family || !family.variants.some(v => v.variant === pickedVariant)) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'That variant doesn\'t exist for this card.', flags: MESSAGE_FLAG_EPHEMERAL },
+      data: { content: 'That printing doesn\'t exist for this card.', flags: MESSAGE_FLAG_EPHEMERAL },
     });
     return;
   }
@@ -922,7 +923,7 @@ async function handleVariantPick(
   res.status(200).json({
     type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
     data: {
-      content: `Pinned to **${pickedVariant}**. The post above has been updated.`,
+      content: `Set to **${pickedVariant}** only. Updated above.`,
       flags: MESSAGE_FLAG_EPHEMERAL,
       components: [],
     },
