@@ -16,8 +16,6 @@ import {
   cardFamilyId,
   type CanonicalVariant,
 } from '../variants';
-import type { WantsApi } from '../hooks/useWants';
-import type { AvailableApi } from '../hooks/useAvailable';
 import { CardResultsGrid } from './CardResultsGrid';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
@@ -32,6 +30,31 @@ export interface PickContext {
   acceptedVariants?: CanonicalVariant[];
 }
 
+/**
+ * Generic "what's already in the consumer's draft / list" payload.
+ * Each entry maps to one row in the caller's data store (a wants_items
+ * row, an available_items row, a Signal Builder draft entry, …).
+ *
+ *  - `id` is the caller's row identifier; it round-trips back via
+ *    `onDecrement(id)` so the caller can find the right row to mutate.
+ *  - `key` is the picker's tile key — `cardFamilyId(card)` for `wants`
+ *    listType (one tile per family), `productId` for `available` (one
+ *    tile per printing).
+ *  - `restrictionKey` only applies to `wants`. The picker only counts
+ *    a saved row toward a tile's badge when its restriction matches
+ *    the picker's current variant filter — Hyperspace-saved Luke
+ *    shouldn't badge when the filter is "Any" (different intent →
+ *    different saved item). Encode "any" as the literal string `'any'`
+ *    and a restricted set as `variants.sort().join('|')`. Omit on
+ *    `available` rows.
+ */
+export interface PickerSavedEntry {
+  id: string;
+  key: string;
+  qty: number;
+  restrictionKey?: string;
+}
+
 interface ListCardPickerProps {
   listType: PickerListType;
   allCards: CardVariant[];
@@ -41,12 +64,14 @@ interface ListCardPickerProps {
    *  "browse the catalogue at TCGPlayer prices" contract now. */
   percentage?: number;
   priceMode: PriceMode;
-  /** Full wants API (when listType === 'wants'). Picker reads items
-   *  for the saved-qty badge and uses update/remove to support
-   *  tap-to-decrement on already-saved tiles. */
-  wants?: WantsApi;
-  /** Full available API (when listType === 'available'). */
-  available?: AvailableApi;
+  /** Rows already in the caller's draft / list. The picker uses these
+   *  to render saved-qty badges + drive tap-to-decrement. Defaults to
+   *  empty (= no badges, picker stays in pure-search mode). */
+  savedEntries?: readonly PickerSavedEntry[];
+  /** Decrement one qty of the named saved row. Caller decides whether
+   *  to drop the row at qty=0 or just decrement; picker only fires
+   *  the callback when the user taps the × pill on a badged tile. */
+  onDecrement?: (id: string) => void;
   onPick: (card: CardVariant, ctx: PickContext) => void;
   onClose: () => void;
 }
@@ -126,16 +151,14 @@ export function ListCardPicker({
   listType,
   allCards,
   priceMode,
-  wants,
-  available,
+  savedEntries = [],
+  onDecrement,
   onPick,
   onClose,
 }: ListCardPickerProps) {
   // `percentage` prop is ignored — picker tiles always show raw
   // TCGPlayer prices. Keeping the prop signature stable so callers
   // don't churn.
-  const wantsItems = wants?.items ?? [];
-  const availableItems = available?.items ?? [];
   const { query, setQuery, results, isSearching } = useCardSearch({
     allCards,
     setFilter: null,
@@ -196,7 +219,7 @@ export function ListCardPicker({
   }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
 
   // Saved-count lookup + item-id reverse index. For wants, scope by
-  // (familyId + filter restriction key) so a Hyperspace-saved Luke
+  // (key + filter restriction key) so a Hyperspace-saved Luke
   // doesn't show a count when the filter is "Any" (different
   // restriction → different item). The id list lets decrement find
   // the right row to touch.
@@ -209,22 +232,13 @@ export function ListCardPicker({
       if (bucket) bucket.push(id);
       else ids.set(key, [id]);
     };
-    if (listType === 'wants') {
-      const filterKey = restrictionKeyOf(selectedVariants);
-      for (const item of wantsItems) {
-        const itemKey = item.restriction.mode === 'any'
-          ? 'any'
-          : restrictionKeyOf(item.restriction.variants);
-        if (itemKey !== filterKey) continue;
-        push(item.familyId, item.id, item.qty);
-      }
-    } else {
-      for (const item of availableItems) {
-        push(item.productId, item.id, item.qty);
-      }
+    const filterKey = listType === 'wants' ? restrictionKeyOf(selectedVariants) : null;
+    for (const entry of savedEntries) {
+      if (filterKey !== null && entry.restrictionKey !== filterKey) continue;
+      push(entry.key, entry.id, entry.qty);
     }
     return { savedCounts: counts, savedItemIds: ids };
-  }, [listType, wantsItems, availableItems, selectedVariants]);
+  }, [listType, savedEntries, selectedVariants]);
 
   const tileKey = (card: CardVariant): string | null => {
     if (listType === 'wants') return cardFamilyId(card);
@@ -241,25 +255,16 @@ export function ListCardPicker({
   const deferredResults = useDeferredValue(viewResults);
 
   // Decrement: tapping the ×N badge removes one qty. Finds the newest
-  // matching item (by pop from the id list) and decrements, or removes
-  // it entirely at qty 1.
+  // matching item (by pop from the id list) and asks the caller to
+  // decrement it. The caller decides whether to drop the row at qty=0
+  // or just decrement — both wishlist (drop-at-0) and signal-builder
+  // (drop-at-0) use the same convention today.
   const handleDecrement = (card: CardVariant) => {
     const key = tileKey(card);
-    if (!key) return;
+    if (!key || !onDecrement) return;
     const ids = savedItemIds.get(key);
     if (!ids || ids.length === 0) return;
-    const itemId = ids[ids.length - 1];
-    if (listType === 'wants' && wants) {
-      const item = wants.items.find(i => i.id === itemId);
-      if (!item) return;
-      if (item.qty <= 1) wants.remove(itemId);
-      else wants.update(itemId, { qty: item.qty - 1 });
-    } else if (listType === 'available' && available) {
-      const item = available.items.find(i => i.id === itemId);
-      if (!item) return;
-      if (item.qty <= 1) available.remove(itemId);
-      else available.update(itemId, { qty: item.qty - 1 });
-    }
+    onDecrement(ids[ids.length - 1]);
   };
 
   return (

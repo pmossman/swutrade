@@ -66,7 +66,17 @@ export function AvailablePanel({
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}
-        available={available}
+        savedEntries={available.items.map(item => ({
+          id: item.id,
+          key: item.productId,
+          qty: item.qty,
+        }))}
+        onDecrement={id => {
+          const item = available.items.find(i => i.id === id);
+          if (!item) return;
+          if (item.qty <= 1) available.remove(id);
+          else available.update(id, { qty: item.qty - 1 });
+        }}
         onPick={card => {
           if (!card.productId) return;
           available.add({ productId: card.productId, qty: 1 });

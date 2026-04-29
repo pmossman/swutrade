@@ -70,7 +70,24 @@ export function WantsPanel({
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}
-        wants={wants}
+        savedEntries={wants.items.map(item => ({
+          id: item.id,
+          key: item.familyId,
+          qty: item.qty,
+          // Encode the saved restriction so the picker only badges a
+          // tile when its current variant filter matches — Hyperspace-
+          // saved Luke shouldn't badge under a "Standard" filter, that's
+          // a different intent.
+          restrictionKey: item.restriction.mode === 'any'
+            ? 'any'
+            : [...item.restriction.variants].sort().join('|'),
+        }))}
+        onDecrement={id => {
+          const item = wants.items.find(i => i.id === id);
+          if (!item) return;
+          if (item.qty <= 1) wants.remove(id);
+          else wants.update(id, { qty: item.qty - 1 });
+        }}
         onPick={(card, ctx) => {
           // Variant filter (acceptedVariants) drives the saved
           // restriction. Empty filter → any. Otherwise → restricted

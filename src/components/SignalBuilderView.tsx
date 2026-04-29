@@ -305,16 +305,20 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   const canPost = cards.length > 0 && !!guildId && !posting;
 
   if (pickerOpen) {
-    // The picker's listType controls visual cues (saved-qty badges,
-    // tap-to-decrement). We deliberately omit `wants` / `available`
-    // so the picker stays in pure-search mode — the Signal Builder
-    // composes a draft list and only mutates inventory on submit
-    // via /api/signals. Mapping kind→listType keeps the variant
-    // filter UX consistent with how the user thinks about the side:
-    // 'wanted' → wants picker, 'offering' → binder picker.
-    // Wrapped in the same max-w-3xl column the form uses so the
-    // picker tile grid keeps a sensible thumbnail size on wide
-    // screens — matches WishlistView/BinderView's chrome.
+    // Feed the local draft into the picker so it can render saved-qty
+    // badges + drive tap-to-decrement, exactly like the wishlist /
+    // binder pickers do — the picker is generic; whether the saved
+    // rows live in wants_items, available_items, or local component
+    // state is the caller's problem. Mapping kind→listType keeps the
+    // variant filter UX consistent with how the user thinks about
+    // the side: 'wanted' → wants picker (one tile per family),
+    // 'offering' → binder picker (one tile per printing).
+    const savedEntries = cards.map(c => ({
+      id: c.familyId,
+      key: c.familyId,
+      qty: c.qty,
+      restrictionKey: c.variant ? c.variant : 'any',
+    }));
     return (
       <PageChrome auth={auth}>
         <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
@@ -322,6 +326,16 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             listType={kind === 'wanted' ? 'wants' : 'available'}
             allCards={allCards}
             priceMode="market"
+            savedEntries={savedEntries}
+            onDecrement={id => {
+              setCards(prev => {
+                const idx = prev.findIndex(c => c.familyId === id);
+                if (idx < 0) return prev;
+                const c = prev[idx];
+                if (c.qty <= 1) return prev.filter((_, i) => i !== idx);
+                return prev.map((cc, i) => i === idx ? { ...cc, qty: cc.qty - 1 } : cc);
+              });
+            }}
             onPick={handlePick}
             onClose={() => setPickerOpen(false)}
           />
