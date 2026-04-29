@@ -1,8 +1,10 @@
 /**
- * Discord embed builders for `/looking-for` + `/offering` signal posts.
+ * Discord embed builders for signal posts. Signals are authored on
+ * the web (`/?signals=new`); the bot posts the embed and owns the
+ * post-level button interactions (Cancel, Specify variant).
  *
  * Multi-card aware: a signal can be a single card or a group of up
- * to 5. The embed format flexes for both — single-card stays tight,
+ * to 20. The embed format flexes for both — single-card stays tight,
  * multi-card becomes a bulleted list with per-card match listings.
  *
  * Match listings are public — the post lists which guild members
@@ -23,7 +25,6 @@ export const SIGNAL_CUSTOM_ID_PREFIX = 'signal';
 const COMPONENT_TYPE_ACTION_ROW = 1;
 const COMPONENT_TYPE_BUTTON = 2;
 const COMPONENT_TYPE_STRING_SELECT = 3;
-const BUTTON_STYLE_PRIMARY = 1;
 const BUTTON_STYLE_SECONDARY = 2;
 const BUTTON_STYLE_DANGER = 4;
 
@@ -34,8 +35,6 @@ const COLOR_WANTED = 0x3B82F6;
 const COLOR_OFFERING = 0x10B981;
 // Strike-through tone for cancelled / expired states.
 const COLOR_INACTIVE = 0x6b7280;
-// Preview state — gold-ish to signal "not yet posted".
-const COLOR_PREVIEW = 0xF5A623;
 
 /** Cap on rendered match mentions per card before truncating to "+N more". */
 const MATCH_RENDER_LIMIT = 5;
@@ -71,9 +70,6 @@ export interface SignalEmbedContext {
   groupId: string;
   kind: CardSignalKind;
   status: CardSignalStatus;
-  /** Either preview (Confirm + Cancel buttons) or live (Cancel +
-   *  optional Specify variant for single-card / variant=any). */
-  mode: 'preview' | 'live';
   cards: SignalEmbedCard[];
   note?: string | null;
   maxUnitPrice?: number | null;
@@ -87,30 +83,22 @@ export interface SignalEmbedContext {
 }
 
 /**
- * The signal embed. Used for both the public live post and the
- * preview ephemeral. Same embed body in both cases; the action row
- * differs (Confirm/Cancel vs Cancel/Specify-variant).
+ * The signal embed. Single-card uses a tighter layout with the
+ * thumbnail and a single match-list line. Multi-card collapses
+ * each card into a bullet:
  *
- * Multi-card collapses each card into a bullet:
  *   • 3× Luke Skywalker — Hero of Yavin [JTL] (Leader) · any printing
  *     📦 In this server: <@123>, <@456>
- *
- * Single-card uses a tighter layout with the thumbnail and a
- * single match-list line.
  */
 export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   const isActive = ctx.status === 'active';
-  const isPreview = ctx.mode === 'preview' && ctx.status === 'draft';
   const titleVerb = ctx.kind === 'wanted' ? '🔍 Looking for' : '💱 Offering';
 
-  const color = (() => {
-    if (isPreview) return COLOR_PREVIEW;
-    if (!isActive) return COLOR_INACTIVE;
-    return ctx.kind === 'wanted' ? COLOR_WANTED : COLOR_OFFERING;
-  })();
+  const color = !isActive
+    ? COLOR_INACTIVE
+    : ctx.kind === 'wanted' ? COLOR_WANTED : COLOR_OFFERING;
 
   const statusBadge = (() => {
-    if (isPreview) return '*Preview · not yet posted*';
     switch (ctx.status) {
       case 'cancelled': return '· **Cancelled**';
       case 'expired':   return '· **Expired**';
@@ -148,9 +136,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
     lines.push(`> ${ctx.note}`);
   }
   lines.push('');
-  if (isPreview) {
-    lines.push('Click **Confirm & post** to publish in this channel, or **Cancel** to discard.');
-  } else if (isActive) {
+  if (isActive) {
     lines.push(`⏱ ${ctx.expiryHint}`);
   } else if (statusBadge) {
     lines.push(statusBadge);
@@ -162,7 +148,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   const titleText = ctx.cards.length === 1
     ? `${titleVerb} · ${ctx.cards[0].name}`
     : `${titleVerb} · ${ctx.cards.length} cards`;
-  const title = !isActive && !isPreview ? `~~${titleText}~~` : titleText;
+  const title = !isActive ? `~~${titleText}~~` : titleText;
 
   // Thumbnail: only for single-card. Multi-card has no thumbnail
   // — the bullet list is the focal element.
@@ -180,7 +166,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
         name: `@${ctx.requester.handle}`,
         ...(ctx.requester.avatarUrl ? { icon_url: ctx.requester.avatarUrl } : {}),
       },
-      footer: { text: 'SWUTrade · /looking-for or /offering to post your own' },
+      footer: { text: 'SWUTrade · build your own at swutrade.com' },
     }],
     components: buildActionRow(ctx),
     // Suppress automatic pings for the listed mentions — the post
@@ -217,32 +203,7 @@ function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string
 }
 
 function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {
-  const isActive = ctx.status === 'active';
-  const isPreview = ctx.mode === 'preview' && ctx.status === 'draft';
-  if (!isActive && !isPreview) return [];
-
-  if (isPreview) {
-    // Preview: Confirm + Cancel only. Per-card variant flow runs
-    // post-confirm via the same Specify-variant button on the
-    // live post (single-card only).
-    return [{
-      type: COMPONENT_TYPE_ACTION_ROW,
-      components: [
-        {
-          type: COMPONENT_TYPE_BUTTON,
-          style: BUTTON_STYLE_PRIMARY,
-          label: 'Confirm & post',
-          custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:confirm-draft`,
-        },
-        {
-          type: COMPONENT_TYPE_BUTTON,
-          style: BUTTON_STYLE_SECONDARY,
-          label: 'Cancel',
-          custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:cancel-draft`,
-        },
-      ],
-    }];
-  }
+  if (ctx.status !== 'active') return [];
 
   // Live: Cancel post + (single-card with variant=any) Specify
   // variant. Multi-card defers per-card variant pinning to a

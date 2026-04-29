@@ -37,11 +37,9 @@ import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 import { getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
 import {
-  autocompleteSignalFamilies,
   findMatches,
   lookupSignalCard,
   lookupSignalFamily,
-  type SignalCard,
   type SignalFamily,
   type VariantSpec,
 } from '../lib/signalMatching.js';
@@ -385,18 +383,12 @@ async function buildApplicationCommandFollowup(
   const commandType = data?.type ?? APPLICATION_COMMAND_TYPE_SLASH;
   const commandName = data?.name;
 
-  // /looking-for and /offering land here; both are slash commands
-  // (type 1) but with their OWN command name, not a sub-command of
-  // /swutrade. Branch by command name first so we don't try to
-  // interpret a top-level option as a /swutrade subcommand.
-  if (commandType === APPLICATION_COMMAND_TYPE_SLASH
-      && (commandName === 'looking-for' || commandName === 'offering')) {
-    return handleSignalSlashFollowup(
-      payload,
-      commandName === 'looking-for' ? 'wanted' : 'offering',
-      deps,
-    );
-  }
+  // /looking-for and /offering used to land here; both are now
+  // posted via the web Signal Builder at /?signals=new. The slash
+  // commands have been dropped from registration. Existing live
+  // posts from those commands keep working — their Cancel and
+  // Specify-variant buttons route through `signal:*` custom_ids
+  // which are still handled below.
 
   let peerDiscordId: string | undefined;
   let peerUsername: string | undefined;
@@ -488,417 +480,21 @@ async function sendDeferredFollowup(opts: {
   }
 }
 
-// --- /looking-for + /offering slash handlers -------------------------------
-
-/** Days a signal stays active before the cron sweep marks it
- *  expired. Wanted signals linger longer (your wishlist; not as
- *  urgent) while offering signals turn over fast (cards on hand at
- *  events). User can cancel either at any time. */
-const SIGNAL_TTL_DAYS: Record<'wanted' | 'offering', number> = {
-  wanted: 7,
-  offering: 3,
-};
-
-/**
- * Handle the followup body for `/looking-for` or `/offering`.
- *
- * Side effects (in order):
- *   1. Validate the card from autocomplete payload + the guild
- *      context (must be in a guild, bot must be installed).
- *   2. Upsert the underlying inventory row (`wants_items` for wanted
- *      signals, `available_items` for offering).
- *   3. Insert the `card_signals` row.
- *   4. Post the public signal embed in the channel via the bot
- *      client; UPDATE the signal with the message_id.
- *   5. Find guild matches; DM each (gated on dm_match_alerts).
- *
- * Returns the ephemeral followup body for the slash itself —
- * "Posted! N matches pinged." or an error explanation.
- */
-async function handleSignalSlashFollowup(
-  payload: Record<string, unknown>,
-  kind: 'wanted' | 'offering',
-  _deps: BotDeps,
-): Promise<Record<string, unknown>> {
-  const guildId = payload.guild_id as string | undefined;
-  if (!guildId) {
-    return {
-      content: '`/looking-for` and `/offering` only work inside a server (not in DMs).',
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    };
-  }
-
-  const channelId = payload.channel_id as string | undefined;
-  if (!channelId) {
-    return { content: 'Discord didn\'t supply a channel id.', flags: MESSAGE_FLAG_EPHEMERAL };
-  }
-
-  const clickerDiscordId =
-    (payload.member as { user?: { id?: string } } | undefined)?.user?.id
-    ?? (payload.user as { id?: string } | undefined)?.id;
-  if (!clickerDiscordId) {
-    return { content: 'Couldn\'t identify the user from the interaction.', flags: MESSAGE_FLAG_EPHEMERAL };
-  }
-
-  const data = payload.data as {
-    options?: Array<{ name: string; type: number; value?: unknown }>;
-  } | undefined;
-  const opts = data?.options ?? [];
-
-  // Parse 1-5 card slots. `card` is required; `card2`..`card5` are
-  // optional. Variant arg only applies to the primary card —
-  // multi-card secondaries default to "any" with the post-hoc
-  // Specify-variant button (deferred for multi-card to PR2).
-  const cardKeys = ['card', 'card2', 'card3', 'card4', 'card5'] as const;
-  const familyIds: Array<{ key: string; familyId: string }> = [];
-  for (const key of cardKeys) {
-    const opt = opts.find(o => o.name === key);
-    if (opt && typeof opt.value === 'string' && opt.value.length > 0) {
-      // Sentinel — the user submitted the slash with the autocomplete
-      // hint row still selected (didn't actually pick a card).
-      if (opt.value === '__signal-hint__') {
-        return {
-          content: `The \`${key}\` slot needs a real card — type to search the autocomplete.`,
-          flags: MESSAGE_FLAG_EPHEMERAL,
-        };
-      }
-      familyIds.push({ key, familyId: opt.value });
-    }
-  }
-  if (familyIds.length === 0) {
-    return { content: 'Pick at least one card from the autocomplete list.', flags: MESSAGE_FLAG_EPHEMERAL };
-  }
-
-  // Resolve each family + the primary's variant.
-  const variantOpt = opts.find(o => o.name === 'variant');
-  const variantOptValue = typeof variantOpt?.value === 'string' ? variantOpt.value : null;
-  if (variantOptValue === '__signal-hint__') {
-    return {
-      content: 'The `variant` slot needs a real printing — type to search the autocomplete.',
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    };
-  }
-  const requestedVariant = variantOptValue && variantOptValue.length > 0 ? variantOptValue : null;
-
-  type ResolvedCard = {
-    family: ReturnType<typeof lookupSignalFamily>;
-    variantSpec: VariantSpec;
-    representativeProductId: string;
-  };
-  const resolvedCards: ResolvedCard[] = [];
-  for (let i = 0; i < familyIds.length; i++) {
-    const family = lookupSignalFamily(familyIds[i].familyId);
-    if (!family) {
-      return {
-        content: `Couldn't find one of the cards in the SWUTrade index. Pick from the autocomplete list.`,
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      };
-    }
-    // Variant arg only narrows the primary card.
-    const isPrimary = i === 0;
-    const variantSpec: VariantSpec = isPrimary
-      && requestedVariant
-      && family.variants.some(v => v.variant === requestedVariant)
-      ? { mode: 'restricted', variants: [requestedVariant] }
-      : { mode: 'any' };
-    const representativeProductId = variantSpec.mode === 'restricted'
-      ? family.variants.find(v => v.variant === variantSpec.variants[0])!.productId
-      : family.variants[0].productId;
-    resolvedCards.push({ family, variantSpec, representativeProductId });
-  }
-
-  const qty = Math.max(1, Math.min(99, Number(opts.find(o => o.name === 'qty')?.value ?? 1) || 1));
-  const note = (() => {
-    const v = opts.find(o => o.name === 'note')?.value;
-    return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
-  })();
-  const maxPriceRaw = opts.find(o => o.name === 'max_price')?.value;
-  const maxUnitPrice = typeof maxPriceRaw === 'number' && maxPriceRaw > 0 ? maxPriceRaw : null;
-
-  const db = getDb();
-
-  // Resolve the SWUTrade user from the Discord id.
-  const [signaler] = await db
-    .select({ id: users.id, handle: users.handle, avatarUrl: users.avatarUrl })
-    .from(users)
-    .where(eq(users.discordId, clickerDiscordId))
-    .limit(1);
-  if (!signaler) {
-    return {
-      content: 'Sign in with Discord at <https://swutrade.com> first — your post needs to attach to a SWUTrade account.',
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    };
-  }
-
-  // Ensure the bot is installed in this guild.
-  const [installRow] = await db
-    .select({ guildId: botInstalledGuilds.guildId })
-    .from(botInstalledGuilds)
-    .where(eq(botInstalledGuilds.guildId, guildId))
-    .limit(1);
-  if (!installRow) {
-    return {
-      content: 'SWUTrade isn\'t installed in this server.',
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    };
-  }
-
-  // Group all rows under one id. Single-card sets groupId = signalId
-  // for query symmetry — group lookups always work the same way.
-  const groupId = randomUUID();
-  const expiresAt = new Date(Date.now() + SIGNAL_TTL_DAYS[kind] * 24 * 60 * 60 * 1000);
-  const now = new Date();
-
-  // Insert each card's inventory row (wants/available) + signal row
-  // with status='draft'. The preview ephemeral is the user's
-  // confirmation gate before anything goes public.
-  const draftRows: Array<{
-    signalId: string;
-    family: NonNullable<ReturnType<typeof lookupSignalFamily>>;
-    variantSpec: VariantSpec;
-    representativeProductId: string;
-    matchedUsers: Awaited<ReturnType<typeof findMatches>>;
-  }> = [];
-
-  for (const rc of resolvedCards) {
-    const family = rc.family!;
-    let inventoryRowId: string;
-    if (kind === 'wanted') {
-      const wantsId = `w-${randomUUID().slice(0, 12)}`;
-      const restriction = rc.variantSpec.mode === 'any'
-        ? { mode: 'any' as const }
-        : { mode: 'restricted' as const, variants: rc.variantSpec.variants };
-      await db.insert(wantsItemsTable).values({
-        id: wantsId,
-        userId: signaler.id,
-        familyId: family.familyId,
-        qty,
-        restrictionMode: restriction.mode,
-        restrictionVariants: restriction.mode === 'restricted' ? restriction.variants : null,
-        restrictionKey: restrictionKey(restriction),
-        maxUnitPrice: maxUnitPrice != null ? String(maxUnitPrice) : null,
-        isPriority: true,
-        addedAt: now.getTime(),
-      }).onConflictDoUpdate({
-        target: [wantsItemsTable.userId, wantsItemsTable.familyId, wantsItemsTable.restrictionKey],
-        set: {
-          qty: sql`GREATEST(${wantsItemsTable.qty}, ${qty})`,
-          isPriority: true,
-          updatedAt: now,
-        },
-      });
-      const [row] = await db
-        .select({ id: wantsItemsTable.id })
-        .from(wantsItemsTable)
-        .where(and(
-          eq(wantsItemsTable.userId, signaler.id),
-          eq(wantsItemsTable.familyId, family.familyId),
-          eq(wantsItemsTable.restrictionKey, restrictionKey(restriction)),
-        ))
-        .limit(1);
-      inventoryRowId = row.id;
-    } else {
-      const availId = `a-${randomUUID().slice(0, 12)}`;
-      await db.insert(availableItemsTable).values({
-        id: availId,
-        userId: signaler.id,
-        productId: rc.representativeProductId,
-        qty,
-        addedAt: now.getTime(),
-      }).onConflictDoUpdate({
-        target: [availableItemsTable.userId, availableItemsTable.productId],
-        set: {
-          qty: sql`GREATEST(${availableItemsTable.qty}, ${qty})`,
-          updatedAt: now,
-        },
-      });
-      const [row] = await db
-        .select({ id: availableItemsTable.id })
-        .from(availableItemsTable)
-        .where(and(
-          eq(availableItemsTable.userId, signaler.id),
-          eq(availableItemsTable.productId, rc.representativeProductId),
-        ))
-        .limit(1);
-      inventoryRowId = row.id;
-    }
-
-    const signalId = randomUUID();
-    await db.insert(cardSignals).values({
-      id: signalId,
-      userId: signaler.id,
-      kind,
-      groupId,
-      wantsItemId: kind === 'wanted' ? inventoryRowId : null,
-      availableItemId: kind === 'offering' ? inventoryRowId : null,
-      guildId,
-      channelId,
-      expiresAt,
-      signalNote: note,
-      maxUnitPrice: maxUnitPrice != null ? String(maxUnitPrice) : null,
-      status: 'draft',
-    });
-
-    // Compute matches now so the preview embed can show them. We
-    // also re-compute on confirm (in case inventory shifts in
-    // those few seconds), but the preview is the user's view.
-    const matchedUsers = await findMatches(db, {
-      kind,
-      family,
-      variant: rc.variantSpec,
-      guildId,
-      requesterUserId: signaler.id,
-      eventId: null,
-    });
-
-    draftRows.push({ signalId, family, variantSpec: rc.variantSpec, representativeProductId: rc.representativeProductId, matchedUsers });
-  }
-
-  // Build the preview ephemeral. Same embed builder as the live
-  // post; the action row flips to Confirm + Cancel via mode='preview'.
-  // Add `flags: 64` (ephemeral) so the preview is only visible to
-  // the slash author — the followup PATCH replaces the deferred
-  // ack message Discord already marked as ephemeral.
-  const previewBody = buildSignalPost({
-    groupId,
-    kind,
-    status: 'draft',
-    mode: 'preview',
-    cards: draftRows.map(r => ({
-      signalId: r.signalId,
-      name: r.family.name,
-      setCode: r.family.setCode,
-      cardType: r.family.cardType,
-      productId: r.representativeProductId,
-      variantSpec: r.variantSpec,
-      qty,
-      matchedUsers: r.matchedUsers.map(m => ({ discordId: m.discordId, handle: m.handle })),
-    })),
-    note,
-    maxUnitPrice,
-    requester: { discordId: clickerDiscordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
-    expiryHint: formatExpiryHint(expiresAt, now),
-  });
-  return { ...previewBody, flags: MESSAGE_FLAG_EPHEMERAL } as unknown as Record<string, unknown>;
-}
 
 // --- autocomplete handler --------------------------------------------------
 
 /**
- * Discord-side autocomplete for /looking-for and /offering. Returns
- * up to 25 cards whose name matches the focused option's value.
- *
- * Synchronous response (Discord requires <3s; autocomplete doesn't
- * support deferral). The card index is in-memory after first load
- * so warm calls are sub-ms; cold start has the same Vercel cold-
- * start risk as everything else but autocomplete doesn't show the
- * "didn't respond in time" error — Discord just shows an empty
- * dropdown, which the user can retype to retrigger.
+ * Discord-side autocomplete. Currently no registered command
+ * uses autocomplete callbacks (the /swutrade settings `user`
+ * arg uses Discord's native user picker, no server callback).
+ * Reserved as a placeholder so the dispatcher branch in
+ * `handleInteraction` doesn't need a code change when we add a
+ * new autocompleted command.
  */
 async function handleAutocomplete(
-  payload: Record<string, unknown>,
+  _payload: Record<string, unknown>,
   res: VercelResponse,
 ): Promise<void> {
-  const data = payload.data as {
-    name?: string;
-    options?: Array<{ name: string; type: number; value?: unknown; focused?: boolean }>;
-  } | undefined;
-
-  const focused = data?.options?.find(o => o.focused);
-  if (!focused) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
-    return;
-  }
-
-  // `event` autocomplete is reserved for LGS — empty until the
-  // events table exists.
-  if (focused.name === 'event') {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
-    return;
-  }
-
-  // `card`, `card2`, `card3`, `card4`, `card5` all share the
-  // family-level autocomplete — the slash handler resolves each
-  // independently, but the dropdown logic is identical.
-  if (focused.name === 'card' || /^card[2-5]$/.test(focused.name ?? '')) {
-    const query = typeof focused.value === 'string' ? focused.value : '';
-    // Empty input → render a single hint choice so the dropdown
-    // isn't a blank box. The slash handler rejects the sentinel
-    // value with a friendly error if the user somehow submits it.
-    if (query.trim().length === 0) {
-      res.status(200).json({
-        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
-        data: { choices: [{ name: 'Start typing to search SWUTrade\'s card index…', value: '__signal-hint__' }] },
-      });
-      return;
-    }
-    const families = autocompleteSignalFamilies(query, 25);
-    if (families.length === 0) {
-      res.status(200).json({
-        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
-        data: { choices: [{ name: `No matches for "${query}". Try a partial name (e.g., "luke").`, value: '__signal-hint__' }] },
-      });
-      return;
-    }
-    const choices = families.map(f => {
-      // Format: "Card Name [SET] (Leader) (+N printings)"
-      // Examples:
-      //   "Luke Skywalker - Faithful Friend [SOR] (Leader) (+4 printings)"
-      //   "Aggressive Negotiations [SEC]"
-      // Set code helps disambiguate when reprints exist; the
-      // (Leader) tag lets users instantly tell if the autocomplete
-      // hit a leader they meant or a same-named non-leader (e.g.
-      // when typing partial names).
-      const parts = [f.name, `[${f.setCode}]`];
-      if (f.cardType === 'Leader') parts.push('(Leader)');
-      if (f.alternateCount > 0) {
-        parts.push(`(+${f.alternateCount} printing${f.alternateCount === 1 ? '' : 's'})`);
-      }
-      return {
-        name: parts.join(' ').slice(0, 100),
-        value: f.familyId.slice(0, 100),
-      };
-    });
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
-    return;
-  }
-
-  if (focused.name === 'variant') {
-    // Variant autocomplete is contextual: read the user's already-
-    // picked `card:` value (a family id) and return only the
-    // variants that family actually has. Discord includes ALL
-    // currently-filled options on the autocomplete payload, so we
-    // can drill into the sibling `card:` arg without state.
-    const cardOpt = data?.options?.find(o => o.name === 'card');
-    const familyId = typeof cardOpt?.value === 'string' ? cardOpt.value : null;
-    if (!familyId || familyId === '__signal-hint__') {
-      res.status(200).json({
-        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
-        data: { choices: [{ name: 'Pick a card first, then come back to specify a variant.', value: '__signal-hint__' }] },
-      });
-      return;
-    }
-    const family = lookupSignalFamily(familyId);
-    if (!family) {
-      res.status(200).json({
-        type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE,
-        data: { choices: [{ name: 'Couldn\'t find that card — repick from the autocomplete.', value: '__signal-hint__' }] },
-      });
-      return;
-    }
-    const query = typeof focused.value === 'string' ? focused.value.toLowerCase() : '';
-    const filtered = query.length === 0
-      ? family.variants
-      : family.variants.filter(v => v.variant.toLowerCase().includes(query));
-    const choices = filtered.slice(0, 25).map(v => ({
-      name: v.market != null ? `${v.variant} · ~$${v.market.toFixed(2)}` : v.variant,
-      value: v.variant,
-    }));
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices } });
-    return;
-  }
-
-  // Unknown focused option — empty choices (Discord renders nothing).
   res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_AUTOCOMPLETE, data: { choices: [] } });
 }
 
@@ -957,11 +553,9 @@ async function handleSignalButton(
     return;
   }
 
-  // Group-scoped actions: cancel, confirm-draft, cancel-draft.
+  // Group-scoped actions: cancel.
   // Row-scoped actions: variant-open, variant-pick.
-  const isGroupAction = action === 'cancel'
-    || action === 'confirm-draft'
-    || action === 'cancel-draft';
+  const isGroupAction = action === 'cancel';
 
   if (isGroupAction) {
     return handleSignalGroupAction({
@@ -1027,12 +621,12 @@ async function handleSignalButton(
 }
 
 /**
- * Group-scoped button actions: cancel a live group, confirm a
- * draft (post the public message), or cancel a draft (discard).
+ * Group-scoped button actions on a live signal post. Today only
+ * `cancel` lands here; the slash-flow draft actions were retired
+ * when the web Signal Builder replaced the slash command.
  *
- * Auth check is shared: the clicker must own the group's signals.
- * The first row's userId is the canonical owner — every row in a
- * group has the same userId by construction.
+ * Auth check: the clicker must own the group's signals. Every row
+ * in a group has the same userId, so the first row is canonical.
  */
 async function handleSignalGroupAction(args: {
   groupId: string;
@@ -1059,205 +653,20 @@ async function handleSignalGroupAction(args: {
 
   const ownerId = groupRows[0].userId;
   if (ownerId !== clickerUserId) {
-    const verb = action === 'cancel' ? 'cancel it'
-      : action === 'confirm-draft' ? 'post it'
-      : action === 'cancel-draft' ? 'discard it'
-      : 'modify it';
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
       data: {
-        content: `Only the post's author can ${verb}.`,
+        content: `Only the post's author can cancel it.`,
         flags: MESSAGE_FLAG_EPHEMERAL,
       },
     });
     return;
   }
 
-  switch (action) {
-    case 'confirm-draft':
-      return handleConfirmDraft(groupId, groupRows, res, deps);
-    case 'cancel-draft':
-      return handleCancelDraft(groupId, groupRows, res);
-    case 'cancel':
-      return handleCancelLive(groupId, groupRows, res, deps);
-    default:
-      res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+  if (action === 'cancel') {
+    return handleCancelLive(groupId, groupRows, res, deps);
   }
-}
-
-/**
- * Confirm a draft group: flip every row from `draft` → `active`,
- * post the public embed in the original channel, store the
- * resulting message_id on every row, and PATCH the ephemeral
- * preview into a "Posted!" confirmation.
- *
- * Re-runs `findMatches` per card just before posting so the
- * public surface reflects the freshest matchable inventory (vs
- * the stale snapshot the preview had if the user lingered).
- */
-async function handleConfirmDraft(
-  groupId: string,
-  groupRows: Array<typeof cardSignals.$inferSelect>,
-  res: VercelResponse,
-  deps: BotDeps,
-): Promise<void> {
-  const db = getDb();
-
-  // All rows in the group share status. If any aren't draft, the
-  // group already published — bail.
-  if (groupRows.some(r => r.status !== 'draft')) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'This signal already posted (or was cancelled).', flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
-  }
-
-  const [signaler] = await db
-    .select({ id: users.id, handle: users.handle, avatarUrl: users.avatarUrl, discordId: users.discordId })
-    .from(users)
-    .where(eq(users.id, groupRows[0].userId))
-    .limit(1);
-  if (!signaler) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  // Resolve each row's family + variantSpec (read from the
-  // inventory row written during the slash) + recompute matches.
-  const cards = await Promise.all(groupRows.map(async (row) => {
-    const family = await resolveSignalFamily(row);
-    const variantSpec = await resolveVariantSpec(row);
-    if (!family) return null;
-    const matches = await findMatches(db, {
-      kind: row.kind,
-      family,
-      variant: variantSpec,
-      guildId: row.guildId,
-      requesterUserId: row.userId,
-      eventId: null,
-    });
-    const representative = variantSpec.mode === 'restricted'
-      ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
-      : family.variants[0];
-    return {
-      signalId: row.id,
-      name: family.name,
-      setCode: family.setCode,
-      cardType: family.cardType,
-      productId: representative.productId,
-      variantSpec,
-      qty: 1, // qty lives on the inventory row but the embed only needs a label; pull from the row directly when re-rendering
-      matchedUsers: matches.map(m => ({ discordId: m.discordId, handle: m.handle })),
-    };
-  }));
-
-  if (cards.some(c => c === null)) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'Couldn\'t resolve one of the cards. The signal may reference deleted inventory.', flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
-  }
-
-  // Pull qty from the wants_items / available_items row per card
-  // (the qty option on the slash applies to all cards in the
-  // group, but we read from the source of truth in case it drifted).
-  for (let i = 0; i < cards.length; i++) {
-    const row = groupRows[i];
-    if (row.kind === 'wanted' && row.wantsItemId) {
-      const [w] = await db.select({ qty: wantsItemsTable.qty }).from(wantsItemsTable).where(eq(wantsItemsTable.id, row.wantsItemId)).limit(1);
-      if (w) cards[i]!.qty = w.qty;
-    } else if (row.kind === 'offering' && row.availableItemId) {
-      const [a] = await db.select({ qty: availableItemsTable.qty }).from(availableItemsTable).where(eq(availableItemsTable.id, row.availableItemId)).limit(1);
-      if (a) cards[i]!.qty = a.qty;
-    }
-  }
-
-  const firstRow = groupRows[0];
-  const embedBody = buildSignalPost({
-    groupId,
-    kind: firstRow.kind,
-    status: 'active',
-    mode: 'live',
-    cards: cards.map(c => c!),
-    note: firstRow.signalNote,
-    maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
-    requester: { discordId: signaler.discordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
-    expiryHint: formatExpiryHint(firstRow.expiresAt),
-  });
-
-  // Post the public message.
-  const bot = deps.bot ?? createDiscordBotClient();
-  let postedMessageId: string;
-  try {
-    const posted = await bot.postChannelMessage(firstRow.channelId, embedBody);
-    postedMessageId = posted.id;
-  } catch (err) {
-    console.error('handleConfirmDraft: postChannelMessage failed', err);
-    await reportError({
-      source: 'bot.signal-confirm-draft.post',
-      tags: { groupId, channelId: firstRow.channelId },
-    }, err);
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'Couldn\'t post — bot might be missing permissions to send messages here.', flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
-  }
-
-  // Flip every draft row to active + record the message id.
-  await db.update(cardSignals)
-    .set({ status: 'active', messageId: postedMessageId })
-    .where(eq(cardSignals.groupId, groupId));
-
-  // Replace the ephemeral preview with a "Posted!" confirmation.
-  const channelId = firstRow.channelId;
-  const guildId = firstRow.guildId;
-  const messageUrl = `https://discord.com/channels/${guildId}/${channelId}/${postedMessageId}`;
-  res.status(200).json({
-    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-    data: {
-      content: `Posted! [Open the post →](${messageUrl})`,
-      embeds: [],
-      components: [],
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    },
-  });
-}
-
-/**
- * Cancel a draft group: delete the draft rows. Inventory rows
- * (`wants_items` / `available_items`) are left in place — the user
- * intentionally typed those cards, and removing them silently
- * would surprise them. The ephemeral copy mentions this so they
- * know where to manage if they want to clean up.
- */
-async function handleCancelDraft(
-  groupId: string,
-  groupRows: Array<typeof cardSignals.$inferSelect>,
-  res: VercelResponse,
-): Promise<void> {
-  if (groupRows.some(r => r.status !== 'draft')) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { content: 'This signal already posted; use Cancel post to retire it.', flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
-  }
-
-  const db = getDb();
-  await db.delete(cardSignals).where(eq(cardSignals.groupId, groupId));
-
-  res.status(200).json({
-    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-    data: {
-      content: 'Cancelled. *(The cards stayed in your wishlist/binder — manage them at swutrade.com if you want to remove.)*',
-      embeds: [],
-      components: [],
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    },
-  });
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
 }
 
 /**
@@ -1317,7 +726,7 @@ async function handleCancelLive(
     groupId,
     kind: firstRow.kind,
     status: 'cancelled',
-    mode: 'live',
+
     cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
     note: firstRow.signalNote,
     maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
@@ -1488,7 +897,7 @@ async function handleVariantPick(
         groupId: signal.groupId ?? signal.id,
         kind: signal.kind,
         status: 'active',
-        mode: 'live',
+    
         cards: [{
           signalId: signal.id,
           name: family.name,
@@ -1560,24 +969,10 @@ async function handleCronRequest(
 async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
   const db = getDb();
 
-  // 1. Stale-draft sweep: drafts older than 1h were abandoned (the
-  //    user closed Discord, never confirmed). Delete to keep the
-  //    table tidy. This is non-destructive — only signal rows;
-  //    inventory rows the slash inserted stay (those are the
-  //    user's wishlist/binder, not the post).
-  const staleDraftThreshold = new Date(Date.now() - 60 * 60 * 1000);
-  const deletedDrafts = await db
-    .delete(cardSignals)
-    .where(and(
-      eq(cardSignals.status, 'draft'),
-      sql`${cardSignals.createdAt} < ${staleDraftThreshold}`,
-    ))
-    .returning({ id: cardSignals.id });
-
-  // 2. Active-expiry sweep: walk active signals past their
-  //    expires_at. Group by groupId so we handle multi-card
-  //    signals atomically — the public message represents the
-  //    whole group; we only PATCH it once.
+  // Active-expiry sweep: walk active signals past their expires_at.
+  // Group by groupId so we handle multi-card signals atomically —
+  // the public message represents the whole group; we only PATCH
+  // it once.
   const overdue = await db
     .select()
     .from(cardSignals)
@@ -1587,7 +982,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
     ));
 
   if (overdue.length === 0) {
-    res.status(200).json({ ok: true, expired: 0, staleDraftsDeleted: deletedDrafts.length });
+    res.status(200).json({ ok: true, expired: 0 });
     return;
   }
 
@@ -1645,7 +1040,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
       groupId,
       kind: firstRow.kind,
       status: 'expired',
-      mode: 'live',
+  
       cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
       note: firstRow.signalNote,
       maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
@@ -1669,7 +1064,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
     }
   }
 
-  res.status(200).json({ ok: true, expired, staleDraftsDeleted: deletedDrafts.length, patchFailures });
+  res.status(200).json({ ok: true, expired, patchFailures });
 }
 
 /**

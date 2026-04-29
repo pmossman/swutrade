@@ -194,8 +194,8 @@ export const botInstalledGuilds = pgTable('bot_installed_guilds', {
    */
   tradesChannelId: text('trades_channel_id'),
   /**
-   * Channel where /looking-for and /offering signal posts land.
-   * Defaults to `trades_channel_id` at read time when null — server
+   * Channel where signal posts (authored on the web Signal Builder)
+   * land. Defaults to `trades_channel_id` at read time when null — server
    * admins can override via the web app's guild settings page when
    * they want signals separated from the private trade-thread
    * parent channel (e.g., a dedicated #swu-lfg channel).
@@ -404,7 +404,7 @@ export const tradeProposals = pgTable(
     threadApprovalDmMessageId: text('thread_approval_dm_message_id'),
     // Set when this proposal was created in response to a
     // `card_signals` post (someone clicked "I have this!" / "I want
-    // this!" on a /looking-for or /offering signal). Lets the
+    // this!" on a signal post). Lets the
     // signal's response thread render in one query and lets
     // fulfillment detection mark the source signal as `fulfilled`
     // when this proposal transitions to `accepted`. ON DELETE SET
@@ -691,7 +691,8 @@ export const sessionEvents = pgTable(
 
 /**
  * Acute "I want this card NOW" / "I have this card to offload NOW"
- * broadcasts surfaced via `/looking-for` + `/offering` slash commands.
+ * broadcasts authored on the web Signal Builder (`/?signals=new`)
+ * and rendered as a public Discord embed.
  *
  * Distinct from a user's standing wishlist (`wants_items`) and binder
  * (`available_items`) — those are the long-tail inventory; signals
@@ -699,35 +700,34 @@ export const sessionEvents = pgTable(
  * for an upcoming event or quick turnaround.
  *
  * The signal IS the public surface of an inventory row, NOT a copy.
- * The slash handler upserts the underlying wants/available row first,
- * then inserts a signal row pointing at it. Cascade-delete from the
- * inventory side: if the user removes the card from their list, the
- * signal post becomes meaningless and gets retired automatically.
+ * The web `/api/signals` POST upserts the underlying wants/available
+ * row first, then inserts signal rows pointing at it. Cascade-delete
+ * from the inventory side: if the user removes the card from their
+ * list, the signal post becomes meaningless and gets retired.
  *
  * Lifecycle:
- *   active     — broadcast live; matched users have been DM-pinged
- *   cancelled  — owner clicked Cancel on the post
+ *   active     — broadcast live in the channel
+ *   cancelled  — owner clicked Cancel post (Discord button) or hit
+ *                /api/signals?action=cancel from the web
  *   fulfilled  — a trade between requester + responder for this card
  *                landed `accepted` (PR 3 detection)
  *   expired    — past `expires_at`; cron sweep marks + PATCHes embed
  *
  * Forward-compat for LGS integration:
  *   `event_id` / `lgs_id` are nullable today (no events table yet).
- *   When LGS ships, the slash command grows an `event:` autocomplete,
- *   matching gets a same-event-attendee boost, and these columns
- *   start carrying values without a schema change.
+ *   When LGS ships, the builder grows an event picker, matching gets
+ *   a same-event-attendee boost, and these columns carry values
+ *   without a schema change.
  */
 export const cardSignalKinds = ['wanted', 'offering'] as const;
 export type CardSignalKind = typeof cardSignalKinds[number];
 
-// `draft` — slash submitted, ephemeral preview shown to author,
-//           awaiting confirm. Cron sweeps drafts older than 1h.
-// `active` — confirmed; public post is live.
-// `cancelled` — author cancelled (from preview OR live post).
+// `active` — public post is live.
+// `cancelled` — author cancelled the live post.
 // `fulfilled` — accepted trade landed for this card with the
 //               signaler. PR 3 fulfillment detection lights this up.
 // `expired` — past `expires_at`; daily cron flips + PATCHes embed.
-export const cardSignalStatuses = ['draft', 'active', 'cancelled', 'fulfilled', 'expired'] as const;
+export const cardSignalStatuses = ['active', 'cancelled', 'fulfilled', 'expired'] as const;
 export type CardSignalStatus = typeof cardSignalStatuses[number];
 
 export const cardSignals = pgTable(
@@ -739,12 +739,10 @@ export const cardSignals = pgTable(
       .notNull(),
     kind: text('kind', { enum: cardSignalKinds }).notNull(),
 
-    // Group id for multi-card signals — `/looking-for card:Luke
-    // card2:Dedra card3:Cassian` produces three rows that share a
-    // groupId. The public post embeds all rows in one message;
-    // Cancel + Confirm act on the whole group. Single-card
-    // signals can leave this null OR set it to their own id (the
-    // slash handler does the latter for query symmetry).
+    // Group id for multi-card signals — a builder submission of
+    // 3 cards produces 3 rows that share a groupId. The public
+    // post embeds all rows in one message; Cancel acts on the
+    // whole group.
     groupId: text('group_id'),
 
     // Exactly one is non-null (enforced by DB CHECK constraint added
@@ -762,7 +760,7 @@ export const cardSignals = pgTable(
       .notNull(),
     channelId: text('channel_id').notNull(),
     // message_id is set after the bot.postChannelMessage call returns;
-    // null briefly between INSERT and UPDATE in the slash handler.
+    // null briefly between INSERT and UPDATE in /api/signals create.
     messageId: text('message_id'),
 
     // PR 2 stores the response thread id here. Reserved for forward

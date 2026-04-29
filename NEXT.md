@@ -32,25 +32,36 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-### Card signals — PR 1: foundation + signaler side
+### Card signals — PR 1: foundation + signaler side ✅ shipped 2026-04-28
 
-**Cut from queue item #2 (re-scoped 2026-04-28).** Three-PR cut for this slice; PR 1 ships only the broadcast side (no response surface yet — that's PR 2).
+**Cut from queue item #2 (re-scoped 2026-04-28).** Authored on the
+web Signal Builder; the bot's job is rendering + button interactions.
 
-**What ships in PR 1:**
+**What shipped in PR 1:**
 - `card_signals` table + `trade_proposals.responding_to_signal_id` denorm.
-- `/looking-for` + `/offering` slash commands with autocomplete on card name (+ forward-compat optional `event` arg).
-- Public signal post in invocation channel — embed with card image, card name + variant, qty, optional max-price/note, expiry hint. Cancel button only (no response surface yet).
-- DM-ping matched users at signal-post time, gated on `dm_match_alerts`.
-- Daily Vercel cron expires past-due signals + PATCHes their embeds. (Hobby plan caps cron at 1×/day; the resulting up-to-24h staleness is acceptable since the signal has already passed `expires_at`.)
-- Vitest coverage: signal upsert, match query, cancel button auth, cron transitions.
+- Web Signal Builder at `/?signals=new` — multi-card form (≤20),
+  per-card variant + max-price + qty, "Pull from wishlist priorities"
+  shortcut, guild dropdown, embed preview pane.
+- `POST /api/signals` posts the public embed, `DELETE` cancels the
+  group, `GET /api/signals/mine` lists the viewer's active signals.
+- Public signal post — embed with card image (single-card),
+  match listing of guild members holding the inverse inventory,
+  Cancel post button + Specify-variant button (single-card / variant=any).
+- Daily Vercel cron expires past-due signals + PATCHes their embeds.
+  (Hobby plan caps cron at 1×/day; the resulting up-to-24h staleness
+  is acceptable since the signal has already passed `expires_at`.)
+- Vitest coverage: signal create + cancel + list-mine, button-handler
+  cancel + variant flows.
 
-**Done when:**
-- [ ] Schema migration applied to Neon.
-- [ ] `/looking-for` + `/offering` registered against the beta app, autocomplete returns matches against the card index.
-- [ ] Slash → embed posts in channel; matched users get DM (test in beta guild).
-- [ ] Cancel button works (owner-only enforcement).
-- [ ] Cron job runs and expires.
-- [ ] Tests green; between-slice ritual passes.
+**What changed vs the original plan:**
+- Slash commands (`/looking-for`, `/offering`) were prototyped, then
+  killed — the structural limits of slash UX (5-card cap, no card
+  images in autocomplete, modal can't autocomplete) made the web
+  builder strictly better. Match listings render publicly in the
+  embed instead of auto-DM'ing matched users; Discord chat culture
+  is naturally public.
+- Signals carry public discovery only. A future slice may add a
+  per-signal Discord thread for response coordination.
 
 PR 2 (next) — response surface: thread under signal post, "I have this!" / "I want this!" button → modal → public response. PR 3 — ghost flow + fulfillment detection.
 
@@ -84,37 +95,36 @@ Ordered smallest / highest-clarity first so the between-slice ritual feedback lo
 
 ---
 
-### 2. Card signals — `/looking-for` + `/offering` slash commands
+### 2. Card signals — response surface (PR 2 / PR 3)
 
 **Why:** SWUTrade's wishlist + binder are the long-tail "what I want / what I have" inventory; signals are the **acute** version — "I specifically need 1× Luke before Friday's draft" or "I have an extra Cassian I want to offload by tonight." Today users do this via free-text Discord channels; the bot can structure that flood, auto-add to inventory, ping matched users, and turn anonymous responders into ghost users with an inviting on-ramp into SWUTrade. Designed forward-compat for the future LGS integration (event scope is in the schema from day 1).
 
 Wireframe doc lives in conversation history (2026-04-28) — fold into a `docs/wiki/` page when implementation starts.
 
-**What ships (PR 1 — core signal lifecycle):**
-- New `card_signals` table (kind: `wanted | offering`, references the underlying `wants_items` / `available_items` row, nullable `event_id` + `lgs_id` for LGS forward-compat).
-- `trade_proposals.responding_to_signal_id` denorm column for response-thread queries + fulfillment detection.
-- `/looking-for` + `/offering` slash commands with autocomplete on card name. Both gated on enrolled membership in a bot-installed guild.
-- Public signal post in the invocation channel with embed, response counter, and Cancel button. Thread spawned under the post for visible response trail.
+**What ships (PR 1 — shipped 2026-04-28; see Active slice above):**
+- New `card_signals` table + the web Signal Builder + Discord embed
+  rendering + button interactions (Cancel post, Specify variant).
+- Match listings render publicly in the embed. No auto-DMs.
+
+**What ships (PR 2 — response surface, not yet started):**
+- Thread spawned under each live signal post for a visible response trail.
 - "I have this!" / "I want this!" button → Discord modal → quick-respond flow:
   - Signed-in users → real `trade_proposals` row, posts public response in thread.
   - Anonymous users → ghost user minted (`createGhostUser` keyed to `discord_id`), proposal still real, response posted with "Discord-only · join SWUTrade" badge, confirmation DM with soft sign-in CTA.
-- DM-ping matched users at signal-post time, gated on each match's `dm_match_alerts` pref.
 - Ghost spam limit: max 3 active responses across all signals (forces resolution or sign-in for headroom).
-
-**What ships (PR 2 — lifecycle + fulfillment):**
-- `api/cron/signals.ts` — hourly Vercel cron expires past-due signals, PATCHes their embeds (strike-through + "Expired" badge), locks their threads.
-- `lib/proposalResolve.ts` — on `accepted` transition, mark matching signal `fulfilled`, PATCH embed (green "Fulfilled by @responder" badge), lock thread.
 - `lib/discordBot.ts` — add `startThreadFromMessage` + modal-response helpers (modal interaction type is new for us).
 - `api/bot.ts` — modal-submit dispatch path for `signal-respond:*` custom_ids.
-- Re-run-same-card behavior: `/looking-for` for an already-active card bumps the existing signal's `expires_at` rather than posting a duplicate.
-- Vitest coverage in `tests/api/signals.test.ts` (upsert + match + ghost mint + fulfillment); e2e in `e2e/signals.auth.spec.ts` for the signed-in slash flow.
+
+**What ships (PR 3 — fulfillment detection):**
+- `lib/proposalResolve.ts` — on `accepted` transition, mark matching signal `fulfilled`, PATCH embed (green "Fulfilled by @responder" badge), lock thread.
+- Re-post-same-card behavior: `POST /api/signals` for an already-active card bumps the existing signal's `expires_at` rather than posting a duplicate.
+- Vitest coverage extends `tests/api/signals.test.ts` (response thread, ghost mint, fulfillment); e2e in `e2e/signals.auth.spec.ts` for the signed-in response flow.
 
 **Done when:**
-- [ ] Both slash commands registered + functional in a test guild.
 - [ ] Anonymous click → modal → ghost-mint → real proposal + public response thread post all work end-to-end.
 - [ ] Ghost claims merge cleanly when the user later signs in via OAuth.
-- [ ] Cron expiry + fulfillment-detection PATCH the signal embed correctly.
-- [ ] DM-ping respects `dm_match_alerts`; ghost spam limit enforced.
+- [ ] Fulfillment-detection PATCHes the signal embed correctly on `accepted`.
+- [ ] Ghost spam limit enforced.
 - [ ] `docs/wiki/` page created summarizing the feature surface.
 - [ ] Between-slice ritual passes for each PR.
 

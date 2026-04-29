@@ -116,86 +116,6 @@ const headers = {
 // Shared option set for /looking-for and /offering. The two
 // commands are symmetric — same shape, just inverse semantics —
 // so the option list lives in one place to keep them in lockstep.
-// Multi-card support: card2..card5 are optional and autocomplete
-// the same way card does. Each becomes its own card_signals row
-// in the resulting group; the public post lists them as bullets.
-// 5 max per slash invocation — Discord allows 25 options total per
-// command, but the slash UI gets unwieldy past 5 cards. "Add
-// another card" button on the post will lift this limit later.
-const SIGNAL_OPTIONS = [
-  {
-    type: 3, // STRING
-    name: 'card',
-    description: 'Card name (autocompletes from the SWUTrade index)',
-    required: true,
-    autocomplete: true,
-  },
-  {
-    type: 3, // STRING
-    name: 'variant',
-    description: 'Restrict to a specific printing (autocompletes from the chosen card)',
-    required: false,
-    autocomplete: true,
-  },
-  {
-    type: 3, // STRING
-    name: 'card2',
-    description: 'Add a second card to this signal (optional)',
-    required: false,
-    autocomplete: true,
-  },
-  {
-    type: 3, // STRING
-    name: 'card3',
-    description: 'Add a third card (optional)',
-    required: false,
-    autocomplete: true,
-  },
-  {
-    type: 3, // STRING
-    name: 'card4',
-    description: 'Add a fourth card (optional)',
-    required: false,
-    autocomplete: true,
-  },
-  {
-    type: 3, // STRING
-    name: 'card5',
-    description: 'Add a fifth card (optional)',
-    required: false,
-    autocomplete: true,
-  },
-  {
-    type: 4, // INTEGER
-    name: 'qty',
-    description: 'How many copies of each card (default 1; applies to all cards in this signal)',
-    required: false,
-    min_value: 1,
-    max_value: 99,
-  },
-  {
-    type: 10, // NUMBER (float)
-    name: 'max_price',
-    description: 'Max unit price you\'d pay / asking price ($)',
-    required: false,
-    min_value: 0,
-  },
-  {
-    type: 3, // STRING
-    name: 'note',
-    description: 'Optional context (e.g. "for Friday\'s draft")',
-    required: false,
-    max_length: 100,
-  },
-  {
-    type: 3, // STRING
-    name: 'event',
-    description: 'Forward-compat — pickup at a specific LGS event (currently unused)',
-    required: false,
-    autocomplete: true,
-  },
-];
-
 const COMMANDS = [
   {
     type: 1, // CHAT_INPUT (slash command)
@@ -222,18 +142,11 @@ const COMMANDS = [
     name: 'SWUTrade prefs',
     // Context menu commands do NOT take a description field.
   },
-  {
-    type: 1, // CHAT_INPUT
-    name: 'looking-for',
-    description: 'Post that you\'re looking for a card — pings users in this server who have it listed',
-    options: SIGNAL_OPTIONS,
-  },
-  {
-    type: 1, // CHAT_INPUT
-    name: 'offering',
-    description: 'Post that you have a card to offload — pings users in this server who want it',
-    options: SIGNAL_OPTIONS,
-  },
+  // /looking-for and /offering moved to a web-app builder at
+  // swutrade.com/?signals=new — the slash UX hit Discord's
+  // structural limits (5-card cap, no card images in autocomplete,
+  // modal can't autocomplete). PUTting the smaller list here drops
+  // the dead commands from Discord on next register.
 ];
 
 async function call(method, path, body) {

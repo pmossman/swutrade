@@ -307,7 +307,6 @@ export async function handleCreate(
     groupId,
     kind: body.kind,
     status: 'active',
-    mode: 'live',
     cards: cardsForEmbed,
     note: body.note ?? null,
     maxUnitPrice: groupMaxPrice,
@@ -435,7 +434,7 @@ export async function handleCancel(
         groupId,
         kind: firstRow.kind,
         status: 'cancelled',
-        mode: 'live',
+    
         cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
         note: firstRow.signalNote,
         maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
