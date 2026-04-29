@@ -1006,7 +1006,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
 
   for (const signal of overdue) {
     // Set status FIRST so a flaky Discord PATCH doesn't keep us
-    // re-sweeping the same row each hour. The embed update is a
+    // re-sweeping the same row on the next daily run. The embed update is a
     // best-effort visual sync; the database is the source of truth.
     await db.update(cardSignals)
       .set({ status: 'expired' })

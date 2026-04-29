@@ -41,7 +41,7 @@ Skipping any of 1–3 is a bug in the process.
 - `/looking-for` + `/offering` slash commands with autocomplete on card name (+ forward-compat optional `event` arg).
 - Public signal post in invocation channel — embed with card image, card name + variant, qty, optional max-price/note, expiry hint. Cancel button only (no response surface yet).
 - DM-ping matched users at signal-post time, gated on `dm_match_alerts`.
-- Hourly Vercel cron expires past-due signals + PATCHes their embeds.
+- Daily Vercel cron expires past-due signals + PATCHes their embeds. (Hobby plan caps cron at 1×/day; the resulting up-to-24h staleness is acceptable since the signal has already passed `expires_at`.)
 - Vitest coverage: signal upsert, match query, cancel button auth, cron transitions.
 
 **Done when:**
