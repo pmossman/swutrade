@@ -66,7 +66,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
     session, preview, status,
     saveCards, confirm, unconfirm, cancel, claim,
     hasUnseenCounterpartEdit, markCounterpartSeen,
-    sendChat, suggest, acceptSuggestion, dismissSuggestion,
+    sendChat, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
   } = api;
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
@@ -389,6 +389,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           session={session}
           onClose={() => setTimelineOpen(false)}
           sendChat={sendChat}
+          proposeRevert={proposeRevert}
         />
       )}
 

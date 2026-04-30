@@ -20,6 +20,7 @@ import {
   inviteHandleToSession,
   listActiveSessionsForViewer,
   markSessionRead,
+  proposeRevertForSession,
   sendChatMessage,
   suggestForSession,
   unconfirmSession,
@@ -71,6 +72,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleAcceptSuggestion(req, res);
     case 'dismiss-suggestion':
       return handleDismissSuggestion(req, res);
+    case 'propose-revert':
+      return handleProposeRevertSession(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/sessions action' });
   }
@@ -182,6 +185,10 @@ const SuggestBodySchema = z.object({
   targetSide: z.enum(['a', 'b']),
   cardsToAdd: z.array(TradeCardSnapshotSchema).max(50).default([]),
   cardsToRemove: z.array(TradeCardSnapshotSchema).max(50).default([]),
+});
+
+const ProposeRevertBodySchema = z.object({
+  snapshotEventId: z.string().min(1).max(80),
 });
 
 /**
@@ -796,4 +803,55 @@ export async function handleDismissSuggestion(req: VercelRequest, res: VercelRes
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.ok ? result.view : null });
+}
+
+/**
+ * Propose a revert to a past edit-snapshot. Body: { snapshotEventId }.
+ * Creates a `targetSide: 'both'` pending suggestion that the
+ * counterpart accepts (double-sided confirm).
+ */
+export async function handleProposeRevertSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const parsed = ProposeRevertBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const db = getDb();
+  const result = await proposeRevertForSession(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    snapshotEventId: parsed.data.snapshotEventId,
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+      case 'not-participant':
+      case 'no-such-snapshot':
+        return res.status(404).json({ error: 'Not found' });
+      case 'terminal':
+      case 'open-slot':
+        return res.status(409).json({ error: result.reason });
+      case 'no-op':
+        return res.status(400).json({ error: 'Current state already matches that snapshot' });
+      case 'cap-exceeded':
+        return res.status(400).json({ error: 'cap-exceeded' });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({
+    session: result.ok ? result.view : null,
+    suggestionId: result.ok ? result.suggestionId : null,
+  });
 }

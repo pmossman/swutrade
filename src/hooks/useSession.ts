@@ -166,6 +166,11 @@ export interface SessionApi {
   acceptSuggestion: (suggestionId: string) => Promise<{ ok: boolean }>;
   /** Explicit dismissal — either party can dismiss. */
   dismissSuggestion: (suggestionId: string) => Promise<{ ok: boolean }>;
+  /** Propose a revert to a past edit-snapshot. The targetSide is
+   *  always 'both'; the counterpart accepts to apply (double-sided
+   *  confirm). 'no-op' reason returned when current state already
+   *  matches the snapshot. */
+  proposeRevert: (snapshotEventId: string) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
 }
 
 // Module-scoped cache: session id → SessionView. Same pattern as
@@ -533,6 +538,22 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
+  const proposeRevert = useCallback(async (snapshotEventId: string) => {
+    if (!sessionId) return { ok: false as const, reason: 'no-session' };
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/propose-revert`,
+        { snapshotEventId },
+      );
+      if (!result.ok) return { ok: false as const, reason: result.reason };
+      if (result.data.session) applyServerSession(result.data.session);
+      return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
   return {
     session,
     preview,
@@ -549,5 +570,6 @@ export function useSession(sessionId: string | null): SessionApi {
     suggest,
     acceptSuggestion,
     dismissSuggestion,
+    proposeRevert,
   };
 }

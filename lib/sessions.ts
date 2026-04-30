@@ -316,15 +316,16 @@ export async function getSessionForViewer(
 
 /**
  * Fetch the most-recent N events for a session, newest-first, with
- * `actorIsViewer` precomputed for the rendered shape. Excludes
- * 'edit-snapshot' events from the default timeline (they're stored
- * for revert-history but would clutter the chat-like log) — callers
- * that need them pass `includeSnapshots: true`.
+ * `actorIsViewer` precomputed for the rendered shape. Includes
+ * 'edit-snapshot' events so PR 3's revert-to-state UI can surface
+ * them as "↶ Revert here" affordances in the timeline. Display
+ * filtering (e.g. collapsing snapshots into compact rows alongside
+ * the matching 'edited' event) is the renderer's job.
  */
 export async function listEventsForSession(
   db: Db,
   sessionId: string,
-  opts: { viewerUserId: string; limit?: number; includeSnapshots?: boolean },
+  opts: { viewerUserId: string; limit?: number },
 ): Promise<SessionEvent[]> {
   const limit = Math.min(Math.max(opts.limit ?? SESSION_EVENT_PAGE_SIZE, 1), 200);
   const rows = await db
@@ -338,13 +339,9 @@ export async function listEventsForSession(
     .from(sessionEvents)
     .where(eq(sessionEvents.sessionId, sessionId))
     .orderBy(desc(sessionEvents.createdAt))
-    .limit(limit + 50); // overfetch a little to allow snapshot filtering
+    .limit(limit);
 
-  const filtered = opts.includeSnapshots
-    ? rows
-    : rows.filter(r => r.type !== 'edit-snapshot');
-
-  return filtered.slice(0, limit).map(r => ({
+  return rows.map(r => ({
     id: r.id,
     type: r.type,
     actorUserId: r.actorUserId,
@@ -1706,13 +1703,24 @@ export async function markSessionRead(
  * for the view (so the UI renders residual delta) and for auto-
  * dismissal (residual === empty → suggestion is satisfied).
  */
+function cardListsEqual(a: TradeCardSnapshot[], b: TradeCardSnapshot[]): boolean {
+  if (a.length !== b.length) return false;
+  const aMap = new Map(a.map(c => [c.productId, c.qty]));
+  for (const c of b) {
+    if (aMap.get(c.productId) !== c.qty) return false;
+  }
+  return true;
+}
+
 function computeSuggestionResidual(
   suggestion: PendingSuggestion,
   userACards: TradeCardSnapshot[],
   userBCards: TradeCardSnapshot[],
 ): { residualAdd: TradeCardSnapshot[]; residualRemove: TradeCardSnapshot[] } {
-  // 'both' is reserved for PR 3 revert-to-snapshot; treat the entire
-  // payload as residual until matched against state in PR 3.
+  // 'both'-side reverts compute satisfaction differently — current
+  // state matches the snapshot atomically, no per-card residual.
+  // We return empty residual lists for the per-card UI, and the
+  // sweep treats matching state as satisfied via cardListsEqual.
   if (suggestion.targetSide === 'both') {
     return { residualAdd: [], residualRemove: [] };
   }
@@ -1754,6 +1762,28 @@ function sweepAutoDismissals(
   const newlyDismissed: PendingSuggestion[] = [];
   const next = suggestions.map(s => {
     if (s.dismissedAt) return s; // already dismissed, leave alone
+
+    // 'both'-side revert: satisfied iff the current state of both
+    // sides exactly matches the snapshot. (The suggestion is "set
+    // both sides to this state"; if they're already there, the
+    // request is effectively done.)
+    if (s.targetSide === 'both') {
+      if (!s.bothSidesSnapshot) return s; // malformed — leave alone
+      if (
+        cardListsEqual(s.bothSidesSnapshot.userACards, userACards)
+        && cardListsEqual(s.bothSidesSnapshot.userBCards, userBCards)
+      ) {
+        const dismissed: PendingSuggestion = {
+          ...s,
+          dismissedAt: now.toISOString(),
+          dismissedReason: 'satisfied',
+        };
+        newlyDismissed.push(dismissed);
+        return dismissed;
+      }
+      return s;
+    }
+
     const { residualAdd, residualRemove } = computeSuggestionResidual(s, userACards, userBCards);
     if (residualAdd.length === 0 && residualRemove.length === 0) {
       const dismissed: PendingSuggestion = {
@@ -1942,56 +1972,81 @@ export async function acceptSuggestion(
 
   const viewerIsA = row.userAId === args.viewerUserId;
   const viewerSide: 'a' | 'b' = viewerIsA ? 'a' : 'b';
-  // PR 3 'both' lands later — currently treat 'both' as not-target
-  // for any single side (revert-suggestions need cross-confirm flow).
-  if (suggestion.targetSide !== viewerSide) {
-    return { ok: false, reason: 'not-target' };
-  }
 
-  // Compute residual against current state. If it's already empty
-  // (someone edited their way to satisfaction in a tight race), we
-  // still mark the suggestion accepted but skip the edit call.
-  const { residualAdd, residualRemove } = computeSuggestionResidual(
-    suggestion,
-    row.userACards,
-    row.userBCards,
-  );
-
-  // Apply the residual: take the target side's current cards, add
-  // residualAdd entries (bumping qty if productId already present),
-  // remove residualRemove entries (zeroing them out).
-  const targetCurrent = viewerIsA ? row.userACards : row.userBCards;
-  const byPid = new Map(targetCurrent.map(c => [c.productId, { ...c }]));
-  for (const add of residualAdd) {
-    const existing = byPid.get(add.productId);
-    if (existing) {
-      byPid.set(add.productId, { ...existing, qty: existing.qty + add.qty });
-    } else {
-      byPid.set(add.productId, { ...add });
+  // Authorization rules differ by suggestion shape:
+  //   - 'a' / 'b': only the target side's owner can accept.
+  //   - 'both' (revert): the suggester explicitly committed to the
+  //     revert by proposing it; only the COUNTERPART (non-suggester)
+  //     can accept. That's the "double-sided confirm" — both parties
+  //     have to agree, one via proposal, the other via acceptance.
+  if (suggestion.targetSide === 'both') {
+    if (suggestion.suggestedByUserId === args.viewerUserId) {
+      return { ok: false, reason: 'not-target' };
+    }
+  } else {
+    if (suggestion.targetSide !== viewerSide) {
+      return { ok: false, reason: 'not-target' };
     }
   }
-  for (const rm of residualRemove) {
-    byPid.delete(rm.productId);
-  }
-  const nextCards = Array.from(byPid.values());
 
-  // Mark the suggestion accepted (using dismissedReason as the
-  // discriminator — dismissedAt + reason='accepted' would be cleaner
-  // semantically but conflicts with the type's enum. Instead we drop
-  // the row from pending_suggestions outright on accept; the event
-  // log carries the audit trail.)
   const now = new Date();
   const remaining = suggestions.filter((_, i) => i !== idx);
+  const priorConfirmations = row.confirmedByUserIds.length;
+
+  // Compute next-state cards. For 'a' / 'b' we apply the residual
+  // delta to the target side; for 'both' we replace both sides with
+  // the snapshot.
+  let nextUserACards: TradeCardSnapshot[];
+  let nextUserBCards: TradeCardSnapshot[];
+  let acceptedPayload: Record<string, unknown>;
+
+  if (suggestion.targetSide === 'both') {
+    if (!suggestion.bothSidesSnapshot) {
+      return { ok: false, reason: 'no-such-suggestion' }; // malformed
+    }
+    nextUserACards = suggestion.bothSidesSnapshot.userACards;
+    nextUserBCards = suggestion.bothSidesSnapshot.userBCards;
+    acceptedPayload = {
+      suggestionId: suggestion.id,
+      kind: 'revert',
+    };
+  } else {
+    const { residualAdd, residualRemove } = computeSuggestionResidual(
+      suggestion,
+      row.userACards,
+      row.userBCards,
+    );
+    const targetCurrent = viewerIsA ? row.userACards : row.userBCards;
+    const byPid = new Map(targetCurrent.map(c => [c.productId, { ...c }]));
+    for (const add of residualAdd) {
+      const existing = byPid.get(add.productId);
+      if (existing) {
+        byPid.set(add.productId, { ...existing, qty: existing.qty + add.qty });
+      } else {
+        byPid.set(add.productId, { ...add });
+      }
+    }
+    for (const rm of residualRemove) {
+      byPid.delete(rm.productId);
+    }
+    const nextCards = Array.from(byPid.values());
+    nextUserACards = viewerIsA ? nextCards : row.userACards;
+    nextUserBCards = viewerIsA ? row.userBCards : nextCards;
+    acceptedPayload = {
+      suggestionId: suggestion.id,
+      addedCount: residualAdd.length,
+      removedCount: residualRemove.length,
+    };
+  }
 
   // Apply via direct update; can't reuse editSessionSide because it
   // does its own snapshot/event recording and we need to atomically
   // swap pending_suggestions in the same write.
-  const priorConfirmations = row.confirmedByUserIds.length;
   await db
     .update(tradeSessions)
     .set({
-      userACards: viewerIsA ? nextCards : row.userACards,
-      userBCards: viewerIsA ? row.userBCards : nextCards,
+      userACards: nextUserACards,
+      userBCards: nextUserBCards,
       confirmedByUserIds: [],
       lastEditedAt: now,
       lastEditedByUserId: args.viewerUserId,
@@ -2005,25 +2060,27 @@ export async function acceptSuggestion(
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
     type: 'suggestion-accepted',
-    payload: {
-      suggestionId: suggestion.id,
-      addedCount: residualAdd.length,
-      removedCount: residualRemove.length,
-    },
+    payload: acceptedPayload,
   });
   await recordSessionEvent(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
     type: 'edited',
-    payload: { side: viewerSide, count: nextCards.length, viaSuggestion: suggestion.id },
+    payload: {
+      side: suggestion.targetSide === 'both' ? 'both' : viewerSide,
+      count: suggestion.targetSide === 'both'
+        ? nextUserACards.length + nextUserBCards.length
+        : (viewerIsA ? nextUserACards.length : nextUserBCards.length),
+      viaSuggestion: suggestion.id,
+    },
   });
   await recordSessionEvent(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
     type: 'edit-snapshot',
     payload: {
-      userACards: viewerIsA ? nextCards : row.userACards,
-      userBCards: viewerIsA ? row.userBCards : nextCards,
+      userACards: nextUserACards,
+      userBCards: nextUserBCards,
     },
   });
   if (priorConfirmations > 0) {
@@ -2092,6 +2149,114 @@ export async function dismissSuggestion(
   const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
   if (!view) return { ok: false, reason: 'not-found' };
   return { ok: true, view };
+}
+
+// --- PR 3: snapshot history + double-sided revert -------------------------
+
+export type ProposeRevertResult =
+  | { ok: true; view: SessionView; suggestionId: string }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'open-slot' | 'no-such-snapshot' | 'cap-exceeded' | 'no-op' };
+
+/**
+ * Author a "revert to this state" suggestion. Looks up the named
+ * snapshot event in this session, captures its `{userACards,
+ * userBCards}` payload, and creates a `targetSide: 'both'` pending
+ * suggestion that the COUNTERPART must accept (double-sided
+ * confirm). Auto-dismisses immediately if the current state already
+ * matches the snapshot — no point holding a no-op suggestion.
+ *
+ * Reuses pending_suggestions storage + accept/dismiss endpoints +
+ * auto-sweep machinery from PR 2; the only special case is the
+ * 'both' targetSide branch in `acceptSuggestion`.
+ */
+export async function proposeRevertForSession(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string; snapshotEventId: string },
+): Promise<ProposeRevertResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  if (row.userBId === null) return { ok: false, reason: 'open-slot' };
+
+  // Pull the snapshot event. Must belong to this session and be of
+  // type 'edit-snapshot' (revert can only target real snapshot
+  // payloads, not arbitrary events).
+  const [event] = await db
+    .select()
+    .from(sessionEvents)
+    .where(and(
+      eq(sessionEvents.id, args.snapshotEventId),
+      eq(sessionEvents.sessionId, args.sessionId),
+    ))
+    .limit(1);
+  if (!event || event.type !== 'edit-snapshot') {
+    return { ok: false, reason: 'no-such-snapshot' };
+  }
+  const payload = event.payload as { userACards?: TradeCardSnapshot[]; userBCards?: TradeCardSnapshot[] } | null;
+  if (!payload || !Array.isArray(payload.userACards) || !Array.isArray(payload.userBCards)) {
+    return { ok: false, reason: 'no-such-snapshot' };
+  }
+
+  // No-op shortcut — current state already matches the snapshot.
+  // Reverting to "now" is meaningless; refuse so the user gets an
+  // immediate "nothing to revert" hint instead of a phantom pending
+  // suggestion that auto-dismisses on the next poll.
+  if (
+    cardListsEqual(payload.userACards, row.userACards)
+    && cardListsEqual(payload.userBCards, row.userBCards)
+  ) {
+    return { ok: false, reason: 'no-op' };
+  }
+
+  const active = (row.pendingSuggestions ?? []).filter(s => !s.dismissedAt);
+  if (active.length >= MAX_PENDING_SUGGESTIONS) {
+    return { ok: false, reason: 'cap-exceeded' };
+  }
+
+  const now = new Date();
+  const newSuggestion: PendingSuggestion = {
+    id: crypto.randomUUID(),
+    suggestedByUserId: args.viewerUserId,
+    targetSide: 'both',
+    cardsToAdd: [],
+    cardsToRemove: [],
+    bothSidesSnapshot: {
+      userACards: payload.userACards,
+      userBCards: payload.userBCards,
+    },
+    createdAt: now.toISOString(),
+  };
+
+  const pruned = pruneStaleDismissals(row.pendingSuggestions ?? [], now);
+  const next = [...pruned, newSuggestion];
+
+  await db
+    .update(tradeSessions)
+    .set({ pendingSuggestions: next, updatedAt: now })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'suggestion-created',
+    payload: {
+      suggestionId: newSuggestion.id,
+      targetSide: 'both',
+      kind: 'revert',
+      fromSnapshotEventId: args.snapshotEventId,
+    },
+  });
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view, suggestionId: newSuggestion.id };
 }
 
 // Expose drizzle helpers that future files will reuse so we don't

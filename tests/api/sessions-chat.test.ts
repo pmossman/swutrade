@@ -194,7 +194,7 @@ describeWithDb('POST /api/sessions — chat + read state', () => {
     expect(aliceCards.map(c => c.productId).sort()).toEqual(['a-1', 'a-2']);
   });
 
-  it('snapshot events excluded from default timeline (events list omits them)', async () => {
+  it('snapshot events surface in the timeline so revert UI can target them', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);
     const bob = await createTestUser();
@@ -217,10 +217,11 @@ describeWithDb('POST /api/sessions — chat + read state', () => {
     expect(res._status).toBe(200);
     const body = res._json as { session: { events: Array<{ type: string }> } };
     const types = body.session.events.map(e => e.type);
-    expect(types).not.toContain('edit-snapshot');
-    // But the chat we just posted is there.
+    // PR 3 surfaces snapshot events in the default timeline so the
+    // revert UI can pick one. The renderer is responsible for
+    // visual treatment (compact "↶ Revert here" affordance).
+    expect(types).toContain('edit-snapshot');
     expect(types).toContain('chat');
-    // And the edit + edit-related events.
     expect(types).toContain('edited');
   });
 });

@@ -49,6 +49,7 @@
     { "source": "/api/sessions/:id/suggest", "destination": "/api/sessions?action=suggest&id=:id" },
     { "source": "/api/sessions/:id/suggestion/:suggestionId/accept", "destination": "/api/sessions?action=accept-suggestion&id=:id&suggestionId=:suggestionId" },
     { "source": "/api/sessions/:id/suggestion/:suggestionId/dismiss", "destination": "/api/sessions?action=dismiss-suggestion&id=:id&suggestionId=:suggestionId" },
+    { "source": "/api/sessions/:id/propose-revert", "destination": "/api/sessions?action=propose-revert&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
     { "source": "/api/signals/mine", "destination": "/api/signals?action=mine" },
     { "source": "/api/signals/:groupId/cancel", "destination": "/api/signals?action=cancel&groupId=:groupId" },

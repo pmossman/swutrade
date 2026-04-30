@@ -26,21 +26,41 @@ interface SessionTimelinePanelProps {
   /** Closes the panel. Caller decides whether to also clear focus. */
   onClose: () => void;
   sendChat: (body: string) => Promise<{ ok: true } | { ok: false; reason: 'rate-limited' | 'invalid' | 'error' }>;
+  /** Propose a revert to the given snapshot event id (PR 3). The
+   *  panel renders edit-snapshot events with a "↶ Revert here"
+   *  affordance that fires this. */
+  proposeRevert: (snapshotEventId: string) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
 }
 
-export function SessionTimelinePanel({ session, onClose, sendChat }: SessionTimelinePanelProps) {
+export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert }: SessionTimelinePanelProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
+  const [revertError, setRevertError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Server returns events newest-first; reverse for chronological
-  // top-to-bottom render. Skip event types that aren't user-meaningful.
+  // top-to-bottom render. Skip system-internal types.
   const visibleEvents = useMemo(() => {
     return [...session.events]
-      .filter(e => e.type !== 'notified' && e.type !== 'edit-snapshot')
+      .filter(e => e.type !== 'notified')
       .reverse();
   }, [session.events]);
+
+  const handleRevert = async (snapshotEventId: string) => {
+    setRevertingId(snapshotEventId);
+    setRevertError(null);
+    const result = await proposeRevert(snapshotEventId);
+    setRevertingId(null);
+    if (!result.ok) {
+      setRevertError(
+        result.reason === 'no-op'
+          ? 'Already at this state — nothing to revert.'
+          : "Couldn't propose revert — try again.",
+      );
+    }
+  };
 
   // Auto-scroll to bottom when new events arrive (chat-app convention).
   // Only auto-scrolls if user is already near the bottom — avoids
@@ -110,6 +130,11 @@ export function SessionTimelinePanel({ session, onClose, sendChat }: SessionTime
         </header>
 
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
+          {revertError && (
+            <div className="text-[11px] text-red-400 px-2 py-1 rounded border border-red-500/30 bg-red-950/20">
+              {revertError}
+            </div>
+          )}
           {visibleEvents.length === 0 ? (
             <EmptyState />
           ) : (
@@ -118,6 +143,8 @@ export function SessionTimelinePanel({ session, onClose, sendChat }: SessionTime
                 key={event.id}
                 event={event}
                 counterpartHandle={counterpartHandle}
+                onRevert={event.type === 'edit-snapshot' ? () => handleRevert(event.id) : undefined}
+                reverting={revertingId === event.id}
               />
             ))
           )}
@@ -166,7 +193,17 @@ function EmptyState() {
   );
 }
 
-function EventRow({ event, counterpartHandle }: { event: SessionEvent; counterpartHandle: string }) {
+function EventRow({
+  event,
+  counterpartHandle,
+  onRevert,
+  reverting,
+}: {
+  event: SessionEvent;
+  counterpartHandle: string;
+  onRevert?: () => void;
+  reverting?: boolean;
+}) {
   const actor = event.actorIsViewer ? 'You' : `@${counterpartHandle}`;
   const time = formatTime(event.createdAt);
 
@@ -190,6 +227,27 @@ function EventRow({ event, counterpartHandle }: { event: SessionEvent; counterpa
     );
   }
 
+  // edit-snapshot rows render as compact "snapshot pill + revert-here
+  // button" so the user can pick any past state to propose reverting
+  // to. The matching 'edited' event is rendered separately as the
+  // human-readable description.
+  if (event.type === 'edit-snapshot' && onRevert) {
+    return (
+      <div className="flex items-center justify-center gap-2 text-[11px] py-1">
+        <span className="text-gray-600 italic">snapshot · {time}</span>
+        <button
+          type="button"
+          onClick={onRevert}
+          disabled={reverting}
+          className="px-2 py-0.5 rounded border border-amber-500/30 hover:border-amber-400/60 hover:bg-amber-900/20 text-amber-300 hover:text-amber-100 text-[10px] font-bold uppercase tracking-wide transition-colors disabled:opacity-50"
+          title="Propose a revert to this state"
+        >
+          {reverting ? 'Sending…' : '↶ Revert here'}
+        </button>
+      </div>
+    );
+  }
+
   // Structured event — small one-liner with subtle chrome.
   const summary = summarizeStructuredEvent(event, actor);
   if (!summary) return null;
@@ -206,6 +264,14 @@ function summarizeStructuredEvent(event: SessionEvent, actor: string): string | 
       return 'Session opened';
     case 'edited': {
       const count = typeof event.payload?.count === 'number' ? event.payload.count : null;
+      const viaSuggestion = typeof event.payload?.viaSuggestion === 'string';
+      const side = event.payload?.side;
+      if (viaSuggestion && side === 'both') {
+        return `${actor} accepted a revert`;
+      }
+      if (viaSuggestion) {
+        return `${actor} accepted a suggestion`;
+      }
       return count != null
         ? `${actor} edited their side (${count} card${count === 1 ? '' : 's'})`
         : `${actor} edited their side`;
@@ -224,6 +290,20 @@ function summarizeStructuredEvent(event: SessionEvent, actor: string): string | 
       return `${actor} cancelled the session`;
     case 'expired':
       return 'Session expired';
+    case 'suggestion-created': {
+      const kind = event.payload?.kind === 'revert' ? 'revert' : 'suggestion';
+      return `${actor} proposed a ${kind}`;
+    }
+    case 'suggestion-accepted':
+      // The matching 'edited' event renders the user-visible "applied"
+      // line; this one is internal bookkeeping.
+      return null;
+    case 'suggestion-dismissed': {
+      const reason = event.payload?.reason;
+      if (reason === 'satisfied') return 'A suggestion was satisfied and cleared';
+      if (reason === 'unactionable') return 'A suggestion was no longer actionable';
+      return `${actor} dismissed a suggestion`;
+    }
     default:
       return null;
   }

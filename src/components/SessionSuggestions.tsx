@@ -65,6 +65,20 @@ interface SuggestionRowProps {
 function SuggestionRow({ suggestion, counterpartHandle, onAccept, onDismiss }: SuggestionRowProps) {
   const [busy, setBusy] = useState<'accept' | 'dismiss' | null>(null);
 
+  // Revert suggestions ('both' targetSide) get a distinct render —
+  // the snapshot replaces both sides atomically, so per-side delta
+  // doesn't apply. Show the snapshot summary + accept/dismiss.
+  if (suggestion.targetSide === 'both') {
+    return (
+      <RevertSuggestionRow
+        suggestion={suggestion}
+        counterpartHandle={counterpartHandle}
+        onAccept={onAccept}
+        onDismiss={onDismiss}
+      />
+    );
+  }
+
   const fromActor = suggestion.suggestedByViewer
     ? 'You'
     : `@${counterpartHandle ?? 'counterpart'}`;
@@ -155,6 +169,121 @@ function SuggestionRow({ suggestion, counterpartHandle, onAccept, onDismiss }: S
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * Revert-suggestion variant. Replaces both sides atomically — the
+ * snapshot was captured at a specific past edit, so we surface the
+ * full both-sides card list as a "this would set the trade to look
+ * like this" preview.
+ *
+ * Auth: revert proposals follow the double-sided confirm — only the
+ * NON-suggester can accept. The suggester's only action is Withdraw.
+ */
+function RevertSuggestionRow({
+  suggestion,
+  counterpartHandle,
+  onAccept,
+  onDismiss,
+}: SuggestionRowProps) {
+  const [busy, setBusy] = useState<'accept' | 'dismiss' | null>(null);
+  const fromActor = suggestion.suggestedByViewer
+    ? 'You'
+    : `@${counterpartHandle ?? 'counterpart'}`;
+  const snapshot = suggestion.bothSidesSnapshot;
+
+  const handleAccept = async () => {
+    setBusy('accept');
+    try {
+      await onAccept(suggestion.id);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const handleDismiss = async () => {
+    setBusy('dismiss');
+    try {
+      await onDismiss(suggestion.id);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <li className="rounded-lg border border-amber-500/25 bg-amber-950/20 p-2.5 flex flex-col gap-2">
+      <div className="text-[11px] text-amber-100/90">
+        <span className="font-semibold">{fromActor}</span>
+        <span className="text-amber-200/60"> proposed reverting both sides to a past state</span>
+      </div>
+
+      {snapshot && (
+        <div className="grid grid-cols-2 gap-2 text-[12px]">
+          <div className="rounded bg-space-900/40 border border-space-700 p-1.5">
+            <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-0.5">Your side</div>
+            <SnapshotCardList cards={snapshot.yourCards} />
+          </div>
+          <div className="rounded bg-space-900/40 border border-space-700 p-1.5">
+            <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-0.5">
+              @{counterpartHandle ?? 'counterpart'}'s side
+            </div>
+            <SnapshotCardList cards={snapshot.theirCards} />
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 pt-1">
+        {/* Accept gated to the non-suggester (double-sided confirm). */}
+        {!suggestion.suggestedByViewer ? (
+          <>
+            <button
+              type="button"
+              onClick={handleAccept}
+              disabled={!!busy}
+              className="px-3 py-1.5 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50"
+            >
+              {busy === 'accept' ? 'Reverting…' : '↶ Accept revert'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDismiss}
+              disabled={!!busy}
+              className="px-3 py-1.5 rounded-md border border-space-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 text-xs font-semibold transition-colors disabled:opacity-50"
+            >
+              {busy === 'dismiss' ? 'Dismissing…' : 'Dismiss'}
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={handleDismiss}
+            disabled={!!busy}
+            className="px-3 py-1.5 rounded-md border border-space-700 hover:border-gray-500 text-gray-400 hover:text-gray-200 text-xs font-semibold transition-colors disabled:opacity-50"
+          >
+            {busy === 'dismiss' ? 'Withdrawing…' : 'Withdraw'}
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function SnapshotCardList({ cards }: { cards: TradeCardSnapshot[] }) {
+  if (cards.length === 0) {
+    return <div className="text-[11px] text-gray-600 italic">empty</div>;
+  }
+  return (
+    <ul className="flex flex-col gap-0.5 text-[11px]">
+      {cards.map(card => (
+        <li key={`${card.productId}-${card.variant}`} className="text-gray-200">
+          <span className="font-semibold tabular-nums">×{card.qty}</span>
+          <span className="ml-1.5 truncate">{card.name}</span>
+          {card.variant && card.variant !== 'Standard' && (
+            <span className="ml-1 text-[10px] text-gray-500">({card.variant})</span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
