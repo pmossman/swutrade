@@ -9,24 +9,6 @@ export interface CardTileBadge {
   colorClass: string;
 }
 
-/**
- * Family-mode footer strip: small thumbs of every printing in a
- * card family, with non-matching variants visibly receded (grayscale
- * + brightness reduction + opacity drop, all GPU-accelerated CSS).
- * Communicates "this card has 4 printings, you'd save Hyperspace
- * specifically" at a glance instead of a separate "Any" pill.
- */
-export interface FamilyVariantStrip {
-  /** Every printing in the family, sorted cheapest-first (matches the
-   *  picker's familyMap convention). */
-  allVariants: CardVariant[];
-  /** productIds (or variant labels) considered "active" — full-colour.
-   *  Empty array = no filter active = treat ALL as active (the user
-   *  hasn't narrowed; every printing is acceptable).
-   *  When non-empty, anything NOT in this set renders dimmed. */
-  activeVariantLabels: readonly string[];
-}
-
 interface CardTileProps {
   card: CardVariant;
   qty: number;
@@ -45,10 +27,6 @@ interface CardTileProps {
    *  an "Any" pill (or the active filter selection) so the user
    *  sees what a tap will actually save. */
   badge?: CardTileBadge[] | null;
-  /** When set, render the family-variant strip below the metadata —
-   *  small thumbs for every printing with non-matching variants
-   *  dimmed. Only set in family-mode pickers. */
-  familyStrip?: FamilyVariantStrip;
   /** Verb-target string baked into the aria-label so screen readers
    *  + e2e tests can disambiguate which surface the click acts on
    *  ("Add Luke to trade" vs "Add Luke to list"). Defaults to "trade"
@@ -82,7 +60,6 @@ export function CardTile({
   accent,
   landscape = false,
   badge,
-  familyStrip,
   actionTarget = 'trade',
   onAdd,
   onDecrement,
@@ -239,61 +216,7 @@ export function CardTile({
             <span className="tabular-nums">{formatPrice(altUnitPrice)}</span>
           </div>
         )}
-        {familyStrip && familyStrip.allVariants.length > 1 && (
-          <FamilyStrip strip={familyStrip} />
-        )}
       </div>
-    </div>
-  );
-}
-
-/**
- * Variant strip rendered at the foot of a family-mode tile. Shows
- * every printing of the family as a small thumb, with non-active
- * variants visibly receded via grayscale + brightness reduction.
- *
- * Behaviour matches the consumer's intuition:
- *   - Filter empty (no `activeVariantLabels`) → ALL thumbs full-colour;
- *     reads as "any of these printings works."
- *   - Filter active → matching thumbs full-colour, others grayscale
- *     + dimmed; reads as "I'd save this printing specifically."
- *
- * Pure CSS filter — `grayscale(1) brightness(0.45)` desaturates +
- * darkens in one GPU pass. No layout reflow on filter toggle.
- */
-function FamilyStrip({ strip }: { strip: FamilyVariantStrip }) {
-  const { allVariants, activeVariantLabels } = strip;
-  const allActive = activeVariantLabels.length === 0;
-  return (
-    <div
-      className="mt-2 pt-1.5 border-t border-space-700/60 flex items-center gap-1 flex-wrap"
-      aria-label={`${allVariants.length} printings in this card family`}
-    >
-      {allVariants.map(v => {
-        const variantLabel = extractVariantLabel(v.name);
-        const active = allActive || activeVariantLabels.includes(variantLabel);
-        const imgUrl = cardImageUrl(v.productId, 'sm');
-        return (
-          <div
-            key={`${v.productId ?? v.name}`}
-            className={`relative w-6 h-8 rounded overflow-hidden bg-space-900 transition-all ${
-              active
-                ? 'ring-1 ring-space-600'
-                : 'ring-1 ring-space-800 [filter:grayscale(1)_brightness(0.45)] opacity-50'
-            }`}
-            title={`${variantLabel}${active ? '' : ' — excluded by current variant filter'}`}
-          >
-            {imgUrl && (
-              <img
-                src={imgUrl}
-                alt=""
-                loading="lazy"
-                className="w-full h-full object-cover"
-              />
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

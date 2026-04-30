@@ -14,6 +14,7 @@ import {
 } from '../variants';
 import { CardResultsGrid } from './CardResultsGrid';
 import { CardTile } from './CardTile';
+import { FamilyRow } from './FamilyRow';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
 
@@ -530,8 +531,11 @@ export function ListCardPicker({
       <CardResultsGrid
         results={deferredResults}
         isSearching={isSearching}
-        portraitColsClass="grid-cols-4 sm:grid-cols-4 md:grid-cols-5"
-        landscapeColsClass="grid-cols-3 sm:grid-cols-3 md:grid-cols-4"
+        // Family mode is one full-width row per family — collapse the
+        // grid to a single column so FamilyRow gets the row width.
+        // Specific mode keeps the multi-column tile grid.
+        portraitColsClass={activeMode === 'family' ? 'grid-cols-1' : 'grid-cols-4 sm:grid-cols-4 md:grid-cols-5'}
+        landscapeColsClass={activeMode === 'family' ? 'grid-cols-1' : 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4'}
         emptyLabel={hasQuery ? 'No cards match your filters' : 'No cards in this filter'}
         renderTile={(card, ctx) => {
           const key = tileKey(card);
@@ -561,20 +565,28 @@ export function ListCardPicker({
           const tilePickContext: PickContext = activeMode === 'specific'
             ? { acceptedVariants: [extractVariantLabel(card.name) as CanonicalVariant] }
             : pickContext;
-          // Family-mode strip: pull every printing of this family
-          // from the prebuilt map so the tile can show all variants
-          // with non-matching ones dimmed.
-          const familyStripData = activeMode === 'family' && familyVariantsMap
-            ? (() => {
-                const familyId = cardFamilyId(card);
-                const allVariants = familyVariantsMap.get(familyId) ?? [];
-                if (allVariants.length <= 1) return undefined;
-                return {
-                  allVariants,
-                  activeVariantLabels: selectedVariants,
-                };
-              })()
-            : undefined;
+          if (activeMode === 'family' && familyVariantsMap) {
+            // Family mode: full-width FamilyRow with stacked active +
+            // excluded variants. The picker has already collapsed the
+            // group to one rep card; we look up the full variant list
+            // from the prebuilt familyVariantsMap.
+            const familyId = cardFamilyId(card);
+            const allVariants = familyVariantsMap.get(familyId) ?? [card];
+            return (
+              <FamilyRow
+                key={`${card.name}-${card.set}`}
+                primary={card}
+                allVariants={allVariants}
+                activeVariantLabels={selectedVariants}
+                qty={savedQty}
+                priceMode={priceMode}
+                accent={accent}
+                actionTarget={actionTarget}
+                onAdd={() => onPick(card, tilePickContext)}
+                onDecrement={() => handleDecrement(card)}
+              />
+            );
+          }
           return (
             <CardTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -591,7 +603,6 @@ export function ListCardPicker({
               accent={accent}
               landscape={ctx.leaderGroup}
               badge={tileBadge}
-              familyStrip={familyStripData}
               actionTarget={actionTarget}
               onAdd={() => onPick(card, tilePickContext)}
               onDecrement={() => handleDecrement(card)}
