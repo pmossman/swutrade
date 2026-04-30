@@ -42,26 +42,20 @@ export interface PickContext {
  *     builder — surfaces where the user is committing to an exact
  *     printing.
  *   - `family` — one tile per family (representative printing).
- *     Variant filter chips visible — the user picks restrictions
- *     up-front, then click saves with that restriction. Used for
- *     wishlist + looking-for signals when a user knows they want
- *     exactly "Luke, any version" or "Luke, only Hyperspace".
- *   - `either` — both modes available with a toggle at the top of
- *     the picker. `default` controls which is active on mount.
- *     Used for wishlist + looking-for signals as the new default
- *     (default: 'family' — most adds are "any", power users
- *     toggle).
+ *     Variant filter chips visible — they drive the saved
+ *     restriction. Empty filter → save as "any printing"; one or
+ *     more variants selected → save as that variant restriction.
+ *     Used for wishlist + looking-for signals.
  *
- * The `either` flavour assumes `family-keyed` saved-entry shape
- * (PickerWantsSavedEntry) regardless of the active tile layout —
- * because the underlying data model is family-keyed even when the
- * user picks a specific printing (the variant just becomes the
- * restriction).
+ * Earlier iterations had an `either` mode with a "Save As: any /
+ * specific" toggle alongside the variant filter; that was removed
+ * because the variant filter chips already do the same job — having
+ * both controls confused users. `family` mode + the variant filter
+ * is the single primitive now.
  */
 export type SelectionMode =
   | { kind: 'specific' }
-  | { kind: 'family' }
-  | { kind: 'either'; default: 'specific' | 'family' };
+  | { kind: 'family' };
 
 /**
  * "What's already in the consumer's draft / list" — one entry per
@@ -101,7 +95,7 @@ type ListCardPickerProps =
       savedEntries?: readonly PickerAvailableSavedEntry[];
     })
   | (CommonPickerProps & {
-      selectionMode: { kind: 'family' } | { kind: 'either'; default: 'specific' | 'family' };
+      selectionMode: { kind: 'family' };
       savedEntries?: readonly PickerWantsSavedEntry[];
     });
 
@@ -234,20 +228,10 @@ export function ListCardPicker({
   initialQuery,
   actionTarget = 'list',
 }: ListCardPickerProps) {
-  // Active tile mode — locked when selectionMode is 'specific' or
-  // 'family', toggleable when 'either'. Preserve toggle position
-  // across re-renders inside the picker session.
-  const [activeMode, setActiveMode] = useState<'specific' | 'family'>(
-    () => selectionMode.kind === 'either' ? selectionMode.default : selectionMode.kind,
-  );
-  // If the parent flips between hard-locked modes (rare — wishlist
-  // → binder swap), sync the active mode without forgetting the
-  // user's toggle for 'either' surfaces.
-  useEffect(() => {
-    if (selectionMode.kind === 'specific') setActiveMode('specific');
-    else if (selectionMode.kind === 'family') setActiveMode('family');
-    // 'either' → leave activeMode at whatever the user picked
-  }, [selectionMode.kind]);
+  // Active tile mode is just the selectionMode kind — no in-picker
+  // toggle anymore. The variant filter chips drive the saved
+  // restriction in 'family' mode.
+  const activeMode = selectionMode.kind;
   // `percentage` prop is ignored — picker tiles always show raw
   // TCGPlayer prices. Keeping the prop signature stable so callers
   // don't churn.
@@ -463,7 +447,12 @@ export function ListCardPicker({
   }[accent];
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    // Self-constrain to a readable column width so card thumbs stay
+    // a sensible size on wide screens. Without this, the trade
+    // overlay (which doesn't wrap the picker) renders cards 2x
+    // larger than the wishlist picker (which the parent constrains)
+    // — felt jarring across surfaces.
+    <div className="flex flex-col flex-1 min-h-0 max-w-3xl mx-auto w-full">
       {header ?? (
         // Default top bar: back chevron on the left, Done pill on
         // the right. Both fire onClose. Caller can supply a custom
@@ -488,51 +477,18 @@ export function ListCardPicker({
         </div>
       )}
 
-      {chips}
-
-      {selectionMode.kind === 'either' && (
-        // Toggle visible only on `either` surfaces (wishlist, looking-
-        // for signal). Locked modes hide it because the answer is
-        // structural — a binder add is always specific, a wants add
-        // can be either-or.
-        <div className="px-3 pt-2 shrink-0 flex items-center gap-2">
-          <span className="text-[10px] font-bold tracking-widest uppercase text-gray-500">Save as</span>
-          <div className="inline-flex rounded-md border border-space-700 bg-space-900/40 p-0.5 text-[11px] font-semibold">
-            <button
-              type="button"
-              onClick={() => setActiveMode('family')}
-              aria-pressed={activeMode === 'family'}
-              className={`px-2 py-1 rounded transition-colors ${
-                activeMode === 'family'
-                  ? 'bg-gold/20 text-gold'
-                  : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              Any printing
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveMode('specific')}
-              aria-pressed={activeMode === 'specific'}
-              className={`px-2 py-1 rounded transition-colors ${
-                activeMode === 'specific'
-                  ? 'bg-gold/20 text-gold'
-                  : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              Specific printing
-            </button>
-          </div>
-        </div>
-      )}
-
+      {/* Filter region: variant + set chips on top, source-pool chips
+          inline beneath when the consumer supplies any. Wrapping both
+          in one bordered panel reads as a single "what's narrowing my
+          view" region — keeps the source chips from feeling orphaned
+          above the variant pills.
+          Variant filter chips only make sense in family tile mode —
+          they drive which restriction a click saves. In specific
+          tile mode each tile IS its own variant; chips would just
+          duplicate that signal. */}
       <div className="px-3 pt-2 shrink-0">
-        {/* Variant filter chips only make sense in family tile mode —
-            they pick which restriction a click saves. In specific
-            tile mode each tile IS its own variant; chips would just
-            duplicate that signal. Set + aspect chips stay visible
-            either way (they narrow which families render). */}
         <SelectionFilterBar filters={filters} hideVariantFilter={activeMode === 'specific'} />
+        {chips}
       </div>
 
       <div className="px-3 pt-2 shrink-0">

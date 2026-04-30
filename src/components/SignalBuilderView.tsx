@@ -345,10 +345,10 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
           {kind === 'wanted' ? (
             <ListCardPicker
-              // Looking-for signals = wishlist semantics. Default to
-              // "any printing" mode but let the user toggle to
-              // specific if they want a Hyperspace-only signal.
-              selectionMode={{ kind: 'either', default: 'family' }}
+              // Looking-for signals = wishlist semantics. Family-
+              // level entries; variant filter chips drive
+              // restriction (empty → any; selected → restricted).
+              selectionMode={{ kind: 'family' }}
               allCards={allCards}
               priceMode="market"
               savedEntries={cards.map(c => ({

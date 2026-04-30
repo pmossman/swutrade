@@ -279,7 +279,10 @@ export function TradeSearchOverlay({
             </div>
           }
           chips={visibleChips.length > 0 ? (
-            <div className="px-3 pt-2 shrink-0 flex items-center gap-1.5 flex-wrap">
+            // Renders inside the picker's filter region (under the
+            // variant pills), so this fragment stays unwrapped — the
+            // picker supplies the outer padding + spacing.
+            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
               <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
                 Show
               </span>
