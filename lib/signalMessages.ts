@@ -147,18 +147,21 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   if (ctx.note) {
     lines.push(`> ${ctx.note}`);
   }
-  lines.push('');
-  if (isActive) {
-    lines.push(`⏱ ${ctx.expiryHint}`);
-    // Clickable sign-up CTA — Discord viewers who aren't on
-    // SWUTrade yet can tap straight into the OAuth flow without
-    // hunting for the link. The Discord link-unfurl shows the
-    // OAuth handshake's redirect target so it reads as friendly
-    // ("Sign in with Discord on swutrade.com").
-    const origin = ctx.origin ?? 'https://swutrade.com';
-    lines.push(`✨ [Join SWUTrade with Discord →](${origin}/api/auth/discord)`);
-  } else if (statusBadge) {
+  // Single CTA line right at the bottom — combines what used to be
+  // the "build your own at swutrade.com" footer + the standalone
+  // ✨ Join link. Footer is plain-text only on Discord embeds, so
+  // the actual link has to live in the description. Drops the
+  // "Expires in N days" hint entirely — to viewers a signal post is
+  // just a Discord message, not a thing with a lifecycle. The cron
+  // still expires rows server-side for match-query hygiene; users
+  // don't see it.
+  if (statusBadge && !isActive) {
+    lines.push('');
     lines.push(statusBadge);
+  } else if (isActive) {
+    lines.push('');
+    const origin = ctx.origin ?? 'https://swutrade.com';
+    lines.push(`✨ [Join SWUTrade with Discord →](${origin}/api/auth/discord) · build your own list`);
   }
 
   // Title — single-card uses the card name; multi-card uses a
@@ -186,10 +189,6 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   return {
     embeds: [{
       title,
-      // url makes the title clickable in Discord — points at the
-      // sign-up flow so a tap from a curious onlooker lands on the
-      // OAuth-with-Discord screen, not a generic landing page.
-      url: isActive ? `${ctx.origin ?? 'https://swutrade.com'}/api/auth/discord` : undefined,
       description: lines.join('\n'),
       color,
       thumbnail,
@@ -198,7 +197,9 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
         name: `@${ctx.requester.handle}`,
         ...(ctx.requester.avatarUrl ? { icon_url: ctx.requester.avatarUrl } : {}),
       },
-      footer: { text: 'SWUTrade · build your own at swutrade.com' },
+      // Footer is plain-text-only on Discord embeds — the actionable
+      // CTA lives at the bottom of the description (see above).
+      footer: { text: 'SWUTrade' },
     }],
     components: buildActionRow(ctx),
     // Suppress automatic pings for the listed mentions — the post

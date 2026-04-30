@@ -72,7 +72,7 @@ export function WantsPanel({
         priceMode={priceMode}
         savedEntries={wants.items.map(item => ({
           id: item.id,
-          key: item.familyId,
+          familyId: item.familyId,
           qty: item.qty,
           // Encode the saved restriction so the picker only badges a
           // tile when its current variant filter matches — Hyperspace-

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useDeferredValue } from 'react';
+import { useMemo, useRef, useState, useEffect, useDeferredValue } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
@@ -31,32 +31,56 @@ export interface PickContext {
 }
 
 /**
- * Generic "what's already in the consumer's draft / list" payload.
- * Each entry maps to one row in the caller's data store (a wants_items
- * row, an available_items row, a Signal Builder draft entry, …).
+ * "What's already in the consumer's draft / list" — one entry per
+ * row the caller cares about. Discriminated on listType so each
+ * variant carries the right shape:
  *
- *  - `id` is the caller's row identifier; it round-trips back via
- *    `onDecrement(id)` so the caller can find the right row to mutate.
- *  - `key` is the picker's tile key — `cardFamilyId(card)` for `wants`
- *    listType (one tile per family), `productId` for `available` (one
- *    tile per printing).
- *  - `restrictionKey` only applies to `wants`. The picker only counts
- *    a saved row toward a tile's badge when its restriction matches
- *    the picker's current variant filter — Hyperspace-saved Luke
- *    shouldn't badge when the filter is "Any" (different intent →
- *    different saved item). Encode "any" as the literal string `'any'`
- *    and a restricted set as `variants.sort().join('|')`. Omit on
- *    `available` rows.
+ *   - `wants` listType: `familyId` + `restrictionKey` ("any" or
+ *     pipe-joined variant list). The picker only counts a saved
+ *     row toward a tile's badge when its restriction matches the
+ *     current variant filter — Hyperspace-saved Luke shouldn't
+ *     badge under an "Any" filter (different intent → different
+ *     saved item).
+ *   - `available` listType: `productId`. One tile per printing,
+ *     keyed exactly. No restrictionKey field — variants are
+ *     productId-disambiguated already.
+ *
+ * Splitting these (vs the older single-shape with a polymorphic
+ * `key` field) makes it impossible for the offering side of the
+ * Signal Builder to accidentally feed familyIds when the picker
+ * expects productIds — that mismatch silently broke saved-qty
+ * badges on the offering picker before this refactor.
+ *
+ * `id` round-trips back via `onDecrement(id)` so the caller can
+ * find the right row to mutate.
  */
-export interface PickerSavedEntry {
+export interface PickerWantsSavedEntry {
   id: string;
-  key: string;
+  familyId: string;
   qty: number;
-  restrictionKey?: string;
+  /** "any" or a pipe-joined sorted variant list (e.g. "Hyperspace"
+   *  or "Hyperspace|Showcase"). Used to scope badge counts by the
+   *  picker's current variant filter. */
+  restrictionKey: string;
 }
 
-interface ListCardPickerProps {
-  listType: PickerListType;
+export interface PickerAvailableSavedEntry {
+  id: string;
+  productId: string;
+  qty: number;
+}
+
+type ListCardPickerProps =
+  | (CommonPickerProps & {
+      listType: 'wants';
+      savedEntries?: readonly PickerWantsSavedEntry[];
+    })
+  | (CommonPickerProps & {
+      listType: 'available';
+      savedEntries?: readonly PickerAvailableSavedEntry[];
+    });
+
+interface CommonPickerProps {
   allCards: CardVariant[];
   /** Accepted but ignored — picker tile prices are always raw 100%
    *  TCGPlayer (mkt/low). Kept on the interface for symmetry with
@@ -64,10 +88,6 @@ interface ListCardPickerProps {
    *  "browse the catalogue at TCGPlayer prices" contract now. */
   percentage?: number;
   priceMode: PriceMode;
-  /** Rows already in the caller's draft / list. The picker uses these
-   *  to render saved-qty badges + drive tap-to-decrement. Defaults to
-   *  empty (= no badges, picker stays in pure-search mode). */
-  savedEntries?: readonly PickerSavedEntry[];
   /** Decrement one qty of the named saved row. Caller decides whether
    *  to drop the row at qty=0 or just decrement; picker only fires
    *  the callback when the user taps the × pill on a badged tile. */
@@ -179,9 +199,53 @@ export function ListCardPicker({
 
   // Browse mode: when the user hasn't typed, render the whole catalog
   // (respecting filters) so they can pick cards without having to
-  // search by name.
-  const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
-  const baseResults = hasQuery ? results : browseResults;
+  // search by name. Computing this against ~8000 cards is the most
+  // expensive thing the picker does on mount — defer it to a post-
+  // paint effect so the picker chrome (search input + filter bar)
+  // appears instantly when the user clicks "Add a card", rather than
+  // waiting on the heavy compute first.
+  const [browseResults, setBrowseResults] = useState<SetSearchGroup[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      setBrowseResults(browseAllGroups(allCards));
+    };
+    // requestIdleCallback when available so the compute happens once
+    // the browser has nothing else to do; setTimeout fallback for
+    // engines without it (tests, older Safari) so the work still
+    // happens but yields back to paint first.
+    const ric = (typeof window !== 'undefined' && 'requestIdleCallback' in window)
+      ? (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback
+      : null;
+    if (ric) ric(run);
+    else setTimeout(run, 0);
+    return () => { cancelled = true; };
+  }, [allCards]);
+
+  // Stale-while-revalidate: keep showing the last settled search
+  // results during the 150ms debounce window so the grid doesn't
+  // flash between keystrokes. Without this, a user typing "luke"
+  // sees the grid swap to "browse all cards" between each keystroke
+  // (because `results` clears for sub-2-char queries) — visible
+  // flicker. With it, the prior search hits stay until the new
+  // search lands.
+  const lastSearchResultsRef = useRef<SetSearchGroup[]>([]);
+  useEffect(() => {
+    if (!isSearching && hasQuery && results.length > 0) {
+      lastSearchResultsRef.current = results;
+    }
+    // Reset the cached results when the user clears the query so
+    // the next search starts cold rather than reviving stale hits.
+    if (!hasQuery) lastSearchResultsRef.current = [];
+  }, [results, isSearching, hasQuery]);
+  const baseResults = !hasQuery
+    ? browseResults
+    : results.length > 0
+      ? results
+      : lastSearchResultsRef.current.length > 0
+        ? lastSearchResultsRef.current
+        : browseResults;
 
   // Wants picker: collapse each family to a single tile using the rep
   // that matches the current variant filter (cheapest match, or
@@ -218,11 +282,10 @@ export function ListCardPicker({
     }));
   }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
 
-  // Saved-count lookup + item-id reverse index. For wants, scope by
-  // (key + filter restriction key) so a Hyperspace-saved Luke
-  // doesn't show a count when the filter is "Any" (different
-  // restriction → different item). The id list lets decrement find
-  // the right row to touch.
+  // Saved-count lookup + item-id reverse index. The shape of
+  // savedEntries is discriminated on listType — for wants the
+  // tile keys by familyId + filters by current variant restriction;
+  // for available the tile keys by productId.
   const { savedCounts, savedItemIds } = useMemo(() => {
     const counts = new Map<string, number>();
     const ids = new Map<string, string[]>();
@@ -232,10 +295,18 @@ export function ListCardPicker({
       if (bucket) bucket.push(id);
       else ids.set(key, [id]);
     };
-    const filterKey = listType === 'wants' ? restrictionKeyOf(selectedVariants) : null;
-    for (const entry of savedEntries) {
-      if (filterKey !== null && entry.restrictionKey !== filterKey) continue;
-      push(entry.key, entry.id, entry.qty);
+    if (listType === 'wants') {
+      const filterKey = restrictionKeyOf(selectedVariants);
+      const entries = (savedEntries ?? []) as readonly PickerWantsSavedEntry[];
+      for (const entry of entries) {
+        if (entry.restrictionKey !== filterKey) continue;
+        push(entry.familyId, entry.id, entry.qty);
+      }
+    } else {
+      const entries = (savedEntries ?? []) as readonly PickerAvailableSavedEntry[];
+      for (const entry of entries) {
+        push(entry.productId, entry.id, entry.qty);
+      }
     }
     return { savedCounts: counts, savedItemIds: ids };
   }, [listType, savedEntries, selectedVariants]);

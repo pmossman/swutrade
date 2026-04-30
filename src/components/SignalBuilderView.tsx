@@ -124,7 +124,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   const [kind, setKind] = useState<SignalKind>(intent.kind);
   const [cards, setCards] = useState<SignalCardEntry[]>([]);
   const [note, setNote] = useState('');
-  const [expiresInDays, setExpiresInDays] = useState(7);
   const [guildId, setGuildId] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
@@ -247,7 +246,11 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       })),
       note: note.trim() || null,
       guildId,
-      expiresInDays,
+      // Long server-side TTL — viewers think of these as plain
+      // Discord messages with no lifecycle, so we don't surface
+      // expiration in the UI. The server still expires rows so
+      // match queries don't drag along ancient signals forever.
+      expiresInDays: 90,
     });
     setPosting(false);
     if (!result.ok) {
@@ -312,34 +315,62 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     // rows live in wants_items, available_items, or local component
     // state is the caller's problem. Mapping kind→listType keeps the
     // variant filter UX consistent with how the user thinks about
-    // the side: 'wanted' → wants picker (one tile per family),
-    // 'offering' → binder picker (one tile per printing).
-    const savedEntries = cards.map(c => ({
-      id: c.familyId,
-      key: c.familyId,
-      qty: c.qty,
-      restrictionKey: c.variant ? c.variant : 'any',
-    }));
+    // the side: 'wanted' → wants picker (one tile per family,
+    // family-keyed badge), 'offering' → binder picker (one tile per
+    // printing, productId-keyed badge). The picker enforces this
+    // shape via discriminated-union types now, so the offering side
+    // can't accidentally feed familyIds and silently miss badges
+    // (which it did before this refactor).
+    const onDecrement = (id: string) => {
+      setCards(prev => {
+        const idx = prev.findIndex(c => c.familyId === id);
+        if (idx < 0) return prev;
+        const c = prev[idx];
+        if (c.qty <= 1) return prev.filter((_, i) => i !== idx);
+        return prev.map((cc, i) => i === idx ? { ...cc, qty: cc.qty - 1 } : cc);
+      });
+    };
     return (
       <PageChrome auth={auth}>
         <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
-          <ListCardPicker
-            listType={kind === 'wanted' ? 'wants' : 'available'}
-            allCards={allCards}
-            priceMode="market"
-            savedEntries={savedEntries}
-            onDecrement={id => {
-              setCards(prev => {
-                const idx = prev.findIndex(c => c.familyId === id);
-                if (idx < 0) return prev;
-                const c = prev[idx];
-                if (c.qty <= 1) return prev.filter((_, i) => i !== idx);
-                return prev.map((cc, i) => i === idx ? { ...cc, qty: cc.qty - 1 } : cc);
-              });
-            }}
-            onPick={handlePick}
-            onClose={() => setPickerOpen(false)}
-          />
+          {kind === 'wanted' ? (
+            <ListCardPicker
+              listType="wants"
+              allCards={allCards}
+              priceMode="market"
+              savedEntries={cards.map(c => ({
+                id: c.familyId,
+                familyId: c.familyId,
+                qty: c.qty,
+                restrictionKey: c.variant ?? 'any',
+              }))}
+              onDecrement={onDecrement}
+              onPick={handlePick}
+              onClose={() => setPickerOpen(false)}
+            />
+          ) : (
+            <ListCardPicker
+              listType="available"
+              allCards={allCards}
+              priceMode="market"
+              savedEntries={cards.flatMap(c => {
+                const family = familyMap.get(c.familyId);
+                if (!family) return [];
+                // For offering, the user pinned a specific printing
+                // (or none → first variant). The picker tile keys by
+                // productId, so we resolve the entry's variant to a
+                // concrete productId for badge matching.
+                const productId = c.variant
+                  ? family.variants.find(v => v.variant === c.variant)?.productId
+                  : family.variants[0]?.productId;
+                if (!productId) return [];
+                return [{ id: c.familyId, productId, qty: c.qty }];
+              })}
+              onDecrement={onDecrement}
+              onPick={handlePick}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
         </div>
       </PageChrome>
     );
@@ -373,7 +404,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             where it goes, when it expires). Lives in a slim strip
             outside the embed-styled body so the body can read 1-to-1
             with the rendered Discord post. */}
-        <div className="mb-4 rounded-md border border-space-700 bg-space-800/40 p-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+        <div className="mb-4 rounded-md border border-space-700 bg-space-800/40 p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
           <div className="flex items-center gap-1" role="tablist">
             <span className="text-gray-500 font-semibold uppercase tracking-wide pr-1">Kind</span>
             <KindPill active={kind === 'wanted'} accent="blue" onClick={() => setKind('wanted')}>
@@ -400,19 +431,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
                 ))}
               </select>
             )}
-          </label>
-          <label className="flex items-center gap-2">
-            <span className="text-gray-500 font-semibold uppercase tracking-wide">For</span>
-            <select
-              value={expiresInDays}
-              onChange={e => setExpiresInDays(Number(e.target.value))}
-              className="flex-1 bg-space-900/70 border border-space-700 rounded px-2 py-1 text-xs focus:border-gold/50 focus:outline-none"
-            >
-              <option value={3}>3 days</option>
-              <option value={7}>7 days</option>
-              <option value={14}>14 days</option>
-              <option value={30}>30 days</option>
-            </select>
           </label>
         </div>
 
@@ -495,12 +513,11 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             )}
           </div>
 
-          {/* Footer: expiry + match-listing placeholder. Mirrors the
-              live embed's `⏱ Expires in N days` line + the `📦 …` line
-              that lists matched users when posted. */}
-          <div className="mt-3 pt-2 border-t border-space-700/50 text-[11px] text-gray-400 space-y-0.5">
-            <div>⏱ Expires in {expiresInDays} {expiresInDays === 1 ? 'day' : 'days'}</div>
-            <div className="text-gray-500 italic">📦 People in your server who can help will be listed here when you post.</div>
+          {/* Footer cue — mirrors the embed's match-list line that
+              shows up when posted with people in the server who can
+              help. */}
+          <div className="mt-3 pt-2 border-t border-space-700/50 text-[11px] text-gray-500 italic">
+            People in your server who can help will be listed here when you post.
           </div>
         </article>
 

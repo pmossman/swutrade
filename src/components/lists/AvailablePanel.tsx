@@ -68,7 +68,7 @@ export function AvailablePanel({
         priceMode={priceMode}
         savedEntries={available.items.map(item => ({
           id: item.id,
-          key: item.productId,
+          productId: item.productId,
           qty: item.qty,
         }))}
         onDecrement={id => {
