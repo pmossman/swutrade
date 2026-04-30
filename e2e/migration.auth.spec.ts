@@ -1,7 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { signIn, createIsolatedUser, ensureTestUser, cleanupTestUser, type TestUser } from './helpers/auth';
 
-test.describe('First sign-in migration flow', () => {
+/**
+ * First-sign-in sync: server is the source of truth. Local items
+ * only ever migrate UPWARD when the server is genuinely empty;
+ * otherwise the server overwrites local. No dialog — the import-or-
+ * start-fresh prompt got removed because dismissing it left devices
+ * stuck unsynced.
+ */
+test.describe('First sign-in sync flow', () => {
   test.describe.configure({ mode: 'serial' });
   let user: TestUser;
 
@@ -14,7 +21,7 @@ test.describe('First sign-in migration flow', () => {
     await cleanupTestUser(user);
   });
 
-  test('shows migration dialog when local items exist + server is empty → Import works', async ({ context, page }) => {
+  test('local items + empty server → silently push local up to the server', async ({ context, page }) => {
     // Seed local items BEFORE signing in.
     await page.addInitScript(() => {
       window.localStorage.setItem('swu.wants.v2', JSON.stringify([
@@ -25,54 +32,32 @@ test.describe('First sign-in migration flow', () => {
       ]));
     });
 
-    // Now sign in — server is empty, local has items → migration prompt.
     await signIn(context, user);
-    // Explicit ?view=trade — signed-in users land on Home by default
-    // now; migration tests assert the trade-builder empty state after
-    // importing/resetting, so pin to trade view.
     await page.goto('/?view=trade');
 
-    // Migration dialog should appear.
-    await expect(page.getByText('Import your lists?')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/1 want/)).toBeVisible();
-    await expect(page.getByText(/1 available/)).toBeVisible();
+    // No dialog — sign-in proceeds straight to the app.
+    await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText('Import your lists?')).toBeHidden();
 
-    // Click Import.
-    await page.getByRole('button', { name: /Import 2 card/i }).click();
+    // Local items got pushed to the server. Poll briefly so the
+    // background sync has a chance to land before asserting.
+    await expect.poll(async () => {
+      const wants = await page.evaluate(async () => {
+        const res = await fetch('/api/sync/wants');
+        return res.json();
+      });
+      return Array.isArray(wants) ? wants.length : 0;
+    }, { timeout: 10_000 }).toBe(1);
 
-    // Dialog should dismiss. Verify items landed on the server.
-    await expect(page.getByText('Import your lists?')).not.toBeVisible({ timeout: 5_000 });
-
-    // Check server via API.
-    const serverWants = await page.evaluate(async () => {
-      const res = await fetch('/api/sync/wants');
+    const serverAvailable = await page.evaluate(async () => {
+      const res = await fetch('/api/sync/available');
       return res.json();
     });
-    expect(serverWants.length).toBe(1);
+    expect(serverAvailable.length).toBe(1);
   });
 
-  test('Start fresh clears local and pulls from (empty) server', async ({ context, page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('swu.wants.v2', JSON.stringify([
-        { id: 'local-w1', familyId: 'x::y', qty: 1, restriction: { mode: 'any' }, addedAt: Date.now() },
-      ]));
-    });
-
-    await signIn(context, user);
-    await page.goto('/?view=trade');
-
-    await expect(page.getByText('Import your lists?')).toBeVisible({ timeout: 15_000 });
-    await page.getByRole('button', { name: /Start fresh/i }).click();
-
-    // Dialog should dismiss — the choice was processed.
-    await expect(page.getByText('Import your lists?')).not.toBeVisible({ timeout: 5_000 });
-
-    // App should be usable (trade panels visible).
-    await expect(page.getByRole('button', { name: 'Add cards to Offering' })).toBeVisible({ timeout: 10_000 });
-  });
-
-  test('no dialog when server already has data (returning user)', async ({ context, page }) => {
-    // Pre-populate the server with data via direct DB insert.
+  test('server has data + local has different data → server wins, local is overwritten', async ({ context, page }) => {
+    // Pre-populate the server with one item via direct DB insert.
     const { getDb } = await import('../lib/db.js');
     const { wantsItems } = await import('../lib/schema.js');
     const { restrictionKey } = await import('../lib/shared.js');
@@ -80,7 +65,7 @@ test.describe('First sign-in migration flow', () => {
     await db.insert(wantsItems).values({
       id: `srv-${crypto.randomUUID().slice(0, 8)}`,
       userId: user.userId,
-      familyId: 'jtl::luke',
+      familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin',
       qty: 1,
       restrictionMode: 'any',
       restrictionVariants: null,
@@ -89,21 +74,38 @@ test.describe('First sign-in migration flow', () => {
       addedAt: Date.now(),
     });
 
-    // Seed local items too (to trigger migration check).
+    // Seed local with a DIFFERENT item — server should win.
     await page.addInitScript(() => {
       window.localStorage.setItem('swu.wants.v2', JSON.stringify([
-        { id: 'local-w1', familyId: 'law::cad-bane', qty: 1, restriction: { mode: 'any' }, addedAt: Date.now() },
+        { id: 'local-w1', familyId: 'a-lawless-time::cad-bane-now-its-my-turn', qty: 9, restriction: { mode: 'any' }, addedAt: Date.now() },
       ]));
     });
 
     await signIn(context, user);
     await page.goto('/?view=trade');
 
-    // Wait for auth to load — account menu button is the stable
-    // signed-in signal now (username lives inside the popover).
+    // No dialog — sign-in proceeds straight to the app.
     await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible({ timeout: 15_000 });
-    // Explicitly verify dialog does NOT appear.
-    await page.waitForTimeout(2000);
-    await expect(page.getByText('Import your lists?')).not.toBeVisible();
+    await expect(page.getByText('Import your lists?')).toBeHidden();
+
+    // Server's view of wants is unchanged — the local Cad Bane row
+    // didn't override the server's Luke row. Poll because the pull
+    // step is async post-sign-in.
+    await expect.poll(async () => {
+      const wants = await page.evaluate(async () => {
+        const res = await fetch('/api/sync/wants');
+        return res.json();
+      });
+      return Array.isArray(wants) && wants.length === 1 ? wants[0].familyId : 'unknown';
+    }, { timeout: 10_000 }).toBe('jump-to-lightspeed::luke-skywalker-hero-of-yavin');
+
+    // Local cache also reflects the server view (the device's
+    // localStorage got rewritten as part of pull-and-apply).
+    const localWants = await page.evaluate(() => {
+      const raw = window.localStorage.getItem('swu.wants.v2');
+      return raw ? JSON.parse(raw) : null;
+    });
+    expect(localWants).toHaveLength(1);
+    expect(localWants[0].familyId).toBe('jump-to-lightspeed::luke-skywalker-hero-of-yavin');
   });
 });
