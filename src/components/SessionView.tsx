@@ -310,6 +310,24 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                 theirCards={counterpartCards}
               />
 
+              {/* Mobile-only segmented toggle. The per-panel chevron
+                  in the header was hard to discover — this surfaces
+                  the same state as a discrete control so the user
+                  doesn't have to know to tap a panel header to
+                  collapse it. Three modes: Both / Yours / Theirs.
+                  Hidden on desktop where the side-by-side grid
+                  already shows everything. */}
+              {isMobile && !terminal && (
+                <SplitViewToggle
+                  yourCollapsed={yourSideCollapsed}
+                  theirCollapsed={theirSideCollapsed}
+                  counterpartHandle={counterpartHandle}
+                  onSelectBoth={() => { setYourSideCollapsed(false); setTheirSideCollapsed(false); }}
+                  onSelectYours={() => { setYourSideCollapsed(false); setTheirSideCollapsed(true); }}
+                  onSelectTheirs={() => { setYourSideCollapsed(true); setTheirSideCollapsed(false); }}
+                />
+              )}
+
               <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
                 <TradeSide
                   label="Your side"
@@ -452,6 +470,62 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   );
 }
 
+// --- Mobile split-view toggle --------------------------------------------
+
+/**
+ * Three-state segmented control surfacing the side-collapse state on
+ * mobile. The trade builder's tap-the-header-to-collapse pattern is
+ * subtle (chevron icon at panel-header-left); session users were
+ * missing it during dogfooding. This exposes the same state as a
+ * discrete control with explicit labels so the affordance is obvious.
+ */
+function SplitViewToggle({
+  yourCollapsed,
+  theirCollapsed,
+  counterpartHandle,
+  onSelectBoth,
+  onSelectYours,
+  onSelectTheirs,
+}: {
+  yourCollapsed: boolean;
+  theirCollapsed: boolean;
+  counterpartHandle: string | null;
+  onSelectBoth: () => void;
+  onSelectYours: () => void;
+  onSelectTheirs: () => void;
+}) {
+  // Currently active mode derived from the two collapse flags.
+  const mode: 'both' | 'yours' | 'theirs' =
+    yourCollapsed ? 'theirs'
+    : theirCollapsed ? 'yours'
+    : 'both';
+
+  const buttonClass = (active: boolean) =>
+    `flex-1 px-3 py-1.5 text-[11px] font-bold tracking-wide uppercase transition-colors ${
+      active
+        ? 'bg-gold/20 text-gold-bright'
+        : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+    }`;
+
+  return (
+    <div
+      role="group"
+      aria-label="Trade view mode"
+      className="flex items-stretch rounded-md border border-space-700 bg-space-800/40 overflow-hidden"
+    >
+      <button type="button" onClick={onSelectYours} className={buttonClass(mode === 'yours')} aria-pressed={mode === 'yours'}>
+        Yours
+      </button>
+      <button type="button" onClick={onSelectBoth} className={buttonClass(mode === 'both')} aria-pressed={mode === 'both'}>
+        Both
+      </button>
+      <button type="button" onClick={onSelectTheirs} className={buttonClass(mode === 'theirs')} aria-pressed={mode === 'theirs'}>
+        @{counterpartHandle ?? 'Theirs'}
+      </button>
+    </div>
+  );
+}
+
 // --- Counterpart panel header --------------------------------------------
 
 /**
@@ -581,19 +655,27 @@ function TimelineToggle({ unreadCount, onClick }: { unreadCount: number; onClick
     <button
       type="button"
       onClick={onClick}
-      aria-label={hasUnread ? `Activity (${unreadCount} unread)` : 'Activity'}
-      className={`relative inline-flex items-center gap-1 px-2.5 py-1 rounded-md border text-[11px] font-bold uppercase tracking-wide transition-colors ${
+      aria-label={hasUnread ? `Chat & activity (${unreadCount} unread)` : 'Chat & activity'}
+      className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold uppercase tracking-wide transition-colors ${
         hasUnread
-          ? 'bg-gold/15 border-gold/40 text-gold hover:bg-gold/25'
-          : 'bg-space-800/60 border-space-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+          ? 'bg-gold/20 border-gold/60 text-gold-bright hover:bg-gold/30 animate-pulse-unread'
+          : 'bg-space-800/60 border-space-700 text-gray-300 hover:text-gold hover:border-gold/40'
       }`}
     >
-      <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-        <path d="M3 4h10M3 8h10M3 12h7" strokeLinecap="round" />
+      {/* Chat-bubble icon — explicit visual cue that this surface
+          carries chat, not just system events. The "Activity" label
+          alone reads as read-only history; the bubble + the "Chat"
+          word in the label clarify it's interactive. */}
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+        <path
+          d="M2.5 4.5C2.5 3.4 3.4 2.5 4.5 2.5h7c1.1 0 2 .9 2 2v5c0 1.1-.9 2-2 2H7l-3 2.5V11.5c-.83 0-1.5-.67-1.5-1.5z"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
-      <span>Activity</span>
+      <span>Chat</span>
       {hasUnread && (
-        <span className="ml-0.5 inline-flex items-center justify-center min-w-[1.1rem] px-1 h-4 rounded-full bg-gold text-space-900 text-[10px] font-bold tabular-nums">
+        <span className="inline-flex items-center justify-center min-w-[1.1rem] px-1 h-4 rounded-full bg-gold-bright text-space-900 text-[10px] font-bold tabular-nums shadow-[0_0_8px_rgba(255,215,0,0.5)]">
           {unreadCount > 99 ? '99+' : unreadCount}
         </span>
       )}

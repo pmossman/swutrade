@@ -166,6 +166,18 @@ body::before {
   animation: pulse-glow-crimson 2.4s ease-in-out infinite;
 }
 
+/* Subtle gold pulse for the Chat & activity toggle when unread
+   messages are pending. Slow + low-amplitude so it draws the eye
+   without nagging. Suppressed via the prefers-reduced-motion block
+   below. */
+@keyframes pulse-unread {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 166, 35, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(245, 166, 35, 0); }
+}
+.animate-pulse-unread {
+  animation: pulse-unread 2.2s ease-out infinite;
+}
+
 /* Show only on touch devices (e.g. mobile long-press hints) */
 .touch-only { display: none; }
 @media (hover: none) and (pointer: coarse) {

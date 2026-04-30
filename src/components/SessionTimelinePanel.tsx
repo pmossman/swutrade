@@ -106,9 +106,38 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
+  // visualViewport tracking — older iOS (< 16.4) ignores the
+  // interactive-widget viewport meta and keeps the layout viewport at
+  // its full height when the keyboard opens. Without an explicit
+  // height stamp the panel ends up taller than the visible area, the
+  // chat input gets auto-scrolled into view, and the rest of the page
+  // peeks through above and below. We mirror visualViewport.height
+  // into a CSS var so the panel always matches the visible region.
+  const [vvHeight, setVvHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const sync = () => setVvHeight(vv.height);
+    sync();
+    vv.addEventListener('resize', sync);
+    vv.addEventListener('scroll', sync);
+    return () => {
+      vv.removeEventListener('resize', sync);
+      vv.removeEventListener('scroll', sync);
+    };
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/40" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-40 flex justify-end bg-black/40"
+      onClick={onClose}
+      style={vvHeight ? { height: `${vvHeight}px` } : undefined}
+    >
       <div
+        // h-full inherits the parent's pinned visualViewport height.
+        // Modern browsers also benefit from interactive-widget=resizes-content
+        // in the viewport meta, but the inline height pin works on
+        // older iOS versions that ignore it.
         className="w-full max-w-md h-full bg-space-900 border-l border-space-700 flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}
       >

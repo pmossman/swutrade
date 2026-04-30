@@ -100,6 +100,7 @@ function InlineSuggestionPill({
         type="button"
         onClick={() => setExpanded(e => !e)}
         aria-expanded={expanded}
+        aria-label={`${fromActor} ${verb} ${summary}`}
         className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-amber-900/20 transition-colors"
       >
         <span className="flex items-center gap-2 min-w-0 text-[12px] text-amber-100">
@@ -113,9 +114,13 @@ function InlineSuggestionPill({
           >
             <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
+          {/* Space-joined text spans render with real whitespace so
+              both screen readers and Playwright getByText see "You
+              suggested +1" not "Yousuggested+1". CSS gap between
+              flex children doesn't create text-node whitespace. */}
           <span className="font-semibold shrink-0">{fromActor}</span>
-          <span className="text-amber-200/70 shrink-0">{verb}</span>
-          <span className="font-bold tabular-nums text-amber-50 shrink-0">{summary}</span>
+          <span className="text-amber-200/70 shrink-0">{' '}{verb}</span>
+          <span className="font-bold tabular-nums text-amber-50 shrink-0">{' '}{summary}</span>
         </span>
         <span className="text-[10px] text-amber-300/70 shrink-0 uppercase tracking-wide">
           {expanded ? 'hide' : 'review'}
@@ -280,6 +285,7 @@ function RevertSuggestionPill({
         type="button"
         onClick={() => setExpanded(e => !e)}
         aria-expanded={expanded}
+        aria-label={`${fromActor} proposed reverting both sides (${aCount} + ${bCount} cards)`}
         className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-amber-900/20 transition-colors"
       >
         <span className="flex items-center gap-2 min-w-0 text-[12px] text-amber-100">
@@ -294,9 +300,9 @@ function RevertSuggestionPill({
             <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span className="font-semibold">{fromActor}</span>
-          <span className="text-amber-200/70">proposed reverting both sides</span>
+          <span className="text-amber-200/70">{' '}proposed reverting both sides</span>
           <span className="text-[10px] text-amber-300/70 tabular-nums">
-            ({aCount}+{bCount} cards)
+            {' '}({aCount}+{bCount} cards)
           </span>
         </span>
         <span className="text-[10px] text-amber-300/70 shrink-0 uppercase tracking-wide">

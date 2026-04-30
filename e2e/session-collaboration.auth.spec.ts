@@ -120,11 +120,12 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       // Send the suggestion.
       await a.page.getByRole('button', { name: /Send suggestion/i }).click();
 
-      // Suggestion now appears as a collapsed pill — A sees their
+      // Suggestion now appears as a collapsed pill. A sees their
       // outgoing pill ("You suggested +1") inside the counterpart's
-      // panel. Verify by the summary text.
+      // panel; the button's aria-label carries the verb so we don't
+      // depend on flex-child text concatenation.
       await expect(
-        a.page.getByText(/You suggested/i).first(),
+        a.page.getByRole('button', { name: /You suggested/i }).first(),
       ).toBeVisible({ timeout: 5_000 });
 
       // B sees an incoming pill in their own panel ("@<handle>
@@ -139,7 +140,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       await expect(b.page.getByText(/Luke Skywalker - Hero of Yavin/i).first()).toBeVisible({ timeout: 8_000 });
       // Suggestion pill clears on both sides.
       await expect(b.page.getByRole('button', { name: /suggests/i })).toHaveCount(0, { timeout: 8_000 });
-      await expect(a.page.getByText(/You suggested/i)).toHaveCount(0, { timeout: 8_000 });
+      await expect(a.page.getByRole('button', { name: /You suggested/i })).toHaveCount(0, { timeout: 8_000 });
     } finally {
       await closeAll([a, b]);
     }
@@ -172,7 +173,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
       // Pill clears from both sides on poll.
       await expect(b.page.getByRole('button', { name: /suggests/i })).toHaveCount(0, { timeout: 8_000 });
-      await expect(a.page.getByText(/You suggested/i)).toHaveCount(0, { timeout: 8_000 });
+      await expect(a.page.getByRole('button', { name: /You suggested/i })).toHaveCount(0, { timeout: 8_000 });
     } finally {
       await closeAll([a, b]);
     }
