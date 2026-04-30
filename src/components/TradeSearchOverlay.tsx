@@ -242,6 +242,7 @@ export function TradeSearchOverlay({
           onDecrement={handleDecrement}
           onClose={handleDismiss}
           initialQuery={seededInitialQuery}
+          actionTarget="trade"
           header={
             <div className="shrink-0 pt-3 pb-2 px-4 sm:px-6 max-w-6xl mx-auto w-full relative border-b border-space-800">
               <div

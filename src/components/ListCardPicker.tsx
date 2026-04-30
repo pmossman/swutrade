@@ -140,6 +140,10 @@ interface CommonPickerProps {
    *  overlay's seed flow (e.g. opening the overlay pre-filled with
    *  a card name from the swap-variant kebab). */
   initialQuery?: string;
+  /** Verb-target string for tile aria-labels — "Add Luke (HS) to ${target}".
+   *  Defaults to "list"; the trade overlay overrides to "trade" so
+   *  screen readers + e2e tests can disambiguate the surface. */
+  actionTarget?: string;
 }
 
 function representativeVariant(variants: CardVariant[]): CardVariant {
@@ -228,6 +232,7 @@ export function ListCardPicker({
   header,
   chips,
   initialQuery,
+  actionTarget = 'list',
 }: ListCardPickerProps) {
   // Active tile mode — locked when selectionMode is 'specific' or
   // 'family', toggleable when 'either'. Preserve toggle position
@@ -281,25 +286,35 @@ export function ListCardPicker({
   // paint effect so the picker chrome (search input + filter bar)
   // appears instantly when the user clicks "Add a card", rather than
   // waiting on the heavy compute first.
-  const [browseResults, setBrowseResults] = useState<SetSearchGroup[]>([]);
   const browseSource = browsePool ?? allCards;
+  // For a scoped browsePool (chip-active overlay use) the source is
+  // small (often <50 cards), so compute synchronously — the user
+  // just clicked a chip and expects an immediate re-render.
+  // For the full catalog (~8000 cards) we defer past first paint via
+  // requestIdleCallback so the picker chrome appears instantly when
+  // the user clicks "Add a card" rather than blocking on the heavy
+  // iteration first.
+  const isScopedPool = browsePool !== undefined;
+  const [browseResults, setBrowseResults] = useState<SetSearchGroup[]>(
+    () => isScopedPool ? browseAllGroups(browseSource) : [],
+  );
   useEffect(() => {
+    if (isScopedPool) {
+      setBrowseResults(browseAllGroups(browseSource));
+      return;
+    }
     let cancelled = false;
     const run = () => {
       if (cancelled) return;
       setBrowseResults(browseAllGroups(browseSource));
     };
-    // requestIdleCallback when available so the compute happens once
-    // the browser has nothing else to do; setTimeout fallback for
-    // engines without it (tests, older Safari) so the work still
-    // happens but yields back to paint first.
     const ric = (typeof window !== 'undefined' && 'requestIdleCallback' in window)
       ? (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback
       : null;
     if (ric) ric(run);
     else setTimeout(run, 0);
     return () => { cancelled = true; };
-  }, [browseSource]);
+  }, [browseSource, isScopedPool]);
 
   // Stale-while-revalidate: keep showing the last settled search
   // results during the 150ms debounce window so the grid doesn't
@@ -585,7 +600,7 @@ export function ListCardPicker({
               accent={accent}
               landscape={ctx.leaderGroup}
               badge={tileBadge}
-              actionTarget="list"
+              actionTarget={actionTarget}
               onAdd={() => onPick(card, tilePickContext)}
               onDecrement={() => handleDecrement(card)}
             />
