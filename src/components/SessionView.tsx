@@ -14,6 +14,7 @@ import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
+import { SessionTimelinePanel } from './SessionTimelinePanel';
 import { PERSIST_KEYS } from '../persistence';
 import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
@@ -59,9 +60,10 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   });
 
   const api = useSession(sessionId);
-  const { session, preview, status, saveCards, confirm, unconfirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen } = api;
+  const { session, preview, status, saveCards, confirm, unconfirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen, sendChat } = api;
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
 
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
@@ -225,7 +227,10 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           const counterpartCards = snapshotsToTradeCards(session.theirCards, byProductId);
           return (
             <>
-              <SessionIdentityStrip session={session} />
+              <SessionIdentityStrip
+                session={session}
+                onOpenTimeline={() => setTimelineOpen(true)}
+              />
 
               {terminal ? (
                 <TerminalBanner
@@ -346,6 +351,14 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         open={listsDrawerOpen}
         onOpenChange={setListsDrawerOpen}
       />
+
+      {timelineOpen && session && (
+        <SessionTimelinePanel
+          session={session}
+          onClose={() => setTimelineOpen(false)}
+          sendChat={sendChat}
+        />
+      )}
     </div>
   );
 }
@@ -357,7 +370,13 @@ export function SessionView({ sessionId }: { sessionId: string }) {
  * state. Never carries the Confirm / Cancel buttons: those belong
  * below the cards so the flow reads as stage → confirm.
  */
-function SessionIdentityStrip({ session }: { session: SessionData }) {
+function SessionIdentityStrip({
+  session,
+  onOpenTimeline,
+}: {
+  session: SessionData;
+  onOpenTimeline: () => void;
+}) {
   const counterpart = session.counterpart;
   const settled = session.status === 'settled';
   const cancelled = session.status === 'cancelled';
@@ -406,8 +425,43 @@ function SessionIdentityStrip({ session }: { session: SessionData }) {
             />
           </>
         )}
+        <TimelineToggle
+          unreadCount={session.unreadCount}
+          onClick={onOpenTimeline}
+        />
       </div>
     </section>
+  );
+}
+
+/**
+ * "Activity" pill that opens the timeline panel. Surfaces the unread
+ * badge so the counterpart's chat / edits don't go unseen — clears
+ * via `markRead` (auto-fired on visibility) once the panel is open.
+ */
+function TimelineToggle({ unreadCount, onClick }: { unreadCount: number; onClick: () => void }) {
+  const hasUnread = unreadCount > 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={hasUnread ? `Activity (${unreadCount} unread)` : 'Activity'}
+      className={`relative inline-flex items-center gap-1 px-2.5 py-1 rounded-md border text-[11px] font-bold uppercase tracking-wide transition-colors ${
+        hasUnread
+          ? 'bg-gold/15 border-gold/40 text-gold hover:bg-gold/25'
+          : 'bg-space-800/60 border-space-700 text-gray-400 hover:text-gray-200 hover:border-gray-500'
+      }`}
+    >
+      <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+        <path d="M3 4h10M3 8h10M3 12h7" strokeLinecap="round" />
+      </svg>
+      <span>Activity</span>
+      {hasUnread && (
+        <span className="ml-0.5 inline-flex items-center justify-center min-w-[1.1rem] px-1 h-4 rounded-full bg-gold text-space-900 text-[10px] font-bold tabular-nums">
+          {unreadCount > 99 ? '99+' : unreadCount}
+        </span>
+      )}
+    </button>
   );
 }
 

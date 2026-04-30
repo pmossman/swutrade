@@ -7,6 +7,27 @@ export type TradeCardSnapshot = CardSnapshot;
 
 export type SessionStatus = 'active' | 'settled' | 'cancelled' | 'expired';
 
+export type SessionEventType =
+  | 'created'
+  | 'edited'
+  | 'edit-snapshot'
+  | 'confirmed'
+  | 'unconfirmed'
+  | 'settled'
+  | 'cancelled'
+  | 'expired'
+  | 'notified'
+  | 'chat';
+
+export interface SessionEvent {
+  id: string;
+  type: SessionEventType;
+  actorUserId: string | null;
+  actorIsViewer: boolean;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
 export interface SessionCounterpart {
   userId: string;
   handle: string;
@@ -37,6 +58,13 @@ export interface SessionView {
   updatedAt: string;
   settledAt: string | null;
   expiresAt: string;
+  /** Most-recent timeline events (newest-first). */
+  events: SessionEvent[];
+  /** Count of timeline events the viewer hasn't seen — drives the
+   *  unread badge on the timeline tab. */
+  unreadCount: number;
+  /** Viewer's last-read timestamp; null = never opened. */
+  lastReadAt: string | null;
 }
 
 /**
@@ -89,6 +117,15 @@ export interface SessionApi {
    *  above). Called when the user scrolls the counterpart panel into
    *  view or dismisses the banner. */
   markCounterpartSeen: () => void;
+  /** Append a chat message to the timeline. Server validates length
+   *  (≤500 chars) + rate-limits to ~10/min. Returns 'rate-limited'
+   *  on cap-exceeded so the UI can show a transient "slow down"
+   *  hint without retrying. */
+  sendChat: (body: string) => Promise<{ ok: true } | { ok: false; reason: 'rate-limited' | 'invalid' | 'error' }>;
+  /** Stamp the viewer's last-read timestamp to NOW. Called
+   *  automatically on visibilitychange→visible (matches the
+   *  background-sync pattern). Idempotent. */
+  markRead: () => Promise<void>;
 }
 
 // Module-scoped cache: session id → SessionView. Same pattern as
@@ -344,6 +381,64 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession, fetchOnce]);
 
+  const sendChat = useCallback(async (body: string) => {
+    if (!sessionId) return { ok: false as const, reason: 'error' as const };
+    const trimmed = body.trim();
+    if (trimmed.length === 0 || trimmed.length > 500) {
+      return { ok: false as const, reason: 'invalid' as const };
+    }
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/chat`,
+        { message: trimmed },
+      );
+      if (!result.ok) {
+        if (result.reason === 'rate-limited') {
+          return { ok: false as const, reason: 'rate-limited' as const };
+        }
+        return { ok: false as const, reason: 'error' as const };
+      }
+      if (result.data.session) applyServerSession(result.data.session);
+      return { ok: true as const };
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
+  const markRead = useCallback(async () => {
+    if (!sessionId) return;
+    // Skip if already at zero — avoids a write per visibility change
+    // when the viewer is just toggling tabs without new activity.
+    if (latestRef.current && latestRef.current.unreadCount === 0) return;
+    try {
+      const result = await apiPost<{ session: SessionView }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/mark-read`,
+      );
+      if (result.ok && result.data.session) applyServerSession(result.data.session);
+    } catch {
+      // Read-state is a UX nicety, not a correctness concern. A
+      // failed mark-read just means the badge stays for one more
+      // poll cycle.
+    }
+  }, [sessionId, applyServerSession]);
+
+  // Auto mark-read on visibility→visible so opening the session
+  // tab clears the unread badge (matches the foreground-sync pattern).
+  // Initial open is also covered: the initial fetchOnce gives us
+  // the unreadCount, and the first visibility check fires markRead.
+  useEffect(() => {
+    if (!sessionId) return;
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') markRead();
+    };
+    if (document.visibilityState === 'visible') markRead();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [sessionId, markRead]);
+
   return {
     session,
     preview,
@@ -355,5 +450,7 @@ export function useSession(sessionId: string | null): SessionApi {
     claim,
     hasUnseenCounterpartEdit,
     markCounterpartSeen,
+    sendChat,
+    markRead,
   };
 }

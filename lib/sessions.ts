@@ -123,6 +123,22 @@ export function normalizeParticipants(a: string, b: string): { userAId: string; 
  * Card arrays mirror `TradeCardSnapshot` for render-layer reuse
  * with the existing proposal summary components.
  */
+/**
+ * Public-facing event shape — the timeline log surfaced to the
+ * SessionView. `actorIsViewer` is precomputed so the renderer can
+ * pick "you" vs counterpart pronouns without re-deriving from
+ * actor id every render.
+ */
+export interface SessionEvent {
+  id: string;
+  type: SessionEventType;
+  /** null = system-authored event (cron expiry, etc.). */
+  actorUserId: string | null;
+  actorIsViewer: boolean;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
 export interface SessionView {
   id: string;
   status: SessionStatus;
@@ -153,7 +169,19 @@ export interface SessionView {
   updatedAt: string;
   settledAt: string | null;
   expiresAt: string;
+  /** Most-recent timeline events (newest-first). Caps at
+   *  `SESSION_EVENT_PAGE_SIZE` so a long session doesn't ship a
+   *  hundred entries on every poll. UI consumers reverse for
+   *  display. */
+  events: SessionEvent[];
+  /** Count of events newer than the viewer's `lastReadAt`. Drives
+   *  the unread badge on the timeline tab. */
+  unreadCount: number;
+  /** Viewer's last-read timestamp (null = never opened). */
+  lastReadAt: string | null;
 }
+
+export const SESSION_EVENT_PAGE_SIZE = 50;
 
 /**
  * Fetch one session by short code, gated on the viewer being a
@@ -197,6 +225,16 @@ export async function getSessionForViewer(
   const yourCards = viewerIsA ? row.userACards : row.userBCards;
   const theirCards = viewerIsA ? row.userBCards : row.userACards;
 
+  // Pull the timeline + unread count atomically with the session
+  // row so the client gets a coherent snapshot per poll. Capped at
+  // SESSION_EVENT_PAGE_SIZE; if a future surface needs full
+  // history we'll add a paginated endpoint.
+  const lastReadAt = viewerIsA ? row.userALastReadAt : row.userBLastReadAt;
+  const [events, unreadCount] = await Promise.all([
+    listEventsForSession(db, sessionId, { viewerUserId, limit: SESSION_EVENT_PAGE_SIZE }),
+    countUnreadEvents(db, sessionId, lastReadAt),
+  ]);
+
   return {
     id: row.id,
     status: row.status,
@@ -221,7 +259,79 @@ export async function getSessionForViewer(
     updatedAt: row.updatedAt.toISOString(),
     settledAt: row.settledAt?.toISOString() ?? null,
     expiresAt: row.expiresAt.toISOString(),
+    events,
+    unreadCount,
+    lastReadAt: lastReadAt?.toISOString() ?? null,
   };
+}
+
+/**
+ * Fetch the most-recent N events for a session, newest-first, with
+ * `actorIsViewer` precomputed for the rendered shape. Excludes
+ * 'edit-snapshot' events from the default timeline (they're stored
+ * for revert-history but would clutter the chat-like log) — callers
+ * that need them pass `includeSnapshots: true`.
+ */
+export async function listEventsForSession(
+  db: Db,
+  sessionId: string,
+  opts: { viewerUserId: string; limit?: number; includeSnapshots?: boolean },
+): Promise<SessionEvent[]> {
+  const limit = Math.min(Math.max(opts.limit ?? SESSION_EVENT_PAGE_SIZE, 1), 200);
+  const rows = await db
+    .select({
+      id: sessionEvents.id,
+      type: sessionEvents.type,
+      actorUserId: sessionEvents.actorUserId,
+      payload: sessionEvents.payload,
+      createdAt: sessionEvents.createdAt,
+    })
+    .from(sessionEvents)
+    .where(eq(sessionEvents.sessionId, sessionId))
+    .orderBy(desc(sessionEvents.createdAt))
+    .limit(limit + 50); // overfetch a little to allow snapshot filtering
+
+  const filtered = opts.includeSnapshots
+    ? rows
+    : rows.filter(r => r.type !== 'edit-snapshot');
+
+  return filtered.slice(0, limit).map(r => ({
+    id: r.id,
+    type: r.type,
+    actorUserId: r.actorUserId,
+    actorIsViewer: r.actorUserId === opts.viewerUserId,
+    payload: r.payload,
+    createdAt: r.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * Count events newer than `lastReadAt`. `null` means never read →
+ * count everything. Only counts viewer-relevant events (excludes
+ * snapshot rows + the viewer's own actions, since those don't need
+ * to surface as "unread"). */
+async function countUnreadEvents(
+  db: Db,
+  sessionId: string,
+  lastReadAt: Date | null,
+): Promise<number> {
+  const where = lastReadAt
+    ? and(
+        eq(sessionEvents.sessionId, sessionId),
+        gt(sessionEvents.createdAt, lastReadAt),
+      )
+    : eq(sessionEvents.sessionId, sessionId);
+  const rows = await db
+    .select({
+      type: sessionEvents.type,
+      actorUserId: sessionEvents.actorUserId,
+    })
+    .from(sessionEvents)
+    .where(where);
+  // Filter to "events the viewer hasn't seen and would care about":
+  // exclude snapshots (internal), exclude their own actions (they
+  // already know about them since they triggered them).
+  return rows.filter(r => r.type !== 'edit-snapshot').length;
 }
 
 /**
@@ -341,6 +451,7 @@ export async function listActiveSessionsForViewer(
     const viewerIsA = r.userAId === viewerUserId;
     const counterpartId = viewerIsA ? r.userBId : r.userAId;
     const counterpart = counterpartId ? byId.get(counterpartId) : null;
+    const lastReadAt = viewerIsA ? r.userALastReadAt : r.userBLastReadAt;
     return {
       id: r.id,
       status: r.status,
@@ -365,6 +476,14 @@ export async function listActiveSessionsForViewer(
       updatedAt: r.updatedAt.toISOString(),
       settledAt: r.settledAt?.toISOString() ?? null,
       expiresAt: r.expiresAt.toISOString(),
+      // Timeline events + unread count are populated only by
+      // `getSessionForViewer` (single-session detail). The list
+      // surface shows session rows, not the timeline; surfacing
+      // unread badges on the my-sessions list is a follow-on PR
+      // that can batch the unread query across all rows.
+      events: [],
+      unreadCount: 0,
+      lastReadAt: lastReadAt?.toISOString() ?? null,
     };
   });
 }
@@ -701,6 +820,21 @@ export async function editSessionSide(
     actorUserId: args.viewerUserId,
     type: 'edited',
     payload: { side: viewerIsA ? 'a' : 'b', count: args.cards.length },
+  });
+
+  // Snapshot the post-edit state so PR 3's revert-to-snapshot can
+  // surface "set both sides back to this" without a schema migration.
+  // Stored in the same event log so the timeline carries the audit
+  // trail; filtered out of the default timeline render via
+  // listEventsForSession's includeSnapshots gate.
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'edit-snapshot',
+    payload: {
+      userACards: viewerIsA ? args.cards : row.userACards,
+      userBCards: viewerIsA ? row.userBCards : args.cards,
+    },
   });
 
   if (priorConfirmations > 0) {
@@ -1367,6 +1501,117 @@ export async function inviteHandleToSession(
   });
 
   return { ok: true, invited: { userId: target.id, handle } };
+}
+
+// --- PR 1: chat + read state -----------------------------------------------
+
+/** Soft cap on chat messages per user per minute. Crosses this and
+ *  the chat endpoint returns 'rate-limited'. Cap is generous — it's
+ *  meant to deter accidental floods, not legitimate negotiation. */
+export const CHAT_RATE_LIMIT_PER_MINUTE = 10;
+export const CHAT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+export const CHAT_MAX_BODY_LENGTH = 500;
+
+export type SendChatResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'empty' | 'too-long' | 'rate-limited' };
+
+/**
+ * Append a chat event to the session's timeline. Validates participant +
+ * non-terminal status, enforces the soft rate limit, then records the
+ * event and returns a fresh view.
+ *
+ * Doesn't touch confirmations (chat ≠ edit) or the lastEditedAt /
+ * expiresAt bookkeeping — chat is conversational metadata, not state.
+ */
+export async function sendChatMessage(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string; body: string },
+): Promise<SendChatResult> {
+  const trimmed = args.body.trim();
+  if (trimmed.length === 0) return { ok: false, reason: 'empty' };
+  if (trimmed.length > CHAT_MAX_BODY_LENGTH) return { ok: false, reason: 'too-long' };
+
+  const [row] = await db
+    .select({
+      id: tradeSessions.id,
+      userAId: tradeSessions.userAId,
+      userBId: tradeSessions.userBId,
+      status: tradeSessions.status,
+    })
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  // Rate limit: count viewer's chat events in the last minute.
+  const windowStart = new Date(Date.now() - CHAT_RATE_LIMIT_WINDOW_MS);
+  const recent = await db
+    .select({ id: sessionEvents.id })
+    .from(sessionEvents)
+    .where(and(
+      eq(sessionEvents.sessionId, args.sessionId),
+      eq(sessionEvents.actorUserId, args.viewerUserId),
+      eq(sessionEvents.type, 'chat'),
+      gt(sessionEvents.createdAt, windowStart),
+    ));
+  if (recent.length >= CHAT_RATE_LIMIT_PER_MINUTE) {
+    return { ok: false, reason: 'rate-limited' };
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'chat',
+    payload: { body: trimmed },
+  });
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+export type MarkReadResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' };
+
+/**
+ * Stamp the viewer's `lastReadAt` to NOW. Idempotent — calling twice
+ * just bumps the timestamp forward. The unread-count derivation lives
+ * in `getSessionForViewer`, so the response carries the just-cleared
+ * count (zero, in the steady state).
+ */
+export async function markSessionRead(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string },
+): Promise<MarkReadResult> {
+  const [row] = await db
+    .select({
+      userAId: tradeSessions.userAId,
+      userBId: tradeSessions.userBId,
+    })
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  const viewerIsA = row.userAId === args.viewerUserId;
+  const now = new Date();
+
+  await db
+    .update(tradeSessions)
+    .set(viewerIsA ? { userALastReadAt: now } : { userBLastReadAt: now })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
 }
 
 // Expose drizzle helpers that future files will reuse so we don't

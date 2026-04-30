@@ -17,7 +17,10 @@ import {
   getSessionPreview,
   inviteHandleToSession,
   listActiveSessionsForViewer,
+  markSessionRead,
+  sendChatMessage,
   unconfirmSession,
+  CHAT_MAX_BODY_LENGTH,
 } from '../lib/sessions.js';
 
 /**
@@ -55,6 +58,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleClaimSession(req, res);
     case 'invite-handle':
       return handleInviteHandle(req, res);
+    case 'chat':
+      return handleChatSession(req, res);
+    case 'mark-read':
+      return handleMarkReadSession(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/sessions action' });
   }
@@ -156,6 +163,10 @@ const CreateBodySchema = z.object({
 
 const EditBodySchema = z.object({
   cards: z.array(TradeCardSnapshotSchema).max(200),
+});
+
+const ChatBodySchema = z.object({
+  message: z.string().min(1).max(CHAT_MAX_BODY_LENGTH),
 });
 
 /**
@@ -549,4 +560,85 @@ export async function handleInviteHandle(
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.status(200).json({ invited: result.invited });
+}
+
+/**
+ * Append a chat message to the session timeline. 429 on rate-limit
+ * exceeded; 400 for empty / too-long; 404 for not-participant or
+ * unknown id; 409 for terminal sessions (you can't chat after settle).
+ *
+ * On success, returns the full updated SessionView (events list now
+ * carries the new chat row at the front) so the caller's optimistic
+ * update can rebase to canonical state.
+ */
+export async function handleChatSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const parsed = ChatBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const db = getDb();
+  const result = await sendChatMessage(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    body: parsed.data.message,
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+      case 'not-participant':
+        return res.status(404).json({ error: 'Not found' });
+      case 'terminal':
+        return res.status(409).json({ error: 'Session is no longer active' });
+      case 'empty':
+      case 'too-long':
+        return res.status(400).json({ error: result.reason });
+      case 'rate-limited':
+        return res.status(429).json({ error: 'Too many messages — slow down a moment.' });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.ok ? result.view : null });
+}
+
+/**
+ * Stamp the viewer's last-read timestamp to NOW. Idempotent.
+ * Returns the refreshed view so the caller can re-render with the
+ * cleared unread count without an extra round-trip.
+ */
+export async function handleMarkReadSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const db = getDb();
+  const result = await markSessionRead(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+  });
+  if (!result.ok) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.view });
 }

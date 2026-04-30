@@ -32,38 +32,126 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-### Card signals — PR 1: foundation + signaler side ✅ shipped 2026-04-28
+### Session collaboration: timeline + chat + suggestions (started 2026-04-30)
 
-**Cut from queue item #2 (re-scoped 2026-04-28).** Authored on the
-web Signal Builder; the bot's job is rendering + button interactions.
+**Why:** Real-world feedback from beta users — in a live session, one
+user wanted to propose a change to the counterpart's side ("you should
+add this card to balance things out") but the strict per-side ownership
+model (`lib/sessions.ts::editSessionSide`) leaves no path for it.
+Today's session is read-the-other-side-only. Adding (a) a structured
+suggestion pattern that the counterpart can accept or dismiss, (b) an
+in-session chat surface for working out details, and (c) a unified
+timeline interleaving messages with structured trade events lets
+traders negotiate without leaving the canvas. Sets up snapshot history
++ revert as a natural follow-on.
 
-**What shipped in PR 1:**
-- `card_signals` table + `trade_proposals.responding_to_signal_id` denorm.
-- Web Signal Builder at `/?signals=new` — multi-card form (≤20),
-  per-card variant + max-price + qty, "Pull from wishlist priorities"
-  shortcut, guild dropdown, embed preview pane.
-- `POST /api/signals` posts the public embed, `DELETE` cancels the
-  group, `GET /api/signals/mine` lists the viewer's active signals.
-- Public signal post — embed with card image (single-card),
-  match listing of guild members holding the inverse inventory,
-  Cancel post button + Specify-variant button (single-card / variant=any).
-- Daily Vercel cron expires past-due signals + PATCHes their embeds.
-  (Hobby plan caps cron at 1×/day; the resulting up-to-24h staleness
-  is acceptable since the signal has already passed `expires_at`.)
-- Vitest coverage: signal create + cancel + list-mine, button-handler
-  cancel + variant flows.
+**Architectural fit (the design that survived design review):**
+- `sessionEvents` already stores arbitrary-payload events
+  (`lib/sessions.ts:401-428`). PR 1 reuses this table for chat
+  messages + edit snapshots — no new table for the timeline itself.
+- Suggestions live in a small JSONB `pending_suggestions` column on
+  `trade_sessions`; tied to the existing accept/dismiss vocabulary
+  the trade_proposals system already establishes (proposer →
+  counter → accept/decline pattern, but session-scoped + lighter).
+- Read state is two timestamp columns (`user_a_last_read_at`,
+  `user_b_last_read_at`) — enough for 2-person sessions; per-message
+  read-tracking would be overkill.
+- Snapshot history maps onto the same suggestion mechanic — a
+  "revert to v4" is just a suggestion whose payload is a both-sides
+  snapshot. Schema collapses to one feature with two payload shapes.
 
-**What changed vs the original plan:**
-- Slash commands (`/looking-for`, `/offering`) were prototyped, then
-  killed — the structural limits of slash UX (5-card cap, no card
-  images in autocomplete, modal can't autocomplete) made the web
-  builder strictly better. Match listings render publicly in the
-  embed instead of auto-DM'ing matched users; Discord chat culture
-  is naturally public.
-- Signals carry public discovery only. A future slice may add a
-  per-signal Discord thread for response coordination.
+**What ships — PR 1: chat + timeline foundation**
+- New `sessionEvents.kind` values: `'chat'`, `'edit-snapshot'`. The
+  edit-snapshot event captures `{ userACards, userBCards }` on every
+  successful `editSessionSide` call so PR 3's revert is a query, not
+  a migration.
+- `lib/sessions.ts::sendChatMessage(sessionId, viewerUserId, body)` —
+  appends a chat event; ~10 msg/min/user soft cap to deter
+  accidental flooding.
+- `POST /api/sessions/:id/chat` endpoint, body `{ message: string ≤500 }`.
+- New columns on `trade_sessions`: `user_a_last_read_at`,
+  `user_b_last_read_at` (timestamptz, nullable).
+- `POST /api/sessions/:id/mark-read` writes the viewer's column to
+  NOW(). Idempotent.
+- `useSession` exposes `events`, `unreadCount`, `sendChat()`,
+  `markRead()`. Calls markRead on `visibilitychange → visible` (same
+  hook the foreground sync uses).
+- `SessionTimeline.tsx` — chronological feed with kind-specific
+  cards (chat bubble, "X added 2× Luke", "Y suggested adding Han",
+  "Both confirmed", etc.). Drawer/sidebar placement decided in PR 1
+  design pass (likely a slim collapsible right rail at desktop,
+  full-screen tab at mobile).
+- Unread badge on the timeline tab/heading.
 
-PR 2 (next) — response surface: thread under signal post, "I have this!" / "I want this!" button → modal → public response. PR 3 — ghost flow + fulfillment detection.
+**What ships — PR 2: cross-side suggestions**
+- New JSONB `pending_suggestions` column on `trade_sessions`:
+  `Array<{ id, suggestedByUserId, targetSide: 'a' | 'b', cardsToAdd:
+  CardRef[], cardsToRemove: CardRef[], createdAt, dismissedAt? }>`.
+  Capped at e.g. 10 active per session.
+- **Auto-dismiss policy** (residual-rendering + auto-dismiss-on-
+  unactionable, per design discussion):
+  - Compute "remaining delta" by intersecting against target side's
+    current state. Empty residual = satisfied → auto-dismiss.
+  - If a `cardsToAdd` productId is no longer in the suggester's
+    binder (or `cardsToRemove` no longer applicable) → unactionable
+    → auto-dismiss.
+  - User-initiated dismissal: explicit, separate path.
+- Endpoints (under the `/api/sessions/:id` action dispatcher):
+  - `suggest` → `POST /:id/suggest` (auth: targetSide ≠ viewer's side).
+  - `accept-suggestion` → applies residual delta as a normal edit
+    via `editSessionSide` (which already auto-clears confirmations).
+  - `dismiss-suggestion` → drops it without applying.
+- `useSession` exposes `suggestions`, `suggestForCounterpart()`,
+  `acceptSuggestion()`, `dismissSuggestion()`.
+- UI: counterpart's panel renders an inline "1 suggestion pending"
+  affordance with a residual-delta preview + accept/dismiss controls.
+- Timeline gets `'suggestion-created' | 'suggestion-accepted' |
+  'suggestion-dismissed'` event kinds; auto-dismiss flagged with
+  reason payload (`{ reason: 'satisfied' | 'unactionable' }`).
+
+**What ships — PR 3: snapshot history + double-sided revert**
+- "Revert to this state" affordance on past `'edit-snapshot'`
+  events in the timeline. Fires a new suggestion variant: `{
+  targetSide: 'both', userACards, userBCards, fromSnapshotEventId
+  }`. Reuses the suggest/accept/dismiss machinery from PR 2.
+- Accepting a revert clears confirmations + applies both sides via
+  a single `editSessionSide`-equivalent transaction.
+- Revert does **not** restore in-flight suggestions or chat history
+  — it's "set the cards back to that state," not a time machine.
+- Unactionable revert (a referenced productId is gone from either
+  binder) auto-dismisses with reason payload.
+
+**Done when:**
+- [ ] Chat round-trips end-to-end with sub-3s latency (limited by
+      the existing 2.5s session poll).
+- [ ] Counterpart's unread badge clears within one poll cycle of
+      the user opening the session.
+- [ ] Suggesting a card → counterpart sees pending → accepting
+      applies the delta → confirmations cleared (re-confirm gate
+      intact).
+- [ ] Auto-dismissal: target side editing in a way that fully
+      satisfies the suggestion clears it on next poll. Unactionable
+      suggestions also auto-dismiss with reason recorded.
+- [ ] Snapshot history navigable in the timeline; revert proposed
+      by one side requires the other's accept (double-sided
+      confirm).
+- [ ] Vitest coverage: every new endpoint + state transition +
+      auto-dismiss trigger.
+- [ ] e2e (auth) for two-user session: send-chat round-trip /
+      suggest-and-accept / suggest-and-counterpart-edits-around-it
+      (auto-dismiss on satisfy) / revert-proposed-and-accepted.
+- [ ] Wiki: new `docs/wiki/k-sessions.md` (or extension to
+      `c-trade-builder.md` if the area is small enough) covering
+      the timeline + suggestion + revert model.
+- [ ] Between-slice ritual passes for each PR.
+
+**Open design questions (decide before merge):**
+- Timeline placement at desktop vs mobile (slim rail vs full-screen
+  tab). Sketch in PR 1.
+- Mobile UX for chat with virtual keyboard (canvas push vs
+  fullscreen chat mode).
+- Notification surface for chat (deferred to v0 — relies on user
+  being in-session; push notifications are a Phase 5 concern).
 
 ---
 
@@ -238,6 +326,9 @@ Branch preserved for reference (no merge planned). `docs/v2/` scaffolding stays 
 ## Done
 
 *(append here as slices ship; newest-first)*
+
+### 2026-04-28 — Card signals PR 1: foundation + signaler side
+Authored on the web Signal Builder; the bot's job is rendering + button interactions. `card_signals` table + `trade_proposals.responding_to_signal_id` denorm. Web Signal Builder at `/?signals=new` — multi-card form (≤20), per-card variant + max-price + qty, "Pull from wishlist priorities" shortcut, guild dropdown, embed preview pane. `POST /api/signals` posts the public embed, `DELETE` cancels the group, `GET /api/signals/mine` lists the viewer's active signals. Public signal post — embed with card image (single-card), match listing of guild members holding the inverse inventory, Cancel post button + Specify-variant button (single-card / variant=any). Daily Vercel cron expires past-due signals + PATCHes their embeds. Vitest coverage: signal create + cancel + list-mine, button-handler cancel + variant flows. Slash commands prototyped then killed — structural limits made the web builder strictly better. PR 2 (response surface — thread + modal-respond) and PR 3 (ghost flow + fulfillment detection) remain in queue at item #2.
 
 ### 2026-04-22 — Two-state user UX: collapse ghost into guest
 From the user's POV SWUTrade now has exactly two user states: `guest` (signed-out OR ghost, identical chrome) and `Discord-signed-in`. Ghost is an internal server concept only — a cookie carrying session membership that no longer leaks into UI. `AccountMenu` shows the "Sign in with Discord" menu whenever `!user || user.isAnonymous` (ghosts see no "Sign out", no "Profile" / "Settings" entries). `NavMenu` gating splits into `hasAccount` (real user — gates "My Communities") + `hasAnySession` (real or ghost — gates "My Trades" so ghosts can still reach their in-flight sessions via the hamburger). Routing's `home` rule narrows to real-signed-in, so ghost `?view=home` falls through to the trade builder. `GhostHomeView` deleted entirely. Two new auth e2e cases: (1) asserts a ghost's AccountMenu surfaces "Sign in with Discord" + no "Sign out" / "Public profile", and NavMenu surfaces "My Trades" but not "My Communities"; (2) asserts `?view=home` as a ghost routes to the trade builder. Wiki updated in `e-home-nav.md` + `g-auth.md` + `README.md`.

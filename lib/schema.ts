@@ -642,6 +642,13 @@ export const tradeSessions = pgTable(
     // Optional final-state timestamp — when the session first left
     // `active`. Symmetric with trade_proposals.respondedAt.
     settledAt: timestamp('settled_at', { withTimezone: true }),
+    // Per-user "I've seen the timeline up to here" timestamps. The
+    // unread-event count = events with createdAt > lastReadAt for
+    // the current viewer. Two columns is enough — sessions are
+    // strictly 2-person; no need for per-message read tracking.
+    // Null = never opened (treat all events as unread).
+    userALastReadAt: timestamp('user_a_last_read_at', { withTimezone: true }),
+    userBLastReadAt: timestamp('user_b_last_read_at', { withTimezone: true }),
   },
   (t) => [
     // Partial unique index: only ONE active session per sorted pair.
@@ -670,27 +677,36 @@ export const tradeSessions = pgTable(
  * just lifecycle beats.
  *
  * Event types:
- *   created      — session opened
- *   edited       — one side mutated their half (batched per PUT call)
- *   confirmed    — a participant tapped Confirm
- *   unconfirmed  — confirmations cleared because of a subsequent edit
- *   settled      — both parties confirmed, session frozen
- *   cancelled    — explicit cancel by a participant
- *   expired      — TTL cron moved it to terminal
- *   notified     — debounce-DM job sent a ping (helps reason about
- *                  why a user got/didn't get a DM)
+ *   created         — session opened
+ *   edited          — one side mutated their half (batched per PUT call)
+ *   edit-snapshot   — full both-sides snapshot captured at every edit;
+ *                     payload: { userACards, userBCards }. Lets the
+ *                     timeline show "what did the trade look like at
+ *                     this point" + drives PR 3's revert-to-snapshot.
+ *   confirmed       — a participant tapped Confirm
+ *   unconfirmed     — confirmations cleared because of a subsequent edit
+ *   settled         — both parties confirmed, session frozen
+ *   cancelled       — explicit cancel by a participant
+ *   expired         — TTL cron moved it to terminal
+ *   notified        — debounce-DM job sent a ping (helps reason about
+ *                     why a user got/didn't get a DM)
+ *   chat            — in-session chat message; payload: { body: string }.
+ *                     Reusing sessionEvents for chat keeps the timeline
+ *                     unified (chat + structured events on one stream).
  *
  * Payload shape varies by type — see the write call sites.
  */
 export const sessionEventTypes = [
   'created',
   'edited',
+  'edit-snapshot',
   'confirmed',
   'unconfirmed',
   'settled',
   'cancelled',
   'expired',
   'notified',
+  'chat',
 ] as const;
 export type SessionEventType = typeof sessionEventTypes[number];
 

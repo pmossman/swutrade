@@ -176,6 +176,13 @@
       "when": 1777519076080,
       "tag": "0024_solid_switch",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1777586873792,
+      "tag": "0025_session_chat_read_state",
+      "breakpoints": true
     }
   ]
 }
