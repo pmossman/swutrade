@@ -81,9 +81,11 @@ test.describe('Community source chip', () => {
     // "Show" filter alongside Variant + Set; expand it to reveal the
     // Community wants chip.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
-    // Both sides' overlays mount simultaneously, so the Show filter
-    // button matches twice — pin to the Offering side (first in DOM).
-    await page.getByRole('button', { name: /^Show/ }).first().click();
+    // Filter button name = "Show All" (label + summary, no chips
+    // active). Anchored match avoids the page-level "Show tutorial"
+    // button. Both sides' overlays mount simultaneously, so .first()
+    // pins to the Offering side.
+    await page.getByRole('button', { name: /^Show All\b/ }).first().click();
 
     // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(

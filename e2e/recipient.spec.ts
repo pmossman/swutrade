@@ -74,10 +74,12 @@ test.describe('Source chip is qty-aware', () => {
 
     // Source chips live inside a collapsed "Show" filter alongside
     // Variant + Set. With no auto-activated chip the filter starts
-    // closed — expand it to access "My available". Both sides'
-    // overlays mount simultaneously so `.first()` pins to the open
-    // Offering side.
-    await page.getByRole('button', { name: /^Show/ }).first().click();
+    // closed — expand it to access "My available". Filter button
+    // name = "Show All" (label + summary, no chips active);
+    // anchored match dodges the page-level "Show tutorial" button.
+    // Both sides' overlays mount simultaneously so `.first()` pins
+    // to the open Offering side.
+    await page.getByRole('button', { name: /^Show All\b/ }).first().click();
     const mineChip = page.getByRole('button', { name: 'My available 1' }).first();
     await expect(mineChip).toBeVisible();
 
