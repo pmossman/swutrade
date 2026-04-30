@@ -77,16 +77,10 @@ test.describe('Community source chip', () => {
       .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
-    // Open the Offering picker.
+    // Open the Offering picker. Source chips (Community wants / My
+    // available / etc.) render inline in the filter region — no
+    // expand step needed.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
-
-    // Filters are now collapsed behind a summary button — click to
-    // expand and reveal the source chips (Community wants / My
-    // available / etc.).
-    // Both sides' overlays mount simultaneously post-picker-rework,
-    // so the FilterSummaryButton matches twice. Pin to the Offering
-    // side (first in DOM order).
-    await page.getByRole('button', { name: /Any variant/i }).first().click();
 
     // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(
@@ -111,11 +105,6 @@ test.describe('Community source chip', () => {
       .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
-    // Expand filters (see above).
-    // Both sides' overlays mount simultaneously post-picker-rework,
-    // so the FilterSummaryButton matches twice. Pin to the Offering
-    // side (first in DOM order).
-    await page.getByRole('button', { name: /Any variant/i }).first().click();
 
     await expect(
       page.getByRole('button', { name: /Community wants/ }),
