@@ -66,6 +66,28 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* iOS Safari auto-zooms text-input form controls whose computed
+   font-size is less than 16px on focus, which throws off the rest
+   of the app's layout (the viewport scales in and the surrounding
+   chrome gets pushed around). Force all text-accepting form
+   elements to 16px on mobile widths so the zoom never fires.
+   `!important` is intentional — this is a browser-correctness
+   override that must win against Tailwind size utilities (text-xs,
+   text-sm, etc.) without each input having to opt in.
+
+   Excluded: checkbox / radio / range / color / file — those don't
+   surface a text-entry mode, so the zoom heuristic doesn't apply.
+
+   Desktop unaffected — auto-zoom is a touch-device concern, and
+   the smaller font sizes on form controls work fine with a mouse. */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* Keyboard focus ring. On a dark palette the browser's default
    blue outline is near-invisible; without it tab users can't see
    where focus is. Gold matches the app's primary accent. Opt out
