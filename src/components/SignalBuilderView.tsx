@@ -8,8 +8,18 @@ import { useNavigation } from '../contexts/NavigationContext';
 import { AppHeader } from './ui/AppHeader';
 import { NumberStepper } from './ui/NumberStepper';
 import { ListCardPicker } from './ListCardPicker';
-import { cardFamilyId } from '../variants';
+import { cardFamilyId, variantBadgeColor, variantChipLabel } from '../variants';
 import { apiPost } from '../services/apiClient';
+
+/**
+ * Stable key for a variant restriction. Same shape useWants /
+ * lib/shared use, inlined here to avoid pulling lib/* into the
+ * client bundle.
+ */
+function restrictionKeyOf(variants: readonly string[] | null): string {
+  if (!variants || variants.length === 0) return 'any';
+  return [...variants].sort().join('|');
+}
 
 /**
  * Web Signal Builder — replaces the deprecated Discord
@@ -33,12 +43,17 @@ type SignalKind = 'wanted' | 'offering';
 
 interface SignalCardEntry {
   /** Family-level id (`<set-slug>::<name-slug>`). The /api/signals
-   *  contract is family-keyed; per-printing pinning is the variant
-   *  field. */
+   *  contract is family-keyed; per-printing pinning lives in
+   *  `variants`. */
   familyId: string;
-  /** null = "any printing" (default); otherwise a specific variant
-   *  label that exists for this family. */
-  variant: string | null;
+  /** null = "any printing" (default). Otherwise the set of variant
+   *  labels the user is willing to accept (wanted) or is offering
+   *  (offering). The picker's variant filter chips drive this:
+   *    - 0 chips selected → null (any printing)
+   *    - N chips selected → the N variant labels (multi-variant
+   *      restriction; persisted as wantsItems.restrictionVariants
+   *      and rendered in the Discord embed as "A / B only"). */
+  variants: string[] | null;
   qty: number;
   /** null = no ceiling. */
   maxPrice: number | null;
@@ -164,13 +179,14 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       if (!w.isPriority) continue;
       if (!familyMap.has(w.familyId)) continue;
       // Priority wishlist entries map cleanly onto a Looking-for
-      // signal — restriction translates to variant pin.
-      const variant = w.restriction.mode === 'restricted' && w.restriction.variants.length === 1
-        ? w.restriction.variants[0]
+      // signal — restriction translates 1-to-1 (multi-variant wants
+      // become multi-variant signal entries; "any" stays null).
+      const variants = w.restriction.mode === 'restricted'
+        ? [...w.restriction.variants]
         : null;
       seeded.push({
         familyId: w.familyId,
-        variant,
+        variants,
         qty: w.qty,
         maxPrice: w.maxUnitPrice ?? null,
       });
@@ -203,32 +219,32 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   function handlePick(card: CardVariant, ctx: { acceptedVariants?: string[] }) {
     const familyId = cardFamilyId(card);
     if (!familyMap.has(familyId)) return;
-    // The picker's selectionMode handles the "which variant to pin"
-    // question and feeds it back via ctx.acceptedVariants:
-    //   - specific tile mode (offering): [card.variant]
+    // The picker's selectionMode feeds the click intent through
+    // ctx.acceptedVariants:
+    //   - specific tile mode (offering): [card.variant] — exactly
+    //     one variant, the printing the user clicked.
     //   - family tile mode + variant filter (wanted, restricted):
-    //     the filter selection
-    //   - family tile mode + no filter (wanted, "any"): []
-    // So all three signal-builder sub-cases collapse to the same
-    // single-line read:
+    //     the full filter selection (1+ variants).
+    //   - family tile mode + no filter (wanted, "any"): [].
     const accepted = ctx.acceptedVariants ?? [];
-    const variant = accepted.length === 1 ? accepted[0] : null;
-    // Dedup key also differs by side:
-    //   - 'wanted' merges by familyId — "any" wants for the same
-    //     family converge, so a second tap bumps qty.
+    const variants = accepted.length > 0 ? [...accepted] : null;
+    const dedupKey = restrictionKeyOf(variants);
+    // Dedup differs by side:
+    //   - 'wanted' merges by (familyId, restriction) — the same
+    //     family with the same multi-variant restriction is one
+    //     entry; a different restriction (e.g. "any" vs Hyperspace)
+    //     is a distinct row. Mirrors wantsItems uniqueness.
     //   - 'offering' keeps each (familyId, variant) as its own
-    //     entry — a user offering Standard Chewbacca AND Prestige
-    //     Chewbacca is two distinct available_items rows, so the
-    //     draft has to mirror that.
+    //     entry since available_items is productId-keyed.
     setCards(prev => {
       const existing = prev.findIndex(c =>
         c.familyId === familyId
-        && (kind === 'wanted' || c.variant === variant),
+        && restrictionKeyOf(c.variants) === dedupKey,
       );
       if (existing >= 0) {
         return prev.map((c, i) => i === existing ? { ...c, qty: Math.min(99, c.qty + 1) } : c);
       }
-      return [...prev, { familyId, variant, qty: 1, maxPrice: null }];
+      return [...prev, { familyId, variants, qty: 1, maxPrice: null }];
     });
   }
 
@@ -248,7 +264,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       kind,
       cards: cards.map(c => ({
         familyId: c.familyId,
-        variant: c.variant,
+        variants: c.variants,
         qty: c.qty,
         maxPrice: c.maxPrice,
       })),
@@ -324,13 +340,12 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     // shape via discriminated-union types now, so the offering side
     // can't accidentally feed familyIds and silently miss badges
     // (which it did before this refactor).
-    // Compound id for offering — a draft can carry multiple entries
-    // for the same family at different variants (Standard Chewie +
-    // Prestige Chewie are distinct rows). Wanted draft uses just
-    // familyId since "any" wants merge.
-    const entryId = (c: SignalCardEntry) => kind === 'offering'
-      ? `${c.familyId}::${c.variant ?? '*'}`
-      : c.familyId;
+    // Compound id encodes (familyId, restriction) so multiple
+    // entries with different variant restrictions stay distinct in
+    // the draft — applies to both sides:
+    //   - 'wanted': any-Luke vs Hyperspace-only-Luke are distinct rows
+    //   - 'offering': Standard Chewie vs Prestige Chewie are distinct rows
+    const entryId = (c: SignalCardEntry) => `${c.familyId}::${restrictionKeyOf(c.variants)}`;
     const onDecrement = (id: string) => {
       setCards(prev => {
         const idx = prev.findIndex(c => entryId(c) === id);
@@ -341,13 +356,14 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       });
     };
     return (
-      <PageChrome auth={auth}>
+      <PageChrome auth={auth} fillViewport>
         <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
           {kind === 'wanted' ? (
             <ListCardPicker
               // Looking-for signals = wishlist semantics. Family-
               // level entries; variant filter chips drive
-              // restriction (empty → any; selected → restricted).
+              // restriction (empty → any; 1+ selected → restricted
+              // to the full set).
               selectionMode={{ kind: 'family' }}
               allCards={allCards}
               priceMode="market"
@@ -355,7 +371,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
                 id: entryId(c),
                 familyId: c.familyId,
                 qty: c.qty,
-                restrictionKey: c.variant ?? 'any',
+                restrictionKey: restrictionKeyOf(c.variants),
               }))}
               onDecrement={onDecrement}
               onPick={handlePick}
@@ -364,21 +380,18 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
           ) : (
             <ListCardPicker
               // Offering signals are productId-keyed (you have
-              // specific printings); lock to specific.
+              // specific printings); lock to specific. Pinned
+              // variant lives at variants[0] — specific tile mode
+              // always feeds back exactly one accepted variant.
               selectionMode={{ kind: 'specific' }}
               allCards={allCards}
               priceMode="market"
               savedEntries={cards.flatMap(c => {
                 const family = familyMap.get(c.familyId);
                 if (!family) return [];
-                // For offering, the entry's `variant` field carries
-                // the printing the user clicked — resolve it to the
-                // concrete productId so the picker's productId-keyed
-                // badge lookup matches. Falls back to the cheapest
-                // variant if the entry was somehow stored without a
-                // variant (legacy / migration).
-                const productId = c.variant
-                  ? family.variants.find(v => v.variant === c.variant)?.productId
+                const pinned = c.variants?.[0];
+                const productId = pinned
+                  ? family.variants.find(v => v.variant === pinned)?.productId
                   : family.variants[0]?.productId;
                 if (!productId) return [];
                 return [{ id: entryId(c), productId, qty: c.qty }];
@@ -577,10 +590,25 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
  * Standard page chrome — header + main wrapper. Same shape as
  * BinderView / ProfileView / SettingsView use, so the Signal Builder
  * page reads as a first-class app surface and not a floating dialog.
+ *
+ * `fillViewport` locks the chrome to viewport height + clips overflow,
+ * so a child that wants its own internal scroll region (the picker
+ * route) gets the same height-locked container TradeSearchOverlay
+ * provides via `fixed inset-0`. Form-mode keeps the default
+ * `min-h-[100dvh]` so a long form can scroll the page naturally.
  */
-function PageChrome({ auth, children }: { auth: AuthApi; children: React.ReactNode }) {
+function PageChrome({
+  auth,
+  fillViewport = false,
+  children,
+}: {
+  auth: AuthApi;
+  fillViewport?: boolean;
+  children: React.ReactNode;
+}) {
+  const heightClass = fillViewport ? 'h-[100dvh] overflow-hidden' : 'min-h-[100dvh]';
   return (
-    <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
+    <div className={`${heightClass} bg-space-900 text-gray-100 flex flex-col`}>
       <AppHeader
         auth={auth}
         breadcrumbs={[
@@ -588,7 +616,7 @@ function PageChrome({ auth, children }: { auth: AuthApi; children: React.ReactNo
           { label: 'Post to a server' },
         ]}
       />
-      <main className="flex-1 flex flex-col w-full">
+      <main className="flex-1 flex flex-col w-full min-h-0">
         {children}
       </main>
     </div>
@@ -718,19 +746,46 @@ function CardRow({
           {family.cardType === 'Leader' && <span className="text-[11px] text-gray-500">(Leader)</span>}
         </div>
         <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[11px] text-gray-400">
-          <select
-            value={card.variant ?? ''}
-            onChange={e => onChange({ variant: e.target.value || null })}
-            aria-label="Variant"
-            className="bg-space-900/70 border border-space-700 rounded px-1 py-0.5 focus:border-gold/50 focus:outline-none"
-          >
-            <option value="">any printing</option>
-            {family.variants.map(v => (
-              <option key={v.productId} value={v.variant}>
-                {v.variant}{v.market != null ? ` · ~$${v.market.toFixed(2)}` : ''}
-              </option>
-            ))}
-          </select>
+          {card.variants && card.variants.length > 1 ? (
+            // Multi-variant restrictions can't fit a single <select>;
+            // render the accepted variants as colored badges (matching
+            // the picker filter chip palette) so the user sees exactly
+            // what's pinned. To change the restriction the user
+            // removes + re-adds via the picker — single source of
+            // truth for restriction selection lives there.
+            <span className="flex items-center gap-1 flex-wrap">
+              {card.variants.map(v => (
+                <span
+                  key={v}
+                  className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(v)}`}
+                >
+                  {variantChipLabel(v)}
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => onChange({ variants: null })}
+                className="text-[10px] text-gray-500 hover:text-gold underline ml-0.5"
+                title="Drop the variant restriction"
+              >
+                drop
+              </button>
+            </span>
+          ) : (
+            <select
+              value={card.variants?.[0] ?? ''}
+              onChange={e => onChange({ variants: e.target.value ? [e.target.value] : null })}
+              aria-label="Variant"
+              className="bg-space-900/70 border border-space-700 rounded px-1 py-0.5 focus:border-gold/50 focus:outline-none"
+            >
+              <option value="">any printing</option>
+              {family.variants.map(v => (
+                <option key={v.productId} value={v.variant}>
+                  {v.variant}{v.market != null ? ` · ~$${v.market.toFixed(2)}` : ''}
+                </option>
+              ))}
+            </select>
+          )}
           <span className="text-gray-600">·</span>
           <span className="flex items-center gap-1">
             max&nbsp;$

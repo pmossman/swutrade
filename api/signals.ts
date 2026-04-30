@@ -65,7 +65,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 const CardInputSchema = z.object({
   familyId: z.string().min(1).max(200),
-  variant: z.string().min(1).max(60).nullable().optional(),
+  /** null / omitted / empty array → "any printing"; 1+ variant
+   *  labels → the user wants/offers exactly those printings. The
+   *  embed renders multi-variant restrictions as "A / B only". */
+  variants: z.array(z.string().min(1).max(60)).max(20).nullable().optional(),
   qty: z.number().int().min(1).max(99),
   maxPrice: z.number().min(0).max(10000).nullable().optional(),
 });
@@ -196,8 +199,16 @@ export async function handleCreate(
     if (!family) {
       return res.status(400).json({ error: `Unknown card family: ${c.familyId}` });
     }
-    const variantSpec: VariantSpec = c.variant && family.variants.some(v => v.variant === c.variant)
-      ? { mode: 'restricted', variants: [c.variant] }
+    // Filter the requested variants to those that actually exist in
+    // the family — defends against stale frontend data (post-set-rotation
+    // a printing might be missing) without rejecting the whole post.
+    // After filtering: 0 valid → 'any', 1+ → 'restricted' with the
+    // surviving variants.
+    const requestedVariants = (c.variants ?? []).filter(rv =>
+      family.variants.some(v => v.variant === rv),
+    );
+    const variantSpec: VariantSpec = requestedVariants.length > 0
+      ? { mode: 'restricted', variants: requestedVariants }
       : { mode: 'any' };
     const representativeProductId = variantSpec.mode === 'restricted'
       ? family.variants.find(v => v.variant === variantSpec.variants[0])!.productId
