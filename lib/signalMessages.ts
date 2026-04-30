@@ -161,7 +161,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   } else if (isActive) {
     lines.push('');
     const origin = ctx.origin ?? 'https://swutrade.com';
-    lines.push(`✨ [Join SWUTrade with Discord →](${origin}/api/auth/discord) · build your own list`);
+    lines.push(`✨ [Join SWUTrade with Discord →](${origin}/api/auth/discord) · build your virtual trade binder`);
   }
 
   // Title — single-card uses the card name; multi-card uses a
