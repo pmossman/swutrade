@@ -49,8 +49,15 @@ export function BinderView({
 
   const count = available.items.length;
 
+  // Viewport-locked outer + min-h-0 main: the AvailablePanel uses
+  // overflow-y-auto on its row list AND on its picker grid, which
+  // both need a hard height ancestor to actually scroll. Without
+  // this lock the document would scroll instead — list mode would
+  // appear to work (just scrolling differently than designed) but
+  // picker mode breaks because the virtualizer's first scroll lands
+  // on a non-scrollable container.
   return (
-    <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
+    <div className="h-[100dvh] overflow-hidden bg-space-900 text-gray-100 flex flex-col">
       <AppHeader
         auth={auth}
         breadcrumbs={[
@@ -59,7 +66,7 @@ export function BinderView({
         ]}
       />
 
-      <main className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3">
+      <main className="flex-1 min-h-0 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3">
         <header className="flex items-baseline justify-between gap-3 pb-3 border-b border-space-800 mb-2">
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-gray-100">Your trade binder</h1>
