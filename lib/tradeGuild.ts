@@ -232,6 +232,7 @@ interface SwutradeChannelIds {
 interface ChannelEnsureBot {
   getGuildBotMember: (guildId: string, botUserId: string) => Promise<{ roles: string[] }>;
   createGuildChannel: (guildId: string, body: Record<string, unknown>) => Promise<{ id: string; name: string }>;
+  modifyChannel?: (channelId: string, opts: { parent_id?: string | null }) => Promise<{ id: string }>;
   postChannelMessage?: (channelId: string, body: Record<string, unknown>) => Promise<{ id: string }>;
 }
 
@@ -289,6 +290,7 @@ export async function ensureSwutradeCategory(
   // 1. Category — non-chat container that groups the four channels.
   //    Carries the bot's full permission set so child channels inherit
   //    it; admins can override per-channel later.
+  const categoryWasJustCreated = !row?.categoryId;
   let categoryId = row?.categoryId ?? null;
   if (!categoryId) {
     const cat = await bot.createGuildChannel(guildId, {
@@ -299,6 +301,24 @@ export async function ensureSwutradeCategory(
       ],
     });
     categoryId = cat.id;
+  }
+
+  // Re-parent helper: when we just minted a new category but the row
+  // already carried a child channel id from the pre-category install,
+  // the existing channel sits orphaned outside the new category.
+  // Modify it in-place so it slots under the new category alongside
+  // its siblings. Falls through silently if the bot client lacks
+  // modifyChannel (synthetic test fakes) or the API call fails (e.g.
+  // channel deleted manually) — the worst case is the orphaned
+  // channel stays orphaned, which is the pre-fix status quo.
+  async function reparentExisting(existingId: string): Promise<void> {
+    if (!categoryWasJustCreated) return;
+    if (!bot.modifyChannel) return;
+    try {
+      await bot.modifyChannel(existingId, { parent_id: categoryId });
+    } catch (err) {
+      console.error('ensureSwutradeCategory: re-parent failed', { existingId, err });
+    }
   }
 
   // 2. #swutrade-threads — private trade-proposal threads parent.
@@ -317,6 +337,8 @@ export async function ensureSwutradeCategory(
       ],
     });
     tradesChannelId = ch.id;
+  } else {
+    await reparentExisting(tradesChannelId);
   }
 
   // 3. #swutrade-posts — signal posts (Looking-for / Offering).
@@ -335,6 +357,8 @@ export async function ensureSwutradeCategory(
       ],
     });
     postsChannelId = ch.id;
+  } else {
+    await reparentExisting(postsChannelId);
   }
 
   // 4. #swutrade-announcements — read-only broadcast channel.
@@ -354,6 +378,8 @@ export async function ensureSwutradeCategory(
     });
     announcementsChannelId = ch.id;
     announcementsJustCreated = true;
+  } else {
+    await reparentExisting(announcementsChannelId);
   }
 
   // 5. #swutrade-discussion — open community chat about the app.
@@ -371,6 +397,8 @@ export async function ensureSwutradeCategory(
       ],
     });
     discussionChannelId = ch.id;
+  } else {
+    await reparentExisting(discussionChannelId);
   }
 
   await db

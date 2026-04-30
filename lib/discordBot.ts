@@ -117,6 +117,15 @@ export interface DiscordBotClient {
       }>;
     },
   ): Promise<{ id: string; name: string }>;
+  /** Modify an existing channel — currently used to re-parent a
+   *  pre-category-era channel under the new SWUTrade category on
+   *  legacy installs. Returns the modified channel; throws on 404
+   *  if the channel was deleted manually so the caller can fall
+   *  back to a fresh create. */
+  modifyChannel(
+    channelId: string,
+    opts: { parent_id?: string | null },
+  ): Promise<{ id: string }>;
   /** Fetch the bot's member row in a guild — we use this to resolve
    *  the bot's managed-integration role so we can grant it the right
    *  permission overwrites on a channel we just created.
@@ -315,6 +324,15 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
         body: JSON.stringify(opts),
       });
       return res.json() as Promise<{ id: string; name: string }>;
+    },
+
+    async modifyChannel(channelId, opts) {
+      if (isSyntheticDiscordId(channelId)) return { id: channelId };
+      const res = await request(`/channels/${channelId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(opts),
+      }, { idempotent: true });
+      return res.json() as Promise<{ id: string }>;
     },
 
     async getGuildBotMember(guildId, botUserId) {

@@ -34,6 +34,7 @@ export function createBaseFakeBot(overrides: FakeBotOverrides = {}): DiscordBotC
     addThreadMember: unused('addThreadMember') as DiscordBotClient['addThreadMember'],
     deleteChannel: unused('deleteChannel') as DiscordBotClient['deleteChannel'],
     createGuildChannel: unused('createGuildChannel') as DiscordBotClient['createGuildChannel'],
+    modifyChannel: unused('modifyChannel') as DiscordBotClient['modifyChannel'],
     getGuildBotMember: unused('getGuildBotMember') as DiscordBotClient['getGuildBotMember'],
     ...overrides,
   };

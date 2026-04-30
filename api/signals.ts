@@ -75,7 +75,11 @@ const CreateBodySchema = z.object({
   cards: z.array(CardInputSchema).min(1).max(20),
   note: z.string().max(500).nullable().optional(),
   guildId: z.string().min(1).max(40),
-  expiresInDays: z.number().int().min(1).max(30).default(7),
+  // Server-side TTL for match-query hygiene only — viewers don't see
+  // expiration in the embed anymore, so the cap is generous (1 year).
+  // Default 90d matches what the web builder sends; any older client
+  // that omits the field gets the same default.
+  expiresInDays: z.number().int().min(1).max(365).default(90),
 });
 
 interface CreateDeps {
