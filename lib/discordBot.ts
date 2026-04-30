@@ -96,13 +96,19 @@ export interface DiscordBotClient {
    *  Discord user) — otherwise the parent channel accumulates empty
    *  threads with just the bot/proposer inside. */
   deleteChannel(channelId: string): Promise<void>;
-  /** Create a new guild text channel. Returns the channel id. */
+  /** Create a new guild channel. Returns the channel id. `type` 0 is
+   *  a regular text channel; type 4 is a category (a non-chat
+   *  container that groups channels visually under it via
+   *  `parent_id`). When `parent_id` is set, the channel inherits
+   *  permission overwrites from the parent category unless explicitly
+   *  overridden. */
   createGuildChannel(
     guildId: string,
     opts: {
       name: string;
-      type: 0; // GUILD_TEXT
+      type: 0 | 4; // 0 = GUILD_TEXT, 4 = GUILD_CATEGORY
       topic?: string;
+      parent_id?: string;
       permission_overwrites?: Array<{
         id: string; // role or user id
         type: 0 | 1; // 0 = role, 1 = user

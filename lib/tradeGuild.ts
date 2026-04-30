@@ -199,28 +199,69 @@ export async function getGuildTradesChannel(
 }
 
 /**
- * Auto-create the `#swutrade-threads` channel for a guild and stash
- * its id on `bot_installed_guilds.trades_channel_id`. Used by:
- *
- *   - the bot install handler on first install (welcome path), and
- *   - the signals API when a post lands on a guild whose install
- *     pre-dates the auto-create logic OR whose first attempt failed
- *     (bot DM'd the install admin but the channel didn't get created
- *     because of permissions / race / outage).
- *
- * Idempotent on the DB row but not on Discord — a successful run
- * persists the new channel id; a failed call leaves the row's
- * `trades_channel_id` unchanged. Bubbles errors so callers can
- * decide whether to surface a fix-it message.
+ * Bitfield literals for the channel-create permission overlays we
+ * apply. Discord encodes permission bitsets as decimal strings;
+ * pre-summing makes the call sites readable. Values cross-checked
+ * against https://discord.com/developers/docs/topics/permissions.
  */
-export async function ensureTradesChannel(
+const PERM_VIEW_CHANNEL = 0x400n;          // 1024
+const PERM_SEND_MESSAGES = 0x800n;         // 2048
+const PERM_READ_MESSAGE_HISTORY = 0x10000n; // 65536
+const PERM_ADD_REACTIONS = 0x40n;          // 64
+const PERM_EMBED_LINKS = 0x4000n;          // 16384
+const PERM_ATTACH_FILES = 0x8000n;         // 32768
+
+const EVERYONE_VIEW_ONLY = (PERM_VIEW_CHANNEL).toString();
+const EVERYONE_VIEW_AND_REACT = (PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_ADD_REACTIONS).toString();
+const EVERYONE_FULL_CHAT = (
+  PERM_VIEW_CHANNEL | PERM_READ_MESSAGE_HISTORY | PERM_ADD_REACTIONS
+  | PERM_SEND_MESSAGES | PERM_EMBED_LINKS | PERM_ATTACH_FILES
+).toString();
+/** Same bitset the bot install asked for — keeps the bot working
+ *  in each channel regardless of server defaults. */
+const BOT_FULL_PERMS = '360777255952';
+
+interface SwutradeChannelIds {
+  categoryId: string;
+  tradesChannelId: string;
+  postsChannelId: string;
+  announcementsChannelId: string;
+  discussionChannelId: string;
+}
+
+interface ChannelEnsureBot {
+  getGuildBotMember: (guildId: string, botUserId: string) => Promise<{ roles: string[] }>;
+  createGuildChannel: (guildId: string, body: Record<string, unknown>) => Promise<{ id: string; name: string }>;
+  postChannelMessage?: (channelId: string, body: Record<string, unknown>) => Promise<{ id: string }>;
+}
+
+/**
+ * Provision the SWUTrade channel category + four standard channels
+ * for a guild and stash their ids on `bot_installed_guilds`. Used
+ * by the install flow (welcome path) and by api/signals.ts when a
+ * post lands on a guild whose install pre-dates the category model
+ * OR whose first attempt partially failed.
+ *
+ * Layout:
+ *   📁 SWUTrade
+ *      #swutrade-posts          (members can reply; signals land here)
+ *      #swutrade-threads        (private trade-proposal threads parent)
+ *      #swutrade-announcements  (read-only; SWUTrade-team broadcasts)
+ *      #swutrade-discussion     (open community chat about the app)
+ *
+ * Idempotent at the per-piece level: if the row already has any of
+ * the channel ids set, we keep them. Only missing pieces get
+ * created. Lets re-running the function repair partial installs
+ * without duplicating channels.
+ *
+ * Returns the resolved ids for every piece so the caller can use
+ * them directly without a re-read.
+ */
+export async function ensureSwutradeCategory(
   db: Db,
   guildId: string,
-  bot: {
-    getGuildBotMember: (guildId: string, botUserId: string) => Promise<{ roles: string[] }>;
-    createGuildChannel: (guildId: string, body: Record<string, unknown>) => Promise<{ id: string }>;
-  },
-): Promise<string> {
+  bot: ChannelEnsureBot,
+): Promise<SwutradeChannelIds> {
   const botUserId = process.env.DISCORD_CLIENT_ID;
   if (!botUserId) {
     throw new Error('DISCORD_CLIENT_ID not set — cannot resolve bot member');
@@ -232,31 +273,155 @@ export async function ensureTradesChannel(
   }
   // The `@everyone` role id in Discord always equals the guild id.
   const everyoneRoleId = guildId;
-  const channel = await bot.createGuildChannel(guildId, {
-    name: 'swutrade-threads',
-    type: 0,
-    topic:
-      'SWUTrade · trade proposal threads + signal posts land here. Move signals to a dedicated channel via SWUTrade settings.',
-    permission_overwrites: [
-      {
-        id: everyoneRoleId,
-        type: 0,
-        // VIEW_CHANNEL so members can see the channel. Private threads
-        // are invisible regardless of channel-level defaults.
-        allow: '1024',
-      },
-      {
-        id: botRoleId,
-        type: 0,
-        // Full set from BOT_INSTALL_PERMISSIONS so the bot works
-        // regardless of server defaults on the channel.
-        allow: '360777255952',
-      },
-    ],
-  });
+
+  const [row] = await db
+    .select({
+      categoryId: botInstalledGuilds.categoryId,
+      tradesChannelId: botInstalledGuilds.tradesChannelId,
+      postsChannelId: botInstalledGuilds.postsChannelId,
+      announcementsChannelId: botInstalledGuilds.announcementsChannelId,
+      discussionChannelId: botInstalledGuilds.discussionChannelId,
+    })
+    .from(botInstalledGuilds)
+    .where(eq(botInstalledGuilds.guildId, guildId))
+    .limit(1);
+
+  // 1. Category — non-chat container that groups the four channels.
+  //    Carries the bot's full permission set so child channels inherit
+  //    it; admins can override per-channel later.
+  let categoryId = row?.categoryId ?? null;
+  if (!categoryId) {
+    const cat = await bot.createGuildChannel(guildId, {
+      name: 'SWUTrade',
+      type: 4,
+      permission_overwrites: [
+        { id: botRoleId, type: 0, allow: BOT_FULL_PERMS },
+      ],
+    });
+    categoryId = cat.id;
+  }
+
+  // 2. #swutrade-threads — private trade-proposal threads parent.
+  //    @everyone can VIEW only; private threads themselves are
+  //    invisible to non-participants regardless of channel perms.
+  let tradesChannelId = row?.tradesChannelId ?? null;
+  if (!tradesChannelId) {
+    const ch = await bot.createGuildChannel(guildId, {
+      name: 'swutrade-threads',
+      type: 0,
+      parent_id: categoryId,
+      topic: 'SWUTrade · trade-proposal threads. The bot creates a private thread per proposal; only the traders see the contents.',
+      permission_overwrites: [
+        { id: everyoneRoleId, type: 0, allow: EVERYONE_VIEW_ONLY },
+        { id: botRoleId, type: 0, allow: BOT_FULL_PERMS },
+      ],
+    });
+    tradesChannelId = ch.id;
+  }
+
+  // 3. #swutrade-posts — signal posts (Looking-for / Offering).
+  //    Members can reply inline so a post can become a quick
+  //    conversation thread without spawning a Discord thread.
+  let postsChannelId = row?.postsChannelId ?? null;
+  if (!postsChannelId) {
+    const ch = await bot.createGuildChannel(guildId, {
+      name: 'swutrade-posts',
+      type: 0,
+      parent_id: categoryId,
+      topic: 'SWUTrade · signal posts. Looking-for + Offering boards from your community. Reply on a post to coordinate.',
+      permission_overwrites: [
+        { id: everyoneRoleId, type: 0, allow: EVERYONE_FULL_CHAT },
+        { id: botRoleId, type: 0, allow: BOT_FULL_PERMS },
+      ],
+    });
+    postsChannelId = ch.id;
+  }
+
+  // 4. #swutrade-announcements — read-only broadcast channel.
+  //    @everyone can view + react but not send; the bot posts.
+  let announcementsChannelId = row?.announcementsChannelId ?? null;
+  let announcementsJustCreated = false;
+  if (!announcementsChannelId) {
+    const ch = await bot.createGuildChannel(guildId, {
+      name: 'swutrade-announcements',
+      type: 0,
+      parent_id: categoryId,
+      topic: 'SWUTrade · roadmap milestones, weekly community summaries, feature changelogs.',
+      permission_overwrites: [
+        { id: everyoneRoleId, type: 0, allow: EVERYONE_VIEW_AND_REACT },
+        { id: botRoleId, type: 0, allow: BOT_FULL_PERMS },
+      ],
+    });
+    announcementsChannelId = ch.id;
+    announcementsJustCreated = true;
+  }
+
+  // 5. #swutrade-discussion — open community chat about the app.
+  //    Self-sustaining surface; we don't post here automatically.
+  let discussionChannelId = row?.discussionChannelId ?? null;
+  if (!discussionChannelId) {
+    const ch = await bot.createGuildChannel(guildId, {
+      name: 'swutrade-discussion',
+      type: 0,
+      parent_id: categoryId,
+      topic: 'SWUTrade · feedback, questions, and chat about the app itself. Trade-talk lives in #swutrade-posts.',
+      permission_overwrites: [
+        { id: everyoneRoleId, type: 0, allow: EVERYONE_FULL_CHAT },
+        { id: botRoleId, type: 0, allow: BOT_FULL_PERMS },
+      ],
+    });
+    discussionChannelId = ch.id;
+  }
+
   await db
     .update(botInstalledGuilds)
-    .set({ tradesChannelId: channel.id })
+    .set({
+      categoryId,
+      tradesChannelId,
+      postsChannelId,
+      announcementsChannelId,
+      discussionChannelId,
+    })
     .where(eq(botInstalledGuilds.guildId, guildId));
-  return channel.id;
+
+  // Seed announcements with a welcome post on first creation so the
+  // channel reads as deliberately quiet rather than abandoned. Best-
+  // effort — failure here doesn't roll back the channels.
+  if (announcementsJustCreated && bot.postChannelMessage) {
+    try {
+      await bot.postChannelMessage(announcementsChannelId, {
+        embeds: [{
+          title: '👋 Welcome to SWUTrade in this server',
+          description: [
+            'Updates from the SWUTrade team will land here:',
+            '',
+            '• Roadmap milestones & changelogs',
+            '• Weekly community summaries (top wishlisted cards, trades made, new members)',
+            '• New-feature announcements',
+            '',
+            'Got feedback or questions? Drop them in <#' + discussionChannelId + '>.',
+            'Want to start trading? Compose a post at swutrade.com.',
+          ].join('\n'),
+          color: 0xF5A623,
+        }],
+      });
+    } catch (err) {
+      console.error('ensureSwutradeCategory: announcements welcome post failed', err);
+    }
+  }
+
+  return { categoryId, tradesChannelId, postsChannelId, announcementsChannelId, discussionChannelId };
+}
+
+/** Backwards-compatible shim — old callers still in the repo (or
+ *  any forks) can keep using the `ensureTradesChannel` name; it
+ *  forwards to the category-aware ensure flow and returns just the
+ *  trades-channel id for the existing return contract. */
+export async function ensureTradesChannel(
+  db: Db,
+  guildId: string,
+  bot: ChannelEnsureBot,
+): Promise<string> {
+  const ids = await ensureSwutradeCategory(db, guildId, bot);
+  return ids.tradesChannelId;
 }

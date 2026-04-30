@@ -1242,7 +1242,7 @@ describeWithDb('/api/bot dispatcher', () => {
       expect(dm, 'expected NO welcome DM on re-auth').toBeUndefined();
     });
 
-    it('APPLICATION_AUTHORIZED auto-creates #swutrade-threads + persists the channel id when the bot client succeeds', async () => {
+    it('APPLICATION_AUTHORIZED auto-creates the SWUTrade category + four channels and persists every id when the bot client succeeds', async () => {
       // Test-scoped env pin so the handler's DISCORD_CLIENT_ID lookup
       // has a value. CI doesn't write .env.local's DISCORD_CLIENT_ID
       // to the test process env; locally it's present via dotenv.
@@ -1275,50 +1275,77 @@ describeWithDb('/api/bot dispatcher', () => {
       expect(res._status).toBe(204);
 
       // Bot was asked for its member info first (to resolve the role
-      // id we grant channel perms to), then asked to create the channel.
-      // The caller must supply DISCORD_CLIENT_ID because Discord
-      // rejects `/guilds/:id/members/@me` for bots.
+      // id we grant channel perms to), then asked to create the
+      // category + four channels. DISCORD_CLIENT_ID has to be set
+      // because Discord rejects `/guilds/:id/members/@me` for bots.
       expect(bot.getGuildBotMemberCalls).toHaveLength(1);
       expect(bot.getGuildBotMemberCalls[0].guildId).toBe(guildId);
       expect(bot.getGuildBotMemberCalls[0].botUserId).toBe(TEST_CLIENT_ID);
-      expect(bot.createChannelCalls).toHaveLength(1);
-      const call = bot.createChannelCalls[0];
-      expect(call.guildId).toBe(guildId);
-      expect(call.opts.name).toBe('swutrade-threads');
-      expect(call.opts.type).toBe(0);
-      // Two overwrites: @everyone (role id == guild id) gets VIEW_CHANNEL
-      // only; the bot's own role gets the full BOT_INSTALL_PERMISSIONS
-      // bitfield so it can operate regardless of server-wide defaults.
-      const overwrites = call.opts.permission_overwrites ?? [];
-      expect(overwrites).toHaveLength(2);
-      const everyone = overwrites.find(o => o.id === guildId);
-      const botRole = overwrites.find(o => o.id === 'bot-role-1');
-      expect(everyone?.allow).toBe('1024');
-      expect(botRole?.allow).toBe('360777255952');
 
-      // The created channel id was persisted on the row.
+      // Five createGuildChannel calls in order: category, threads,
+      // posts, announcements, discussion.
+      expect(bot.createChannelCalls).toHaveLength(5);
+      const [cat, threads, posts, announcements, discussion] = bot.createChannelCalls;
+      expect(cat.opts.name).toBe('SWUTrade');
+      expect(cat.opts.type).toBe(4);
+      expect(threads.opts.name).toBe('swutrade-threads');
+      expect(threads.opts.type).toBe(0);
+      expect(threads.opts.parent_id).toBe(`channel-${guildId}`); // category id
+      expect(posts.opts.name).toBe('swutrade-posts');
+      expect(posts.opts.type).toBe(0);
+      expect(announcements.opts.name).toBe('swutrade-announcements');
+      expect(announcements.opts.type).toBe(0);
+      expect(discussion.opts.name).toBe('swutrade-discussion');
+      expect(discussion.opts.type).toBe(0);
+
+      // Permission overwrites: threads is VIEW-only for @everyone,
+      // posts + discussion are full chat, announcements is view+react.
+      const everyoneAllow = (call: typeof threads): string | undefined =>
+        (call.opts.permission_overwrites ?? []).find(o => o.id === guildId)?.allow;
+      expect(everyoneAllow(threads)).toBe('1024');
+      // Posts + discussion: full chat (view + read history + add reactions
+      // + send messages + embed links + attach files).
+      expect(everyoneAllow(posts)).toBe(String(0x400 | 0x10000 | 0x40 | 0x800 | 0x4000 | 0x8000));
+      expect(everyoneAllow(discussion)).toBe(String(0x400 | 0x10000 | 0x40 | 0x800 | 0x4000 | 0x8000));
+      // Announcements: read-only (view + read history + reactions, no send).
+      expect(everyoneAllow(announcements)).toBe(String(0x400 | 0x10000 | 0x40));
+
+      // The created channel ids were persisted on the row.
       const db = getDb();
       const [row] = await db
         .select()
         .from(botInstalledGuilds)
         .where(eq(botInstalledGuilds.guildId, guildId))
         .limit(1);
+      // Each createGuildChannel returns `channel-${guildId}` in the
+      // fake — so every column gets the same value here. In production
+      // each call returns a unique id; the test only checks that the
+      // ids round-trip into the DB.
+      expect(row.categoryId).toBe(`channel-${guildId}`);
       expect(row.tradesChannelId).toBe(`channel-${guildId}`);
+      expect(row.postsChannelId).toBe(`channel-${guildId}`);
+      expect(row.announcementsChannelId).toBe(`channel-${guildId}`);
+      expect(row.discussionChannelId).toBe(`channel-${guildId}`);
     });
 
-    it('APPLICATION_AUTHORIZED skips channel creation when the row already has a tradesChannelId (re-install idempotency)', async () => {
+    it('APPLICATION_AUTHORIZED skips channel creation when every category piece is already in place (re-install idempotency)', async () => {
       const guildId = `e2e-reinstall-${Date.now()}`;
       cleanupGuildIds.push(guildId);
 
-      // Pre-seed the guild row with an existing channel id to simulate
-      // a second APPLICATION_AUTHORIZED firing on a guild we already
-      // installed into. Re-create would orphan the original channel.
+      // Pre-seed the guild row with the full set of category ids to
+      // simulate a second APPLICATION_AUTHORIZED firing on a guild
+      // we already installed into. Re-create would orphan the
+      // original category + channels.
       const db = getDb();
       await db.insert(botInstalledGuilds).values({
         guildId,
         guildName: 'Re-install Test',
         guildIcon: null,
-        tradesChannelId: 'pre-existing-channel-id',
+        categoryId: 'pre-existing-cat',
+        tradesChannelId: 'pre-existing-threads',
+        postsChannelId: 'pre-existing-posts',
+        announcementsChannelId: 'pre-existing-announcements',
+        discussionChannelId: 'pre-existing-discussion',
       });
 
       const bot = makeFakeBot();
@@ -1342,13 +1369,15 @@ describeWithDb('/api/bot dispatcher', () => {
       expect(bot.getGuildBotMemberCalls).toEqual([]);
       expect(bot.createChannelCalls).toEqual([]);
 
-      // Existing channel id is preserved.
+      // Existing channel ids are preserved.
       const [row] = await db
         .select()
         .from(botInstalledGuilds)
         .where(eq(botInstalledGuilds.guildId, guildId))
         .limit(1);
-      expect(row.tradesChannelId).toBe('pre-existing-channel-id');
+      expect(row.categoryId).toBe('pre-existing-cat');
+      expect(row.tradesChannelId).toBe('pre-existing-threads');
+      expect(row.postsChannelId).toBe('pre-existing-posts');
     });
 
     it('APPLICATION_AUTHORIZED still succeeds when createGuildChannel throws (e.g. missing MANAGE_CHANNELS) — row written, tradesChannelId null, error logged', async () => {

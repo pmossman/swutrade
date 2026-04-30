@@ -169,6 +169,13 @@
       "when": 1777482179285,
       "tag": "0023_aromatic_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1777519076080,
+      "tag": "0024_solid_switch",
+      "breakpoints": true
     }
   ]
 }

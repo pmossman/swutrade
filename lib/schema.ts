@@ -194,13 +194,36 @@ export const botInstalledGuilds = pgTable('bot_installed_guilds', {
    */
   tradesChannelId: text('trades_channel_id'),
   /**
-   * Channel where signal posts (authored on the web Signal Builder)
-   * land. Defaults to `trades_channel_id` at read time when null — server
-   * admins can override via the web app's guild settings page when
-   * they want signals separated from the private trade-thread
-   * parent channel (e.g., a dedicated #swu-lfg channel).
+   * Server admin's optional override for the signals-post channel.
+   * When set, takes precedence over `postsChannelId` — for servers
+   * that want signals to land in a pre-existing channel rather than
+   * the auto-created `#swutrade-posts`.
    */
   signalsChannelId: text('signals_channel_id'),
+  /**
+   * SWUTrade category id (Discord channel type 4). Created on first
+   * install (or on first signal post for legacy installs that
+   * predated the category model) and used as the `parent_id` for the
+   * four channels below. Null on legacy installs that haven't been
+   * migrated yet — the auto-recover path in api/signals.ts +
+   * api/bot.ts ensure flow lifts them.
+   */
+  categoryId: text('category_id'),
+  /**
+   * `#swutrade-posts` — where signal posts land. Members can reply
+   * inline. Created under `categoryId` during install.
+   */
+  postsChannelId: text('posts_channel_id'),
+  /**
+   * `#swutrade-announcements` — read-only feed for SWUTrade dev
+   * updates / community summaries. Created under `categoryId`.
+   */
+  announcementsChannelId: text('announcements_channel_id'),
+  /**
+   * `#swutrade-discussion` — open chat for the community to talk
+   * about the app itself. Created under `categoryId`.
+   */
+  discussionChannelId: text('discussion_channel_id'),
 });
 
 /**

@@ -34,7 +34,7 @@ import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
-import { ensureTradesChannel, getGuildTradesChannel } from '../lib/tradeGuild.js';
+import { ensureSwutradeCategory, getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
 import {
   findMatches,
@@ -2281,7 +2281,13 @@ async function handleApplicationAuthorized(
   // fresh install (welcome-DM the admin) vs a re-authorization (stay
   // quiet — they already got the welcome once).
   const [priorRow] = await db
-    .select({ tradesChannelId: botInstalledGuilds.tradesChannelId })
+    .select({
+      categoryId: botInstalledGuilds.categoryId,
+      tradesChannelId: botInstalledGuilds.tradesChannelId,
+      postsChannelId: botInstalledGuilds.postsChannelId,
+      announcementsChannelId: botInstalledGuilds.announcementsChannelId,
+      discussionChannelId: botInstalledGuilds.discussionChannelId,
+    })
     .from(botInstalledGuilds)
     .where(eq(botInstalledGuilds.guildId, guildId))
     .limit(1);
@@ -2300,15 +2306,24 @@ async function handleApplicationAuthorized(
       set: { guildName, guildIcon },
     });
 
-  // Skip auto-create if this guild already has a trades channel —
-  // re-auth / re-install shouldn't spawn duplicates.
-  if (priorRow?.tradesChannelId) {
+  // Skip auto-create only when the full SWUTrade category + four
+  // child channels are already in place. If any piece is missing,
+  // ensureSwutradeCategory fills only what's missing (idempotent),
+  // which is how we migrate legacy installs that have a
+  // trades_channel_id but no category yet.
+  const categoryComplete = priorRow
+    && priorRow.categoryId
+    && priorRow.tradesChannelId
+    && priorRow.postsChannelId
+    && priorRow.announcementsChannelId
+    && priorRow.discussionChannelId;
+  if (categoryComplete) {
     return;
   }
 
   try {
     const bot = deps.bot ?? createDiscordBotClient();
-    await ensureTradesChannel(db, guildId, bot);
+    await ensureSwutradeCategory(db, guildId, bot);
   } catch (err) {
     console.error('discord-bot: auto-create channel failed', err);
     await reportError({

@@ -47,7 +47,7 @@ import {
   formatExpiryHint,
 } from '../lib/signalMessages.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
-import { ensureTradesChannel } from '../lib/tradeGuild.js';
+import { ensureSwutradeCategory } from '../lib/tradeGuild.js';
 import { reportError } from '../lib/errorReporter.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -130,6 +130,7 @@ export async function handleCreate(
     .select({
       tradesChannelId: botInstalledGuilds.tradesChannelId,
       signalsChannelId: botInstalledGuilds.signalsChannelId,
+      postsChannelId: botInstalledGuilds.postsChannelId,
       guildName: botInstalledGuilds.guildName,
     })
     .from(botInstalledGuilds)
@@ -138,19 +139,25 @@ export async function handleCreate(
   if (!installRow) {
     return res.status(403).json({ error: 'SWUTrade isn\'t set up in that server yet.' });
   }
-  // Channel resolution: server admin's signals_channel_id wins;
-  // falls back to the auto-created trades_channel_id. When both are
-  // null (install pre-dated auto-create OR the install-time auto-
-  // create failed silently), try to create the channel right now —
-  // most users hit this on first signal post and the recovery is
-  // identical to what the install handler does.
-  let channelId = installRow.signalsChannelId ?? installRow.tradesChannelId;
+  // Channel resolution priority:
+  //   1. signals_channel_id   → server admin's manual override
+  //   2. posts_channel_id     → auto-created `#swutrade-posts`
+  //   3. trades_channel_id    → legacy installs predating the
+  //                             SWUTrade-category model
+  // When all three are null, run the category-ensure flow inline —
+  // this covers (a) installs predating any auto-create, (b) installs
+  // whose auto-create silently failed, (c) admins who deleted the
+  // posts channel manually.
+  let channelId = installRow.signalsChannelId
+    ?? installRow.postsChannelId
+    ?? installRow.tradesChannelId;
   if (!channelId) {
     try {
       const bot = deps.bot ?? createDiscordBotClient();
-      channelId = await ensureTradesChannel(db, body.guildId, bot);
+      const ids = await ensureSwutradeCategory(db, body.guildId, bot);
+      channelId = ids.postsChannelId;
     } catch (err) {
-      console.error('handleCreate: ensureTradesChannel failed', err);
+      console.error('handleCreate: ensureSwutradeCategory failed', err);
       await reportError({
         source: 'signals.create.ensure-channel',
         tags: { guildId: body.guildId, kind: body.kind },
