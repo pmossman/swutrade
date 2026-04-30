@@ -344,7 +344,7 @@ Signed-out landings use the slim header variant (`ListView.tsx:204-208`) so sign
 
 - **Sync error state is sticky (`useServerSync.ts:155`)** — once `status === 'error'` from a 401, the only recovery is a page reload. There's no retry button in the UI and no polling recovery; a user whose session expired has to manually hit refresh. The `offline` status has the same stickiness. Phase 4 would add a small toast/banner with a retry.
 
-- **No cross-device sync broadcast** — a user editing their lists on desktop doesn't see the change on mobile until a page reload on the mobile side (the initial pull runs on sign-in, not on focus). Acceptable given the single-device trading loop most users run, but surprising if you're on both devices at once.
+- **No real-time cross-device push** — pulls fire on sign-in AND on tab/app foreground (`useServerSync.ts` listens to `visibilitychange` + `window.focus`), so a phone returning from background picks up edits made on desktop without a reload. Still no server→client push channel (websocket / SSE), so two devices held side-by-side won't update in real time without one of them being foregrounded. Skip rules for the foreground pull: skip when initial sync hasn't completed and skip when a debounced push is pending (don't clobber unsynced local edits).
 
 - **`sharedLists` parse has no popstate-driven update in practice (`useSharedLists.ts:40-45`)** — the listener is defensive; in-app navigation doesn't normally push new `w`/`a` URLs, the share flow is reload-mounted. The listener exists for parity with `useTradeIntent`, not because of a current consumer.
 

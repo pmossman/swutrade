@@ -125,6 +125,56 @@ export function useServerSync(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Re-pull on tab/app foreground so a phone that was signed in
+  // hours ago picks up edits made on another device. Without this,
+  // the initial sign-in pull is the only refresh — a long-idle
+  // session reads stale localStorage forever (until reload).
+  //
+  // Skip rules:
+  //   - signed out → nothing to pull
+  //   - initial sync hasn't completed → the mount effect will handle it
+  //   - debounce timer is pending → local edits about to push; pulling
+  //     first would clobber them. Wait for the next foreground event
+  //     after the push has settled.
+  useEffect(() => {
+    if (!user) return;
+
+    const pull = async () => {
+      if (!initialSyncDoneRef.current) return;
+      if (debounceRef.current) return;
+      setStatus('syncing');
+      try {
+        const [serverWants, serverAvailable] = await Promise.all([
+          syncGet<unknown[]>('/api/sync/wants'),
+          syncGet<unknown[]>('/api/sync/available'),
+        ]);
+        writingBackRef.current = true;
+        wants.setAll(serverWants as typeof wants.items);
+        available.setAll(serverAvailable as typeof available.items);
+        writingBackRef.current = false;
+        setStatus('idle');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '';
+        setStatus(msg === 'auth-expired' ? 'error' : 'offline');
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') pull();
+    };
+    // Both events: visibilitychange covers tab-switching and most
+    // mobile foreground/background transitions; window.focus is the
+    // belt-and-suspenders for Safari quirks where vischange doesn't
+    // always fire on app resume.
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', pull);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', pull);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   // Debounced sync on local mutations — only after initial sync.
   useEffect(() => {
     if (!user || writingBackRef.current || !initialSyncDoneRef.current) return;
