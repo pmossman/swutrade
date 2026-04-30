@@ -1,12 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useDeferredValue } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
-import { useCardSearch, browseAllGroups } from '../hooks/useCardSearch';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
-import { applySelectionFilters } from '../applySelectionFilters';
-import { SearchResults } from './SearchResults';
-import { SelectionFilterBar } from './SelectionFilterBar';
-import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
-import { variantChipLabel, type CanonicalVariant } from '../variants';
+import { ListCardPicker } from './ListCardPicker';
 import { adjustPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
@@ -16,14 +11,9 @@ const saberBarColors: Record<AccentColor, string> = {
   blue: 'bg-gradient-to-b from-blue-300 via-blue-500 to-blue-700 shadow-[0_0_12px_rgba(96,165,250,0.55)]',
 };
 
-const headerColors: Record<AccentColor, string> = {
-  emerald: 'border-emerald-500/30 text-emerald-300',
-  blue: 'border-blue-500/30 text-blue-300',
-};
-
-const searchBorderColors: Record<AccentColor, string> = {
-  emerald: 'focus:border-emerald-500/50 focus:ring-emerald-500/20',
-  blue: 'focus:border-blue-500/50 focus:ring-blue-500/20',
+const headerTextColors: Record<AccentColor, string> = {
+  emerald: 'text-emerald-300',
+  blue: 'text-blue-300',
 };
 
 const doneButtonColors: Record<AccentColor, string> = {
@@ -71,37 +61,47 @@ interface TradeSearchOverlayProps {
   // Card universe + filters
   allCards: CardVariant[];
   isLoading: boolean;
+  /** Persisted variant + set selection filters. Owned by the parent
+   *  so they survive overlay open/close. The unified picker uses its
+   *  own internal filter state today, so this prop is reserved for a
+   *  follow-up that wires the parent-owned filters back into the
+   *  picker; for now the picker's persisted filters stand in. */
   filters: SelectionFilters;
 
   // Source chips — caller decides labels and which cards qualify.
   sourceChips: SourceChipConfig[];
 
-  // Current side's trade rows — feeds the SearchResults grid (×N
-  // saved-qty badges, etc.)
+  // Current side's trade rows — used for saved-qty badges + the
+  // "picked so far" running summary in the header.
   cards: TradeCard[];
   percentage: number;
   priceMode: PriceMode;
 
-  // Trade actions wired through to SearchResults' tile click handlers.
+  // Trade actions wired through to the picker's onAdd/onDecrement.
   onAdd: (card: CardVariant) => void;
   onChangeQty: (key: string, delta: number) => void;
   onRemove: (key: string) => void;
 
   /**
-   * One-shot seed for the overlay's internal state. Set non-null to
+   * One-shot seed for the overlay's initial state. Set non-null to
    * apply (query and/or activeChips), then the overlay fires
-   * `onSeedConsumed` so the parent can clear it. Mirrors the
-   * `autoOpenSharedLink` pattern already in use elsewhere.
+   * `onSeedConsumed` so the parent can clear it.
    */
   seed?: TradeSearchOverlaySeed | null;
   onSeedConsumed?: () => void;
 }
 
 /**
- * Full-screen card-picker overlay. Owns its own search state via
- * `useCardSearch` so the parent stays focused on the trade panel
- * itself; communication with the parent is fully declarative through
- * the `open` / `onDismiss` pair plus the optional `seed` prop.
+ * Full-screen trade-builder card-picker overlay. Thin shell around
+ * `<ListCardPicker selectionMode="specific">` — the unified picker
+ * owns search / filter / browse / tile rendering / saved-qty badges,
+ * while this component contributes the trade-builder-specific chrome:
+ *
+ *   - animated open / close (fade + slide)
+ *   - ESC-to-dismiss
+ *   - counterpart-context header ("Adding to · for @alice · Picked so far")
+ *   - source chip row ("My available", "They want", "Overlap")
+ *   - seed prop (one-shot initial query + active chips)
  */
 export function TradeSearchOverlay({
   open,
@@ -110,31 +110,23 @@ export function TradeSearchOverlay({
   accentColor,
   counterpartHandle,
   allCards,
-  isLoading,
-  filters,
-  sourceChips,
   cards,
   percentage,
   priceMode,
+  sourceChips,
   onAdd,
   onChangeQty,
   onRemove,
   seed,
   onSeedConsumed,
 }: TradeSearchOverlayProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const search = useCardSearch({ allCards, setFilter: null });
   const [activeChipIds, setActiveChipIds] = useState<readonly string[]>([]);
-  // Filter row collapses behind a summary control so the default
-  // state shows the grid, not three rows of toggles. Expands on tap.
-  const [filtersOpen, setFiltersOpen] = useState(false);
-
-  const hasQuery = search.query.length >= 2;
-  const hdr = headerColors[accentColor];
-  const searchBorder = searchBorderColors[accentColor];
+  // Seed-derived initial query — one-shot; the picker re-mounts each
+  // time the overlay opens, so this fires fresh per open.
+  const [seededInitialQuery, setSeededInitialQuery] = useState<string>('');
 
   // Auto-deactivate any chip whose pool drops to empty (e.g. user
-  // pulls the last "My available" card into the trade). Without this
+  // pulled the last "My available" card into the trade). Without this
   // the grid would show "No cards match your filters" while a
   // gold-active chip was still selected.
   useEffect(() => {
@@ -146,81 +138,25 @@ export function TradeSearchOverlay({
     });
   }, [sourceChips]);
 
-  // Auto-focus the search input every time the overlay opens. The
-  // component itself stays mounted across open/close cycles (only its
-  // SearchResults child is conditionally rendered), so the mount-time
-  // ref-focus pattern doesn't refire on a subsequent open. Gate on the
-  // `open` transition. The seed effect below handles the seeded-open
-  // case separately because it needs to fire AFTER applying the
-  // seeded query.
-  useEffect(() => {
-    if (!open) return;
-    if (seed) return; // seed effect handles its own focus on a delay
-    // Defer past the show transition / focus-trap so the focus actually
-    // lands. ~50ms matches the seed effect's timer below.
-    const t = window.setTimeout(() => inputRef.current?.focus(), 50);
-    return () => window.clearTimeout(t);
-  }, [open, seed]);
-
   // Apply parent-supplied seed once, then notify so the parent can
   // null it out. Effect re-runs whenever seed identity changes.
   useEffect(() => {
     if (!seed) return;
-    if (seed.query !== undefined) {
-      search.setQuery(seed.query);
-    }
-    if (seed.activeChips !== undefined) {
-      setActiveChipIds(seed.activeChips);
-    }
+    if (seed.query !== undefined) setSeededInitialQuery(seed.query);
+    if (seed.activeChips !== undefined) setActiveChipIds(seed.activeChips);
     onSeedConsumed?.();
-    // Re-focus the input on the next tick so the seeded query is
-    // visible AND the cursor is in the right place if the user wants
-    // to refine it.
-    const timer = setTimeout(() => inputRef.current?.focus(), 50);
-    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed]);
 
-  // Browse mode: render the catalog when there's no query so users
-  // can scroll without searching.
-  const browseResults = useMemo(() => browseAllGroups(allCards), [allCards]);
-
-  // When source chips are active, scope the grid to the union of
-  // selected chip pools instead of the catalog.
-  const sourceResults = useMemo(() => {
-    if (activeChipIds.length === 0) return null;
-    const pool: CardVariant[] = [];
-    for (const id of activeChipIds) {
-      const chip = sourceChips.find(c => c.id === id);
-      if (chip) pool.push(...chip.cards);
-    }
-    return browseAllGroups(pool);
-  }, [activeChipIds, sourceChips]);
-
-  const baseResults = sourceResults
-    ? sourceResults
-    : (hasQuery ? search.results : browseResults);
-
-  const filteredResults = useMemo(
-    () => applySelectionFilters(
-      baseResults,
-      filters.selectedSets,
-      filters.selectedVariants,
-    ),
-    [baseResults, filters.selectedSets, filters.selectedVariants],
-  );
-  // Low-priority render so chrome paints before hundreds of browse tiles.
-  const deferredResults = useDeferredValue(filteredResults);
-
-  const handleClearSearch = useCallback(() => {
-    search.clearSearch();
-  }, [search]);
+  // Reset the seeded query state when the overlay closes — next open
+  // starts cold unless a fresh seed comes in.
+  useEffect(() => {
+    if (!open) setSeededInitialQuery('');
+  }, [open]);
 
   const handleDismiss = useCallback(() => {
-    search.clearSearch();
-    inputRef.current?.blur();
     onDismiss();
-  }, [search, onDismiss]);
+  }, [onDismiss]);
 
   // Esc handler — global so it works after focus moves to a tile.
   // Only attached while the overlay is open.
@@ -236,6 +172,41 @@ export function TradeSearchOverlay({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, handleDismiss]);
 
+  // Browse pool: when source chips are active, scope the catalog
+  // browse to the union of selected chip pools. Search continues to
+  // hit the full catalog (the picker uses `allCards` for its search
+  // index, separate from `browsePool`) so a user typing "Luke" still
+  // finds a Luke that's outside the chip pool.
+  const browsePool = useMemo(() => {
+    if (activeChipIds.length === 0) return undefined;
+    const pool: CardVariant[] = [];
+    for (const id of activeChipIds) {
+      const chip = sourceChips.find(c => c.id === id);
+      if (chip) pool.push(...chip.cards);
+    }
+    return pool;
+  }, [activeChipIds, sourceChips]);
+
+  // Saved entries for the picker — productId-keyed (selectionMode is
+  // 'specific' so the picker's badge lookup matches the trade row's
+  // exact printing). The id round-trips via onDecrement so we can
+  // route back to the right tradeCardKey.
+  const savedEntries = useMemo(() => cards.map(tc => {
+    const productId = tc.card.productId ?? '';
+    return {
+      id: productId,
+      productId,
+      qty: tc.qty,
+    };
+  }), [cards]);
+
+  const handleDecrement = useCallback((id: string) => {
+    const tc = cards.find(c => (c.card.productId ?? '') === id);
+    if (!tc) return;
+    if (tc.qty <= 1) onRemove(id);
+    else onChangeQty(id, -1);
+  }, [cards, onChangeQty, onRemove]);
+
   const visibleChips = sourceChips.filter(c => c.cards.length > 0 || c.alwaysVisible);
 
   // Running summary for the context header — lets the user see "what
@@ -248,303 +219,87 @@ export function TradeSearchOverlay({
 
   return (
     <div
-      // Back to fullscreen (`inset-0`). Beta feedback: the top peek
-      // from the prior iteration was pitched as a helpful "you're
-      // inside a larger flow" cue, but in practice it ate space on
-      // mobile without clarifying anything. The header's "Done"
-      // button + counterpart context line carry the orientation
-      // work on their own.
       className={`fixed inset-0 z-40 bg-space-900 flex flex-col transition-all duration-200 ease-out ${
         open
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-4 pointer-events-none'
       }`}
     >
-      <div className="shrink-0 pt-3 pb-2 px-4 sm:px-6 max-w-6xl mx-auto w-full relative">
-        <div
-          className={`absolute left-4 sm:left-6 top-3 bottom-3 w-[3px] rounded-full ${saberBarColors[accentColor]}`}
-          aria-hidden
-        />
-        <div className="pl-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-[9px] tracking-[0.25em] text-gray-500 uppercase truncate">
-              Adding to
-              {counterpartHandle && (
-                <span className="normal-case tracking-normal text-gray-400"> · for <span className="text-gold">@{counterpartHandle}</span></span>
-              )}
-            </div>
-            <div className={`swu-display text-base ${hdr.split(' ').pop()}`}>{label}</div>
-            {open && pickedCount > 0 && (
-              // Gated on `open` — the overlay's DOM stays mounted while
-              // closed (for the fade/translate transition), but text
-              // queries would still match the hidden "3" here AND a
-              // visible qty "3" in the trade panel. Strict-mode page
-              // locators would then throw.
-              <div className="text-[10px] text-gray-500 mt-0.5">
-                Picked so far: <strong className="text-gray-300">{pickedCount}</strong>
-                {pickedTotal > 0 && <> · <strong className="text-gray-300">${pickedTotal.toFixed(2)}</strong></>}
-              </div>
-            )}
-          </div>
-          <button
-            onClick={handleDismiss}
-            className={`shrink-0 px-3 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors ${doneButtonColors[accentColor]}`}
-            aria-label="Close search"
-            title={counterpartHandle ? 'Back to proposal (Esc)' : 'Close (Esc)'}
-          >
-            Done
-          </button>
-        </div>
-      </div>
-
-      <div className="shrink-0 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
-        <div className="relative">
-          <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none">
-            {search.isSearching || isLoading ? (
-              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-              </svg>
-            ) : (
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            )}
-          </div>
-          <input
-            ref={inputRef}
-            type="text"
-            value={search.query}
-            onChange={e => search.setQuery(e.target.value)}
-            onFocus={e => e.currentTarget.select()}
-            placeholder="Search cards..."
-            className={`w-full bg-space-700 text-gray-100 border border-space-600 rounded-lg pl-8 pr-8 py-2 text-base placeholder-gray-500 focus:outline-none focus:ring-1 transition-all ${searchBorder}`}
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-          />
-          {search.query && (
-            <button
-              onClick={handleClearSearch}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Filter summary button — collapses source chips + variant +
-          set selectors behind one tap. Beta feedback said the picker
-          felt overloaded with multiple rows of controls always on
-          screen; the single summary reads as "here's what's filtered
-          right now, tap if you want to change it." */}
-      <div className="shrink-0 pt-2 pb-1 px-4 sm:px-6 max-w-6xl mx-auto w-full">
-        <FilterSummaryButton
-          visibleChips={visibleChips}
-          activeChipIds={activeChipIds}
-          selectedVariants={filters.selectedVariants}
-          selectedSets={filters.selectedSets}
-          isOpen={filtersOpen}
-          onToggle={() => setFiltersOpen(o => !o)}
-          onClear={() => {
-            // Wipe local source-chip state + the persisted variant /
-            // set selections together so a single tap restores the
-            // resting "All cards · Any variant · All sets" view.
-            setActiveChipIds([]);
-            filters.clearAll();
-          }}
-        />
-        {filtersOpen && (
-          <div className="mt-2 space-y-2">
-            {visibleChips.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
-                  Show
-                </span>
-                {visibleChips.map(chip => (
-                  <SourceChip
-                    key={chip.id}
-                    active={activeChipIds.includes(chip.id)}
-                    onClick={() => setActiveChipIds(prev =>
-                      prev.includes(chip.id)
-                        ? prev.filter(id => id !== chip.id)
-                        : [...prev, chip.id],
+      {open && (
+        <ListCardPicker
+          // Re-mount when seed identity changes so the seeded query
+          // takes effect on a fresh `useCardSearch` instance. Without
+          // the key, initialQuery would only fire on first overlay
+          // open.
+          key={`seed-${seededInitialQuery}`}
+          selectionMode={{ kind: 'specific' }}
+          allCards={allCards}
+          browsePool={browsePool}
+          priceMode={priceMode}
+          accent={accentColor}
+          savedEntries={savedEntries}
+          onPick={card => onAdd(card)}
+          onDecrement={handleDecrement}
+          onClose={handleDismiss}
+          initialQuery={seededInitialQuery}
+          header={
+            <div className="shrink-0 pt-3 pb-2 px-4 sm:px-6 max-w-6xl mx-auto w-full relative border-b border-space-800">
+              <div
+                className={`absolute left-4 sm:left-6 top-3 bottom-3 w-[3px] rounded-full ${saberBarColors[accentColor]}`}
+                aria-hidden
+              />
+              <div className="pl-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[9px] tracking-[0.25em] text-gray-500 uppercase truncate">
+                    Adding to
+                    {counterpartHandle && (
+                      <span className="normal-case tracking-normal text-gray-400">
+                        {' '}· for <span className="text-gold">@{counterpartHandle}</span>
+                      </span>
                     )}
-                    label={chip.label}
-                    count={chip.cards.length}
-                  />
-                ))}
+                  </div>
+                  <div className={`swu-display text-base ${headerTextColors[accentColor]}`}>{label}</div>
+                  {pickedCount > 0 && (
+                    <div className="text-[10px] text-gray-500 mt-0.5">
+                      Picked so far: <strong className="text-gray-300">{pickedCount}</strong>
+                      {pickedTotal > 0 && <> · <strong className="text-gray-300">${pickedTotal.toFixed(2)}</strong></>}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={handleDismiss}
+                  className={`shrink-0 px-3 py-1.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-colors ${doneButtonColors[accentColor]}`}
+                  aria-label="Close search"
+                  title={counterpartHandle ? 'Back to proposal (Esc)' : 'Close (Esc)'}
+                >
+                  Done
+                </button>
               </div>
-            )}
-            <SelectionFilterBar filters={filters} />
-          </div>
-        )}
-      </div>
-
-      {/* Grid only mounts when the overlay is actually shown — browse
-          mode renders hundreds of tiles, so we don't pay that DOM
-          cost while the overlay is hidden behind the trade view. */}
-      <div className="flex-1 min-h-0 max-w-6xl mx-auto w-full flex flex-col">
-        {open && (
-          <SearchResults
-            results={deferredResults}
-            priceMode={priceMode}
-            onAdd={onAdd}
-            onChangeQty={onChangeQty}
-            onRemove={onRemove}
-            tradeCards={cards}
-            isSearching={search.isSearching}
-            accentColor={accentColor}
-          />
-        )}
-      </div>
-
-      {/* Bottom Done removed — the Done button is now in the header
-          (labeled, colored to match the side accent) so it's the
-          single dismiss affordance on mobile and desktop. */}
-    </div>
-  );
-}
-
-/**
- * Collapsed-state summary button for the picker's filter row. Shows
- * a compact "Overlap (3) · Hyperspace · All sets" style summary so
- * users can see current filter state without the row taking up
- * vertical space. Taps toggle the expanded detail surface (source
- * chips + variant + set) below.
- */
-function FilterSummaryButton({
-  visibleChips,
-  activeChipIds,
-  selectedVariants,
-  selectedSets,
-  isOpen,
-  onToggle,
-  onClear,
-}: {
-  visibleChips: SourceChipConfig[];
-  activeChipIds: readonly string[];
-  selectedVariants: readonly string[];
-  selectedSets: readonly string[];
-  isOpen: boolean;
-  onToggle: () => void;
-  /** Reset every filter back to default. Visible only when at least
-   *  one filter is active so the affordance never reads as "do
-   *  nothing" — clarifies why the filter row is gold-tinted. */
-  onClear: () => void;
-}) {
-  const active = visibleChips.filter(c => activeChipIds.includes(c.id));
-  const chipsActive = active.length > 0;
-  const variantsActive = selectedVariants.length > 0;
-  const setsActive = selectedSets.length > 0;
-  const anyActive = chipsActive || variantsActive || setsActive;
-
-  // Build a pruned summary: when nothing is filtered, show the full
-  // default trio ("All cards · Any variant · All sets") so the user
-  // sees the resting state at a glance. When something IS filtered,
-  // drop the "All / Any" placeholders and surface only the actives —
-  // that way a `Special` set preset reads as `Special` instead of
-  // being buried after a misleading "All cards · Any variant ·" prefix.
-  const parts: string[] = [];
-  if (chipsActive) {
-    parts.push(
-      active.length === 1
-        ? `${active[0].label}${active[0].cards.length > 0 ? ` (${active[0].cards.length})` : ''}`
-        : `${active.length} sources`,
-    );
-  }
-  if (variantsActive) {
-    parts.push(summarizeSelection(
-      selectedVariants,
-      'Any variant',
-      (v) => variantChipLabel(v as CanonicalVariant),
-    ));
-  }
-  if (setsActive) {
-    parts.push(summarizeSelection(selectedSets, 'All sets', setSummaryLabel));
-  }
-  if (parts.length === 0) {
-    parts.push('All cards', 'Any variant', 'All sets');
-  }
-
-  return (
-    <div
-      className={`w-full flex items-center gap-1 rounded-md border transition-colors ${
-        anyActive
-          ? 'bg-gold/15 border-gold/50 ring-1 ring-gold/20'
-          : 'bg-space-800/60 border-space-700'
-      }`}
-    >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={isOpen}
-        className={`flex-1 flex items-center gap-2 px-3 py-1.5 text-[11px] transition-colors ${
-          anyActive
-            ? 'text-gold hover:text-gold-bright'
-            : 'text-gray-400 hover:text-gray-200'
-        }`}
-      >
-        <FilterIcon className="w-3.5 h-3.5 shrink-0" />
-        {anyActive && (
-          <span
-            aria-label={`${parts.length} filter${parts.length === 1 ? '' : 's'} active`}
-            className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-gold text-space-900 text-[9px] font-bold tabular-nums"
-          >
-            {parts.length}
-          </span>
-        )}
-        <span className="flex-1 text-left truncate">
-          {parts.map((p, i) => (
-            <span key={i}>
-              {i > 0 && <span className="text-gold/60"> · </span>}
-              {p}
-            </span>
-          ))}
-        </span>
-        <svg
-          className={`w-3 h-3 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''} ${anyActive ? 'text-gold/70' : 'text-gray-500'}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-      {anyActive && (
-        <button
-          type="button"
-          onClick={onClear}
-          aria-label="Clear all filters"
-          title="Clear all filters"
-          className="shrink-0 mr-1 px-1.5 h-6 rounded text-[10px] font-bold uppercase tracking-wide text-gold hover:text-gold-bright hover:bg-gold/10 transition-colors"
-        >
-          Clear
-        </button>
+            </div>
+          }
+          chips={visibleChips.length > 0 ? (
+            <div className="px-3 pt-2 shrink-0 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
+                Show
+              </span>
+              {visibleChips.map(chip => (
+                <SourceChip
+                  key={chip.id}
+                  active={activeChipIds.includes(chip.id)}
+                  onClick={() => setActiveChipIds(prev =>
+                    prev.includes(chip.id)
+                      ? prev.filter(id => id !== chip.id)
+                      : [...prev, chip.id],
+                  )}
+                  label={chip.label}
+                  count={chip.cards.length}
+                />
+              ))}
+            </div>
+          ) : null}
+        />
       )}
     </div>
-  );
-}
-
-function FilterIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M2 4h12M4 8h8M6 12h4" />
-    </svg>
   );
 }
 

@@ -60,7 +60,7 @@ export function SearchResults({
             qty={qty}
             percentage={PICKER_PERCENTAGE}
             priceMode={priceMode}
-            accentColor={accentColor}
+            accent={accentColor}
             onAdd={onAdd}
             onDecrement={handleDecrement}
             landscape={ctx.leaderGroup}

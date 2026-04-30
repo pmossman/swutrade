@@ -28,12 +28,12 @@ test.describe('Recipient: end-to-end trade from a shared link', () => {
     const addingTo = page.getByText('Adding to', { exact: false }).first();
     await expect(addingTo).toBeVisible({ timeout: 5_000 });
 
-    // The picker rework collapsed source chips + filters into one
-    // compact FilterSummaryButton. The active source ("They want")
-    // now surfaces inline in the summary label with its card count,
-    // instead of via aria-pressed on a standalone chip.
+    // After the picker unification, source chips render inline in a
+    // visible row above the filter bar (no more collapsed summary).
+    // "They want" should be visible + active as a result of the
+    // shared-list landing's auto-activation seed.
     await expect(
-      page.getByRole('button', { name: /They want \(\d+\)/ }),
+      page.getByRole('button', { name: /They want \d+/, pressed: true }),
     ).toBeVisible();
 
     // The grid should be scoped to the sender's wants — Luke
@@ -72,15 +72,10 @@ test.describe('Source chip is qty-aware', () => {
     // Open the Offering search overlay.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
 
-    // Expand the FilterSummaryButton to reach the source-chip row —
-    // post-picker-rework, chips live inside a collapsed detail panel.
-    // Both sides' overlays mount simultaneously (each with its own
-    // summary button in identical "All cards" default state), so
-    // `.first()` pins this click to the Offering side that's open.
-    await page.getByRole('button', { name: /All cards · Any variant · All sets/ }).first().click();
-
-    // "My available" chip visible with count 1.
-    const mineChip = page.getByRole('button', { name: 'My available 1' });
+    // Source chips render inline above the filter bar after the
+    // picker unification. Both sides' overlays mount simultaneously
+    // so `.first()` pins to the open Offering side.
+    const mineChip = page.getByRole('button', { name: 'My available 1' }).first();
     await expect(mineChip).toBeVisible();
 
     // Activate it to scope the grid to the user's available pool.

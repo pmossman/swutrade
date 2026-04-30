@@ -3,25 +3,47 @@ import type { CardVariant, PriceMode } from '../types';
 import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, variantBadgeColor } from '../variants';
 
+export interface CardTileBadge {
+  text: string;
+  /** Tailwind class string controlling the pill's bg + text colour. */
+  colorClass: string;
+}
+
 interface CardTileProps {
   card: CardVariant;
   qty: number;
   percentage: number;
   priceMode: PriceMode;
-  accentColor: 'emerald' | 'blue';
+  /** Side / surface accent. 'gold' for list surfaces (wishlist,
+   *  binder, signals, family-mode picker tiles). 'emerald' / 'blue'
+   *  for trade-builder offering / receiving. */
+  accent: 'gold' | 'emerald' | 'blue';
   /** If true, render at landscape (7:5) aspect — set by parent for
    *  leader/base card groups. Overrides image-load detection. */
   landscape?: boolean;
+  /** Pill row above the price. When omitted, the tile renders the
+   *  card's intrinsic variant ("Standard", "Hyperspace", …) — the
+   *  trade-builder default. Family-mode picker tiles override with
+   *  an "Any" pill (or the active filter selection) so the user
+   *  sees what a tap will actually save. */
+  badge?: CardTileBadge[] | null;
+  /** Verb-target string baked into the aria-label so screen readers
+   *  + e2e tests can disambiguate which surface the click acts on
+   *  ("Add Luke to trade" vs "Add Luke to list"). Defaults to "trade"
+   *  to preserve the trade-builder's prior label. */
+  actionTarget?: string;
   onAdd: (card: CardVariant) => void;
   onDecrement: (card: CardVariant) => void;
 }
 
-const qtyBadgeClass: Record<string, string> = {
+const qtyBadgeClass: Record<'gold' | 'emerald' | 'blue', string> = {
+  gold: 'bg-black/85 text-white ring-1 ring-gold/70',
   emerald: 'bg-black/85 text-white ring-1 ring-emerald-400/70',
   blue: 'bg-black/85 text-white ring-1 ring-blue-400/70',
 };
 
-const accentBorderClass: Record<string, string> = {
+const accentBorderClass: Record<'gold' | 'emerald' | 'blue', string> = {
+  gold: 'border-gold/50 shadow-[0_0_0_1px_rgba(245,166,35,0.25)]',
   emerald: 'border-emerald-500/50 shadow-[0_0_0_1px_rgba(52,211,153,0.25)]',
   blue: 'border-blue-500/50 shadow-[0_0_0_1px_rgba(96,165,250,0.25)]',
 };
@@ -35,8 +57,10 @@ export function CardTile({
   qty,
   percentage,
   priceMode,
-  accentColor,
+  accent,
   landscape = false,
+  badge,
+  actionTarget = 'trade',
   onAdd,
   onDecrement,
 }: CardTileProps) {
@@ -98,13 +122,13 @@ export function CardTile({
       tabIndex={0}
       onClick={handleAdd}
       onKeyDown={handleKeyActivate}
-      aria-label={`Add ${card.name} (${variant}) to trade`}
+      aria-label={`Add ${card.name} (${variant}) to ${actionTarget}`}
       // Each base-card group renders in its own grid with column counts
       // tuned to the card orientation, so a landscape tile naturally
       // gets a wider slot and equal visual weight to a portrait tile in
       // its own group — no col-span hacks, no cap-width gutters.
       className={`group relative flex flex-col text-left bg-space-700/40 rounded-lg overflow-hidden border transition-all
-        ${inTrade ? accentBorderClass[accentColor] : 'border-space-600 hover:border-space-500'}
+        ${inTrade ? accentBorderClass[accent] : 'border-space-600 hover:border-space-500'}
         hover:bg-space-700/70 active:scale-[0.98] cursor-pointer
         focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/60
         ${pulsing ? 'animate-tile-add' : ''}
@@ -132,13 +156,28 @@ export function CardTile({
         )}
       </div>
 
-      {/* Metadata strip — stays tight regardless of tile width */}
+      {/* Metadata strip — stays tight regardless of tile width.
+          Pill row defaults to the tile's intrinsic variant (the
+          trade-builder default); callers can override via `badge`
+          to surface "Any" / "filter selection" style pills for
+          family-mode picker tiles. */}
       <div className="px-2 py-1.5">
         <div className="flex items-center justify-between gap-1 mb-1 min-h-[20px]">
           <div className="flex items-center gap-1 flex-wrap min-w-0">
-            <span className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-medium ${variantBadgeColor(variant)}`}>
-              {variant}
-            </span>
+            {badge !== undefined ? (
+              badge?.map((b, i) => (
+                <span
+                  key={`${b.text}-${i}`}
+                  className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-medium ${b.colorClass}`}
+                >
+                  {b.text}
+                </span>
+              ))
+            ) : (
+              <span className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-medium ${variantBadgeColor(variant)}`}>
+                {variant}
+              </span>
+            )}
             {spreadHigh && spreadPct !== null && (
               <span
                 className="inline-flex items-center px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 text-[9px] font-semibold leading-none"
@@ -152,7 +191,7 @@ export function CardTile({
             <button
               type="button"
               onClick={handleDecrement}
-              className={`shrink-0 inline-flex items-center gap-1 pl-2 pr-1.5 h-6 rounded-full text-[11px] font-bold tabular-nums transition-colors ${qtyBadgeClass[accentColor]} hover:brightness-110 active:scale-95`}
+              className={`shrink-0 inline-flex items-center gap-1 pl-2 pr-1.5 h-6 rounded-full text-[11px] font-bold tabular-nums transition-colors ${qtyBadgeClass[accent]} hover:brightness-110 active:scale-95`}
               aria-label={qty <= 1 ? `Remove ${card.name}` : `Decrease quantity of ${card.name}`}
               title={qty <= 1 ? 'Remove (one in trade)' : `Decrease (${qty} in trade)`}
             >

@@ -3,11 +3,7 @@ import type { CardVariant, PriceMode } from '../types';
 import { useCardSearch, browseAllGroups, type SetSearchGroup } from '../hooks/useCardSearch';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import { PERSIST_KEYS } from '../persistence';
-import {
-  cardImageUrl,
-  adjustPrice,
-  getCardPrice,
-} from '../services/priceService';
+import { getCardPrice } from '../services/priceService';
 import {
   extractVariantLabel,
   variantBadgeColor,
@@ -17,6 +13,7 @@ import {
   type CanonicalVariant,
 } from '../variants';
 import { CardResultsGrid } from './CardResultsGrid';
+import { CardTile } from './CardTile';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
 
@@ -139,6 +136,10 @@ interface CommonPickerProps {
   /** Extra row injected between the header and the filter bar.
    *  Trade overlay drops its source chips here. */
   chips?: React.ReactNode;
+  /** One-shot initial value for the search input. Used by the trade
+   *  overlay's seed flow (e.g. opening the overlay pre-filled with
+   *  a card name from the swap-variant kebab). */
+  initialQuery?: string;
 }
 
 function representativeVariant(variants: CardVariant[]): CardVariant {
@@ -226,6 +227,7 @@ export function ListCardPicker({
   accent = 'gold',
   header,
   chips,
+  initialQuery,
 }: ListCardPickerProps) {
   // Active tile mode — locked when selectionMode is 'specific' or
   // 'family', toggleable when 'either'. Preserve toggle position
@@ -253,6 +255,16 @@ export function ListCardPicker({
     sets: PERSIST_KEYS.pickerSelSets,
   });
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Seed initialQuery once on mount so callers (e.g. the trade overlay's
+  // swap-variant kebab) can pre-fill the search. The ref guard prevents
+  // a parent re-render with the same prop from clobbering user typing.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    if (initialQuery) setQuery(initialQuery);
+  }, [initialQuery, setQuery]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -539,7 +551,18 @@ export function ListCardPicker({
           //   - Wants with 1-variant filter: the chosen variant.
           //   - Wants with 2+ variants: "HS or HSF" so the user can
           //     see the whole restriction they'll save on tap.
-          const badge = wantsBadge(card, activeMode, selectedVariants);
+          // Badge prop reflects what a tap will actually save:
+          //   - Specific mode: tile's intrinsic variant (CardTile's
+          //     default behavior; pass `undefined` so it computes
+          //     itself).
+          //   - Family mode with 0-variant filter: gold "Any" pill.
+          //   - Family mode with 1-variant filter: the chosen variant.
+          //   - Family mode with 2+ variants: one pill each.
+          // The compute-it-here path matches family-mode semantics;
+          // specific mode lets CardTile render its own variant pill.
+          const tileBadge = activeMode === 'specific'
+            ? undefined
+            : wantsBadge(card, activeMode, selectedVariants);
           // pickContext per-tile: in specific mode each tile click
           // pins THAT tile's variant; in family mode the active
           // variant filter pins the restriction.
@@ -547,158 +570,28 @@ export function ListCardPicker({
             ? { acceptedVariants: [extractVariantLabel(card.name) as CanonicalVariant] }
             : pickContext;
           return (
-            <PickerTile
+            <CardTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
               card={card}
+              qty={savedQty}
               // Picker tile prices are always raw TCGPlayer (mkt/low),
-              // never the user's trade-balancer percentage. The wishlist
-              // / binder picker is a "browse the catalogue" surface;
-              // showing 80%-adjusted prices here makes cross-reference
-              // with TCGPlayer needlessly hard. The trade view applies
-              // the percentage where it actually matters.
+              // never the user's trade-balancer percentage. The list
+              // picker is a "browse the catalogue" surface; showing
+              // 80%-adjusted prices here makes cross-reference with
+              // TCGPlayer needlessly hard. The trade view applies the
+              // percentage where it actually matters.
               percentage={100}
               priceMode={priceMode}
-              landscape={ctx.leaderGroup}
-              savedQty={savedQty}
-              badge={badge}
               accent={accent}
-              onPick={() => onPick(card, tilePickContext)}
-              onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
+              landscape={ctx.leaderGroup}
+              badge={tileBadge}
+              actionTarget="list"
+              onAdd={() => onPick(card, tilePickContext)}
+              onDecrement={() => handleDecrement(card)}
             />
           );
         }}
       />
-    </div>
-  );
-}
-
-interface PickerTileProps {
-  card: CardVariant;
-  percentage: number;
-  priceMode: PriceMode;
-  landscape: boolean;
-  savedQty: number;
-  /** Caption pills above the price. Parent computes label + color so
-   *  each pill can reflect either the tile's variant (Available) or
-   *  one element of the active restriction (Wants with multi-variant
-   *  filter). */
-  badge: TileBadge[] | null;
-  /** Side accent — drives the saved-state border + qty badge. */
-  accent: 'gold' | 'emerald' | 'blue';
-  onPick: () => void;
-  /** Decrement one saved qty. Only passed when savedQty > 0. */
-  onDecrement?: () => void;
-}
-
-const tileAccent: Record<'gold' | 'emerald' | 'blue', {
-  savedBorder: string;
-  hoverBorder: string;
-  qtyBadge: string;
-}> = {
-  gold: {
-    savedBorder: 'border-gold/40 hover:border-gold/60',
-    hoverBorder: 'hover:border-gold/40',
-    qtyBadge: 'bg-gold text-space-900',
-  },
-  emerald: {
-    savedBorder: 'border-emerald-500/60 hover:border-emerald-400',
-    hoverBorder: 'hover:border-emerald-500/40',
-    qtyBadge: 'bg-emerald-500 text-space-900',
-  },
-  blue: {
-    savedBorder: 'border-blue-500/60 hover:border-blue-400',
-    hoverBorder: 'hover:border-blue-500/40',
-    qtyBadge: 'bg-blue-500 text-space-900',
-  },
-};
-
-function PickerTile({
-  card,
-  percentage,
-  priceMode,
-  landscape,
-  savedQty,
-  badge,
-  accent,
-  onPick,
-  onDecrement,
-}: PickerTileProps) {
-  const price = adjustPrice(getCardPrice(card, priceMode), percentage);
-  const imgUrl = cardImageUrl(card.productId, 'sm');
-  const accentCls = tileAccent[accent];
-
-  // Compose an accessible name from the card art + badge text so
-  // screen readers (and e2e tests) can identify each tile. The image
-  // is decorative (alt="") since the text covers it.
-  const displayName = card.displayName ?? card.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-  const badgeText = badge?.map(b => b.text).join(' ') ?? '';
-  const ariaLabel = `Add ${displayName}${badgeText ? ' ' + badgeText : ''} to list`;
-
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={onPick}
-        aria-label={ariaLabel}
-        className={`group relative flex flex-col items-stretch w-full rounded-lg bg-space-800/95 border transition-all text-left overflow-hidden active:scale-[0.98] ${
-          savedQty > 0 ? accentCls.savedBorder : `border-space-700 ${accentCls.hoverBorder}`
-        }`}
-      >
-        <div
-          className={`${landscape ? 'aspect-[7/5]' : 'aspect-[5/7]'} bg-space-900 overflow-hidden`}
-        >
-          {imgUrl ? (
-            <img
-              src={imgUrl}
-              alt=""
-              loading="lazy"
-              className="w-full h-full object-contain"
-            />
-          ) : null}
-        </div>
-        {savedQty > 0 && (
-          <span
-            className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none shadow ${accentCls.qtyBadge}`}
-            aria-label={`${savedQty} saved`}
-          >
-            ×{savedQty}
-          </span>
-        )}
-        {/* Caption: badge(s) + price stacked so neither gets clipped at
-            narrow mobile tile widths. Multi-badge rows wrap to a new
-            line if needed. */}
-        <div className="px-1.5 py-1 flex flex-col items-start gap-0.5">
-          {badge && badge.length > 0 && (
-            <div className="flex flex-wrap gap-0.5">
-              {badge.map((b, i) => (
-                <span
-                  key={`${b.text}-${i}`}
-                  className={`text-[8px] leading-none px-1 py-0.5 rounded font-bold uppercase tracking-wide ${b.colorClass}`}
-                >
-                  {b.text}
-                </span>
-              ))}
-            </div>
-          )}
-          {price !== null && (
-            <span className="text-[10px] text-gold font-semibold">
-              ${price.toFixed(2)}
-            </span>
-          )}
-        </div>
-      </button>
-      {/* Decrement button — sibling of the main tile button so its
-          tap doesn't double as an add. Only shows for saved tiles. */}
-      {onDecrement && (
-        <button
-          type="button"
-          onClick={e => { e.stopPropagation(); onDecrement(); }}
-          aria-label={savedQty <= 1 ? 'Remove' : 'Decrease quantity'}
-          className="absolute top-1 left-1 z-[2] w-6 h-6 rounded-full bg-space-900/85 border border-space-700 text-gray-200 hover:text-crimson-light hover:border-crimson/60 flex items-center justify-center text-sm font-bold leading-none transition-colors"
-        >
-          {savedQty <= 1 ? '×' : '−'}
-        </button>
-      )}
     </div>
   );
 }
