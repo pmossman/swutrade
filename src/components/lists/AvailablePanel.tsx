@@ -62,7 +62,9 @@ export function AvailablePanel({
   if (mode === 'picker') {
     return (
       <ListCardPicker
-        listType="available"
+        // Binder rows are productId-keyed; users have specific
+        // printings, no "any" concept. Lock the picker to specific.
+        selectionMode={{ kind: 'specific' }}
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}

@@ -66,7 +66,12 @@ export function WantsPanel({
   if (mode === 'picker') {
     return (
       <ListCardPicker
-        listType="wants"
+        // Wishlist surface — saving with a specific variant is a
+        // power-user move; default to family ("any printing") mode
+        // since most adds are "I want any version of this card".
+        // The toggle stays prominent at the top of the picker so
+        // users can flip when they want a Hyperspace-only entry.
+        selectionMode={{ kind: 'either', default: 'family' }}
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}

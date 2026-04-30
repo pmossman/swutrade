@@ -203,20 +203,16 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   function handlePick(card: CardVariant, ctx: { acceptedVariants?: string[] }) {
     const familyId = cardFamilyId(card);
     if (!familyMap.has(familyId)) return;
-    // Variant resolution differs by side:
-    //   - 'wanted' picker shows ONE tile per family (representative
-    //     printing). The variant pin comes from the active variant
-    //     filter (acceptedVariants), same as WantsPanel uses.
-    //   - 'offering' picker shows ONE tile PER PRINTING; the user
-    //     IS picking a specific printing. Read the variant directly
-    //     off the clicked card.
-    let variant: string | null;
-    if (kind === 'offering') {
-      variant = card.variant ?? null;
-    } else {
-      const accepted = ctx.acceptedVariants ?? [];
-      variant = accepted.length === 1 ? accepted[0] : null;
-    }
+    // The picker's selectionMode handles the "which variant to pin"
+    // question and feeds it back via ctx.acceptedVariants:
+    //   - specific tile mode (offering): [card.variant]
+    //   - family tile mode + variant filter (wanted, restricted):
+    //     the filter selection
+    //   - family tile mode + no filter (wanted, "any"): []
+    // So all three signal-builder sub-cases collapse to the same
+    // single-line read:
+    const accepted = ctx.acceptedVariants ?? [];
+    const variant = accepted.length === 1 ? accepted[0] : null;
     // Dedup key also differs by side:
     //   - 'wanted' merges by familyId — "any" wants for the same
     //     family converge, so a second tap bumps qty.
@@ -349,7 +345,10 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-3 sm:px-6 pb-6 pt-3 min-h-0">
           {kind === 'wanted' ? (
             <ListCardPicker
-              listType="wants"
+              // Looking-for signals = wishlist semantics. Default to
+              // "any printing" mode but let the user toggle to
+              // specific if they want a Hyperspace-only signal.
+              selectionMode={{ kind: 'either', default: 'family' }}
               allCards={allCards}
               priceMode="market"
               savedEntries={cards.map(c => ({
@@ -364,7 +363,9 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
             />
           ) : (
             <ListCardPicker
-              listType="available"
+              // Offering signals are productId-keyed (you have
+              // specific printings); lock to specific.
+              selectionMode={{ kind: 'specific' }}
               allCards={allCards}
               priceMode="market"
               savedEntries={cards.flatMap(c => {

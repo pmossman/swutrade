@@ -20,36 +20,65 @@ import { CardResultsGrid } from './CardResultsGrid';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
 
-export type PickerListType = 'wants' | 'available';
-
 export interface PickContext {
-  /** For wants picker: the variant filter active when the user tapped.
-   *  Empty array means "any variant" — the tap should save with
-   *  restriction.mode = 'any'. Non-empty means restriction.mode =
-   *  'restricted' with these variants. */
+  /** Variants the user's click should be saved against. Empty array
+   *  means "any printing" (consumer saves with `restriction.mode =
+   *  'any'`); a single value means a specific variant pin; multi-
+   *  value means a multi-variant restricted set.
+   *
+   *  Source depends on the picker's active selection mode:
+   *    - `specific` mode: always `[card.variant]` (one printing = one
+   *      tile, click = pin).
+   *    - `family` mode: copies the current variant-filter chip
+   *      selection (empty = "Any" filter, save as 'any'). */
   acceptedVariants?: CanonicalVariant[];
 }
 
 /**
+ * Selection mode controls TWO things: how tiles are laid out (one
+ * per family vs one per printing) and what `acceptedVariants` carries
+ * back to the consumer.
+ *
+ *   - `specific` — one tile per printing. Variant filter chips
+ *     hidden (each tile is its own variant). Click saves with that
+ *     exact variant. Used for binder, offering signals, trade
+ *     builder — surfaces where the user is committing to an exact
+ *     printing.
+ *   - `family` — one tile per family (representative printing).
+ *     Variant filter chips visible — the user picks restrictions
+ *     up-front, then click saves with that restriction. Used for
+ *     wishlist + looking-for signals when a user knows they want
+ *     exactly "Luke, any version" or "Luke, only Hyperspace".
+ *   - `either` — both modes available with a toggle at the top of
+ *     the picker. `default` controls which is active on mount.
+ *     Used for wishlist + looking-for signals as the new default
+ *     (default: 'family' — most adds are "any", power users
+ *     toggle).
+ *
+ * The `either` flavour assumes `family-keyed` saved-entry shape
+ * (PickerWantsSavedEntry) regardless of the active tile layout —
+ * because the underlying data model is family-keyed even when the
+ * user picks a specific printing (the variant just becomes the
+ * restriction).
+ */
+export type SelectionMode =
+  | { kind: 'specific' }
+  | { kind: 'family' }
+  | { kind: 'either'; default: 'specific' | 'family' };
+
+/**
  * "What's already in the consumer's draft / list" — one entry per
- * row the caller cares about. Discriminated on listType so each
- * variant carries the right shape:
+ * row the caller cares about. Two shapes, discriminated by the
+ * picker's selection mode:
  *
- *   - `wants` listType: `familyId` + `restrictionKey` ("any" or
- *     pipe-joined variant list). The picker only counts a saved
+ *   - `family` / `either` modes: `familyId` + `restrictionKey`
+ *     ("any" or pipe-joined variant list). The picker counts a saved
  *     row toward a tile's badge when its restriction matches the
- *     current variant filter — Hyperspace-saved Luke shouldn't
- *     badge under an "Any" filter (different intent → different
- *     saved item).
- *   - `available` listType: `productId`. One tile per printing,
- *     keyed exactly. No restrictionKey field — variants are
- *     productId-disambiguated already.
- *
- * Splitting these (vs the older single-shape with a polymorphic
- * `key` field) makes it impossible for the offering side of the
- * Signal Builder to accidentally feed familyIds when the picker
- * expects productIds — that mismatch silently broke saved-qty
- * badges on the offering picker before this refactor.
+ *     current variant filter (family tile mode) or the tile's own
+ *     variant (specific tile mode).
+ *   - `specific` mode: `productId`. One tile per printing, keyed
+ *     exactly. No restrictionKey field — variants are productId-
+ *     disambiguated already.
  *
  * `id` round-trips back via `onDecrement(id)` so the caller can
  * find the right row to mutate.
@@ -59,8 +88,7 @@ export interface PickerWantsSavedEntry {
   familyId: string;
   qty: number;
   /** "any" or a pipe-joined sorted variant list (e.g. "Hyperspace"
-   *  or "Hyperspace|Showcase"). Used to scope badge counts by the
-   *  picker's current variant filter. */
+   *  or "Hyperspace|Showcase"). */
   restrictionKey: string;
 }
 
@@ -72,12 +100,12 @@ export interface PickerAvailableSavedEntry {
 
 type ListCardPickerProps =
   | (CommonPickerProps & {
-      listType: 'wants';
-      savedEntries?: readonly PickerWantsSavedEntry[];
+      selectionMode: { kind: 'specific' };
+      savedEntries?: readonly PickerAvailableSavedEntry[];
     })
   | (CommonPickerProps & {
-      listType: 'available';
-      savedEntries?: readonly PickerAvailableSavedEntry[];
+      selectionMode: { kind: 'family' } | { kind: 'either'; default: 'specific' | 'family' };
+      savedEntries?: readonly PickerWantsSavedEntry[];
     });
 
 interface CommonPickerProps {
@@ -132,14 +160,16 @@ const ANY_BADGE_COLOR = 'bg-gold/15 text-gold border border-gold/40';
 
 function wantsBadge(
   card: CardVariant,
-  listType: PickerListType,
+  activeMode: 'specific' | 'family',
   selectedVariants: readonly CanonicalVariant[],
 ): TileBadge[] | null {
   const variant = extractVariantLabel(card.name);
-  if (listType === 'available') {
+  if (activeMode === 'specific') {
+    // Each tile is its own printing — pill = the tile's variant.
     const label = variant === 'Standard' ? 'Standard' : variantDisplayLabel(variant);
     return label ? [{ text: label, colorClass: variantBadgeColor(variant) }] : null;
   }
+  // Family mode: pill = current variant filter (what a click would save).
   if (selectedVariants.length === 0) {
     return [{ text: 'Any', colorClass: ANY_BADGE_COLOR }];
   }
@@ -168,7 +198,7 @@ function wantsBadge(
  * type-tap-type-tap through a batch of cards.
  */
 export function ListCardPicker({
-  listType,
+  selectionMode,
   allCards,
   priceMode,
   savedEntries = [],
@@ -176,6 +206,20 @@ export function ListCardPicker({
   onPick,
   onClose,
 }: ListCardPickerProps) {
+  // Active tile mode — locked when selectionMode is 'specific' or
+  // 'family', toggleable when 'either'. Preserve toggle position
+  // across re-renders inside the picker session.
+  const [activeMode, setActiveMode] = useState<'specific' | 'family'>(
+    () => selectionMode.kind === 'either' ? selectionMode.default : selectionMode.kind,
+  );
+  // If the parent flips between hard-locked modes (rare — wishlist
+  // → binder swap), sync the active mode without forgetting the
+  // user's toggle for 'either' surfaces.
+  useEffect(() => {
+    if (selectionMode.kind === 'specific') setActiveMode('specific');
+    else if (selectionMode.kind === 'family') setActiveMode('family');
+    // 'either' → leave activeMode at whatever the user picked
+  }, [selectionMode.kind]);
   // `percentage` prop is ignored — picker tiles always show raw
   // TCGPlayer prices. Keeping the prop signature stable so callers
   // don't churn.
@@ -247,13 +291,12 @@ export function ListCardPicker({
         ? lastSearchResultsRef.current
         : browseResults;
 
-  // Wants picker: collapse each family to a single tile using the rep
-  // that matches the current variant filter (cheapest match, or
-  // Standard when filter is empty) — a saved Want is a cross-printing
-  // entity, so showing every variant would be confusing.
-  // Available picker: show every variant as its own tile since
-  // productIds are exact. The variant filter doesn't apply here
-  // (the UI hides it); any persisted selection is ignored.
+  // Family tile mode: collapse each family to a single tile using
+  // the rep that matches the current variant filter (cheapest match,
+  // or Standard when filter is empty) — a family-level entry is a
+  // cross-printing entity, so showing every variant would be
+  // confusing.
+  // Specific tile mode: show every variant as its own tile.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
     const setScoped = applySelectionFilters(
       baseResults,
@@ -261,7 +304,7 @@ export function ListCardPicker({
       [],
     );
 
-    if (listType !== 'wants') return setScoped;
+    if (activeMode !== 'family') return setScoped;
 
     return setScoped.map(sg => ({
       ...sg,
@@ -280,12 +323,22 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [baseResults, listType, selectedSets, selectedVariants, priceMode]);
+  }, [baseResults, activeMode, selectedSets, selectedVariants, priceMode]);
 
-  // Saved-count lookup + item-id reverse index. The shape of
-  // savedEntries is discriminated on listType — for wants the
-  // tile keys by familyId + filters by current variant restriction;
-  // for available the tile keys by productId.
+  // Saved-count lookup + item-id reverse index.
+  //
+  // Lookup key depends on the active mode + the selectionMode's
+  // saved-shape:
+  //   - `specific` selectionMode → savedEntries are productId-keyed,
+  //     tile keys by productId. Direct match.
+  //   - `family` selectionMode → savedEntries are familyId+restriction-
+  //     keyed, tile keys by familyId. Filter by current variant filter
+  //     (Hyperspace-saved Luke shouldn't badge under "Any" filter).
+  //   - `either` selectionMode → savedEntries family-keyed, tile mode
+  //     toggleable:
+  //       * family tile mode: same as `family` — filter-key match.
+  //       * specific tile mode: per-tile, match entries whose
+  //         restrictionKey === this tile's variant.
   const { savedCounts, savedItemIds } = useMemo(() => {
     const counts = new Map<string, number>();
     const ids = new Map<string, string[]>();
@@ -295,30 +348,43 @@ export function ListCardPicker({
       if (bucket) bucket.push(id);
       else ids.set(key, [id]);
     };
-    if (listType === 'wants') {
-      const filterKey = restrictionKeyOf(selectedVariants);
-      const entries = (savedEntries ?? []) as readonly PickerWantsSavedEntry[];
-      for (const entry of entries) {
-        if (entry.restrictionKey !== filterKey) continue;
-        push(entry.familyId, entry.id, entry.qty);
-      }
-    } else {
+    if (selectionMode.kind === 'specific') {
       const entries = (savedEntries ?? []) as readonly PickerAvailableSavedEntry[];
       for (const entry of entries) {
         push(entry.productId, entry.id, entry.qty);
       }
+    } else {
+      // family or either: family-keyed entries.
+      const entries = (savedEntries ?? []) as readonly PickerWantsSavedEntry[];
+      if (activeMode === 'family') {
+        const filterKey = restrictionKeyOf(selectedVariants);
+        for (const entry of entries) {
+          if (entry.restrictionKey !== filterKey) continue;
+          push(entry.familyId, entry.id, entry.qty);
+        }
+      } else {
+        // specific tile mode for `either` — bucket per (familyId,
+        // variant) so each tile (productId) only badges entries
+        // whose pinned variant matches THIS tile.
+        for (const entry of entries) {
+          push(`${entry.familyId}::${entry.restrictionKey}`, entry.id, entry.qty);
+        }
+      }
     }
     return { savedCounts: counts, savedItemIds: ids };
-  }, [listType, savedEntries, selectedVariants]);
+  }, [selectionMode.kind, activeMode, savedEntries, selectedVariants]);
 
   const tileKey = (card: CardVariant): string | null => {
-    if (listType === 'wants') return cardFamilyId(card);
-    return card.productId ?? null;
+    if (selectionMode.kind === 'specific') return card.productId ?? null;
+    if (activeMode === 'family') return cardFamilyId(card);
+    // `either` in specific tile mode — match the (familyId, variant)
+    // bucket key built above.
+    return `${cardFamilyId(card)}::${extractVariantLabel(card.name)}`;
   };
 
-  const pickContext: PickContext = listType === 'wants'
-    ? { acceptedVariants: selectedVariants }
-    : {};
+  const pickContext: PickContext = activeMode === 'specific'
+    ? { acceptedVariants: [] /* per-tile populated in renderTile via card.variant */ }
+    : { acceptedVariants: selectedVariants };
 
   // Browse mode mounts hundreds of tiles — useDeferredValue lets the
   // picker chrome (filter bar + search input) paint in a high-priority
@@ -364,12 +430,49 @@ export function ListCardPicker({
         </button>
       </div>
 
+      {selectionMode.kind === 'either' && (
+        // Toggle visible only on `either` surfaces (wishlist, looking-
+        // for signal). Locked modes hide it because the answer is
+        // structural — a binder add is always specific, a wants add
+        // can be either-or.
+        <div className="px-3 pt-2 shrink-0 flex items-center gap-2">
+          <span className="text-[10px] font-bold tracking-widest uppercase text-gray-500">Save as</span>
+          <div className="inline-flex rounded-md border border-space-700 bg-space-900/40 p-0.5 text-[11px] font-semibold">
+            <button
+              type="button"
+              onClick={() => setActiveMode('family')}
+              aria-pressed={activeMode === 'family'}
+              className={`px-2 py-1 rounded transition-colors ${
+                activeMode === 'family'
+                  ? 'bg-gold/20 text-gold'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Any printing
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveMode('specific')}
+              aria-pressed={activeMode === 'specific'}
+              className={`px-2 py-1 rounded transition-colors ${
+                activeMode === 'specific'
+                  ? 'bg-gold/20 text-gold'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Specific printing
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="px-3 pt-2 shrink-0">
-        {/* Available cards are always exact variants (keyed by
-            productId), so narrowing the view by variant would just
-            hide rows without changing what gets saved. Hide the
-            variant chip group entirely in that picker. */}
-        <SelectionFilterBar filters={filters} hideVariantFilter={listType === 'available'} />
+        {/* Variant filter chips only make sense in family tile mode —
+            they pick which restriction a click saves. In specific
+            tile mode each tile IS its own variant; chips would just
+            duplicate that signal. Set + aspect chips stay visible
+            either way (they narrow which families render). */}
+        <SelectionFilterBar filters={filters} hideVariantFilter={activeMode === 'specific'} />
       </div>
 
       <div className="px-3 pt-2 shrink-0">
@@ -403,7 +506,13 @@ export function ListCardPicker({
           //   - Wants with 1-variant filter: the chosen variant.
           //   - Wants with 2+ variants: "HS or HSF" so the user can
           //     see the whole restriction they'll save on tap.
-          const badge = wantsBadge(card, listType, selectedVariants);
+          const badge = wantsBadge(card, activeMode, selectedVariants);
+          // pickContext per-tile: in specific mode each tile click
+          // pins THAT tile's variant; in family mode the active
+          // variant filter pins the restriction.
+          const tilePickContext: PickContext = activeMode === 'specific'
+            ? { acceptedVariants: [extractVariantLabel(card.name) as CanonicalVariant] }
+            : pickContext;
           return (
             <PickerTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -419,7 +528,7 @@ export function ListCardPicker({
               landscape={ctx.leaderGroup}
               savedQty={savedQty}
               badge={badge}
-              onPick={() => onPick(card, pickContext)}
+              onPick={() => onPick(card, tilePickContext)}
               onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
             />
           );
