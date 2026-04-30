@@ -10,6 +10,13 @@ const MAIN_SETS = SETS.filter(s => s.category === 'main');
 
 const GOLD_CHIP = 'bg-gold/15 text-gold border-gold/40';
 
+// Single source of truth for the "Any variant" pill — used both in
+// the collapsed summary AND the expanded chip strip. Gradient picks
+// up hues from the variant palette so the no-filter state feels
+// deliberate, not absent. (Set's "All" / "Main" / "Special" presets
+// stay on GOLD_CHIP because they're a different concept.)
+const ANY_VARIANT_BADGE = 'text-white bg-gradient-to-r from-sky-700/70 via-fuchsia-700/70 to-amber-600/70';
+
 interface VariantChipGroupProps {
   selectedVariants: readonly string[];
   onToggle: (v: CanonicalVariant) => void;
@@ -32,25 +39,14 @@ export function VariantChipGroup({
 }: VariantChipGroupProps) {
   const selected = selectedVariants as readonly string[];
   const summary = selected.length === 0
-    ? (
-      // "Any" means every variant qualifies — render a rainbow-tinted
-      // badge that picks up hues from the variant palette so the empty
-      // state feels deliberate, not absent. Matches the per-tile badge
-      // sizing/shape so it slots cleanly next to the selected pills.
-      <span className="text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide text-white bg-gradient-to-r from-sky-700/70 via-fuchsia-700/70 to-amber-600/70">
-        Any
-      </span>
-    )
+    ? <SummaryPill colorClass={ANY_VARIANT_BADGE}>Any</SummaryPill>
     : selected.length <= 3
       ? (
         <>
           {selected.map(v => (
-            <span
-              key={v}
-              className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(v)}`}
-            >
+            <SummaryPill key={v} colorClass={variantBadgeColor(v)}>
               {variantChipLabel(v)}
-            </span>
+            </SummaryPill>
           ))}
         </>
       )
@@ -61,7 +57,7 @@ export function VariantChipGroup({
       summary={summary}
       action={selected.length > 0 ? <ClearAction onClick={onClear} /> : undefined}
     >
-      <Chip active={selected.length === 0} onClick={onClear} colorClass={GOLD_CHIP}>
+      <Chip active={selected.length === 0} onClick={onClear} colorClass={ANY_VARIANT_BADGE}>
         Any
       </Chip>
       {CANONICAL_VARIANTS.map(v => (
@@ -153,12 +149,29 @@ function ClearAction({ onClick }: { onClick: () => void }) {
   );
 }
 
+/**
+ * Compact non-interactive variant badge used in the collapsed-state
+ * summary of VariantChipGroup. Same color palette as the expanded
+ * Chip but smaller, and a span (not a button) since the parent
+ * button already handles toggle. */
+function SummaryPill({ colorClass, children }: { colorClass: string; children: React.ReactNode }) {
+  return (
+    <span className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${colorClass}`}>
+      {children}
+    </span>
+  );
+}
+
 interface SelectionFilterBarProps {
   filters: SelectionFilters;
   /** Hide the Variant filter. Available picker turns this on — every
    *  tap there commits an exact productId, so narrowing the view by
    *  variant would just hide cards without changing semantics. */
   hideVariantFilter?: boolean;
+  /** Caller-supplied filter chips (e.g. trade overlay's source-pool
+   *  filter) wrapped into the same flex-wrap row as Variant + Set so
+   *  every filter affordance shares one row instead of stacking. */
+  extraChips?: React.ReactNode;
 }
 
 /**
@@ -166,7 +179,7 @@ interface SelectionFilterBarProps {
  * useSelectionFilters. ListView builds the same shape against ephemeral
  * useState — see VariantChipGroup / SetChipGroup directly.
  */
-export function SelectionFilterBar({ filters, hideVariantFilter }: SelectionFilterBarProps) {
+export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: SelectionFilterBarProps) {
   const setSummary = useMemo(
     () => summarizeSelection(filters.selectedSets, 'All sets', setSummaryLabel),
     [filters.selectedSets],
@@ -188,6 +201,7 @@ export function SelectionFilterBar({ filters, hideVariantFilter }: SelectionFilt
         onSelectGroup={filters.replaceGroup}
         onClear={filters.clearSets}
       />
+      {extraChips}
     </div>
   );
 }

@@ -509,11 +509,14 @@ export function ListCardPicker({
           tile mode each tile IS its own variant; chips would just
           duplicate that signal. */}
       <div className="px-3 pt-2 shrink-0">
-        <SelectionFilterBar filters={filters} hideVariantFilter={activeMode === 'specific'} />
-        {chips}
+        <SelectionFilterBar
+          filters={filters}
+          hideVariantFilter={activeMode === 'specific'}
+          extraChips={chips}
+        />
       </div>
 
-      <div className="px-3 pt-2 shrink-0">
+      <div className="px-3 py-2 shrink-0">
         <input
           ref={inputRef}
           type="text"

@@ -77,10 +77,13 @@ test.describe('Community source chip', () => {
       .toBeVisible({ timeout: 10_000 });
     await waitForPricesLoaded(page);
 
-    // Open the Offering picker. Source chips (Community wants / My
-    // available / etc.) render inline in the filter region — no
-    // expand step needed.
+    // Open the Offering picker. Source chips live inside a collapsed
+    // "Show" filter alongside Variant + Set; expand it to reveal the
+    // Community wants chip.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
+    // Both sides' overlays mount simultaneously, so the Show filter
+    // button matches twice — pin to the Offering side (first in DOM).
+    await page.getByRole('button', { name: /^Show/ }).first().click();
 
     // Chip is visible + qty-annotated. Label is "Community wants N".
     await expect(

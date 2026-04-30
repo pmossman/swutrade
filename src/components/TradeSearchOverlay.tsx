@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { ListCardPicker } from './ListCardPicker';
+import { CollapsibleChipFilter } from './CollapsibleChipFilter';
 import { adjustPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
@@ -279,31 +280,81 @@ export function TradeSearchOverlay({
             </div>
           }
           chips={visibleChips.length > 0 ? (
-            // Renders inside the picker's filter region (under the
-            // variant pills), so this fragment stays unwrapped — the
-            // picker supplies the outer padding + spacing.
-            <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-              <span className="text-[9px] font-bold tracking-[0.15em] uppercase text-gray-500 mr-1">
-                Show
-              </span>
-              {visibleChips.map(chip => (
-                <SourceChip
-                  key={chip.id}
-                  active={activeChipIds.includes(chip.id)}
-                  onClick={() => setActiveChipIds(prev =>
-                    prev.includes(chip.id)
-                      ? prev.filter(id => id !== chip.id)
-                      : [...prev, chip.id],
-                  )}
-                  label={chip.label}
-                  count={chip.cards.length}
-                />
-              ))}
-            </div>
+            // Mounts into SelectionFilterBar's flex-wrap row alongside
+            // Variant + Set, so all filter affordances share one row
+            // and use the same expand/collapse pattern. Collapsed
+            // summary calls out which sources are active without the
+            // user having to expand it.
+            <SourceChipFilter
+              visibleChips={visibleChips}
+              activeChipIds={activeChipIds}
+              onToggle={id => setActiveChipIds(prev =>
+                prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+              )}
+              onClear={() => setActiveChipIds([])}
+            />
           ) : null}
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Source-pool filter — wraps the available source chips in the same
+ * CollapsibleChipFilter chrome that Variant + Set use, so the picker's
+ * filter region reads as one row of expandable affordances instead of
+ * a free-floating "Show:" strip on its own line. Summary mirrors the
+ * Variant filter's progression: 0 → "All", 1 → that chip's label,
+ * 2-3 → comma-joined labels, 4+ → "N selected".
+ */
+function SourceChipFilter({
+  visibleChips,
+  activeChipIds,
+  onToggle,
+  onClear,
+}: {
+  visibleChips: SourceChipConfig[];
+  activeChipIds: readonly string[];
+  onToggle: (id: string) => void;
+  onClear: () => void;
+}) {
+  const activeChips = visibleChips.filter(c => activeChipIds.includes(c.id));
+  const summary = activeChips.length === 0
+    ? 'All'
+    : activeChips.length <= 2
+      ? activeChips.map(c => c.label).join(', ')
+      : `${activeChips.length} selected`;
+  const action = activeChips.length > 0 ? (
+    <button
+      type="button"
+      onClick={onClear}
+      className="text-[10px] text-gray-500 hover:text-gold transition-colors"
+    >
+      Clear
+    </button>
+  ) : undefined;
+  // Auto-expand at mount if any chip is already active — covers the
+  // shared-link flow where the overlay opens with `theirs` pre-seeded,
+  // so the user lands on visible scope chips instead of a hidden
+  // "Show" pill they'd have to know to expand.
+  return (
+    <CollapsibleChipFilter
+      label="Show"
+      summary={summary}
+      action={action}
+      defaultOpen={activeChips.length > 0}
+    >
+      {visibleChips.map(chip => (
+        <SourceChip
+          key={chip.id}
+          active={activeChipIds.includes(chip.id)}
+          onClick={() => onToggle(chip.id)}
+          label={chip.label}
+          count={chip.cards.length}
+        />
+      ))}
+    </CollapsibleChipFilter>
   );
 }
 

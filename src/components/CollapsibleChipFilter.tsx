@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface CollapsibleChipFilterProps {
   label: string;
@@ -29,6 +29,15 @@ export function CollapsibleChipFilter({
   children,
 }: CollapsibleChipFilterProps) {
   const [open, setOpen] = useState(defaultOpen);
+  // Re-evaluate when defaultOpen flips true after mount — covers the
+  // case where a parent's "auto-open if any selection is active" flag
+  // becomes true post-render (e.g. trade overlay's source chips
+  // activated via async seed). Asymmetric on purpose: a parent
+  // requesting "open" always wins, but once open the user controls
+  // closing.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-1.5">

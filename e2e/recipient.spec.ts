@@ -72,9 +72,12 @@ test.describe('Source chip is qty-aware', () => {
     // Open the Offering search overlay.
     await page.getByRole('button', { name: 'Add cards to Offering' }).click();
 
-    // Source chips render inline above the filter bar after the
-    // picker unification. Both sides' overlays mount simultaneously
-    // so `.first()` pins to the open Offering side.
+    // Source chips live inside a collapsed "Show" filter alongside
+    // Variant + Set. With no auto-activated chip the filter starts
+    // closed — expand it to access "My available". Both sides'
+    // overlays mount simultaneously so `.first()` pins to the open
+    // Offering side.
+    await page.getByRole('button', { name: /^Show/ }).first().click();
     const mineChip = page.getByRole('button', { name: 'My available 1' }).first();
     await expect(mineChip).toBeVisible();
 
