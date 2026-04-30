@@ -110,10 +110,15 @@ type ListCardPickerProps =
 
 interface CommonPickerProps {
   allCards: CardVariant[];
+  /** Optional scoped pool for BROWSE mode only. When set, the
+   *  catalog-browse tiles are drawn from this subset (e.g. the
+   *  trade-builder source chips like "My available", "They want")
+   *  while name search continues to query the full `allCards`. */
+  browsePool?: CardVariant[];
   /** Accepted but ignored — picker tile prices are always raw 100%
    *  TCGPlayer (mkt/low). Kept on the interface for symmetry with
-   *  the trade builder's TradeSearchOverlay; both share the same
-   *  "browse the catalogue at TCGPlayer prices" contract now. */
+   *  the trade builder; both share the same "browse the catalogue
+   *  at TCGPlayer prices" contract now. */
   percentage?: number;
   priceMode: PriceMode;
   /** Decrement one qty of the named saved row. Caller decides whether
@@ -122,6 +127,18 @@ interface CommonPickerProps {
   onDecrement?: (id: string) => void;
   onPick: (card: CardVariant, ctx: PickContext) => void;
   onClose: () => void;
+  /** Side accent — drives the Done button colour + saved-tile border.
+   *  'gold' for list surfaces (wishlist, binder, signals); 'emerald'
+   *  for trade-builder offering side; 'blue' for receiving side. */
+  accent?: 'gold' | 'emerald' | 'blue';
+  /** Replace the default top bar (Back chevron + Done pill) with
+   *  caller-supplied content. Used by the trade overlay to show
+   *  counterpart context ("Adding to · for @alice") + a side-tinted
+   *  Done. The default bar still wins when this is omitted. */
+  header?: React.ReactNode;
+  /** Extra row injected between the header and the filter bar.
+   *  Trade overlay drops its source chips here. */
+  chips?: React.ReactNode;
 }
 
 function representativeVariant(variants: CardVariant[]): CardVariant {
@@ -200,11 +217,15 @@ function wantsBadge(
 export function ListCardPicker({
   selectionMode,
   allCards,
+  browsePool,
   priceMode,
   savedEntries = [],
   onDecrement,
   onPick,
   onClose,
+  accent = 'gold',
+  header,
+  chips,
 }: ListCardPickerProps) {
   // Active tile mode — locked when selectionMode is 'specific' or
   // 'family', toggleable when 'either'. Preserve toggle position
@@ -249,11 +270,12 @@ export function ListCardPicker({
   // appears instantly when the user clicks "Add a card", rather than
   // waiting on the heavy compute first.
   const [browseResults, setBrowseResults] = useState<SetSearchGroup[]>([]);
+  const browseSource = browsePool ?? allCards;
   useEffect(() => {
     let cancelled = false;
     const run = () => {
       if (cancelled) return;
-      setBrowseResults(browseAllGroups(allCards));
+      setBrowseResults(browseAllGroups(browseSource));
     };
     // requestIdleCallback when available so the compute happens once
     // the browser has nothing else to do; setTimeout fallback for
@@ -265,7 +287,7 @@ export function ListCardPicker({
     if (ric) ric(run);
     else setTimeout(run, 0);
     return () => { cancelled = true; };
-  }, [allCards]);
+  }, [browseSource]);
 
   // Stale-while-revalidate: keep showing the last settled search
   // results during the 150ms debounce window so the grid doesn't
@@ -404,31 +426,42 @@ export function ListCardPicker({
     onDecrement(ids[ids.length - 1]);
   };
 
+  // Done button colour matches the side accent — gold for list
+  // surfaces, emerald/blue for the trade-builder sides. Caller can
+  // override the entire top bar via the `header` slot.
+  const doneColors = {
+    gold: 'bg-gold/20 border-gold/50 text-gold hover:bg-gold/30 hover:border-gold/70',
+    emerald: 'bg-emerald-600 border-emerald-500/70 text-white hover:bg-emerald-500',
+    blue: 'bg-blue-600 border-blue-500/70 text-white hover:bg-blue-500',
+  }[accent];
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Top bar: subtle back chevron on the left for spatial-context
-          users, prominent "Done" pill on the right so it reads as a
-          clear "I'm finished picking" affordance — matches every call
-          site's mental model (composing a list, then closing it).
-          Both fire the same onClose; keeping two affordances makes the
-          dismissal discoverable from either edge of the screen. */}
-      <div className="px-3 py-2 border-b border-space-800 shrink-0 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-gray-200 transition-colors"
-        >
-          <BackIcon className="w-3.5 h-3.5" />
-          Back
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="px-3 py-1.5 rounded-md bg-gold/20 border border-gold/50 text-gold text-xs font-bold tracking-wide hover:bg-gold/30 hover:border-gold/70 transition-colors"
-        >
-          Done
-        </button>
-      </div>
+      {header ?? (
+        // Default top bar: back chevron on the left, Done pill on
+        // the right. Both fire onClose. Caller can supply a custom
+        // header via the slot prop to inject e.g. trade-builder
+        // counterpart context.
+        <div className="px-3 py-2 border-b border-space-800 shrink-0 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center gap-1 text-[11px] font-semibold text-gray-500 hover:text-gray-200 transition-colors"
+          >
+            <BackIcon className="w-3.5 h-3.5" />
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`px-3 py-1.5 rounded-md border text-xs font-bold tracking-wide transition-colors ${doneColors}`}
+          >
+            Done
+          </button>
+        </div>
+      )}
+
+      {chips}
 
       {selectionMode.kind === 'either' && (
         // Toggle visible only on `either` surfaces (wishlist, looking-
@@ -528,6 +561,7 @@ export function ListCardPicker({
               landscape={ctx.leaderGroup}
               savedQty={savedQty}
               badge={badge}
+              accent={accent}
               onPick={() => onPick(card, tilePickContext)}
               onDecrement={savedQty > 0 ? () => handleDecrement(card) : undefined}
             />
@@ -549,10 +583,34 @@ interface PickerTileProps {
    *  one element of the active restriction (Wants with multi-variant
    *  filter). */
   badge: TileBadge[] | null;
+  /** Side accent — drives the saved-state border + qty badge. */
+  accent: 'gold' | 'emerald' | 'blue';
   onPick: () => void;
   /** Decrement one saved qty. Only passed when savedQty > 0. */
   onDecrement?: () => void;
 }
+
+const tileAccent: Record<'gold' | 'emerald' | 'blue', {
+  savedBorder: string;
+  hoverBorder: string;
+  qtyBadge: string;
+}> = {
+  gold: {
+    savedBorder: 'border-gold/40 hover:border-gold/60',
+    hoverBorder: 'hover:border-gold/40',
+    qtyBadge: 'bg-gold text-space-900',
+  },
+  emerald: {
+    savedBorder: 'border-emerald-500/60 hover:border-emerald-400',
+    hoverBorder: 'hover:border-emerald-500/40',
+    qtyBadge: 'bg-emerald-500 text-space-900',
+  },
+  blue: {
+    savedBorder: 'border-blue-500/60 hover:border-blue-400',
+    hoverBorder: 'hover:border-blue-500/40',
+    qtyBadge: 'bg-blue-500 text-space-900',
+  },
+};
 
 function PickerTile({
   card,
@@ -561,11 +619,13 @@ function PickerTile({
   landscape,
   savedQty,
   badge,
+  accent,
   onPick,
   onDecrement,
 }: PickerTileProps) {
   const price = adjustPrice(getCardPrice(card, priceMode), percentage);
   const imgUrl = cardImageUrl(card.productId, 'sm');
+  const accentCls = tileAccent[accent];
 
   // Compose an accessible name from the card art + badge text so
   // screen readers (and e2e tests) can identify each tile. The image
@@ -581,9 +641,7 @@ function PickerTile({
         onClick={onPick}
         aria-label={ariaLabel}
         className={`group relative flex flex-col items-stretch w-full rounded-lg bg-space-800/95 border transition-all text-left overflow-hidden active:scale-[0.98] ${
-          savedQty > 0
-            ? 'border-gold/40 hover:border-gold/60'
-            : 'border-space-700 hover:border-gold/40'
+          savedQty > 0 ? accentCls.savedBorder : `border-space-700 ${accentCls.hoverBorder}`
         }`}
       >
         <div
@@ -600,7 +658,7 @@ function PickerTile({
         </div>
         {savedQty > 0 && (
           <span
-            className="absolute top-1 right-1 px-1.5 py-0.5 rounded-full bg-gold text-space-900 text-[10px] font-bold leading-none shadow"
+            className={`absolute top-1 right-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold leading-none shadow ${accentCls.qtyBadge}`}
             aria-label={`${savedQty} saved`}
           >
             ×{savedQty}
