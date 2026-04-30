@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { SessionEvent, SessionView } from '../hooks/useSession';
+import type { SessionEvent, SessionView, TradeCardSnapshot } from '../hooks/useSession';
+import { cardImageUrl } from '../services/priceService';
 
 /**
  * Timeline + chat panel for an active trade session. Renders a unified
@@ -277,12 +278,94 @@ function EventRow({
     );
   }
 
+  // 'edited' events with a card-diff payload render as a card-diff
+  // panel instead of a plain one-liner — users see exactly what
+  // changed (with thumbnails) instead of "edited their side."
+  // Fall through to the simple one-liner for legacy events that
+  // don't carry the diff (anything recorded before the diff
+  // enrichment landed).
+  if (event.type === 'edited') {
+    const added = Array.isArray(event.payload?.added) ? event.payload.added as TradeCardSnapshot[] : [];
+    const removed = Array.isArray(event.payload?.removed) ? event.payload.removed as TradeCardSnapshot[] : [];
+    const viaSuggestion = typeof event.payload?.viaSuggestion === 'string';
+    const side = event.payload?.side;
+
+    if (added.length > 0 || removed.length > 0) {
+      const headline = viaSuggestion && side === 'both'
+        ? `${actor} accepted a revert`
+        : viaSuggestion
+          ? `${actor} accepted a suggestion`
+          : `${actor} edited their side`;
+
+      return (
+        <div className="rounded-md border border-space-700 bg-space-800/40 px-2.5 py-1.5">
+          <div className="text-[11px] text-gray-400 italic mb-1">{headline} · {time}</div>
+          {added.length > 0 && (
+            <CardDiffSection label="Added" tone="add" cards={added} />
+          )}
+          {removed.length > 0 && (
+            <CardDiffSection label="Removed" tone="remove" cards={removed} />
+          )}
+        </div>
+      );
+    }
+    // No diff payload — legacy event, fall through to one-liner.
+  }
+
   // Structured event — small one-liner with subtle chrome.
   const summary = summarizeStructuredEvent(event, actor);
   if (!summary) return null;
   return (
     <div className="text-[11px] text-gray-500 italic text-center py-1">
       {summary} · {time}
+    </div>
+  );
+}
+
+/**
+ * Compact card list for the diff section of an 'edited' event. Small
+ * thumbnail + name + qty so the user can recognize cards at a glance
+ * without leaving the timeline. Capped via overflow-y-auto so a
+ * 20-card edit doesn't dominate the panel.
+ */
+function CardDiffSection({
+  label,
+  tone,
+  cards,
+}: {
+  label: string;
+  tone: 'add' | 'remove';
+  cards: TradeCardSnapshot[];
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 mb-1 last:mb-0">
+      <div className={`text-[9px] font-bold uppercase tracking-wider ${
+        tone === 'add' ? 'text-emerald-300' : 'text-red-300'
+      }`}>
+        {label}
+      </div>
+      <ul className="flex flex-col gap-1 max-h-[180px] overflow-y-auto">
+        {cards.map(card => {
+          const thumb = card.productId ? cardImageUrl(card.productId, 'sm') : null;
+          return (
+            <li key={`${card.productId}-${card.variant}`} className="flex items-center gap-1.5 text-[12px] text-gray-200">
+              {thumb && (
+                <img
+                  src={thumb}
+                  alt=""
+                  loading="lazy"
+                  className="w-6 h-8 rounded-sm object-cover bg-space-900 shrink-0"
+                />
+              )}
+              <span className="font-bold tabular-nums text-gray-100">×{card.qty}</span>
+              <span className="truncate">{card.name}</span>
+              {card.variant && card.variant !== 'Standard' && (
+                <span className="text-[10px] text-gray-500 shrink-0">({card.variant})</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

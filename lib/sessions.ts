@@ -882,11 +882,22 @@ export async function editSessionSide(
     })
     .where(eq(tradeSessions.id, args.sessionId));
 
+  // Diff old vs new on the viewer's side so the timeline can render
+  // "Added 2× Luke, removed 1× Han" instead of a generic "edited."
+  // Captured per-edit as part of the audit payload — saves the
+  // renderer from walking snapshot pairs to derive deltas.
+  const oldViewerCards = viewerIsA ? row.userACards : row.userBCards;
+  const editDiff = diffCardSets(oldViewerCards, args.cards);
   await recordSessionEvent(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
     type: 'edited',
-    payload: { side: viewerIsA ? 'a' : 'b', count: args.cards.length },
+    payload: {
+      side: viewerIsA ? 'a' : 'b',
+      count: args.cards.length,
+      added: editDiff.added,
+      removed: editDiff.removed,
+    },
   });
 
   // Snapshot the post-edit state so PR 3's revert-to-snapshot can
@@ -1712,6 +1723,43 @@ function cardListsEqual(a: TradeCardSnapshot[], b: TradeCardSnapshot[]): boolean
   return true;
 }
 
+/**
+ * Per-productId diff of two card snapshot lists. `added` carries the
+ * delta count for productIds whose qty went up (or appeared); `removed`
+ * carries the delta for productIds whose qty went down (or
+ * disappeared). Card metadata (name, variant, unitPrice) for added
+ * entries comes from the NEW list; for removed entries from the OLD
+ * list — matches "this is what was added / what was there before."
+ *
+ * Used to enrich the 'edited' event payload so the timeline can show
+ * "Added 2× Luke, removed 1× Han" rather than just "edited their side."
+ */
+function diffCardSets(
+  oldCards: TradeCardSnapshot[],
+  newCards: TradeCardSnapshot[],
+): { added: TradeCardSnapshot[]; removed: TradeCardSnapshot[] } {
+  const oldByPid = new Map(oldCards.map(c => [c.productId, c]));
+  const newByPid = new Map(newCards.map(c => [c.productId, c]));
+  const allPids = new Set([...oldByPid.keys(), ...newByPid.keys()]);
+
+  const added: TradeCardSnapshot[] = [];
+  const removed: TradeCardSnapshot[] = [];
+
+  for (const pid of allPids) {
+    const oldQty = oldByPid.get(pid)?.qty ?? 0;
+    const newQty = newByPid.get(pid)?.qty ?? 0;
+    if (newQty > oldQty) {
+      const card = newByPid.get(pid)!;
+      added.push({ ...card, qty: newQty - oldQty });
+    } else if (newQty < oldQty) {
+      const card = oldByPid.get(pid)!;
+      removed.push({ ...card, qty: oldQty - newQty });
+    }
+  }
+
+  return { added, removed };
+}
+
 function computeSuggestionResidual(
   suggestion: PendingSuggestion,
   userACards: TradeCardSnapshot[],
@@ -2062,6 +2110,22 @@ export async function acceptSuggestion(
     type: 'suggestion-accepted',
     payload: acceptedPayload,
   });
+
+  // Diff the per-side change so the timeline can render the same
+  // "Added X, removed Y" detail it does for direct edits. For
+  // 'both'-target reverts we diff each side separately and merge —
+  // the renderer shows them as one combined "edited (both sides)" row.
+  const acceptedDiff = suggestion.targetSide === 'both'
+    ? (() => {
+        const a = diffCardSets(row.userACards, nextUserACards);
+        const b = diffCardSets(row.userBCards, nextUserBCards);
+        return { added: [...a.added, ...b.added], removed: [...a.removed, ...b.removed] };
+      })()
+    : diffCardSets(
+        viewerIsA ? row.userACards : row.userBCards,
+        viewerIsA ? nextUserACards : nextUserBCards,
+      );
+
   await recordSessionEvent(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
@@ -2072,6 +2136,8 @@ export async function acceptSuggestion(
         ? nextUserACards.length + nextUserBCards.length
         : (viewerIsA ? nextUserACards.length : nextUserBCards.length),
       viaSuggestion: suggestion.id,
+      added: acceptedDiff.added,
+      removed: acceptedDiff.removed,
     },
   });
   await recordSessionEvent(db, {
