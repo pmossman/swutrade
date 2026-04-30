@@ -203,20 +203,32 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
   function handlePick(card: CardVariant, ctx: { acceptedVariants?: string[] }) {
     const familyId = cardFamilyId(card);
     if (!familyMap.has(familyId)) return;
-    // The picker's variant filter (acceptedVariants) drives the
-    // pinned printing — same wiring WantsPanel uses. Empty filter
-    // → 'any'. Single value → that variant. Multiple values left
-    // as 'any' since the API only takes one variant pin per card
-    // today.
-    const accepted = ctx.acceptedVariants ?? [];
-    const variant = accepted.length === 1 ? accepted[0] : null;
-    // Picker stays open across taps — same UX as the wishlist /
-    // binder pickers, so the user can batch-add and hit Done when
-    // they're satisfied. Tapping a card already in the draft bumps
-    // its qty up to 99 instead of silently no-op'ing, mirroring how
-    // wants.add() bumps an existing entry's qty.
+    // Variant resolution differs by side:
+    //   - 'wanted' picker shows ONE tile per family (representative
+    //     printing). The variant pin comes from the active variant
+    //     filter (acceptedVariants), same as WantsPanel uses.
+    //   - 'offering' picker shows ONE tile PER PRINTING; the user
+    //     IS picking a specific printing. Read the variant directly
+    //     off the clicked card.
+    let variant: string | null;
+    if (kind === 'offering') {
+      variant = card.variant ?? null;
+    } else {
+      const accepted = ctx.acceptedVariants ?? [];
+      variant = accepted.length === 1 ? accepted[0] : null;
+    }
+    // Dedup key also differs by side:
+    //   - 'wanted' merges by familyId — "any" wants for the same
+    //     family converge, so a second tap bumps qty.
+    //   - 'offering' keeps each (familyId, variant) as its own
+    //     entry — a user offering Standard Chewbacca AND Prestige
+    //     Chewbacca is two distinct available_items rows, so the
+    //     draft has to mirror that.
     setCards(prev => {
-      const existing = prev.findIndex(c => c.familyId === familyId);
+      const existing = prev.findIndex(c =>
+        c.familyId === familyId
+        && (kind === 'wanted' || c.variant === variant),
+      );
       if (existing >= 0) {
         return prev.map((c, i) => i === existing ? { ...c, qty: Math.min(99, c.qty + 1) } : c);
       }
@@ -316,9 +328,16 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
     // shape via discriminated-union types now, so the offering side
     // can't accidentally feed familyIds and silently miss badges
     // (which it did before this refactor).
+    // Compound id for offering — a draft can carry multiple entries
+    // for the same family at different variants (Standard Chewie +
+    // Prestige Chewie are distinct rows). Wanted draft uses just
+    // familyId since "any" wants merge.
+    const entryId = (c: SignalCardEntry) => kind === 'offering'
+      ? `${c.familyId}::${c.variant ?? '*'}`
+      : c.familyId;
     const onDecrement = (id: string) => {
       setCards(prev => {
-        const idx = prev.findIndex(c => c.familyId === id);
+        const idx = prev.findIndex(c => entryId(c) === id);
         if (idx < 0) return prev;
         const c = prev[idx];
         if (c.qty <= 1) return prev.filter((_, i) => i !== idx);
@@ -334,7 +353,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
               allCards={allCards}
               priceMode="market"
               savedEntries={cards.map(c => ({
-                id: c.familyId,
+                id: entryId(c),
                 familyId: c.familyId,
                 qty: c.qty,
                 restrictionKey: c.variant ?? 'any',
@@ -351,15 +370,17 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
               savedEntries={cards.flatMap(c => {
                 const family = familyMap.get(c.familyId);
                 if (!family) return [];
-                // For offering, the user pinned a specific printing
-                // (or none → first variant). The picker tile keys by
-                // productId, so we resolve the entry's variant to a
-                // concrete productId for badge matching.
+                // For offering, the entry's `variant` field carries
+                // the printing the user clicked — resolve it to the
+                // concrete productId so the picker's productId-keyed
+                // badge lookup matches. Falls back to the cheapest
+                // variant if the entry was somehow stored without a
+                // variant (legacy / migration).
                 const productId = c.variant
                   ? family.variants.find(v => v.variant === c.variant)?.productId
                   : family.variants[0]?.productId;
                 if (!productId) return [];
-                return [{ id: c.familyId, productId, qty: c.qty }];
+                return [{ id: entryId(c), productId, qty: c.qty }];
               })}
               onDecrement={onDecrement}
               onPick={handlePick}
