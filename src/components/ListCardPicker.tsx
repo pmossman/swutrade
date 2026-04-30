@@ -536,6 +536,12 @@ export function ListCardPicker({
         // Specific mode keeps the multi-column tile grid.
         portraitColsClass={activeMode === 'family' ? 'grid-cols-1' : 'grid-cols-4 sm:grid-cols-4 md:grid-cols-5'}
         landscapeColsClass={activeMode === 'family' ? 'grid-cols-1' : 'grid-cols-3 sm:grid-cols-3 md:grid-cols-4'}
+        // Tuned to FamilyRow's actual rendered height (~120px for the
+        // 96px-tall variant stacks + padding + group label) so the
+        // virtualizer's scrollbar doesn't overestimate by 2x. The
+        // virtualizer measures real height post-render anyway, but
+        // the initial estimate sets the scroll-extent feel.
+        rowHeightEstimate={activeMode === 'family' ? () => 130 : undefined}
         emptyLabel={hasQuery ? 'No cards match your filters' : 'No cards in this filter'}
         renderTile={(card, ctx) => {
           const key = tileKey(card);

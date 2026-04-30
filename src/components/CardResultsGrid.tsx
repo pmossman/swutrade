@@ -22,6 +22,15 @@ interface CardResultsGridProps {
   landscapeColsClass?: string;
   /** Message to show when results are empty. */
   emptyLabel?: string;
+  /** Per-row pixel-height estimate for the virtualizer. The default
+   *  is tuned for the multi-column tile grid (~260px per row of
+   *  portrait tiles, ~180px for leader rows, doubled for >4-variant
+   *  groups that wrap). Family-mode pickers using a single-column
+   *  FamilyRow override this with a much smaller estimate (~120px)
+   *  so the scrollbar height doesn't lie. The virtualizer measures
+   *  actual height post-render via `measureElement`, so a stale
+   *  estimate just affects initial scroll-extent feel. */
+  rowHeightEstimate?: (group: CardGroup) => number;
 }
 
 const DEFAULT_PORTRAIT_COLS = 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-7 xl:grid-cols-8';
@@ -56,6 +65,7 @@ export function CardResultsGrid({
   portraitColsClass = DEFAULT_PORTRAIT_COLS,
   landscapeColsClass = DEFAULT_LANDSCAPE_COLS,
   emptyLabel = 'No cards match your filters',
+  rowHeightEstimate,
 }: CardResultsGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -84,6 +94,7 @@ export function CardResultsGrid({
     getScrollElement: () => parentRef.current,
     estimateSize: i => {
       const row = rows[i];
+      if (rowHeightEstimate) return rowHeightEstimate(row.group);
       const leader = isLeaderOrBaseGroup(row.group.variants);
       const wrap = row.group.variants.length > 4 ? 2 : 1;
       return (leader ? 180 : 260) * wrap;
