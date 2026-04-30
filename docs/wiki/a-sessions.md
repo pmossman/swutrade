@@ -5,16 +5,27 @@
 > - `lib/sessions.ts` — core domain module; every state transition lives here.
 > - `api/sessions.ts` — HTTP dispatcher for `/api/sessions/*` actions.
 > - `src/hooks/useSession.ts` — client polling, mutation mutex, optimistic updates.
-> - `src/components/SessionView.tsx` — the `/s/:id` canvas (InvitePrompt, OpenSlotInvite, InviteByHandleForm, GhostSignInBanner, SessionIdentityStrip, TerminalBanner, SessionActionBar).
+> - `src/components/SessionView.tsx` — the `/s/:id` canvas (InvitePrompt, OpenSlotInvite, InviteByHandleForm, GhostSignInBanner, SessionIdentityStrip, TerminalBanner, SessionActionBar, TimelineToggle).
+> - `src/components/SessionTimelinePanel.tsx` — slide-in chat + activity timeline (PR 1 of session collaboration slice).
+> - `src/components/SessionSuggestions.tsx` — pending-suggestions strip rendered above the trade canvas (PR 2 + PR 3).
+> - `src/components/SessionSuggestComposer.tsx` — fullscreen card-picker for authoring cross-side suggestions (PR 2).
 > - `src/components/ShareLiveTradeButton.tsx` — "Invite someone" button in the trade builder's action strip.
-> - `tests/api/sessions-read.test.ts`, `tests/api/sessions-write.test.ts`, `tests/api/sessions-claim.test.ts`, `tests/api/sessions-invite.test.ts`, `tests/api/sessions-merge.test.ts`.
-> - `e2e/session-live-trade.auth.spec.ts`, `e2e/session-lifecycle.auth.spec.ts`.
-> - Schema rows in `lib/schema.ts` lines 496–622 (`tradeSessions`, `sessionEventTypes`, `sessionEvents`).
+> - `tests/api/sessions-read.test.ts`, `tests/api/sessions-write.test.ts`, `tests/api/sessions-claim.test.ts`, `tests/api/sessions-invite.test.ts`, `tests/api/sessions-merge.test.ts`, `tests/api/sessions-chat.test.ts`, `tests/api/sessions-suggest.test.ts`, `tests/api/sessions-revert.test.ts`.
+> - `e2e/session-live-trade.auth.spec.ts`, `e2e/session-lifecycle.auth.spec.ts`, `e2e/session-collaboration.auth.spec.ts`.
+> - Schema rows in `lib/schema.ts`: `tradeSessions`, `sessionEventTypes`, `sessionEvents`, `PendingSuggestion`.
 > - `vercel.json` rewrites for `/s/:id` and `/api/sessions/*`.
 
 ## Overview
 
 A **trade session** is a Phase 5b primitive that lets two users collaboratively edit the same trade at `/s/:id`. Unlike proposals (async one-shot DMs with accept/decline/counter), a session is a mutable shared canvas: both parties have their own editable half, the balance strip updates live, and the trade doesn't finalize until **both** sides hit Confirm. The session lifecycle is `active` (optionally `active + openSlot` while waiting for a scanner) → one of `settled | cancelled | expired`. Sessions are the primitive that makes the "two people at a game store with phones" flow work — QR-code handoff, anonymous ghost users, no Discord account required.
+
+The **session collaboration slice** (April 2026) layered three negotiation surfaces on top of the base canvas without changing the core lifecycle:
+
+1. **Chat + activity timeline** — every state transition, edit, and chat message lands in the same `session_events` log; the timeline panel renders them as a unified stream with kind-aware visual treatment. Per-user `lastReadAt` columns drive the unread badge.
+2. **Cross-side suggestions** — either party can author "changes for the other side" (cardsToAdd / cardsToRemove); the counterpart accepts (delta applied as a normal edit, confirmations cleared) or dismisses. Auto-dismissal sweeps run on every edit so suggestions satisfied by direct edits clear themselves.
+3. **Snapshot history + double-sided revert** — every edit captures a full both-sides snapshot in the event log; the timeline surfaces a "↶ Revert here" affordance per snapshot. Reverts ride the suggestion mechanic with `targetSide: 'both'` and `bothSidesSnapshot` payload — the counterpart accepts to apply (double-sided confirm, since the suggester implicitly committed by proposing).
+
+All three reuse `pending_suggestions` JSONB on the session row + the existing `session_events` log; no new tables.
 
 ## Key concepts / glossary
 
@@ -64,8 +75,12 @@ A **trade session** is a Phase 5b primitive that lets two users collaboratively 
 - **`tests/api/sessions-claim.test.ts`** — Open-session creation + claim. Anonymous-create mints a ghost, non-participant GET returns preview, claim is idempotent, third-party claim after fill → 409.
 - **`tests/api/sessions-invite.test.ts`** — `invite-handle`: happy-path DM + event, 404 unknown handle, 403 non-creator, 400 self-invite, 409 closed session, 403 ghost creator, debounce within the 10-min window.
 - **`tests/api/sessions-merge.test.ts`** — Ghost → real user migration. Confirmation carry-over, last-edited-by promotion, pair-uniqueness conflict leaves ghost row alive.
+- **`tests/api/sessions-chat.test.ts`** — Chat send (success, whitespace trim, non-participant 404, rate-limit 429), `mark-read` clearing unread, `edit-snapshot` event capture, snapshot rows surfacing in the timeline.
+- **`tests/api/sessions-suggest.test.ts`** — Cross-side suggestion lifecycle: create, target-only accept (suggester gets 403), explicit dismiss, partial satisfaction shrinks residual, full satisfaction auto-dismisses, open-slot session blocks suggestion (409).
+- **`tests/api/sessions-revert.test.ts`** — Revert proposal: counterpart accepts → both sides flip atomically + confirmations clear; current-state-matches-snapshot returns `no-op` (400); independent edit to the snapshot state auto-dismisses the pending revert; non-snapshot event id returns 404.
 - **`e2e/session-live-trade.auth.spec.ts`** — Browser-layer smoke: `/s/<unknown>` renders the SPA (not platform 404), anonymous "Invite someone" click yields `/s/<code>` with a QR. Two bugs documented in the file header as the reason this spec exists.
 - **`e2e/session-lifecycle.auth.spec.ts`** — Serial spec: two anonymous contexts walk create → claim → both-add → both-confirm → settled, plus the cancel-one-side-locks-both-sides path.
+- **`e2e/session-collaboration.auth.spec.ts`** — Two-context coverage of the collaboration slice: chat round-trip via the timeline panel, suggest → counterpart accepts (cards land), suggest auto-dismisses when target fulfills via direct edit, revert proposed by one side and accepted by the counterpart.
 
 ## Data model
 
@@ -88,6 +103,8 @@ Lives at `lib/schema.ts:499-573`. Canonical row:
 | `expires_at` | `timestamptz NOT NULL` | rolling; bumped on edit + claim |
 | `created_at` / `updated_at` | `timestamptz` | standard |
 | `settled_at` | `timestamptz NULL` | captured on first transition out of `active` (symmetric with `trade_proposals.respondedAt`) |
+| `user_a_last_read_at` / `user_b_last_read_at` | `timestamptz NULL` | per-user "I've seen the timeline up to here" stamp; null = never opened. Drives `unreadCount` derivation. |
+| `pending_suggestions` | `jsonb DEFAULT []` | `PendingSuggestion[]` — cross-side proposed edits awaiting accept/dismiss + revert proposals. See subsection below. |
 
 **Indexes:**
 
@@ -108,7 +125,7 @@ Lives at `lib/schema.ts:499-573`. Canonical row:
 
 ### `session_events` (append-only log)
 
-`schema.ts:606-622`. Event types: `created | edited | confirmed | unconfirmed | settled | cancelled | expired | notified`. FK to `tradeSessions` with cascade delete; FK to `users.actor_user_id` with set-null (ghost merges rewrite actor refs before deleting the ghost row, but set-null is the safety net).
+Event types: `created | edited | edit-snapshot | confirmed | unconfirmed | settled | cancelled | expired | notified | chat | suggestion-created | suggestion-accepted | suggestion-dismissed`. FK to `tradeSessions` with cascade delete; FK to `users.actor_user_id` with set-null (ghost merges rewrite actor refs before deleting the ghost row, but set-null is the safety net).
 
 **Payload discriminants worth remembering:**
 
@@ -117,10 +134,47 @@ Lives at `lib/schema.ts:499-573`. Canonical row:
 - `created { promotedFromProposalId }` on `promoteProposalToSession`.
 - `notified { kind: 'invite', targetHandle, targetUserId }` on successful `invite-handle` DM.
 - `notified { kind: 'invite-debounced', targetHandle, targetUserId }` on a suppressed duplicate within `SESSION_INVITE_DEBOUNCE_MS`.
-- `edited { side: 'a' | 'b', count }` — recorded on every `editSessionSide`.
+- `edited { side: 'a' | 'b' | 'both', count, viaSuggestion?: string }` — recorded on every `editSessionSide` AND on suggestion acceptance. `side: 'both'` flags an applied revert; `viaSuggestion` carries the suggestion id for traceability.
+- `edit-snapshot { userACards, userBCards }` — full both-sides snapshot of the post-edit state. Captured on every successful edit. Drives the timeline's "↶ Revert here" affordance + auto-dismiss residual computation. Filtered out of the chat-bubble view but present in `events` so the renderer can surface them as compact pills.
 - `unconfirmed { cleared: N }` — emitted alongside `edited` when the edit cleared existing confirmations.
+- `chat { body: string }` — in-session chat message. Server validates ≤500 chars + 10/min rate limit per user.
+- `suggestion-created { suggestionId, targetSide, addCount, removeCount }` for cross-side suggestions; `{ suggestionId, targetSide: 'both', kind: 'revert', fromSnapshotEventId }` for revert proposals.
+- `suggestion-accepted { suggestionId, addedCount, removedCount }` for cross-side; `{ suggestionId, kind: 'revert' }` for revert.
+- `suggestion-dismissed { suggestionId, reason: 'explicit' | 'satisfied' | 'unactionable' }`. `satisfied` dismissals are emitted automatically by the post-edit sweep when a suggestion's residual goes empty.
 
-The `notified` type reuses a single enum value with payload discriminants rather than adding `invited` / `invite-debounced` / future-`notified-change` values. This is **deliberate**: avoids a schema migration every time we add a new kind of DM. See `lib/sessions.ts:1143` for the reasoning comment.
+The `notified` type reuses a single enum value with payload discriminants rather than adding `invited` / `invite-debounced` / future-`notified-change` values. This is **deliberate**: avoids a schema migration every time we add a new kind of DM. See `lib/sessions.ts` for the reasoning comment. The same pattern applies to `suggestion-*` (one event-type-per-lifecycle-stage, payload discriminates revert vs cross-side).
+
+### `PendingSuggestion`
+
+Persisted as a JSONB array on `trade_sessions.pending_suggestions`. Capped at `MAX_PENDING_SUGGESTIONS = 10` active per session. Three shapes share one type, discriminated by `targetSide`:
+
+| field | type | notes |
+|---|---|---|
+| `id` | `string` | uuid |
+| `suggestedByUserId` | `string` | the proposer |
+| `targetSide` | `'a' \| 'b' \| 'both'` | side whose cards the suggestion modifies |
+| `cardsToAdd` | `TradeCardSnapshot[]` | per-card delta (used for `'a'` / `'b'`) |
+| `cardsToRemove` | `TradeCardSnapshot[]` | per-card delta (used for `'a'` / `'b'`) |
+| `bothSidesSnapshot` | `{ userACards, userBCards } \| undefined` | full state for `'both'` reverts |
+| `createdAt` | `string` | ISO timestamp |
+| `dismissedAt` | `string \| undefined` | dismissal stamp; row stays in column for one mutation cycle as audit trail before being pruned |
+| `dismissedReason` | `'explicit' \| 'satisfied' \| 'unactionable' \| undefined` | acceptance is NOT recorded here — accepted suggestions are dropped from the array outright (event log carries the audit trail) |
+
+**Authorization rules:**
+
+- `suggestForSession`: viewer must be a participant; `targetSide ≠ viewer's side`; session must be active and have a counterpart (no suggesting on open-slot sessions).
+- `acceptSuggestion`: for `'a' / 'b'`, only the target side's owner can accept. For `'both'` (revert), only the **non-suggester** can accept — that's the double-sided confirm.
+- `dismissSuggestion`: either party can dismiss any pending suggestion (suggester withdraws or target declines).
+- `proposeRevertForSession`: takes a `snapshotEventId`; the matching event must be `'edit-snapshot'` AND belong to this session. Refuses with `'no-op'` (HTTP 400) if current state already matches the snapshot.
+
+**Auto-dismissal policy:**
+
+`sweepAutoDismissals` runs inside `editSessionSide` after every successful edit. For each non-dismissed suggestion:
+
+- `'a' / 'b'`: compute residual via `computeSuggestionResidual` (intersect cardsToAdd / cardsToRemove against the post-edit target side). Empty residual → satisfied → auto-dismiss.
+- `'both'`: satisfied iff `cardListsEqual(snapshot.userACards, current userACards)` AND ditto for B. Effectively "current state matches the snapshot."
+
+`pruneStaleDismissals` runs at every write that touches `pending_suggestions` and drops dismissed rows older than `DISMISSED_TTL_MS` (30 s) — keeps the column bounded under heavy use. Dismissed rows linger briefly as a within-poll audit trail (counterpart sees "satisfied" / "withdrawn" before it disappears).
 
 ### `TradeCardSnapshot`
 
@@ -128,13 +182,18 @@ Shared with proposals (see `b-proposals.md`). `{ productId, name, variant, qty, 
 
 ### `SessionView` (viewer-centric)
 
-Mirrored client-side in `src/hooks/useSession.ts:24`. Key derived fields:
+Mirrored client-side in `src/hooks/useSession.ts`. Key derived fields:
 
 - `yourCards` / `theirCards` — storage-layer `user_a_cards` / `user_b_cards` flipped to the viewer's perspective.
+- `viewer: { userId, side: 'a' | 'b' }` — the canonical side the viewer occupies. Lets the client compute counterpart side without re-deriving from the storage layer (used by `SessionSuggestComposer` to send `targetSide`).
 - `openSlot: boolean` — true iff `user_b_id IS NULL`.
 - `confirmedByViewer` / `confirmedByCounterpart` — membership flags derived from `confirmed_by_user_ids`.
 - `lastEditedByViewer: boolean` — `lastEditedByUserId === viewer`. Drives the counterpart-edit banner logic.
 - `counterpart: {…} | null` — `null` when `openSlot`, otherwise the other user's identity (handle, username, avatarUrl, isAnonymous).
+- `events: SessionEvent[]` — most-recent `SESSION_EVENT_PAGE_SIZE` (50) timeline rows, newest-first. Each carries `actorIsViewer` precomputed for "you / them" pronouns.
+- `unreadCount: number` — count of post-`lastReadAt` events the viewer hasn't seen. Excludes `edit-snapshot` rows. Surfaced via the timeline-toggle pill in `SessionIdentityStrip`.
+- `lastReadAt: string | null` — viewer's column from `user_a_last_read_at` / `user_b_last_read_at`.
+- `suggestions: PendingSuggestionView[]` — active (non-dismissed) cross-side + revert proposals, projected with computed `residualAdd` / `residualRemove` so the renderer can show what's still pending vs already satisfied. Excludes dismissed rows.
 
 ### `SessionPreview` (non-participant view)
 
@@ -162,6 +221,13 @@ Limited payload: `{ id, creator: {…}, creatorCardCount, createdAt, expiresAt }
 - `promoteProposalToSession(db, args) → PromoteProposalResult` — recipient-only, re-uses `countered` proposal status, returns `already-active-session` with the winning id on pair conflict.
 - `mergeGhostIntoRealUser(db, ghostId, realUserId) → void` — called from `api/auth.ts:291` in the OAuth callback. See `g-auth.md`.
 - `recordSessionEvent(db, opts) → void` — fire-and-forget; logged failures, never throws (same as `proposalEvents`).
+- `listEventsForSession(db, sessionId, opts) → SessionEvent[]` — most-recent N events newest-first; includes `edit-snapshot` rows so the timeline UI can surface revert affordances.
+- `sendChatMessage(db, args) → SendChatResult` — append `chat` event with rate limit (`CHAT_RATE_LIMIT_PER_MINUTE = 10`) + length cap (`CHAT_MAX_BODY_LENGTH = 500`).
+- `markSessionRead(db, args) → MarkReadResult` — stamps the viewer's `*_last_read_at` column. Idempotent.
+- `suggestForSession(db, args) → SuggestForSessionResult` — author a cross-side suggestion. Reasons cover empty body, invalid target (self-side), cap-exceeded, open-slot.
+- `acceptSuggestion(db, args) → AcceptSuggestionResult` — apply pending suggestion's residual delta as a normal edit. Handles `'a' | 'b' | 'both'`. `'both'` is the revert variant: only the non-suggester can accept (double-sided confirm); both sides flip atomically.
+- `dismissSuggestion(db, args) → DismissSuggestionResult` — explicit dismissal by either party.
+- `proposeRevertForSession(db, args) → ProposeRevertResult` — fetch a snapshot event, build a `targetSide: 'both'` suggestion. Refuses `'no-op'` if state already matches.
 
 ### Endpoints
 
@@ -176,6 +242,12 @@ All at `/api/sessions/*`, dispatched by `api/sessions.ts` via `vercel.json` rewr
 - `POST /api/sessions/:id/confirm` — auth required. Idempotent.
 - `POST /api/sessions/:id/cancel` — auth required. Idempotent on already-terminal.
 - `POST /api/sessions/:id/invite-handle` — auth required, **not ghosts** (403 if `session.isAnonymous`). Body `{ handle }`. 502 on `dm-failed`, 404 on unknown handle, 400 self-invite, 409 closed session, 403 non-creator.
+- `POST /api/sessions/:id/chat` — auth required. Body `{ message: string ≤500 }`. 429 on rate-limit, 400 on empty/too-long.
+- `POST /api/sessions/:id/mark-read` — auth required. No body; stamps the viewer's `*_last_read_at` to NOW. Idempotent.
+- `POST /api/sessions/:id/suggest` — auth required. Body `{ targetSide: 'a'|'b', cardsToAdd?: TradeCardSnapshot[], cardsToRemove?: TradeCardSnapshot[] }`. 400 on empty / invalid-target / cap-exceeded; 409 on terminal / open-slot.
+- `POST /api/sessions/:id/suggestion/:suggestionId/accept` — auth required. 403 if viewer isn't the suggestion target (cross-side) or is the suggester (revert).
+- `POST /api/sessions/:id/suggestion/:suggestionId/dismiss` — auth required. Either party can dismiss.
+- `POST /api/sessions/:id/propose-revert` — auth required. Body `{ snapshotEventId }`. 400 `'no-op'` when current state already matches the snapshot; 404 `'no-such-snapshot'` for non-snapshot event ids; 409 on terminal/open-slot.
 
 ### Endpoint error-mapping table
 
@@ -374,6 +446,34 @@ Full OAuth merge flow lives in `g-auth.md`; this page only documents the session
 5. Proposal transition: `status = 'countered'` with `respondedAt = now`. We re-use `countered` rather than adding a `promoted` terminal status — a promoted proposal has been effectively replaced by the session, which is the same semantic as a counter-offer superseding the original.
 6. **Orphan cleanup**: if the proposal UPDATE fails after the session was inserted, `DELETE FROM trade_sessions WHERE id = sessionId` and rethrow the original error. If the cleanup itself fails, log but surface the original transition error (debugging the primary failure matters more than the cleanup trace).
 7. Event bookkeeping: `sessionEvents.created { promotedFromProposalId }` and `proposalEvents.countered { promotedToSessionId }` — cross-referenceable from both timelines.
+
+### Chat + timeline
+
+Chat messages and structured events share one stream — `session_events`. The server projects them into `SessionView.events` newest-first, capped at `SESSION_EVENT_PAGE_SIZE = 50`. The client's `SessionTimelinePanel` reverses the array for chronological top-to-bottom render and applies kind-aware styling: chat events become bubbles aligned to the actor side (viewer = right, counterpart = left); structured events render as small italicised one-liners; `edit-snapshot` events render as compact "snapshot · time | ↶ Revert here" pills.
+
+Read state is two timestamp columns (`user_a_last_read_at` / `user_b_last_read_at`); the unread count is `events.filter(e => e.createdAt > lastReadAt && e.type !== 'edit-snapshot').length`. The client auto-fires `markRead` on `visibilitychange → visible` (same pattern as the foreground sync) so the unread badge clears the moment the user focuses the tab — no extra explicit "mark as read" step.
+
+Polling cadence is the same 2.5 s used for the rest of the session view; chat latency therefore feels near-real-time without websocket infrastructure. The mutation mutex (`mutationInFlightRef`) holds during chat sends so an in-flight chat doesn't race with a poll.
+
+### Cross-side suggestions
+
+Either participant can author a "changes for the other side" delta via `POST /api/sessions/:id/suggest`. The server validates `targetSide ≠ viewer side` (you can't suggest changes to your own side; just edit it), caps active suggestions per session at `MAX_PENDING_SUGGESTIONS = 10`, and rejects suggestions on open-slot sessions (no counterpart yet). The suggestion appears in `SessionView.suggestions` for both viewers immediately on next poll.
+
+Acceptance routes through `acceptSuggestion`. For `'a' | 'b'` suggestions, only the target's owner can accept; the server applies the **residual** (computed against current state, not the original delta) so partial satisfaction doesn't double-apply. Acceptance does an atomic update: replaces the target side's cards, clears `confirmedByUserIds`, bumps `expiresAt`, drops the suggestion from `pending_suggestions`, and emits `suggestion-accepted | edited | edit-snapshot | unconfirmed` events.
+
+Dismissal is either-party — the suggester withdraws or the target declines. Auto-dismissal runs in `editSessionSide` after every successful edit: any suggestion whose residual goes empty is marked `dismissedReason: 'satisfied'` and a `suggestion-dismissed` event is emitted. The dismissed row stays in `pending_suggestions` for `DISMISSED_TTL_MS = 30 s` (audit trail visible to both sides for one poll cycle) before `pruneStaleDismissals` drops it.
+
+### Snapshot history + double-sided revert
+
+Every successful `editSessionSide` call records an `edit-snapshot` event with a full `{ userACards, userBCards }` payload. These rows accumulate over the session's life; the timeline panel renders each as a "↶ Revert here" affordance.
+
+`POST /api/sessions/:id/propose-revert` with `{ snapshotEventId }` builds a suggestion with `targetSide: 'both'` and `bothSidesSnapshot: { userACards, userBCards }` (lifted from the named event). Refused with `'no-op'` if current state already matches the snapshot. The suggestion appears in `pending_suggestions` and surfaces in `SessionView.suggestions` for both sides.
+
+Acceptance is **double-sided confirm**: the suggester implicitly committed to the revert by proposing it; the counterpart accepts to apply. `acceptSuggestion` for `'both'` rejects the suggester (`reason: 'not-target'`). On accept, both `user_a_cards` and `user_b_cards` are overwritten with the snapshot in a single transaction, confirmations clear, and the same `edited / edit-snapshot / suggestion-accepted` event chain fires (with `side: 'both'` and `viaSuggestion: <id>` discriminants).
+
+Auto-dismissal for reverts: satisfied iff `cardListsEqual(snapshot.userACards, current userACards)` AND ditto for B (i.e., the players independently edited their way back to the snapshot state). Same `dismissedReason: 'satisfied'` flag.
+
+The same suggestion machinery handling cross-side and revert means the `pending_suggestions` column is the **only** place pending negotiations live — there's no second table or in-memory state to keep in sync.
 
 ### Invite by handle
 

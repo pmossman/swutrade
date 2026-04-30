@@ -32,7 +32,9 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-### Session collaboration: timeline + chat + suggestions (started 2026-04-30)
+*(no slice currently active — pick the next from the queue)*
+
+### Session collaboration: timeline + chat + suggestions ✅ shipped 2026-04-30
 
 **Why:** Real-world feedback from beta users — in a live session, one
 user wanted to propose a change to the counterpart's side ("you should
@@ -326,6 +328,9 @@ Branch preserved for reference (no merge planned). `docs/v2/` scaffolding stays 
 ## Done
 
 *(append here as slices ship; newest-first)*
+
+### 2026-04-30 — Session collaboration: timeline + chat + suggestions + revert
+Three-PR slice landing in-session negotiation tools. **PR 1** (`7b776aa`): chat + timeline foundation — chat events ride the existing `session_events` table with new `'chat'` and `'edit-snapshot'` event kinds; per-user `lastReadAt` columns drive an unread badge; `useSession` exposes `sendChat` / `markRead` and auto-fires markRead on visibility change. `SessionTimelinePanel` slide-in overlay with chat bubbles + structured-event one-liners. **PR 2** (`ab8de7b`): cross-side suggestions — JSONB `pending_suggestions` column on `trade_sessions`, `suggestForSession` / `acceptSuggestion` / `dismissSuggestion` lib helpers, residual computation, auto-sweep on every edit (satisfied → auto-dismiss). `SessionSuggestions` panel + `SessionSuggestComposer` fullscreen card-picker. **PR 3** (`6121057`): snapshot history + double-sided revert — every edit captures a both-sides snapshot in the event log; "↶ Revert here" button per snapshot fires a `targetSide: 'both'` suggestion; counterpart accepts (suggester implicitly committed by proposing); same auto-dismiss machinery handles both shapes. New e2e at `e2e/session-collaboration.auth.spec.ts` covers chat round-trip + suggest-and-accept + suggest-with-counterpart-edits-around-it (auto-dismiss on satisfy) + revert-proposed-and-accepted. Wiki updated at `docs/wiki/a-sessions.md` (file map, data model, public surface, three new state-flow subsections, tests roster). 20 new vitest cases (7 chat + 9 suggest + 4 revert); 642 tests total.
 
 ### 2026-04-28 — Card signals PR 1: foundation + signaler side
 Authored on the web Signal Builder; the bot's job is rendering + button interactions. `card_signals` table + `trade_proposals.responding_to_signal_id` denorm. Web Signal Builder at `/?signals=new` — multi-card form (≤20), per-card variant + max-price + qty, "Pull from wishlist priorities" shortcut, guild dropdown, embed preview pane. `POST /api/signals` posts the public embed, `DELETE` cancels the group, `GET /api/signals/mine` lists the viewer's active signals. Public signal post — embed with card image (single-card), match listing of guild members holding the inverse inventory, Cancel post button + Specify-variant button (single-card / variant=any). Daily Vercel cron expires past-due signals + PATCHes their embeds. Vitest coverage: signal create + cancel + list-mine, button-handler cancel + variant flows. Slash commands prototyped then killed — structural limits made the web builder strictly better. PR 2 (response surface — thread + modal-respond) and PR 3 (ghost flow + fulfillment detection) remain in queue at item #2.
