@@ -15,8 +15,9 @@ import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
 import { SessionTimelinePanel } from './SessionTimelinePanel';
-import { SessionSuggestions } from './SessionSuggestions';
+import { InlineSuggestionList, RevertSuggestionBanner } from './SessionSuggestions';
 import { SessionSuggestComposer } from './SessionSuggestComposer';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import { PERSIST_KEYS } from '../persistence';
 import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
@@ -72,10 +73,34 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const [unconfirming, setUnconfirming] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [suggestComposerOpen, setSuggestComposerOpen] = useState(false);
+  // Mobile split-view: same pattern as the trade builder. Each side
+  // can be tap-collapsed; on desktop the panels render side-by-side
+  // and these flags are ignored. Single-column collapse cap: at most
+  // one side may be collapsed at a time so the canvas never
+  // disappears entirely.
+  const isMobile = useIsMobile();
+  const [yourSideCollapsed, setYourSideCollapsed] = useState(false);
+  const [theirSideCollapsed, setTheirSideCollapsed] = useState(false);
 
   // Counterpart side from the viewer's POV. The server tells us
   // viewer.side ('a' | 'b'); the counterpart is the other.
   const counterpartSide: 'a' | 'b' = session?.viewer.side === 'a' ? 'b' : 'a';
+
+  // Suggestion routing — partition session.suggestions by where they
+  // would land so each gets rendered next to its target:
+  //   - incoming: target side === viewer's side. Rendered inline at
+  //     the top of YOUR-side panel (where cards would land).
+  //   - outgoing: viewer authored, target = counterpart. Rendered
+  //     inline at the top of COUNTERPART-side panel (where cards
+  //     would land).
+  //   - reverts: targetSide === 'both'. Rendered as a global banner
+  //     above the canvas — they don't belong to one side.
+  const allSuggestions = session?.suggestions ?? [];
+  const incomingSuggestions = allSuggestions.filter(s =>
+    (s.targetSide === 'a' || s.targetSide === 'b') && s.targetIsViewer);
+  const outgoingSuggestions = allSuggestions.filter(s =>
+    (s.targetSide === 'a' || s.targetSide === 'b') && s.suggestedByViewer);
+  const revertSuggestions = allSuggestions.filter(s => s.targetSide === 'both');
 
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
@@ -271,24 +296,13 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                 />
               )}
 
-              {!terminal && session.suggestions && session.suggestions.length > 0 && (
-                <SessionSuggestions
-                  session={session}
+              {!terminal && revertSuggestions.length > 0 && (
+                <RevertSuggestionBanner
+                  suggestions={revertSuggestions}
+                  counterpartHandle={counterpartHandle}
                   onAccept={acceptSuggestion}
                   onDismiss={dismissSuggestion}
                 />
-              )}
-
-              {!terminal && (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setSuggestComposerOpen(true)}
-                    className="px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/30 text-amber-200 text-[11px] font-bold tracking-wide uppercase transition-colors"
-                  >
-                    + Suggest changes for @{counterpartHandle ?? 'counterpart'}
-                  </button>
-                </div>
               )}
 
               <TradeBalance
@@ -313,7 +327,14 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   wants={wants}
                   available={available}
                   sharedLists={null}
-                  collapsed={false}
+                  // Mobile-only collapse: tap header to fold the
+                  // panel; lets the user focus on one side at a time.
+                  // Locked-open if the OTHER side is currently
+                  // collapsed (prevents both-collapsed empty canvas).
+                  collapsed={isMobile && yourSideCollapsed}
+                  onToggleCollapse={isMobile && !theirSideCollapsed
+                    ? () => setYourSideCollapsed(c => !c)
+                    : undefined}
                   counterpartHandle={counterpartHandle}
                   // Once the viewer has confirmed, their side locks.
                   // Any edit auto-clears confirmations server-side
@@ -327,6 +348,16 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                       ? 'Unconfirm above to keep editing this side.'
                       : undefined
                   }
+                  // Incoming cross-side suggestions land HERE since
+                  // the cards would land on this side if accepted.
+                  aboveCardList={!terminal && incomingSuggestions.length > 0 ? (
+                    <InlineSuggestionList
+                      suggestions={incomingSuggestions}
+                      counterpartHandle={counterpartHandle}
+                      onAccept={acceptSuggestion}
+                      onDismiss={dismissSuggestion}
+                    />
+                  ) : undefined}
                 />
                 <TradeSide
                   label={counterpartHandle ? `@${counterpartHandle}'s side` : 'Their side'}
@@ -347,7 +378,10 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   wants={wants}
                   available={available}
                   sharedLists={null}
-                  collapsed={false}
+                  collapsed={isMobile && theirSideCollapsed}
+                  onToggleCollapse={isMobile && !yourSideCollapsed
+                    ? () => setTheirSideCollapsed(c => !c)
+                    : undefined}
                   counterpartHandle={counterpartHandle}
                   readOnly
                   readOnlyEmptyLabel={
@@ -355,6 +389,18 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                       ? `Waiting for @${counterpartHandle} to add cards.`
                       : 'Waiting for your counterpart to add cards.'
                   }
+                  // Outgoing suggestions render at the top of the
+                  // counterpart's panel (where their cards would land),
+                  // along with the "+ Suggest changes" button.
+                  aboveCardList={!terminal ? (
+                    <CounterpartPanelHeader
+                      outgoingSuggestions={outgoingSuggestions}
+                      counterpartHandle={counterpartHandle}
+                      onAccept={acceptSuggestion}
+                      onDismiss={dismissSuggestion}
+                      onOpenComposer={() => setSuggestComposerOpen(true)}
+                    />
+                  ) : undefined}
                 />
               </div>
 
@@ -403,6 +449,53 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         />
       )}
     </div>
+  );
+}
+
+// --- Counterpart panel header --------------------------------------------
+
+/**
+ * Inline header for the counterpart's TradeSide. Stacks (a) outgoing
+ * suggestion pills the viewer authored (target = counterpart side, so
+ * they'd land here on accept) and (b) a "+ Suggest changes" button.
+ *
+ * Lives in TradeSide's `aboveCardList` slot so the suggestion UI is
+ * spatially anchored to where the cards would actually go — easier
+ * for users to map "tap → goes there."
+ */
+function CounterpartPanelHeader({
+  outgoingSuggestions,
+  counterpartHandle,
+  onAccept,
+  onDismiss,
+  onOpenComposer,
+}: {
+  outgoingSuggestions: import('../hooks/useSession').PendingSuggestionView[];
+  counterpartHandle: string | null;
+  onAccept: (id: string) => Promise<{ ok: boolean }>;
+  onDismiss: (id: string) => Promise<{ ok: boolean }>;
+  onOpenComposer: () => void;
+}) {
+  return (
+    <>
+      {outgoingSuggestions.length > 0 && (
+        <InlineSuggestionList
+          suggestions={outgoingSuggestions}
+          counterpartHandle={counterpartHandle}
+          onAccept={onAccept}
+          onDismiss={onDismiss}
+        />
+      )}
+      <div className="px-3 py-1.5 flex justify-end">
+        <button
+          type="button"
+          onClick={onOpenComposer}
+          className="px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/30 text-amber-200 text-[11px] font-bold tracking-wide uppercase transition-colors"
+        >
+          + Suggest changes
+        </button>
+      </div>
+    </>
   );
 }
 

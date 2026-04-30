@@ -102,11 +102,13 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
     const { a, b } = await createAndClaim(browser);
 
     try {
-      // A opens the suggest composer.
-      await a.page.getByRole('button', { name: /Suggest changes for/i }).click();
+      // The "+ Suggest changes" button now lives inside the
+      // counterpart's panel header (so the suggestion is anchored
+      // visually to the side it would affect).
+      await a.page.getByRole('button', { name: /^\+ Suggest changes$/ }).click();
       await expect(a.page.getByText(/Suggest changes/i).first()).toBeVisible({ timeout: 5_000 });
 
-      // Pick Luke (Hyperspace) — composer uses the standard ListCardPicker.
+      // Pick Luke (Standard) — composer uses the standard ListCardPicker.
       const input = a.page.getByRole('textbox', { name: /Search cards/i }).first();
       await input.fill('luke jtl');
       const tile = a.page.getByRole('button', {
@@ -118,19 +120,26 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       // Send the suggestion.
       await a.page.getByRole('button', { name: /Send suggestion/i }).click();
 
-      // Composer closes; A sees the pending suggestion in the
-      // suggestions panel.
-      await expect(a.page.getByText(/Pending suggestions/i)).toBeVisible({ timeout: 5_000 });
+      // Suggestion now appears as a collapsed pill — A sees their
+      // outgoing pill ("You suggested +1") inside the counterpart's
+      // panel. Verify by the summary text.
+      await expect(
+        a.page.getByText(/You suggested/i).first(),
+      ).toBeVisible({ timeout: 5_000 });
 
-      // B sees it on poll. They tap Accept.
-      await expect(b.page.getByText(/Pending suggestions/i)).toBeVisible({ timeout: 8_000 });
+      // B sees an incoming pill in their own panel ("@<handle>
+      // suggests +1"). The pill is collapsed by default; click to
+      // expand, then Accept.
+      const incomingPill = b.page.getByRole('button', { name: /suggests/i }).first();
+      await expect(incomingPill).toBeVisible({ timeout: 8_000 });
+      await incomingPill.click();
       await b.page.getByRole('button', { name: /^Accept$/ }).first().click();
 
       // The card lands on B's side — visible in the trade canvas.
       await expect(b.page.getByText(/Luke Skywalker - Hero of Yavin/i).first()).toBeVisible({ timeout: 8_000 });
-      // Suggestion clears from both sides.
-      await expect(b.page.getByText(/Pending suggestions/i)).toHaveCount(0);
-      await expect(a.page.getByText(/Pending suggestions/i)).toHaveCount(0, { timeout: 8_000 });
+      // Suggestion pill clears on both sides.
+      await expect(b.page.getByRole('button', { name: /suggests/i })).toHaveCount(0, { timeout: 8_000 });
+      await expect(a.page.getByText(/You suggested/i)).toHaveCount(0, { timeout: 8_000 });
     } finally {
       await closeAll([a, b]);
     }
@@ -141,7 +150,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
     try {
       // A opens the suggest composer + suggests Luke for B.
-      await a.page.getByRole('button', { name: /Suggest changes for/i }).click();
+      await a.page.getByRole('button', { name: /^\+ Suggest changes$/ }).click();
       const input = a.page.getByRole('textbox', { name: /Search cards/i }).first();
       await input.fill('luke jtl');
       const tile = a.page.getByRole('button', {
@@ -151,18 +160,19 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       await tile.click();
       await a.page.getByRole('button', { name: /Send suggestion/i }).click();
 
-      // B sees the pending suggestion.
-      await expect(b.page.getByText(/Pending suggestions/i)).toBeVisible({ timeout: 8_000 });
+      // B sees the pending pill in their own panel.
+      await expect(
+        b.page.getByRole('button', { name: /suggests/i }).first(),
+      ).toBeVisible({ timeout: 8_000 });
 
       // B independently adds Luke to their side via the normal flow.
       // After the edit, the auto-sweep marks the suggestion satisfied
       // and dismisses it.
       await addOneCard(b.page);
 
-      // Suggestion clears from B's view (poll picks up the dismissal).
-      await expect(b.page.getByText(/Pending suggestions/i)).toHaveCount(0, { timeout: 8_000 });
-      // A's view drops it too.
-      await expect(a.page.getByText(/Pending suggestions/i)).toHaveCount(0, { timeout: 8_000 });
+      // Pill clears from both sides on poll.
+      await expect(b.page.getByRole('button', { name: /suggests/i })).toHaveCount(0, { timeout: 8_000 });
+      await expect(a.page.getByText(/You suggested/i)).toHaveCount(0, { timeout: 8_000 });
     } finally {
       await closeAll([a, b]);
     }
@@ -194,13 +204,13 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       const target = all[all.length - 2] ?? all[all.length - 1];
       await target.click();
 
-      // A's pending-suggestions panel shows the revert proposal.
-      await expect(a.page.getByText(/Pending suggestions/i)).toBeVisible({ timeout: 5_000 });
+      // A's revert banner appears (collapsed pill above the canvas).
       await expect(a.page.getByText(/proposed reverting both sides/i)).toBeVisible({ timeout: 5_000 });
 
-      // B sees the revert + accepts (double-sided confirm —
-      // suggester's Accept is gated; only the counterpart can accept).
-      await expect(b.page.getByText(/proposed reverting both sides/i)).toBeVisible({ timeout: 8_000 });
+      // B sees the same pill. Tap to expand, then Accept.
+      const bPill = b.page.getByRole('button', { name: /proposed reverting both sides/i });
+      await expect(bPill).toBeVisible({ timeout: 8_000 });
+      await bPill.click();
       await b.page.getByRole('button', { name: /↶ Accept revert/i }).click();
 
       // Suggestion clears.

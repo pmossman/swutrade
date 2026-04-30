@@ -92,6 +92,12 @@ interface TradeSideProps {
    *  ("Waiting for @handle to add cards."). Ignored when readOnly
    *  is false. */
   readOnlyEmptyLabel?: string;
+  /** Slot rendered between the panel header and the card list. Used
+   *  by SessionView to mount inline suggestion pills + a "+ Suggest"
+   *  button on the counterpart side, anchoring the suggestion UI to
+   *  the side it would actually affect. Hidden when collapsed so the
+   *  panel chrome doesn't peek. */
+  aboveCardList?: React.ReactNode;
 }
 
 const headerColors: Record<string, string> = {
@@ -167,6 +173,7 @@ export function TradeSide({
   headerless,
   readOnly = false,
   readOnlyEmptyLabel,
+  aboveCardList,
 }: TradeSideProps) {
   const { byFamilyAll, byProductId } = useCardIndexContext();
   const isMobile = useIsMobile();
@@ -503,6 +510,15 @@ export function TradeSide({
           );
         })()}
 
+
+        {/* Caller-supplied slot: session suggestions + "+ Suggest"
+            affordances live here. Hidden when collapsed so the
+            mobile collapsed view stays compact. */}
+        {!collapsed && aboveCardList && (
+          <div className="shrink-0 border-b border-space-700">
+            {aboveCardList}
+          </div>
+        )}
 
         {/* Card list sits above the sticky Add Card footer below. */}
         <div className={`flex-1 min-h-0 overflow-y-auto flex flex-col ${collapsed ? 'hidden' : ''}`}>
