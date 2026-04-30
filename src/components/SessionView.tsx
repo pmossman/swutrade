@@ -15,6 +15,8 @@ import { useWants } from '../hooks/useWants';
 import { useAvailable } from '../hooks/useAvailable';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
 import { SessionTimelinePanel } from './SessionTimelinePanel';
+import { SessionSuggestions } from './SessionSuggestions';
+import { SessionSuggestComposer } from './SessionSuggestComposer';
 import { PERSIST_KEYS } from '../persistence';
 import type { TradeCard, CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
@@ -60,10 +62,20 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   });
 
   const api = useSession(sessionId);
-  const { session, preview, status, saveCards, confirm, unconfirm, cancel, claim, hasUnseenCounterpartEdit, markCounterpartSeen, sendChat } = api;
+  const {
+    session, preview, status,
+    saveCards, confirm, unconfirm, cancel, claim,
+    hasUnseenCounterpartEdit, markCounterpartSeen,
+    sendChat, suggest, acceptSuggestion, dismissSuggestion,
+  } = api;
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [suggestComposerOpen, setSuggestComposerOpen] = useState(false);
+
+  // Counterpart side from the viewer's POV. The server tells us
+  // viewer.side ('a' | 'b'); the counterpart is the other.
+  const counterpartSide: 'a' | 'b' = session?.viewer.side === 'a' ? 'b' : 'a';
 
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
@@ -259,6 +271,26 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                 />
               )}
 
+              {!terminal && session.suggestions && session.suggestions.length > 0 && (
+                <SessionSuggestions
+                  session={session}
+                  onAccept={acceptSuggestion}
+                  onDismiss={dismissSuggestion}
+                />
+              )}
+
+              {!terminal && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setSuggestComposerOpen(true)}
+                    className="px-3 py-1.5 rounded-md border border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/30 text-amber-200 text-[11px] font-bold tracking-wide uppercase transition-colors"
+                  >
+                    + Suggest changes for @{counterpartHandle ?? 'counterpart'}
+                  </button>
+                </div>
+              )}
+
               <TradeBalance
                 yourCards={viewerTradeCards}
                 theirCards={counterpartCards}
@@ -357,6 +389,16 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           session={session}
           onClose={() => setTimelineOpen(false)}
           sendChat={sendChat}
+        />
+      )}
+
+      {suggestComposerOpen && session && (
+        <SessionSuggestComposer
+          counterpartSide={counterpartSide}
+          counterpartHandle={session.counterpart?.handle ?? null}
+          allCards={cardIndex.allLoadedCards}
+          onClose={() => setSuggestComposerOpen(false)}
+          onSubmit={suggest}
         />
       )}
     </div>

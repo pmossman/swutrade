@@ -22,6 +22,7 @@ import {
   tradeProposals,
   tradeSessions,
   users,
+  type PendingSuggestion,
   type SessionEventType,
   type SessionStatus,
   type TradeCardSnapshot,
@@ -124,6 +125,42 @@ export function normalizeParticipants(a: string, b: string): { userAId: string; 
  * with the existing proposal summary components.
  */
 /**
+ * Cap on simultaneously-pending suggestions per session. Prevents
+ * spam-suggesting and keeps the JSONB column bounded. Reaching this
+ * cap returns 'cap-exceeded' from `suggestForSession`; the UI
+ * surfaces a "dismiss some pending suggestions first" hint.
+ */
+export const MAX_PENDING_SUGGESTIONS = 10;
+
+/**
+ * View-level shape for a pending suggestion as exposed to the
+ * client. Wraps the persisted `PendingSuggestion` with computed-on-
+ * read fields:
+ *   `residualAdd` / `residualRemove` — what's still needed to satisfy
+ *     the suggestion, given the target side's CURRENT cards. Empty
+ *     residual = satisfied (auto-dismissed on next edit).
+ *   `targetIsViewer` — true when the suggestion's targetSide matches
+ *     the viewer; drives the "you have a pending suggestion" UI.
+ *
+ * Dismissed suggestions are filtered out of the view; the persisted
+ * row keeps `dismissedAt` for one cycle as an audit trail before the
+ * next mutation prunes it.
+ */
+export interface PendingSuggestionView {
+  id: string;
+  suggestedByUserId: string;
+  suggestedByViewer: boolean;
+  targetSide: 'a' | 'b' | 'both';
+  targetIsViewer: boolean;
+  cardsToAdd: TradeCardSnapshot[];
+  cardsToRemove: TradeCardSnapshot[];
+  bothSidesSnapshot?: { yourCards: TradeCardSnapshot[]; theirCards: TradeCardSnapshot[] };
+  residualAdd: TradeCardSnapshot[];
+  residualRemove: TradeCardSnapshot[];
+  createdAt: string;
+}
+
+/**
  * Public-facing event shape — the timeline log surfaced to the
  * SessionView. `actorIsViewer` is precomputed so the renderer can
  * pick "you" vs counterpart pronouns without re-deriving from
@@ -142,7 +179,7 @@ export interface SessionEvent {
 export interface SessionView {
   id: string;
   status: SessionStatus;
-  viewer: { userId: string };
+  viewer: { userId: string; side: 'a' | 'b' };
   counterpart: {
     userId: string;
     handle: string;
@@ -179,6 +216,10 @@ export interface SessionView {
   unreadCount: number;
   /** Viewer's last-read timestamp (null = never opened). */
   lastReadAt: string | null;
+  /** Active cross-side suggestions, viewer-centric. Excludes
+   *  dismissed ones. Each carries computed residual delta so the UI
+   *  renders only what's still actionable. */
+  suggestions: PendingSuggestionView[];
 }
 
 export const SESSION_EVENT_PAGE_SIZE = 50;
@@ -234,11 +275,18 @@ export async function getSessionForViewer(
     listEventsForSession(db, sessionId, { viewerUserId, limit: SESSION_EVENT_PAGE_SIZE }),
     countUnreadEvents(db, sessionId, lastReadAt),
   ]);
+  const suggestions = projectSuggestionsForViewer(
+    row.pendingSuggestions ?? [],
+    viewerUserId,
+    viewerIsA,
+    row.userACards,
+    row.userBCards,
+  );
 
   return {
     id: row.id,
     status: row.status,
-    viewer: { userId: viewerUserId },
+    viewer: { userId: viewerUserId, side: viewerIsA ? 'a' : 'b' },
     counterpart: counterpart
       ? {
           userId: counterpart.id,
@@ -262,6 +310,7 @@ export async function getSessionForViewer(
     events,
     unreadCount,
     lastReadAt: lastReadAt?.toISOString() ?? null,
+    suggestions,
   };
 }
 
@@ -455,7 +504,7 @@ export async function listActiveSessionsForViewer(
     return {
       id: r.id,
       status: r.status,
-      viewer: { userId: viewerUserId },
+      viewer: { userId: viewerUserId, side: (viewerIsA ? 'a' : 'b') as 'a' | 'b' },
       counterpart: counterpart
         ? {
             userId: counterpart.id,
@@ -484,6 +533,13 @@ export async function listActiveSessionsForViewer(
       events: [],
       unreadCount: 0,
       lastReadAt: lastReadAt?.toISOString() ?? null,
+      suggestions: projectSuggestionsForViewer(
+        r.pendingSuggestions ?? [],
+        viewerUserId,
+        viewerIsA,
+        r.userACards,
+        r.userBCards,
+      ),
     };
   });
 }
@@ -799,11 +855,24 @@ export async function editSessionSide(
   // for the future timeline UI.
   const priorConfirmations = row.confirmedByUserIds.length;
 
+  // Auto-sweep pending suggestions: any whose residual is now empty
+  // against the post-edit state get auto-dismissed (reason='satisfied').
+  // E.g. user A suggested user B add Luke + Han; B independently adds
+  // Luke + Han; on B's next edit the residual goes empty → dismissed.
+  const postEditUserACards = viewerIsA ? args.cards : row.userACards;
+  const postEditUserBCards = viewerIsA ? row.userBCards : args.cards;
+  const { next: sweptSuggestions, newlyDismissed } = sweepAutoDismissals(
+    row.pendingSuggestions ?? [],
+    postEditUserACards,
+    postEditUserBCards,
+    now,
+  );
+
   await db
     .update(tradeSessions)
     .set({
-      userACards: viewerIsA ? args.cards : row.userACards,
-      userBCards: viewerIsA ? row.userBCards : args.cards,
+      userACards: postEditUserACards,
+      userBCards: postEditUserBCards,
       // Every edit clears confirmations — the counterpart needs to
       // see the new state before confirming again.
       confirmedByUserIds: [],
@@ -812,6 +881,7 @@ export async function editSessionSide(
       updatedAt: now,
       // Bump expiry forward on active use.
       expiresAt: nextExpiresAt(now),
+      pendingSuggestions: pruneStaleDismissals(sweptSuggestions, now),
     })
     .where(eq(tradeSessions.id, args.sessionId));
 
@@ -843,6 +913,20 @@ export async function editSessionSide(
       actorUserId: args.viewerUserId,
       type: 'unconfirmed',
       payload: { cleared: priorConfirmations },
+    });
+  }
+
+  // Log auto-dismissals from the suggestion sweep so the timeline
+  // explains why a suggestion disappeared ("satisfied by your edit").
+  for (const dismissed of newlyDismissed) {
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'suggestion-dismissed',
+      payload: {
+        suggestionId: dismissed.id,
+        reason: dismissed.dismissedReason ?? 'satisfied',
+      },
     });
   }
 
@@ -1608,6 +1692,402 @@ export async function markSessionRead(
     .update(tradeSessions)
     .set(viewerIsA ? { userALastReadAt: now } : { userBLastReadAt: now })
     .where(eq(tradeSessions.id, args.sessionId));
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+// --- PR 2: cross-side suggestions ------------------------------------------
+
+/**
+ * Given a single pending suggestion + the session's current both-side
+ * card state, compute what's still missing to satisfy it. Used both
+ * for the view (so the UI renders residual delta) and for auto-
+ * dismissal (residual === empty → suggestion is satisfied).
+ */
+function computeSuggestionResidual(
+  suggestion: PendingSuggestion,
+  userACards: TradeCardSnapshot[],
+  userBCards: TradeCardSnapshot[],
+): { residualAdd: TradeCardSnapshot[]; residualRemove: TradeCardSnapshot[] } {
+  // 'both' is reserved for PR 3 revert-to-snapshot; treat the entire
+  // payload as residual until matched against state in PR 3.
+  if (suggestion.targetSide === 'both') {
+    return { residualAdd: [], residualRemove: [] };
+  }
+  const target = suggestion.targetSide === 'a' ? userACards : userBCards;
+  const targetByPid = new Map(target.map(c => [c.productId, c.qty]));
+
+  const residualAdd: TradeCardSnapshot[] = [];
+  for (const wanted of suggestion.cardsToAdd) {
+    const have = targetByPid.get(wanted.productId) ?? 0;
+    const need = wanted.qty - have;
+    if (need > 0) {
+      residualAdd.push({ ...wanted, qty: need });
+    }
+  }
+  const residualRemove: TradeCardSnapshot[] = [];
+  for (const removed of suggestion.cardsToRemove) {
+    const stillHave = targetByPid.get(removed.productId) ?? 0;
+    if (stillHave > 0) {
+      // Residual carries the *current* qty as the "still to remove"
+      // count — the user could have already partially reduced it.
+      residualRemove.push({ ...removed, qty: stillHave });
+    }
+  }
+  return { residualAdd, residualRemove };
+}
+
+/**
+ * After an edit, sweep pending suggestions and auto-dismiss any whose
+ * residual is empty (satisfied). Returns the updated list. Caller is
+ * responsible for persisting + emitting events for newly-dismissed
+ * rows. No-op if nothing needs changing.
+ */
+function sweepAutoDismissals(
+  suggestions: PendingSuggestion[],
+  userACards: TradeCardSnapshot[],
+  userBCards: TradeCardSnapshot[],
+  now: Date,
+): { next: PendingSuggestion[]; newlyDismissed: PendingSuggestion[] } {
+  const newlyDismissed: PendingSuggestion[] = [];
+  const next = suggestions.map(s => {
+    if (s.dismissedAt) return s; // already dismissed, leave alone
+    const { residualAdd, residualRemove } = computeSuggestionResidual(s, userACards, userBCards);
+    if (residualAdd.length === 0 && residualRemove.length === 0) {
+      const dismissed: PendingSuggestion = {
+        ...s,
+        dismissedAt: now.toISOString(),
+        dismissedReason: 'satisfied',
+      };
+      newlyDismissed.push(dismissed);
+      return dismissed;
+    }
+    return s;
+  });
+  return { next, newlyDismissed };
+}
+
+/** Strip dismissed suggestions whose dismissal is older than this
+ *  threshold from the persisted column. They've served their audit
+ *  purpose (event log carries the full record) so the JSONB stays
+ *  bounded over a long-running session. */
+const DISMISSED_TTL_MS = 30 * 1000;
+
+function pruneStaleDismissals(suggestions: PendingSuggestion[], now: Date): PendingSuggestion[] {
+  const cutoff = now.getTime() - DISMISSED_TTL_MS;
+  return suggestions.filter(s => {
+    if (!s.dismissedAt) return true;
+    return new Date(s.dismissedAt).getTime() > cutoff;
+  });
+}
+
+/**
+ * Project persisted suggestions into the viewer-centric shape with
+ * computed residuals. Filters out dismissed rows.
+ */
+function projectSuggestionsForViewer(
+  suggestions: PendingSuggestion[],
+  viewerUserId: string,
+  viewerIsA: boolean,
+  userACards: TradeCardSnapshot[],
+  userBCards: TradeCardSnapshot[],
+): PendingSuggestionView[] {
+  const viewerSide: 'a' | 'b' = viewerIsA ? 'a' : 'b';
+  return suggestions
+    .filter(s => !s.dismissedAt)
+    .map(s => {
+      const { residualAdd, residualRemove } = computeSuggestionResidual(s, userACards, userBCards);
+      return {
+        id: s.id,
+        suggestedByUserId: s.suggestedByUserId,
+        suggestedByViewer: s.suggestedByUserId === viewerUserId,
+        targetSide: s.targetSide,
+        targetIsViewer: s.targetSide === viewerSide,
+        cardsToAdd: s.cardsToAdd,
+        cardsToRemove: s.cardsToRemove,
+        bothSidesSnapshot: s.bothSidesSnapshot
+          ? {
+              yourCards: viewerIsA ? s.bothSidesSnapshot.userACards : s.bothSidesSnapshot.userBCards,
+              theirCards: viewerIsA ? s.bothSidesSnapshot.userBCards : s.bothSidesSnapshot.userACards,
+            }
+          : undefined,
+        residualAdd,
+        residualRemove,
+        createdAt: s.createdAt,
+      };
+    });
+}
+
+export type SuggestForSessionResult =
+  | { ok: true; view: SessionView; suggestionId: string }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'invalid-target' | 'empty' | 'cap-exceeded' | 'open-slot' };
+
+/**
+ * Author a new cross-side suggestion. Validates:
+ *   - viewer is a participant
+ *   - session is active and has a counterpart (no suggesting on open
+ *     slots — there's nobody to accept)
+ *   - targetSide is the COUNTERPART's side (you can't suggest changes
+ *     to your own side; just edit it)
+ *   - at least one of cardsToAdd / cardsToRemove is non-empty
+ *   - active suggestions (not yet dismissed) are below the cap
+ */
+export async function suggestForSession(
+  db: Db,
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    targetSide: 'a' | 'b';
+    cardsToAdd: TradeCardSnapshot[];
+    cardsToRemove: TradeCardSnapshot[];
+  },
+): Promise<SuggestForSessionResult> {
+  if (args.cardsToAdd.length === 0 && args.cardsToRemove.length === 0) {
+    return { ok: false, reason: 'empty' };
+  }
+
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  if (row.userBId === null) return { ok: false, reason: 'open-slot' };
+
+  const viewerIsA = row.userAId === args.viewerUserId;
+  const viewerSide: 'a' | 'b' = viewerIsA ? 'a' : 'b';
+  if (args.targetSide === viewerSide) {
+    return { ok: false, reason: 'invalid-target' };
+  }
+
+  const active = (row.pendingSuggestions ?? []).filter(s => !s.dismissedAt);
+  if (active.length >= MAX_PENDING_SUGGESTIONS) {
+    return { ok: false, reason: 'cap-exceeded' };
+  }
+
+  const now = new Date();
+  const newSuggestion: PendingSuggestion = {
+    id: crypto.randomUUID(),
+    suggestedByUserId: args.viewerUserId,
+    targetSide: args.targetSide,
+    cardsToAdd: args.cardsToAdd,
+    cardsToRemove: args.cardsToRemove,
+    createdAt: now.toISOString(),
+  };
+
+  // Prune stale dismissals at write time so the column doesn't grow
+  // unbounded under heavy use.
+  const pruned = pruneStaleDismissals(row.pendingSuggestions ?? [], now);
+  const next = [...pruned, newSuggestion];
+
+  await db
+    .update(tradeSessions)
+    .set({ pendingSuggestions: next, updatedAt: now })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'suggestion-created',
+    payload: {
+      suggestionId: newSuggestion.id,
+      targetSide: args.targetSide,
+      addCount: args.cardsToAdd.length,
+      removeCount: args.cardsToRemove.length,
+    },
+  });
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view, suggestionId: newSuggestion.id };
+}
+
+export type AcceptSuggestionResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'no-such-suggestion' | 'not-target' | 'already-dismissed' };
+
+/**
+ * Apply a pending suggestion's residual delta to the target side via
+ * `editSessionSide`. Reuses the edit machinery so confirmations
+ * auto-clear and the timeline gets both an `edited` event and a
+ * `suggestion-accepted` event. Only the suggestion's TARGET (the
+ * counterpart) can accept.
+ */
+export async function acceptSuggestion(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string; suggestionId: string },
+): Promise<AcceptSuggestionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  const suggestions = row.pendingSuggestions ?? [];
+  const idx = suggestions.findIndex(s => s.id === args.suggestionId);
+  if (idx < 0) return { ok: false, reason: 'no-such-suggestion' };
+  const suggestion = suggestions[idx];
+  if (suggestion.dismissedAt) return { ok: false, reason: 'already-dismissed' };
+
+  const viewerIsA = row.userAId === args.viewerUserId;
+  const viewerSide: 'a' | 'b' = viewerIsA ? 'a' : 'b';
+  // PR 3 'both' lands later — currently treat 'both' as not-target
+  // for any single side (revert-suggestions need cross-confirm flow).
+  if (suggestion.targetSide !== viewerSide) {
+    return { ok: false, reason: 'not-target' };
+  }
+
+  // Compute residual against current state. If it's already empty
+  // (someone edited their way to satisfaction in a tight race), we
+  // still mark the suggestion accepted but skip the edit call.
+  const { residualAdd, residualRemove } = computeSuggestionResidual(
+    suggestion,
+    row.userACards,
+    row.userBCards,
+  );
+
+  // Apply the residual: take the target side's current cards, add
+  // residualAdd entries (bumping qty if productId already present),
+  // remove residualRemove entries (zeroing them out).
+  const targetCurrent = viewerIsA ? row.userACards : row.userBCards;
+  const byPid = new Map(targetCurrent.map(c => [c.productId, { ...c }]));
+  for (const add of residualAdd) {
+    const existing = byPid.get(add.productId);
+    if (existing) {
+      byPid.set(add.productId, { ...existing, qty: existing.qty + add.qty });
+    } else {
+      byPid.set(add.productId, { ...add });
+    }
+  }
+  for (const rm of residualRemove) {
+    byPid.delete(rm.productId);
+  }
+  const nextCards = Array.from(byPid.values());
+
+  // Mark the suggestion accepted (using dismissedReason as the
+  // discriminator — dismissedAt + reason='accepted' would be cleaner
+  // semantically but conflicts with the type's enum. Instead we drop
+  // the row from pending_suggestions outright on accept; the event
+  // log carries the audit trail.)
+  const now = new Date();
+  const remaining = suggestions.filter((_, i) => i !== idx);
+
+  // Apply via direct update; can't reuse editSessionSide because it
+  // does its own snapshot/event recording and we need to atomically
+  // swap pending_suggestions in the same write.
+  const priorConfirmations = row.confirmedByUserIds.length;
+  await db
+    .update(tradeSessions)
+    .set({
+      userACards: viewerIsA ? nextCards : row.userACards,
+      userBCards: viewerIsA ? row.userBCards : nextCards,
+      confirmedByUserIds: [],
+      lastEditedAt: now,
+      lastEditedByUserId: args.viewerUserId,
+      updatedAt: now,
+      expiresAt: nextExpiresAt(now),
+      pendingSuggestions: pruneStaleDismissals(remaining, now),
+    })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'suggestion-accepted',
+    payload: {
+      suggestionId: suggestion.id,
+      addedCount: residualAdd.length,
+      removedCount: residualRemove.length,
+    },
+  });
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'edited',
+    payload: { side: viewerSide, count: nextCards.length, viaSuggestion: suggestion.id },
+  });
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'edit-snapshot',
+    payload: {
+      userACards: viewerIsA ? nextCards : row.userACards,
+      userBCards: viewerIsA ? row.userBCards : nextCards,
+    },
+  });
+  if (priorConfirmations > 0) {
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'unconfirmed',
+      payload: { cleared: priorConfirmations },
+    });
+  }
+
+  const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+  if (!view) return { ok: false, reason: 'not-found' };
+  return { ok: true, view };
+}
+
+export type DismissSuggestionResult =
+  | { ok: true; view: SessionView }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'no-such-suggestion' | 'already-dismissed' };
+
+/**
+ * Explicit "no thanks" on a pending suggestion. Either party can
+ * dismiss — the suggester might withdraw their own suggestion, the
+ * target might decline. Logs `suggestion-dismissed` with reason
+ * 'explicit'. Doesn't touch cards.
+ */
+export async function dismissSuggestion(
+  db: Db,
+  args: { sessionId: string; viewerUserId: string; suggestionId: string },
+): Promise<DismissSuggestionResult> {
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+
+  const suggestions = row.pendingSuggestions ?? [];
+  const idx = suggestions.findIndex(s => s.id === args.suggestionId);
+  if (idx < 0) return { ok: false, reason: 'no-such-suggestion' };
+  if (suggestions[idx].dismissedAt) return { ok: false, reason: 'already-dismissed' };
+
+  const now = new Date();
+  const next = suggestions.map((s, i) => i === idx
+    ? { ...s, dismissedAt: now.toISOString(), dismissedReason: 'explicit' as const }
+    : s);
+
+  await db
+    .update(tradeSessions)
+    .set({
+      pendingSuggestions: pruneStaleDismissals(next, now),
+      updatedAt: now,
+    })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'suggestion-dismissed',
+    payload: { suggestionId: args.suggestionId, reason: 'explicit' },
+  });
 
   const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
   if (!view) return { ok: false, reason: 'not-found' };

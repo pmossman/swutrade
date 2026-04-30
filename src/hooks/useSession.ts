@@ -17,7 +17,32 @@ export type SessionEventType =
   | 'cancelled'
   | 'expired'
   | 'notified'
-  | 'chat';
+  | 'chat'
+  | 'suggestion-created'
+  | 'suggestion-accepted'
+  | 'suggestion-dismissed';
+
+/**
+ * Cross-side suggestion as projected to the viewer. `targetIsViewer`
+ * means the viewer is the one expected to accept/dismiss; otherwise
+ * it's their pending suggestion to the counterpart.
+ */
+export interface PendingSuggestionView {
+  id: string;
+  suggestedByUserId: string;
+  suggestedByViewer: boolean;
+  targetSide: 'a' | 'b' | 'both';
+  targetIsViewer: boolean;
+  cardsToAdd: TradeCardSnapshot[];
+  cardsToRemove: TradeCardSnapshot[];
+  bothSidesSnapshot?: { yourCards: TradeCardSnapshot[]; theirCards: TradeCardSnapshot[] };
+  /** What's still missing on the target side to satisfy this
+   *  suggestion. Empty residual = effectively satisfied (the next
+   *  edit will auto-dismiss). */
+  residualAdd: TradeCardSnapshot[];
+  residualRemove: TradeCardSnapshot[];
+  createdAt: string;
+}
 
 export interface SessionEvent {
   id: string;
@@ -45,7 +70,7 @@ export interface SessionCounterpart {
 export interface SessionView {
   id: string;
   status: SessionStatus;
-  viewer: { userId: string };
+  viewer: { userId: string; side: 'a' | 'b' };
   counterpart: SessionCounterpart | null;
   openSlot: boolean;
   yourCards: TradeCardSnapshot[];
@@ -65,6 +90,8 @@ export interface SessionView {
   unreadCount: number;
   /** Viewer's last-read timestamp; null = never opened. */
   lastReadAt: string | null;
+  /** Active cross-side suggestions (viewer-centric). */
+  suggestions: PendingSuggestionView[];
 }
 
 /**
@@ -126,6 +153,19 @@ export interface SessionApi {
    *  automatically on visibilitychange→visible (matches the
    *  background-sync pattern). Idempotent. */
   markRead: () => Promise<void>;
+  /** Author a cross-side suggestion. targetSide must be the
+   *  counterpart's side. */
+  suggest: (args: {
+    targetSide: 'a' | 'b';
+    cardsToAdd?: TradeCardSnapshot[];
+    cardsToRemove?: TradeCardSnapshot[];
+  }) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
+  /** Accept a pending suggestion (target only). Applies the residual
+   *  delta to the target side via the same edit machinery — clears
+   *  confirmations + records snapshot. */
+  acceptSuggestion: (suggestionId: string) => Promise<{ ok: boolean }>;
+  /** Explicit dismissal — either party can dismiss. */
+  dismissSuggestion: (suggestionId: string) => Promise<{ ok: boolean }>;
 }
 
 // Module-scoped cache: session id → SessionView. Same pattern as
@@ -439,6 +479,60 @@ export function useSession(sessionId: string | null): SessionApi {
     };
   }, [sessionId, markRead]);
 
+  const suggest = useCallback(async (args: {
+    targetSide: 'a' | 'b';
+    cardsToAdd?: TradeCardSnapshot[];
+    cardsToRemove?: TradeCardSnapshot[];
+  }) => {
+    if (!sessionId) return { ok: false as const, reason: 'no-session' };
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/suggest`,
+        {
+          targetSide: args.targetSide,
+          cardsToAdd: args.cardsToAdd ?? [],
+          cardsToRemove: args.cardsToRemove ?? [],
+        },
+      );
+      if (!result.ok) return { ok: false as const, reason: result.reason };
+      if (result.data.session) applyServerSession(result.data.session);
+      return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
+  const acceptSuggestion = useCallback(async (suggestionId: string) => {
+    if (!sessionId) return { ok: false };
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/accept`,
+      );
+      if (!result.ok || !result.data.session) return { ok: false };
+      applyServerSession(result.data.session);
+      return { ok: true };
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
+  const dismissSuggestion = useCallback(async (suggestionId: string) => {
+    if (!sessionId) return { ok: false };
+    mutationInFlightRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/dismiss`,
+      );
+      if (!result.ok || !result.data.session) return { ok: false };
+      applyServerSession(result.data.session);
+      return { ok: true };
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
   return {
     session,
     preview,
@@ -452,5 +546,8 @@ export function useSession(sessionId: string | null): SessionApi {
     markCounterpartSeen,
     sendChat,
     markRead,
+    suggest,
+    acceptSuggestion,
+    dismissSuggestion,
   };
 }

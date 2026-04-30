@@ -6,12 +6,14 @@ import { getDb } from '../lib/db.js';
 import type { DiscordBotClient } from '../lib/discordBot.js';
 import { users } from '../lib/schema.js';
 import {
+  acceptSuggestion,
   cancelSession,
   claimOpenSlot,
   confirmSession,
   createGhostUser,
   createOpenSession,
   createOrGetActiveSession,
+  dismissSuggestion,
   editSessionSide,
   getSessionForViewer,
   getSessionPreview,
@@ -19,6 +21,7 @@ import {
   listActiveSessionsForViewer,
   markSessionRead,
   sendChatMessage,
+  suggestForSession,
   unconfirmSession,
   CHAT_MAX_BODY_LENGTH,
 } from '../lib/sessions.js';
@@ -62,6 +65,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleChatSession(req, res);
     case 'mark-read':
       return handleMarkReadSession(req, res);
+    case 'suggest':
+      return handleSuggestSession(req, res);
+    case 'accept-suggestion':
+      return handleAcceptSuggestion(req, res);
+    case 'dismiss-suggestion':
+      return handleDismissSuggestion(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/sessions action' });
   }
@@ -167,6 +176,12 @@ const EditBodySchema = z.object({
 
 const ChatBodySchema = z.object({
   message: z.string().min(1).max(CHAT_MAX_BODY_LENGTH),
+});
+
+const SuggestBodySchema = z.object({
+  targetSide: z.enum(['a', 'b']),
+  cardsToAdd: z.array(TradeCardSnapshotSchema).max(50).default([]),
+  cardsToRemove: z.array(TradeCardSnapshotSchema).max(50).default([]),
 });
 
 /**
@@ -641,4 +656,144 @@ export async function handleMarkReadSession(req: VercelRequest, res: VercelRespo
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.view });
+}
+
+/**
+ * Author a cross-side suggestion. Body:
+ *   { targetSide: 'a' | 'b', cardsToAdd?: [], cardsToRemove?: [] }
+ *
+ * Validation:
+ *   400 — empty body (neither add nor remove), invalid target, cap-exceeded
+ *   404 — not-participant or unknown id
+ *   409 — terminal session OR open-slot session (no counterpart yet)
+ */
+export async function handleSuggestSession(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const parsed = SuggestBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const db = getDb();
+  const result = await suggestForSession(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    targetSide: parsed.data.targetSide,
+    cardsToAdd: parsed.data.cardsToAdd,
+    cardsToRemove: parsed.data.cardsToRemove,
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+      case 'not-participant':
+        return res.status(404).json({ error: 'Not found' });
+      case 'terminal':
+      case 'open-slot':
+        return res.status(409).json({ error: result.reason });
+      case 'invalid-target':
+      case 'empty':
+      case 'cap-exceeded':
+        return res.status(400).json({ error: result.reason });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({
+    session: result.ok ? result.view : null,
+    suggestionId: result.ok ? result.suggestionId : null,
+  });
+}
+
+/**
+ * Accept a pending suggestion. Only the suggestion's TARGET (counter-
+ * party) can accept; the suggester sees a 'not-target' rejection.
+ * Applies the residual delta as a normal edit (clears confirmations,
+ * stamps lastEditedAt, captures snapshot).
+ */
+export async function handleAcceptSuggestion(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  const suggestionId = typeof req.query.suggestionId === 'string' ? req.query.suggestionId : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+  if (!suggestionId) return res.status(400).json({ error: 'suggestionId is required' });
+
+  const db = getDb();
+  const result = await acceptSuggestion(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    suggestionId,
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+      case 'not-participant':
+      case 'no-such-suggestion':
+        return res.status(404).json({ error: 'Not found' });
+      case 'terminal':
+      case 'already-dismissed':
+        return res.status(409).json({ error: result.reason });
+      case 'not-target':
+        return res.status(403).json({ error: 'Only the suggestion target can accept' });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.ok ? result.view : null });
+}
+
+/**
+ * Explicit dismissal of a pending suggestion. Either party can
+ * dismiss — the suggester might withdraw, the target might decline.
+ * Logs `suggestion-dismissed` with reason 'explicit'.
+ */
+export async function handleDismissSuggestion(req: VercelRequest, res: VercelResponse) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  const suggestionId = typeof req.query.suggestionId === 'string' ? req.query.suggestionId : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+  if (!suggestionId) return res.status(400).json({ error: 'suggestionId is required' });
+
+  const db = getDb();
+  const result = await dismissSuggestion(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    suggestionId,
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+      case 'not-participant':
+      case 'no-such-suggestion':
+        return res.status(404).json({ error: 'Not found' });
+      case 'already-dismissed':
+        return res.status(409).json({ error: 'Already dismissed' });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.ok ? result.view : null });
 }

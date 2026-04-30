@@ -587,6 +587,41 @@ export const communityEvents = pgTable(
 export const sessionStatuses = ['active', 'settled', 'cancelled', 'expired'] as const;
 export type SessionStatus = typeof sessionStatuses[number];
 
+/**
+ * Cross-side suggestion attached to a session. The suggester (A) wants
+ * the target side (B's) to look different — maybe add some cards,
+ * maybe drop some. The counterpart accepts (delta is applied as a
+ * normal edit) or dismisses (drops without applying). Auto-dismissal
+ * runs on every read:
+ *   - satisfied:    target side already matches the suggested delta
+ *                   (cardsToAdd present, cardsToRemove gone)
+ *   - unactionable: cardsToRemove no longer reachable on the target
+ *                   side (the cards aren't there to remove)
+ *
+ * `dismissedAt` is set on dismissal so the row stays in the JSONB array
+ * for one poll cycle (carries the audit trail), then gets pruned on
+ * the next mutation. Capped at MAX_PENDING_SUGGESTIONS active per
+ * session — the picker enforces this on suggest.
+ *
+ * `targetSide: 'both'` is reserved for PR 3's revert-to-snapshot
+ * variant; a snapshot-shaped payload (full {userACards, userBCards})
+ * can ride the same accept/dismiss machinery.
+ */
+export interface PendingSuggestion {
+  id: string;
+  suggestedByUserId: string;
+  targetSide: 'a' | 'b' | 'both';
+  /** Per-side card adds for 'a' / 'b' suggestions. For 'both', use
+   *  `bothSidesSnapshot` instead (PR 3). */
+  cardsToAdd: TradeCardSnapshot[];
+  cardsToRemove: TradeCardSnapshot[];
+  /** PR 3 — full snapshot payload for revert-to-state suggestions. */
+  bothSidesSnapshot?: { userACards: TradeCardSnapshot[]; userBCards: TradeCardSnapshot[] };
+  createdAt: string;
+  dismissedAt?: string;
+  dismissedReason?: 'explicit' | 'satisfied' | 'unactionable';
+}
+
 export const tradeSessions = pgTable(
   'trade_sessions',
   {
@@ -649,6 +684,11 @@ export const tradeSessions = pgTable(
     // Null = never opened (treat all events as unread).
     userALastReadAt: timestamp('user_a_last_read_at', { withTimezone: true }),
     userBLastReadAt: timestamp('user_b_last_read_at', { withTimezone: true }),
+    // Cross-side proposed edits awaiting accept/dismiss. Stored as a
+    // JSONB array (rather than a side table) because the count per
+    // session is tiny (capped at ~10) and they're always read +
+    // mutated alongside the parent row. See `PendingSuggestion`.
+    pendingSuggestions: jsonb('pending_suggestions').notNull().default([]).$type<PendingSuggestion[]>(),
   },
   (t) => [
     // Partial unique index: only ONE active session per sorted pair.
@@ -693,6 +733,14 @@ export const tradeSessions = pgTable(
  *   chat            — in-session chat message; payload: { body: string }.
  *                     Reusing sessionEvents for chat keeps the timeline
  *                     unified (chat + structured events on one stream).
+ *   suggestion-created   — viewer authored a cross-side suggestion;
+ *                          payload: { suggestionId, targetSide,
+ *                          cardsToAdd, cardsToRemove }.
+ *   suggestion-accepted  — counterpart accepted a pending suggestion;
+ *                          payload: { suggestionId, residual }.
+ *   suggestion-dismissed — explicit OR auto dismissal; payload:
+ *                          { suggestionId, reason: 'explicit' |
+ *                          'satisfied' | 'unactionable' }.
  *
  * Payload shape varies by type — see the write call sites.
  */
@@ -707,6 +755,9 @@ export const sessionEventTypes = [
   'expired',
   'notified',
   'chat',
+  'suggestion-created',
+  'suggestion-accepted',
+  'suggestion-dismissed',
 ] as const;
 export type SessionEventType = typeof sessionEventTypes[number];
 

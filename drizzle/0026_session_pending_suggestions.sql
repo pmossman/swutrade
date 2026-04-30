@@ -1,0 +1,1 @@
+ALTER TABLE "trade_sessions" ADD COLUMN "pending_suggestions" jsonb DEFAULT '[]'::jsonb NOT NULL;
