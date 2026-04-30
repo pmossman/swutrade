@@ -232,6 +232,27 @@ export function ListCardPicker({
   // toggle anymore. The variant filter chips drive the saved
   // restriction in 'family' mode.
   const activeMode = selectionMode.kind;
+
+  // Family-mode strip data: map familyId → all printings (sorted
+  // cheapest-first). Built once per allCards reference; the family
+  // tile reads from this to render its variant strip.
+  const familyVariantsMap = useMemo(() => {
+    if (activeMode !== 'family') return null;
+    const map = new Map<string, CardVariant[]>();
+    for (const c of allCards) {
+      const fid = cardFamilyId(c);
+      const list = map.get(fid) ?? [];
+      list.push(c);
+      map.set(fid, list);
+    }
+    // Sort each family by market price ascending so the strip
+    // surfaces the cheapest variant left-to-right (consistent with
+    // the picker's family-rep selection).
+    for (const list of map.values()) {
+      list.sort((a, b) => (getCardPrice(a, priceMode) ?? Infinity) - (getCardPrice(b, priceMode) ?? Infinity));
+    }
+    return map;
+  }, [activeMode, allCards, priceMode]);
   // `percentage` prop is ignored — picker tiles always show raw
   // TCGPlayer prices. Keeping the prop signature stable so callers
   // don't churn.
@@ -540,6 +561,20 @@ export function ListCardPicker({
           const tilePickContext: PickContext = activeMode === 'specific'
             ? { acceptedVariants: [extractVariantLabel(card.name) as CanonicalVariant] }
             : pickContext;
+          // Family-mode strip: pull every printing of this family
+          // from the prebuilt map so the tile can show all variants
+          // with non-matching ones dimmed.
+          const familyStripData = activeMode === 'family' && familyVariantsMap
+            ? (() => {
+                const familyId = cardFamilyId(card);
+                const allVariants = familyVariantsMap.get(familyId) ?? [];
+                if (allVariants.length <= 1) return undefined;
+                return {
+                  allVariants,
+                  activeVariantLabels: selectedVariants,
+                };
+              })()
+            : undefined;
           return (
             <CardTile
               key={`${card.name}-${card.set}-${card.productId ?? ''}`}
@@ -556,6 +591,7 @@ export function ListCardPicker({
               accent={accent}
               landscape={ctx.leaderGroup}
               badge={tileBadge}
+              familyStrip={familyStripData}
               actionTarget={actionTarget}
               onAdd={() => onPick(card, tilePickContext)}
               onDecrement={() => handleDecrement(card)}
