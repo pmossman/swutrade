@@ -32,7 +32,15 @@ export function VariantChipGroup({
 }: VariantChipGroupProps) {
   const selected = selectedVariants as readonly string[];
   const summary = selected.length === 0
-    ? 'Any'
+    ? (
+      // "Any" means every variant qualifies — render a rainbow-tinted
+      // badge that picks up hues from the variant palette so the empty
+      // state feels deliberate, not absent. Matches the per-tile badge
+      // sizing/shape so it slots cleanly next to the selected pills.
+      <span className="text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide text-white bg-gradient-to-r from-sky-700/70 via-fuchsia-700/70 to-amber-600/70">
+        Any
+      </span>
+    )
     : selected.length <= 3
       ? (
         <>
