@@ -31,7 +31,6 @@ import { useCardIndexContext } from './contexts/CardIndexContext';
 import { useDrawerContext } from './contexts/DrawerContext';
 import { usePricing } from './contexts/PricingContext';
 import { useServerSync } from './hooks/useServerSync';
-import { MigrationDialog } from './components/MigrationDialog';
 import { ProfileView } from './components/ProfileView';
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { SettingsView } from './components/SettingsView';
@@ -161,7 +160,7 @@ function App() {
   });
   const wants = useWants();
   const available = useAvailable();
-  const { status: syncStatus, migrationPrompt } = useServerSync(wants, available, user);
+  const { status: syncStatus } = useServerSync(wants, available, user);
   const sharedLists = useSharedLists();
   // Unified intent store: owns ?propose / ?from / ?counter / ?edit /
   // ?autoBalance. Seeded from URL on mount + re-syncs on popstate;
@@ -902,9 +901,6 @@ function App() {
           their own button; the primary affordance lives in one
           consistent place. */}
       <PrimaryActionBar />
-
-      {/* Migration prompt on first sign-in with local items */}
-      {migrationPrompt && <MigrationDialog prompt={migrationPrompt} />}
 
       {/* Trade summary overlay */}
       {showSummary && (

@@ -6,13 +6,6 @@ import type { AvailableApi } from './useAvailable';
 
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
-export interface MigrationPrompt {
-  wantsCount: number;
-  availableCount: number;
-  onImport: () => void;
-  onSkip: () => void;
-}
-
 // Wraps apiGet/apiPut with the legacy 'auth-expired' sentinel so the
 // surrounding control flow (which distinguishes a real 401 from a
 // generic network blip) keeps working. Once Phase 4 lands a context-
@@ -34,10 +27,6 @@ async function syncPut<T>(url: string, body: unknown): Promise<T> {
 
 export interface ServerSyncApi {
   status: SyncStatus;
-  /** Non-null when the user just signed in for the first time and
-   *  has local items to migrate. The sync hook pauses until the user
-   *  chooses Import or Start Fresh. */
-  migrationPrompt: MigrationPrompt | null;
 }
 
 export function useServerSync(
@@ -46,7 +35,6 @@ export function useServerSync(
   user: User | null,
 ): ServerSyncApi {
   const [status, setStatus] = useState<SyncStatus>('idle');
-  const [migrationPrompt, setMigrationPrompt] = useState<MigrationPrompt | null>(null);
   const prevUserRef = useRef<User | null>(null);
   const syncVersionRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,48 +50,14 @@ export function useServerSync(
     return syncPut<typeof available.items>('/api/sync/available', items);
   }, []);
 
-  const pullAndApply = useCallback(async () => {
-    const [serverWants, serverAvailable] = await Promise.all([
-      syncGet<typeof wants.items>('/api/sync/wants'),
-      syncGet<typeof available.items>('/api/sync/available'),
-    ]);
-    writingBackRef.current = true;
-    wants.setAll(serverWants);
-    available.setAll(serverAvailable);
-    writingBackRef.current = false;
-  }, [wants, available]);
-
-  const doImport = useCallback(async () => {
-    setMigrationPrompt(null);
-    setStatus('syncing');
-    try {
-      await Promise.all([
-        pushWants(wants.items),
-        pushAvailable(available.items),
-      ]);
-      await pullAndApply();
-      initialSyncDoneRef.current = true;
-      setStatus('idle');
-    } catch {
-      setStatus('error');
-    }
-  }, [wants.items, available.items, pushWants, pushAvailable, pullAndApply]);
-
-  const doSkip = useCallback(async () => {
-    setMigrationPrompt(null);
-    setStatus('syncing');
-    try {
-      // Don't push local items — just pull whatever's on the server
-      // (empty for first-time users).
-      await pullAndApply();
-      initialSyncDoneRef.current = true;
-      setStatus('idle');
-    } catch {
-      setStatus('error');
-    }
-  }, [pullAndApply]);
-
-  // Initial sync on sign-in or mount.
+  // Initial sync on sign-in or mount. Server is always the source
+  // of truth — local data only ever migrates upward when the server
+  // is genuinely empty (first-ever sign-in for this Discord account).
+  // If the server has anything, we apply it directly and overwrite
+  // the device's local cache. No "Import or Start Fresh?" prompt
+  // anymore — that step routinely confused users into dismissing
+  // away their own server data, leaving the device showing stale
+  // localStorage that never re-synced.
   useEffect(() => {
     if (!user) {
       prevUserRef.current = null;
@@ -121,9 +75,6 @@ export function useServerSync(
     (async () => {
       setStatus('syncing');
       try {
-        // Check if the server already has data (returning user on
-        // new device, or second sign-in). If so, skip the migration
-        // prompt — just pull.
         const [serverWants, serverAvailable] = await Promise.all([
           syncGet<unknown[]>('/api/sync/wants'),
           syncGet<unknown[]>('/api/sync/available'),
@@ -131,19 +82,35 @@ export function useServerSync(
         const serverHasData = serverWants.length > 0 || serverAvailable.length > 0;
 
         if (wasSignedOut && hasLocalItems && !serverHasData) {
-          // First sign-in with local items + empty server → prompt.
+          // First-ever sign-in for this Discord account with local
+          // items to bring along. Push them up silently — the
+          // server is empty so there's nothing to lose, and the
+          // user shouldn't have to think about it.
+          await Promise.all([
+            pushWants(wants.items),
+            pushAvailable(available.items),
+          ]);
+          // Round-trip via a fresh pull so the device's items now
+          // reflect any normalisation the server did on insert.
+          const [w, a] = await Promise.all([
+            syncGet<unknown[]>('/api/sync/wants'),
+            syncGet<unknown[]>('/api/sync/available'),
+          ]);
+          writingBackRef.current = true;
+          wants.setAll(w as typeof wants.items);
+          available.setAll(a as typeof available.items);
+          writingBackRef.current = false;
+          initialSyncDoneRef.current = true;
           setStatus('idle');
-          setMigrationPrompt({
-            wantsCount: localWantsCount,
-            availableCount: localAvailableCount,
-            onImport: doImport,
-            onSkip: doSkip,
-          });
           return;
         }
 
-        // No migration needed — if server has data, pull it. If
-        // returning user with local items, server wins (LWW).
+        // Server-wins: any time the server has data, apply it. This
+        // covers the multi-device case (signed in elsewhere first)
+        // + the same-device-second-sign-in case. Local items on
+        // this device get overwritten — that's the right behavior
+        // because the user's seen-state across devices is the
+        // server view.
         writingBackRef.current = true;
         wants.setAll(serverWants as typeof wants.items);
         available.setAll(serverAvailable as typeof available.items);
@@ -186,5 +153,5 @@ export function useServerSync(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wants.items, available.items, user?.id]);
 
-  return { status, migrationPrompt };
+  return { status };
 }
