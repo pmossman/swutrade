@@ -186,7 +186,6 @@ export function ListView({
   };
 
   const hasAnyFilter = query.length > 0 || selectedVariants.length > 0 || selectedSets.length > 0;
-  const variantSummary = summarizeSelection(selectedVariants, 'Any', variantChipLabel);
   const setSummary = useMemo(
     () => summarizeSelection(selectedSets, 'All sets', setSummaryLabel),
     [selectedSets],
@@ -269,7 +268,6 @@ export function ListView({
         />
         <div className="flex items-start gap-2 flex-wrap">
           <VariantChipGroup
-            summary={variantSummary}
             selectedVariants={selectedVariants}
             onToggle={toggleVariant}
             onClear={clearVariants}

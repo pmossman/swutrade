@@ -2,9 +2,12 @@ import { useState } from 'react';
 
 interface CollapsibleChipFilterProps {
   label: string;
-  /** One-line summary of what's selected, shown next to the label when
-   *  closed and as a collapsed-state reminder when open. */
-  summary: string;
+  /** Compact selection summary shown next to the label when closed.
+   *  Hidden when the chip strip is expanded — the chips themselves
+   *  already say what's selected. Accepts a node so callers can
+   *  render colored badge pills (variant filter) instead of plain
+   *  text. */
+  summary: React.ReactNode;
   /** When true the chips expand inline; tapping the header toggles. */
   defaultOpen?: boolean;
   /** Small trailing action (e.g. "Clear") — only shown when open. */
@@ -15,8 +18,8 @@ interface CollapsibleChipFilterProps {
 /**
  * Pill-style header that expands to reveal a chip strip. Used for the
  * variant and set filters in both the trade search and the lists
- * picker. Summary is visible both open and closed so users always see
- * what's selected without having to open the control.
+ * picker. Summary shows when collapsed; once expanded it's hidden so
+ * the same selection isn't echoed twice (header text + chip row).
  */
 export function CollapsibleChipFilter({
   label,
@@ -38,9 +41,11 @@ export function CollapsibleChipFilter({
           <span className="font-bold tracking-[0.1em] uppercase text-gray-400">
             {label}
           </span>
-          <span className="text-gray-200 normal-case tracking-normal font-medium">
-            {summary}
-          </span>
+          {!open && (
+            <span className="flex items-center gap-1 text-gray-200 normal-case tracking-normal font-medium">
+              {summary}
+            </span>
+          )}
           <Chevron open={open} />
         </button>
         {open && action}

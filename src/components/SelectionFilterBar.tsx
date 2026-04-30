@@ -11,7 +11,6 @@ const MAIN_SETS = SETS.filter(s => s.category === 'main');
 const GOLD_CHIP = 'bg-gold/15 text-gold border-gold/40';
 
 interface VariantChipGroupProps {
-  summary: string;
   selectedVariants: readonly string[];
   onToggle: (v: CanonicalVariant) => void;
   onClear: () => void;
@@ -20,15 +19,34 @@ interface VariantChipGroupProps {
 /**
  * Variant filter chip row — Any + every CANONICAL_VARIANT. Stateless;
  * caller owns the selectedVariants array and the toggle/clear handlers
- * (so this works against a persisted hook OR ephemeral useState).
+ * (so this works against a persisted hook OR ephemeral useState). The
+ * collapsed summary renders the selected variants as colored badge
+ * pills (matching the per-tile variant badge palette) so users see at
+ * a glance which variant filters are active without expanding the
+ * strip.
  */
 export function VariantChipGroup({
-  summary,
   selectedVariants,
   onToggle,
   onClear,
 }: VariantChipGroupProps) {
   const selected = selectedVariants as readonly string[];
+  const summary = selected.length === 0
+    ? 'Any'
+    : selected.length <= 3
+      ? (
+        <>
+          {selected.map(v => (
+            <span
+              key={v}
+              className={`text-[9px] leading-none px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${variantBadgeColor(v)}`}
+            >
+              {variantChipLabel(v)}
+            </span>
+          ))}
+        </>
+      )
+      : `${selected.length} selected`;
   return (
     <CollapsibleChipFilter
       label="Variant"
@@ -141,7 +159,6 @@ interface SelectionFilterBarProps {
  * useState — see VariantChipGroup / SetChipGroup directly.
  */
 export function SelectionFilterBar({ filters, hideVariantFilter }: SelectionFilterBarProps) {
-  const variantSummary = summarizeSelection(filters.selectedVariants, 'Any');
   const setSummary = useMemo(
     () => summarizeSelection(filters.selectedSets, 'All sets', setSummaryLabel),
     [filters.selectedSets],
@@ -151,7 +168,6 @@ export function SelectionFilterBar({ filters, hideVariantFilter }: SelectionFilt
     <div className="flex items-start gap-2 flex-wrap">
       {!hideVariantFilter && (
         <VariantChipGroup
-          summary={variantSummary}
           selectedVariants={filters.selectedVariants}
           onToggle={filters.toggleVariant}
           onClear={filters.clearVariants}
