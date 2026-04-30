@@ -246,11 +246,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       })),
       note: note.trim() || null,
       guildId,
-      // Long server-side TTL — viewers think of these as plain
-      // Discord messages with no lifecycle, so we don't surface
-      // expiration in the UI. The server still expires rows so
-      // match queries don't drag along ancient signals forever.
-      expiresInDays: 90,
     });
     setPosting(false);
     if (!result.ok) {

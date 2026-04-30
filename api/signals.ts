@@ -75,12 +75,12 @@ const CreateBodySchema = z.object({
   cards: z.array(CardInputSchema).min(1).max(20),
   note: z.string().max(500).nullable().optional(),
   guildId: z.string().min(1).max(40),
-  // Server-side TTL for match-query hygiene only — viewers don't see
-  // expiration in the embed anymore, so the cap is generous (1 year).
-  // Default 90d matches what the web builder sends; any older client
-  // that omits the field gets the same default.
-  expiresInDays: z.number().int().min(1).max(365).default(90),
 });
+
+// Server-side TTL for match-query hygiene. Not user-facing — viewers
+// see signal posts as plain Discord messages with no lifecycle, so
+// the value is hard-coded here rather than a request parameter.
+const SIGNAL_TTL_DAYS = 90;
 
 interface CreateDeps {
   /** Bot client for outbound Discord posts. Tests inject a fake. */
@@ -216,7 +216,7 @@ export async function handleCreate(
   // mark the signals as cancelled so they don't dangle in the
   // active set with no public surface.
   const groupId = randomUUID();
-  const expiresAt = new Date(Date.now() + body.expiresInDays * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + SIGNAL_TTL_DAYS * 24 * 60 * 60 * 1000);
   const now = new Date();
 
   type DraftCard = ResolvedCard & { signalId: string };
