@@ -43,12 +43,13 @@ test.describe('Session Discord identities', () => {
 
       // B opens timeline, expects to see A's message attributed via
       // the panel's "with @<handle>" header AND the counterpart-side
-      // chat bubble (renders inline, not labeled — but the header
-      // identifies who the counterpart is).
+      // chat bubble.
       await b.page.getByRole('button', { name: /Chat & history/i }).first().click();
-      // The panel's header says "with @<userA.handle>".
+      // Use exact-match text to disambiguate from the breadcrumb's
+      // "Trade with @<handle>" — both contain the same handle but
+      // only the panel header is exactly "with @<handle>".
       await expect(
-        b.page.getByText(new RegExp(`with @${userA.handle}`, 'i')),
+        b.page.getByText(`with @${userA.handle}`, { exact: true }),
       ).toBeVisible({ timeout: 5_000 });
       // Chat bubble body visible.
       await expect(b.page.getByText(/hello from A/i)).toBeVisible({ timeout: 8_000 });
@@ -60,7 +61,7 @@ test.describe('Session Discord identities', () => {
       await expect(a.page.getByText(/hi from B/i)).toBeVisible({ timeout: 8_000 });
       // A's panel header reflects @userB.handle.
       await expect(
-        a.page.getByText(new RegExp(`with @${userB.handle}`, 'i')),
+        a.page.getByText(`with @${userB.handle}`, { exact: true }),
       ).toBeVisible({ timeout: 5_000 });
 
       expect(filterConsoleErrors(a.errors)).toEqual([]);
