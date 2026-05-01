@@ -2033,8 +2033,47 @@ function projectSuggestionsForViewer(
 }
 
 export type SuggestForSessionResult =
-  | { ok: true; view: SessionView; suggestionId: string }
-  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'invalid-target' | 'empty' | 'cap-exceeded' | 'open-slot' };
+  | { ok: true; view: SessionView; suggestionId: string; merged: boolean }
+  | { ok: false; reason: 'not-found' | 'not-participant' | 'terminal' | 'invalid-target' | 'empty' | 'cap-exceeded' | 'open-slot' | 'card-locked' };
+
+/**
+ * Combine two qty-keyed card lists by productId — qty adds, card
+ * metadata wins from the newer entry. Used by the auto-merge path
+ * to fold a fresh suggestion's cards into an existing add-only or
+ * remove-only suggestion.
+ */
+function combineCardLists(a: TradeCardSnapshot[], b: TradeCardSnapshot[]): TradeCardSnapshot[] {
+  const byPid = new Map<string, TradeCardSnapshot>();
+  for (const c of a) byPid.set(c.productId, { ...c });
+  for (const c of b) {
+    const existing = byPid.get(c.productId);
+    if (existing) {
+      byPid.set(c.productId, { ...c, qty: existing.qty + c.qty });
+    } else {
+      byPid.set(c.productId, { ...c });
+    }
+  }
+  return Array.from(byPid.values());
+}
+
+/**
+ * Productids referenced anywhere in the active (non-dismissed)
+ * suggestions for this session. Used to enforce the "one suggestion
+ * per card" UX rule — if a card is already in flight as part of any
+ * pending suggestion, a fresh suggestion can't reference it again.
+ * Excludes 'both'-target reverts (those carry full snapshots, not
+ * per-card deltas — they don't lock individual cards).
+ */
+function lockedProductIds(suggestions: PendingSuggestion[]): Set<string> {
+  const locked = new Set<string>();
+  for (const s of suggestions) {
+    if (s.dismissedAt) continue;
+    if (s.targetSide === 'both') continue;
+    for (const c of s.cardsToAdd) locked.add(c.productId);
+    for (const c of s.cardsToRemove) locked.add(c.productId);
+  }
+  return locked;
+}
 
 /**
  * Author a new cross-side suggestion. Validates:
@@ -2044,7 +2083,19 @@ export type SuggestForSessionResult =
  *   - targetSide is the COUNTERPART's side (you can't suggest changes
  *     to your own side; just edit it)
  *   - at least one of cardsToAdd / cardsToRemove is non-empty
- *   - active suggestions (not yet dismissed) are below the cap
+ *   - none of the referenced productIds are already locked by another
+ *     pending suggestion (prevents conflicting/duplicate suggestions
+ *     for the same card)
+ *   - active suggestions are below the cap (skipped when merging
+ *     into an existing one)
+ *
+ * Auto-merge: if the new suggestion is add-only OR remove-only AND
+ * an existing pending suggestion from the same actor + same target
+ * with the same shape (also add-only / remove-only) exists, the new
+ * cards fold into it instead of creating a separate row. Swaps
+ * (cardsToAdd + cardsToRemove together) stay distinct since they
+ * represent a single coherent intent the counterpart should evaluate
+ * as one unit.
  */
 export async function suggestForSession(
   db: Db,
@@ -2078,12 +2129,78 @@ export async function suggestForSession(
     return { ok: false, reason: 'invalid-target' };
   }
 
-  const active = (row.pendingSuggestions ?? []).filter(s => !s.dismissedAt);
+  const existingSuggestions = row.pendingSuggestions ?? [];
+  const active = existingSuggestions.filter(s => !s.dismissedAt);
+
+  // Card-lock check — if any incoming productId is already in
+  // flight, refuse. UI-side guard hides these affordances; this is
+  // the server-side belt to the client's suspenders.
+  const locked = lockedProductIds(active);
+  for (const c of args.cardsToAdd) {
+    if (locked.has(c.productId)) return { ok: false, reason: 'card-locked' };
+  }
+  for (const c of args.cardsToRemove) {
+    if (locked.has(c.productId)) return { ok: false, reason: 'card-locked' };
+  }
+
+  // Auto-merge candidate: same actor + target + same shape (add-only
+  // or remove-only). Swaps (both add AND remove non-empty) bypass.
+  const incomingIsAddOnly = args.cardsToAdd.length > 0 && args.cardsToRemove.length === 0;
+  const incomingIsRemoveOnly = args.cardsToAdd.length === 0 && args.cardsToRemove.length > 0;
+  const mergeCandidateIdx = (incomingIsAddOnly || incomingIsRemoveOnly)
+    ? existingSuggestions.findIndex(s =>
+      !s.dismissedAt
+      && s.suggestedByUserId === args.viewerUserId
+      && s.targetSide === args.targetSide
+      && (
+        (incomingIsAddOnly && s.cardsToAdd.length > 0 && s.cardsToRemove.length === 0)
+        || (incomingIsRemoveOnly && s.cardsToAdd.length === 0 && s.cardsToRemove.length > 0)
+      ),
+    )
+    : -1;
+
+  const now = new Date();
+
+  if (mergeCandidateIdx >= 0) {
+    // Fold into existing — combine card lists by productId, bump createdAt.
+    const target = existingSuggestions[mergeCandidateIdx];
+    const merged: PendingSuggestion = {
+      ...target,
+      cardsToAdd: incomingIsAddOnly ? combineCardLists(target.cardsToAdd, args.cardsToAdd) : target.cardsToAdd,
+      cardsToRemove: incomingIsRemoveOnly ? combineCardLists(target.cardsToRemove, args.cardsToRemove) : target.cardsToRemove,
+      createdAt: now.toISOString(),
+    };
+    const next = existingSuggestions.map((s, i) => i === mergeCandidateIdx ? merged : s);
+
+    await db
+      .update(tradeSessions)
+      .set({ pendingSuggestions: pruneStaleDismissals(next, now), updatedAt: now })
+      .where(eq(tradeSessions.id, args.sessionId));
+
+    await recordSessionEvent(db, {
+      sessionId: args.sessionId,
+      actorUserId: args.viewerUserId,
+      type: 'suggestion-created',
+      payload: {
+        suggestionId: merged.id,
+        targetSide: args.targetSide,
+        addCount: args.cardsToAdd.length,
+        removeCount: args.cardsToRemove.length,
+        mergedInto: target.id,
+      },
+    });
+
+    const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
+    if (!view) return { ok: false, reason: 'not-found' };
+    return { ok: true, view, suggestionId: merged.id, merged: true };
+  }
+
+  // Fresh suggestion — apply the cap check now (merging skipped it
+  // because folding into existing doesn't grow the count).
   if (active.length >= MAX_PENDING_SUGGESTIONS) {
     return { ok: false, reason: 'cap-exceeded' };
   }
 
-  const now = new Date();
   const newSuggestion: PendingSuggestion = {
     id: crypto.randomUUID(),
     suggestedByUserId: args.viewerUserId,
@@ -2095,7 +2212,7 @@ export async function suggestForSession(
 
   // Prune stale dismissals at write time so the column doesn't grow
   // unbounded under heavy use.
-  const pruned = pruneStaleDismissals(row.pendingSuggestions ?? [], now);
+  const pruned = pruneStaleDismissals(existingSuggestions, now);
   const next = [...pruned, newSuggestion];
 
   await db
@@ -2117,7 +2234,7 @@ export async function suggestForSession(
 
   const view = await getSessionForViewer(db, args.sessionId, args.viewerUserId);
   if (!view) return { ok: false, reason: 'not-found' };
-  return { ok: true, view, suggestionId: newSuggestion.id };
+  return { ok: true, view, suggestionId: newSuggestion.id, merged: false };
 }
 
 export type AcceptSuggestionResult =

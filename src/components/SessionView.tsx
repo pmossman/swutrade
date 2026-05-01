@@ -107,6 +107,21 @@ export function SessionView({ sessionId }: { sessionId: string }) {
     (s.targetSide === 'a' || s.targetSide === 'b') && s.suggestedByViewer);
   const revertSuggestions = allSuggestions.filter(s => s.targetSide === 'both');
 
+  // Cards already referenced by a pending non-revert suggestion. The
+  // server enforces the same rule (returns 'card-locked'); this is
+  // the UI guard so the affordance simply isn't there for locked
+  // cards — better than letting the user click a kebab item that
+  // would error.
+  const lockedProductIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of allSuggestions) {
+      if (s.targetSide === 'both') continue;
+      for (const c of s.cardsToAdd) set.add(c.productId);
+      for (const c of s.cardsToRemove) set.add(c.productId);
+    }
+    return set;
+  }, [allSuggestions]);
+
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
     { label: 'My trades', href: '/?trades=1' },
@@ -432,6 +447,11 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                   cardActions={!terminal ? (tc) => {
                     if (!tc.card.productId) return [];
                     const productId = tc.card.productId;
+                    // Skip the suggest-* actions when this card is
+                    // already referenced by a pending suggestion —
+                    // prevents stacking conflicting suggestions on
+                    // the same card.
+                    if (lockedProductIds.has(productId)) return [];
                     const snapshot: TradeCardSnapshot = {
                       productId,
                       name: tc.card.name,
@@ -528,6 +548,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           counterpartHandle={session.counterpart?.handle ?? null}
           allCards={cardIndex.allLoadedCards}
           initialCardsToRemove={suggestComposerInitialRemove}
+          lockedProductIds={lockedProductIds}
           onClose={() => {
             setSuggestComposerOpen(false);
             setSuggestComposerInitialRemove([]);

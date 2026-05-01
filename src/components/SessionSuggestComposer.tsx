@@ -40,6 +40,12 @@ interface SessionSuggestComposerProps {
    *  swap" entry point — opens the composer with the card already
    *  set up to be removed, leaving the user to pick the replacement. */
   initialCardsToRemove?: TradeCardSnapshot[];
+  /** Productids already referenced by another pending suggestion.
+   *  The composer refuses to add them — server enforces the same
+   *  rule (returns 'card-locked' on submit), but blocking at pick
+   *  time gives the user immediate feedback instead of a deferred
+   *  error. */
+  lockedProductIds?: ReadonlySet<string>;
 }
 
 export function SessionSuggestComposer({
@@ -49,14 +55,24 @@ export function SessionSuggestComposer({
   onClose,
   onSubmit,
   initialCardsToRemove,
+  lockedProductIds,
 }: SessionSuggestComposerProps) {
   const [draft, setDraft] = useState<TradeCardSnapshot[]>([]);
   const [removeDraft, setRemoveDraft] = useState<TradeCardSnapshot[]>(() => initialCardsToRemove ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lockedHint, setLockedHint] = useState<string | null>(null);
 
   const handlePick = useCallback((card: CardVariant) => {
     if (!card.productId) return;
+    // Refuse picks for productIds already locked by another pending
+    // suggestion. Surface a transient hint so the user understands
+    // why the tap didn't register — silent-ignore would feel broken.
+    if (lockedProductIds?.has(card.productId)) {
+      setLockedHint(`${card.name} is already in a pending suggestion.`);
+      window.setTimeout(() => setLockedHint(null), 2400);
+      return;
+    }
     const snapshot: TradeCardSnapshot = {
       productId: card.productId,
       name: card.name,
@@ -71,7 +87,7 @@ export function SessionSuggestComposer({
       }
       return [...prev, snapshot];
     });
-  }, []);
+  }, [lockedProductIds]);
 
   const handleDecrement = useCallback((id: string) => {
     setDraft(prev => {
@@ -107,7 +123,9 @@ export function SessionSuggestComposer({
       setError(
         result.reason === 'cap-exceeded'
           ? 'Too many pending suggestions on this session. Dismiss some first.'
-          : 'Could not send the suggestion — try again.',
+          : result.reason === 'card-locked'
+            ? 'One of these cards is already in a pending suggestion. Drop it and try again.'
+            : 'Could not send the suggestion — try again.',
       );
     }
   }, [hasContent, draft, removeDraft, submitting, counterpartSide, onSubmit, onClose]);
@@ -156,7 +174,10 @@ export function SessionSuggestComposer({
         {error && (
           <div className="text-[11px] text-red-400 flex-1 truncate">{error}</div>
         )}
-        {!error && (
+        {!error && lockedHint && (
+          <div className="text-[11px] text-amber-300 flex-1 truncate">{lockedHint}</div>
+        )}
+        {!error && !lockedHint && (
           <div className="text-[11px] text-gray-500 flex-1">
             {!hasContent
               ? 'Tap cards to add them to your suggestion.'

@@ -359,4 +359,90 @@ describeWithDb('POST /api/sessions — cross-side suggestions', () => {
     });
     expect(res._status).toBe(409);
   });
+
+  it('rejects a suggestion referencing a productId already locked by a pending suggestion', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const id = await createSession(alice, bob.handle);
+    const bobSide = await counterpartSideOf(id, alice.id);
+
+    // First suggestion locks luke-1.
+    const first = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToAdd: [snap('luke-1', 1)],
+    });
+    expect(first._status).toBe(200);
+
+    // Second suggestion (a remove of the same productId) gets
+    // rejected — it'd duplicate intent on the same card.
+    const second = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToRemove: [snap('luke-1', 1)],
+    });
+    expect(second._status).toBe(400);
+    expect((second._json as { error: string }).error).toBe('card-locked');
+  });
+
+  it('auto-merges a second add-only suggestion into an existing add-only one', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const id = await createSession(alice, bob.handle);
+    const bobSide = await counterpartSideOf(id, alice.id);
+
+    // First add-only suggestion.
+    const first = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToAdd: [snap('luke-1', 1)],
+    });
+    expect(first._status).toBe(200);
+    const firstId = (first._json as { suggestionId: string }).suggestionId;
+
+    // Second add-only — should merge into the first.
+    const second = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToAdd: [snap('han-1', 1)],
+    });
+    expect(second._status).toBe(200);
+    const body = second._json as { session: SessionLite; suggestionId: string; merged: boolean };
+    expect(body.merged).toBe(true);
+    expect(body.suggestionId).toBe(firstId);
+    // Only one pending suggestion total.
+    expect(body.session.suggestions).toHaveLength(1);
+    // Cards merged.
+    const pids = body.session.suggestions[0].cardsToAdd.map(c => c.productId).sort();
+    expect(pids).toEqual(['han-1', 'luke-1']);
+  });
+
+  it('does not merge swap-shaped suggestions (cardsToAdd + cardsToRemove together)', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const id = await createSession(alice, bob.handle);
+    const bobSide = await counterpartSideOf(id, alice.id);
+
+    // First suggestion is a swap (add + remove together).
+    const first = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToAdd: [snap('luke-1', 1)],
+      cardsToRemove: [snap('han-1', 1)],
+    });
+    expect(first._status).toBe(200);
+    expect((first._json as { merged: boolean }).merged).toBe(false);
+
+    // Second swap with different cards stays distinct.
+    const second = await postSuggest(alice.id, id, {
+      targetSide: bobSide,
+      cardsToAdd: [snap('chewie-1', 1)],
+      cardsToRemove: [snap('boba-1', 1)],
+    });
+    expect(second._status).toBe(200);
+    const body = second._json as { session: SessionLite; merged: boolean };
+    expect(body.merged).toBe(false);
+    expect(body.session.suggestions).toHaveLength(2);
+  });
 });

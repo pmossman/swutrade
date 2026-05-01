@@ -710,6 +710,7 @@ export async function handleSuggestSession(req: VercelRequest, res: VercelRespon
       case 'invalid-target':
       case 'empty':
       case 'cap-exceeded':
+      case 'card-locked':
         return res.status(400).json({ error: result.reason });
     }
   }
@@ -718,6 +719,7 @@ export async function handleSuggestSession(req: VercelRequest, res: VercelRespon
   return res.json({
     session: result.ok ? result.view : null,
     suggestionId: result.ok ? result.suggestionId : null,
+    merged: result.ok ? result.merged : false,
   });
 }
 
