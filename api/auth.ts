@@ -113,6 +113,15 @@ function buildBotInstallUrl(): string | null {
 // --- /api/auth/logout -------------------------------------------------------
 
 export async function handleLogout(req: VercelRequest, res: VercelResponse) {
+  // POST-only — without this gate, any same-site GET (an <img> tag,
+  // a follow-up link, etc.) would clear the user's session. SameSite=Lax
+  // narrows the surface but doesn't fully close it for top-level
+  // navigations; the method gate does. Mirrors `handleDismissMergeBanner`'s
+  // canonical shape.
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
   await destroySession(req, res);
   res.json({ ok: true });
 }
