@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPut } from '../services/apiClient';
 
 /**
@@ -52,6 +52,13 @@ export function useCommunityMembers(): CommunityMembersApi {
   const [members, setMembers] = useState<CommunityMember[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
 
+  // Per-call generation counter for setPeerPref — same race shape
+  // as useGuildMemberships.updateGuild (audit 13-mutation-patterns
+  // #1). Without this, two PUTs to /me/prefs in quick succession
+  // race; the rollback re-fetch is a fourth in-flight request that
+  // can land on top of newer optimistic state.
+  const setPeerPrefGenerationRef = useRef(0);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -74,6 +81,7 @@ export function useCommunityMembers(): CommunityMembersApi {
   // the whole list rather than trying to reverse each modification —
   // the directory isn't huge and consistency beats cleverness.
   const setPeerPref = useCallback<CommunityMembersApi['setPeerPref']>(async (peerUserId, key, value) => {
+    const gen = ++setPeerPrefGenerationRef.current;
     setMembers(prev => prev.map(m => {
       if (m.userId !== peerUserId) return m;
       const nextOverride = { ...m.peerPrefs.override, [key]: value };
@@ -89,11 +97,17 @@ export function useCommunityMembers(): CommunityMembersApi {
     }));
 
     const result = await apiPut('/api/me/prefs', { peerUserId, key, value });
+    // Stale-response guard: a newer setPeerPref started after ours.
+    // Drop both the failure-rollback path AND the value-null refetch
+    // path — the newer call's state is what the user is seeing.
+    if (gen !== setPeerPrefGenerationRef.current) return;
+
     if (!result.ok) {
       // Roll back by refetching from source of truth.
       const refreshed = await apiGet<{ members: CommunityMember[] }>(
         '/api/me/community-members',
       );
+      if (gen !== setPeerPrefGenerationRef.current) return;
       if (refreshed.ok) setMembers(refreshed.data.members);
       return;
     }
@@ -103,6 +117,7 @@ export function useCommunityMembers(): CommunityMembersApi {
       const refreshed = await apiGet<{ members: CommunityMember[] }>(
         '/api/me/community-members',
       );
+      if (gen !== setPeerPrefGenerationRef.current) return;
       if (refreshed.ok) setMembers(refreshed.data.members);
     }
   }, []);

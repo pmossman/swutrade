@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPut } from '../services/apiClient';
 
 export type ProfileVisibility = 'public' | 'discord' | 'private';
@@ -34,6 +34,14 @@ export function useAccountSettings(): AccountSettingsApi {
   const [settings, setSettings] = useState<PrefsMap | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'saving' | 'error'>('loading');
 
+  // Per-call generation counter — same shape as
+  // useGuildMemberships.updateGuild (audit 13-mutation-patterns #1).
+  // Without this, two `update()` calls in quick succession race:
+  // PUT1's failure rollback re-fetches, the in-flight PUT2 lands
+  // optimistic state on top, then PUT2's response or the rollback
+  // re-fetch overwrites.
+  const updateGenerationRef = useRef(0);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -50,15 +58,25 @@ export function useAccountSettings(): AccountSettingsApi {
   }, []);
 
   const update = useCallback(async (patch: PrefsMap) => {
+    const gen = ++updateGenerationRef.current;
     setSettings(prev => (prev ? { ...prev, ...patch } : prev));
     setStatus('saving');
     const result = await apiPut('/api/me/prefs', patch);
+
+    // Stale-response guard: a newer update started after ours. Drop
+    // our completion path so we don't overwrite the newer optimistic
+    // state with a rollback or a now-stale ready/error status.
+    if (gen !== updateGenerationRef.current) {
+      return;
+    }
+
     if (result.ok) {
       setStatus('ready');
       return;
     }
     // Roll back on failure — re-fetch to resync with the server.
     const refreshed = await apiGet<PrefsMap>('/api/me/prefs');
+    if (gen !== updateGenerationRef.current) return; // newer call landed mid-rollback
     if (refreshed.ok) setSettings(refreshed.data);
     setStatus('error');
   }, []);

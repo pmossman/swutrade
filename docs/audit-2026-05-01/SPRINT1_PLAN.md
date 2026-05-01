@@ -31,8 +31,8 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S1.5** — `countUnreadEvents` → `COUNT(*)` (a1f50b7 · run 25226153744)
 - [x] **S1.6** — `tradeActions` consolidation (adea637 · run 25226431194)
 - [x] **S1.7** — Centralize `restrictionKey` + normalize at server-pull boundary (c237cf8 · run 25226780785)
-- [~] **S1.8** — Mutation-race fix in `useGuildMemberships.updateGuild` (gen-counter ref + drop-stale-response in setState)
-- [ ] **S1.9** — Mutation-race fix in `useAccountSettings.update` + `useCommunityMembers.setPeerPref` (shared `/me/prefs` shape)
+- [x] **S1.8** — Race-fix in `useGuildMemberships.updateGuild` (0053435 · run 25227057716)
+- [~] **S1.9** — Mutation-race fix in `useAccountSettings.update` + `useCommunityMembers.setPeerPref` (shared `/me/prefs` shape)
 - [ ] **S1.10** — Mutation-race fix in `useTradeDetail.nudge`; rename `mutationInFlightRef` → `pollPauseRef`; extract `withMutationLock` helper for the new race-aware shape
 - [ ] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup at 3 sites; fix CommunityView's lossy slug-titlecase fallback (user-visible: "Luke Skywalker (Hero of Yavin)" loses lowercase "of" + parens today)
 - [ ] **S1.12** — Consolidate `extractVariant` (3 copies in `api/og.ts`, `api/search.ts`, `ShareLiveTradeButton.tsx`); 2 of them miss the canonical `Regional` regex so OG-image + share-link payloads currently render TCGPlayer collector-numbers as variant labels
