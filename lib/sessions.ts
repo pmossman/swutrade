@@ -10,7 +10,7 @@
  * viewer-centric shape (your cards vs their cards) on read, and
  * encapsulate the event-log writes that every state transition fires.
  */
-import { and, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, ne, or, sql } from 'drizzle-orm';
 import type { getDb } from './db.js';
 import {
   createDiscordBotClient,
@@ -364,23 +364,22 @@ async function countUnreadEvents(
   viewerUserId: string,
   lastReadAt: Date | null,
 ): Promise<number> {
-  const where = lastReadAt
-    ? and(
-        eq(sessionEvents.sessionId, sessionId),
-        gt(sessionEvents.createdAt, lastReadAt),
-      )
-    : eq(sessionEvents.sessionId, sessionId);
-  const rows = await db
-    .select({
-      type: sessionEvents.type,
-      actorUserId: sessionEvents.actorUserId,
-    })
+  // SQL-level filter + COUNT(*) so we don't pull every event row over
+  // the wire on every 2.5s poll. Chat-only, counterpart-authored, newer
+  // than `lastReadAt` — all enforced server-side via WHERE.
+  const filters = [
+    eq(sessionEvents.sessionId, sessionId),
+    eq(sessionEvents.type, 'chat'),
+    ne(sessionEvents.actorUserId, viewerUserId),
+  ];
+  if (lastReadAt) {
+    filters.push(gt(sessionEvents.createdAt, lastReadAt));
+  }
+  const [row] = await db
+    .select({ n: count() })
     .from(sessionEvents)
-    .where(where);
-  return rows.filter(r =>
-    r.type === 'chat'
-    && r.actorUserId !== viewerUserId,
-  ).length;
+    .where(and(...filters));
+  return row?.n ?? 0;
 }
 
 /**
