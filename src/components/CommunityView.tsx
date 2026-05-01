@@ -659,6 +659,7 @@ function PopularPanel({
   guildMembers: MemberWithOverlap[];
   memberStatus: 'loading' | 'ready' | 'error';
 }) {
+  const { byFamily } = useCardIndexContext();
   // Aggregate familyId counts across this guild's members. The
   // /api/me/community rollup endpoint exists but returns only distinct
   // familyIds — no counts. The members directory already carries each
@@ -706,7 +707,7 @@ function PopularPanel({
               {i + 1}
             </span>
             <span className="flex-1 min-w-0 text-sm text-gray-100 truncate">
-              {familyIdToLabel(familyId)}
+              {familyIdToLabel(familyId, byFamily)}
             </span>
             <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-gold/15 border border-gold/40 text-[11px] text-gold font-semibold">
               {count} {count === 1 ? 'want' : 'wants'}
@@ -718,23 +719,34 @@ function PopularPanel({
   );
 }
 
-/** Lightweight familyId → human label: families look like
- *  `set-slug::card-slug`. We only have the id here (no card lookup by
- *  family), so we prettify the slug rather than leave it machine-
- *  readable. Good enough for the list chrome; we can upgrade to a
- *  card-resolved label when we add a familyId → card index. */
-function familyIdToLabel(familyId: string): string {
+/** familyId → human label. Resolves through the CardIndex's
+ *  `byFamily` map so we get the actual card name + set name. The
+ *  prior implementation split the slug on `-` and titlecased — which
+ *  was actively lossy: lowercase joiners ("of", "the") got
+ *  capitalized and parens were dropped, so "Luke Skywalker (Hero of
+ *  Yavin)" rendered as "Luke Skywalker Hero Of Yavin". Audit
+ *  14-domain-rendering #1.
+ *
+ *  Falls back to a prettified slug if the family isn't in the index
+ *  (catalog still loading, or an unreleased card from a future
+ *  schema). */
+function familyIdToLabel(
+  familyId: string,
+  byFamily: Map<string, { name: string; displayName?: string; setName?: string }>,
+): string {
+  const card = byFamily.get(familyId);
+  if (card) {
+    const name = card.displayName ?? card.name;
+    return card.setName ? `${name} · ${card.setName}` : name;
+  }
+  // Fallback for unresolved families — prettify but accept it'll be
+  // mildly off (the lossy path the audit flagged).
   const [setSlug, cardSlug] = familyId.split('::');
-  const label = (cardSlug ?? familyId)
-    .split('-')
-    .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-    .join(' ');
+  const prettify = (s: string): string =>
+    s.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  const label = prettify(cardSlug ?? familyId);
   if (!setSlug) return label;
-  const setLabel = setSlug
-    .split('-')
-    .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-    .join(' ');
-  return `${label} · ${setLabel}`;
+  return `${label} · ${prettify(setSlug)}`;
 }
 
 // --- Upcoming --------------------------------------------------------------

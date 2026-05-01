@@ -33,8 +33,8 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S1.7** — Centralize `restrictionKey` + normalize at server-pull boundary (c237cf8 · run 25226780785)
 - [x] **S1.8** — Race-fix in `useGuildMemberships.updateGuild` (0053435 · run 25227057716)
 - [x] **S1.9** — Race-fix in `/me/prefs` hooks (63088c1 · run 25227320067)
-- [~] **S1.10** — `useTradeDetail.nudge` per-id throttle; rename `mutationInFlightRef` → `pollPausedRef` in useSession (helper extraction skipped — saveCards needs to release the pause mid-mutation, generic helper doesn't fit)
-- [ ] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup at 3 sites; fix CommunityView's lossy slug-titlecase fallback (user-visible: "Luke Skywalker (Hero of Yavin)" loses lowercase "of" + parens today)
+- [x] **S1.10** — Nudge throttle + pollPausedRef rename (947e486 · run 25227643830)
+- [~] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup at 3 sites; fix CommunityView's lossy slug-titlecase fallback
 - [ ] **S1.12** — Consolidate `extractVariant` (3 copies in `api/og.ts`, `api/search.ts`, `ShareLiveTradeButton.tsx`); 2 of them miss the canonical `Regional` regex so OG-image + share-link payloads currently render TCGPlayer collector-numbers as variant labels
 
 ## Run log

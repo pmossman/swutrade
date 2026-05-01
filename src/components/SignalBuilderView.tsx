@@ -112,7 +112,11 @@ function buildFamilyMap(allCards: CardVariant[]): Map<string, FamilyDisplay> {
     if (variants.length === 0) continue;
     const primary = cards[0];
     const display = primary.displayName ?? primary.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-    const setSlug = familyId.split('::')[0];
+    // Read the set slug directly off the card rather than parsing it
+    // out of familyId — same source-of-truth, no string-split.
+    // (Audit 14-domain-rendering #1: familyId.split('::')[0] is a
+    // parser-class footgun.)
+    const setSlug = primary.set;
     out.set(familyId, {
       name: display,
       setCode: setCodeBySlug.get(setSlug) ?? setSlug.slice(0, 4).toUpperCase(),
