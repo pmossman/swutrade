@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
 import { createSingletonCache } from './sharedCache';
 
@@ -74,6 +74,15 @@ export function useGuildMemberships(): GuildMembershipsApi {
     () => (cache.has() ? 'ready' : 'loading'),
   );
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>('idle');
+
+  // Per-call generation counter for `updateGuild`. Bumped on each
+  // call; the canonical response only applies if no newer call has
+  // started since. Without this, two same-render toggles (Enroll +
+  // Include in rollups) race: the first PUT's canonical lands AFTER
+  // the second optimistic apply and clobbers the user's second
+  // toggle. Same shape as the saveCards race (audit
+  // 13-mutation-patterns.md #1).
+  const updateGenerationRef = useRef(0);
 
   const applyPayload = useCallback((data: {
     enrollable: GuildMembershipSummary[];
@@ -155,6 +164,11 @@ export function useGuildMemberships(): GuildMembershipsApi {
   }, [loadLocal, refreshFromDiscord]);
 
   const updateGuild = useCallback(async (guildId: string, patch: GuildPatch) => {
+    // Capture this call's generation. Any newer call that starts
+    // before our PUT returns will bump the counter; we use that to
+    // drop our stale canonical response.
+    const gen = ++updateGenerationRef.current;
+
     // Optimistic update on the local state — if the server applies
     // bundle defaults (enrolled=true → include+appear default true),
     // the response payload tells us the canonical values and we
@@ -171,6 +185,15 @@ export function useGuildMemberships(): GuildMembershipsApi {
       `/api/me/guilds/${encodeURIComponent(guildId)}`,
       patch,
     );
+
+    // Stale-response guard: a newer updateGuild started after ours
+    // (e.g. user toggled a second field). Apply nothing — letting our
+    // canonical land here would overwrite the newer optimistic state.
+    // The newer call's response carries forward.
+    if (gen !== updateGenerationRef.current) {
+      return;
+    }
+
     if (!result.ok) {
       setStatus('error');
       // Re-fetch to bring the UI back to truth.
