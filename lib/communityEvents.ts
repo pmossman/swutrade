@@ -10,7 +10,7 @@
  * still recorded. Flipping the pref back on restores visibility of
  * the prior trail; we never lose history to a toggle.
  */
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import type { getDb } from './db.js';
 import {
   communityEvents,
@@ -185,53 +185,3 @@ export async function listEvents(
   }));
 }
 
-/**
- * Convenience for callers that already have a set of guild ids (e.g.
- * the Community page might want "events across all my guilds" in a
- * future slice). Kept here so we don't accumulate slightly-different
- * query shapes across the app.
- */
-export async function listEventsForGuilds(
-  db: Db,
-  guildIds: string[],
-  opts: { limit?: number } = {},
-): Promise<CommunityEventView[]> {
-  if (guildIds.length === 0) return [];
-  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
-
-  const rows = await db
-    .select({
-      id: communityEvents.id,
-      type: communityEvents.type,
-      payload: communityEvents.payload,
-      createdAt: communityEvents.createdAt,
-      actorId: users.id,
-      actorHandle: users.handle,
-      actorUsername: users.username,
-      actorAvatarUrl: users.avatarUrl,
-      actorShare: users.shareActivityPublicly,
-    })
-    .from(communityEvents)
-    .leftJoin(users, eq(users.id, communityEvents.actorUserId))
-    .where(and(
-      inArray(communityEvents.guildId, guildIds),
-      sql`(${users.id} IS NULL OR ${users.shareActivityPublicly} = true)`,
-    ))
-    .orderBy(desc(communityEvents.createdAt))
-    .limit(limit);
-
-  return rows.map(r => ({
-    id: r.id,
-    type: r.type,
-    actor: r.actorId
-      ? {
-          id: r.actorId,
-          handle: r.actorHandle ?? '',
-          username: r.actorUsername ?? '',
-          avatarUrl: r.actorAvatarUrl,
-          }
-      : null,
-    payload: r.payload,
-    createdAt: r.createdAt.toISOString(),
-  }));
-}

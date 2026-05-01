@@ -130,7 +130,7 @@ export function normalizeParticipants(a: string, b: string): { userAId: string; 
  * cap returns 'cap-exceeded' from `suggestForSession`; the UI
  * surfaces a "dismiss some pending suggestions first" hint.
  */
-export const MAX_PENDING_SUGGESTIONS = 10;
+const MAX_PENDING_SUGGESTIONS = 10;
 
 /**
  * View-level shape for a pending suggestion as exposed to the
@@ -1858,7 +1858,7 @@ function cardListsEqual(a: TradeCardSnapshot[], b: TradeCardSnapshot[]): boolean
  * — long enough to absorb a multi-card session, short enough that
  * a deliberate two-step edit registers as two events.
  */
-export const EDITED_MERGE_WINDOW_MS = 30 * 1000;
+const EDITED_MERGE_WINDOW_MS = 30 * 1000;
 
 /**
  * Per-productId diff of two card snapshot lists. `added` carries the

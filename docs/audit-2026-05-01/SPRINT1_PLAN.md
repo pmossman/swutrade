@@ -24,7 +24,7 @@ Each milestone is one commit; one CI verification gates the next.
 
 ## Milestones
 
-- [ ] **S1.1** — Delete dead code (~213 LOC: `SearchResults.tsx`, `SetFilter.tsx`, `listEventsForGuilds`, internal-only `export`s in `lib/sessions.ts` + `lib/signalMatching.ts`)
+- [~] **S1.1** — Delete dead code (~213 LOC: `SearchResults.tsx`, `SetFilter.tsx`, `listEventsForGuilds`, internal-only `export`s in `lib/sessions.ts` + `lib/signalMatching.ts`)
 - [ ] **S1.2** — `handleLogout` POST-only method gate (CSRF surface)
 - [ ] **S1.3** — Clear OAuth `swu_oauth_state` + `swu_oauth_verifier` cookies on every error path in `handleCallback`
 - [ ] **S1.4** — Replace `created as unknown as Item` with throw-on-null in `useWants.ts:155` + `useAvailable.ts:92`

@@ -64,7 +64,7 @@ const SLUG_TO_CODE: Record<string, string> = (() => {
 /** Derive the set code from a family_id. Returns the slug itself
  *  as a fallback when the prefix isn't in the SETS table — e.g.
  *  for promo sets we haven't catalogued. */
-export function setCodeForFamily(familyId: string): string {
+function setCodeForFamily(familyId: string): string {
   const slug = familyId.split('::')[0] ?? '';
   return SLUG_TO_CODE[slug] ?? slug;
 }
