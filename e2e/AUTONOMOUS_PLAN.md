@@ -27,11 +27,11 @@ milestone — it IS the source of truth for "where are we."
 - [x] A1: Shared `e2e/helpers/sessions.ts` library (e268beb · run 25203930211)
 - [x] A2: SKIPPED — existing `signIn()` helper in `e2e/helpers/auth.ts` already mints sealed Discord cookies via iron-session, no new endpoint needed.
 - [x] A3: `e2e/helpers/session-seed.ts` Drizzle helpers (2aee40b · run 25204081829)
-- [~] A4: CI auth-e2e sharded across 4 runners
-- [ ] A5: Playwright workers raised in `playwright.auth.config.ts` (CI only)
+- [x] A4: CI auth-e2e sharded across 4 runners (c69c81d · run 25204239301) — each shard ~1-1.5 min
+- [x] A5: SKIPPED — sharding alone is fast enough; within-shard parallelism risks StrictMode issues for marginal gain.
 
 ## Phase B — Ghost-only specs (broaden coverage)
-- [ ] B1: `session-edits.auth.spec.ts` — qty +/− (incl. hyphenated set slugs), remove, swap variant, empty side
+- [~] B1: `session-edits.auth.spec.ts` — qty +/− (incl. hyphenated set slugs), remove, cross-side sync
 - [ ] B2: `session-suggestions-extended.auth.spec.ts` — multi-card add/remove, swap, dismiss, card-lock UX, max-10, auto-merge
 - [ ] B3: `session-revert.auth.spec.ts` — multiple candidates, dismiss, latest-state kebab hidden, satisfied auto-dismiss
 - [ ] B4: `session-chat.auth.spec.ts` — rate limit, char limit, empty trim, mark-read on visibility, chat-only badge
@@ -71,3 +71,4 @@ milestone — it IS the source of truth for "where are we."
 |------|-----------|-----|--------|--------|
 | 2026-04-30 22:35 | A1 helpers | e268beb | 25203930211 | ✅ green |
 | 2026-04-30 22:42 | A3 seed helpers | 2aee40b | 25204081829 | ✅ green |
+| 2026-04-30 22:51 | A4 CI sharding | c69c81d | 25204239301 | ✅ green (4 shards × ~1.5min) |
