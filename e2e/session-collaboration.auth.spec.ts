@@ -81,7 +81,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
     try {
       // A opens the timeline + sends a chat message.
-      await a.page.getByRole('button', { name: /^Activity/ }).first().click();
+      await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
       const draft = a.page.getByPlaceholder(/Send a message/i);
       await expect(draft).toBeVisible({ timeout: 5_000 });
       await draft.fill('hey, want to balance things out?');
@@ -89,7 +89,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
       // B opens their timeline. Within the 2.5s poll window, the
       // chat bubble should arrive.
-      await b.page.getByRole('button', { name: /^Activity/ }).first().click();
+      await b.page.getByRole('button', { name: /Chat & activity/i }).first().click();
       await expect(
         b.page.getByText(/hey, want to balance things out\?/),
       ).toBeVisible({ timeout: 8_000 });
@@ -193,7 +193,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
       // A opens the timeline; the most-recent edit-snapshot row has
       // a "↶ Revert here" affordance.
-      await a.page.getByRole('button', { name: /^Activity/ }).first().click();
+      await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
       const revertBtns = a.page.getByRole('button', { name: /↶ Revert here/i });
       await expect(revertBtns.first()).toBeVisible({ timeout: 8_000 });
       // Click the OLDEST visible revert (last in DOM order — events
