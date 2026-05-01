@@ -35,7 +35,17 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S1.9** — Race-fix in `/me/prefs` hooks (63088c1 · run 25227320067)
 - [x] **S1.10** — Nudge throttle + pollPausedRef rename (947e486 · run 25227643830)
 - [x] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup (2713731 · run 25227957542)
-- [~] **S1.12** — Consolidate `extractVariant` (3 copies in `api/og.ts`, `api/search.ts`, `ShareLiveTradeButton.tsx`)
+- [x] **S1.12** — Consolidate `extractVariant` (af52de0 · run 25228252317; one rerun for shard-4 flake on trade-save spec)
+
+## Sprint 1 complete — 12/12 milestones shipped
+
+All correctness fixes (M1, M2, M9 + the 4-hook race-fix series) and
+the highest-ROI perf find (countUnreadEvents COUNT(*)) are live on
+beta. ~430 LOC net deleted; new lines added are mostly fix
+infrastructure (gen-counter refs, cookie-clear helper, audit
+comments).
+
+Next: Sprint 2 (foundational type safety) when parker green-lights.
 
 ## Run log
 
