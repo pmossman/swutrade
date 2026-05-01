@@ -462,8 +462,12 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                     // Skip the suggest-* actions when this card is
                     // already referenced by a pending suggestion —
                     // prevents stacking conflicting suggestions on
-                    // the same card.
-                    if (lockedProductIds.has(productId)) return [];
+                    // the same card. Show a disabled descriptive
+                    // item instead of an empty kebab so the user
+                    // understands *why* the options are missing.
+                    if (lockedProductIds.has(productId)) {
+                      return [{ label: 'In a pending suggestion', disabled: true }];
+                    }
                     const snapshot: TradeCardSnapshot = {
                       productId,
                       name: tc.card.name,
