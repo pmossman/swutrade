@@ -26,8 +26,8 @@ milestone — it IS the source of truth for "where are we."
 ## Phase A — Infrastructure
 - [x] A1: Shared `e2e/helpers/sessions.ts` library (e268beb · run 25203930211)
 - [x] A2: SKIPPED — existing `signIn()` helper in `e2e/helpers/auth.ts` already mints sealed Discord cookies via iron-session, no new endpoint needed.
-- [~] A3: `e2e/helpers/session-seed.ts` Drizzle helpers for direct DB seeding
-- [ ] A4: CI auth-e2e sharded across 4 workers
+- [x] A3: `e2e/helpers/session-seed.ts` Drizzle helpers (2aee40b · run 25204081829)
+- [~] A4: CI auth-e2e sharded across 4 runners
 - [ ] A5: Playwright workers raised in `playwright.auth.config.ts` (CI only)
 
 ## Phase B — Ghost-only specs (broaden coverage)
@@ -70,3 +70,4 @@ milestone — it IS the source of truth for "where are we."
 | When | Milestone | SHA | CI Run | Result |
 |------|-----------|-----|--------|--------|
 | 2026-04-30 22:35 | A1 helpers | e268beb | 25203930211 | ✅ green |
+| 2026-04-30 22:42 | A3 seed helpers | 2aee40b | 25204081829 | ✅ green |

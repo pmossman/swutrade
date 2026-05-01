@@ -209,11 +209,23 @@ jobs:
           exit 1
 
   # ── Step 4: Authenticated E2E against the preview URL ────────
+  # Sharded 4-way for parallelism. Total wallclock ≈ longest single
+  # shard. Each shard is a separate runner that runs ~25% of the
+  # auth-e2e spec files. Within a shard, Playwright stays at 1
+  # worker (set in playwright.auth.config.ts) — the bottleneck is
+  # the shared Postgres + Vercel preview, not within-shard CPU.
   e2e-authenticated:
-    name: E2E (Authenticated)
+    name: E2E (Authenticated) — shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
     needs: [wait-for-deploy]
     if: needs.wait-for-deploy.outputs.url != ''
+    strategy:
+      # One failing shard shouldn't kill the others — we want logs
+      # from every shard so we can see how many tests are affected
+      # before fixing.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     timeout-minutes: 15
     env:
       SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
@@ -251,17 +263,18 @@ jobs:
       - name: Seed test user
         run: npx tsx e2e/helpers/seed.ts
 
-      - name: Run authenticated E2E against ${{ needs.wait-for-deploy.outputs.url }}
-        run: npm run e2e:auth
+      - name: Run authenticated E2E against ${{ needs.wait-for-deploy.outputs.url }} (shard ${{ matrix.shard }}/4)
+        run: npm run e2e:auth -- --shard=${{ matrix.shard }}/4
 
       - uses: actions/upload-artifact@v4
         if: failure()
         # Include test-results/ (where trace.zip, screenshots, and
         # videos land per playwright.auth.config.ts's `trace:
         # on-first-retry`). playwright-report/ alone just has the
-        # HTML summary without actionable debug info.
+        # HTML summary without actionable debug info. Per-shard
+        # artifact name so they don't collide.
         with:
-          name: playwright-auth
+          name: playwright-auth-shard-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/

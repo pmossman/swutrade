@@ -17,16 +17,17 @@ export async function seedTestUser() {
   await db.delete(wantsItems).where(eq(wantsItems.userId, TEST_USER.userId));
   await db.delete(availableItems).where(eq(availableItems.userId, TEST_USER.userId));
 
-  const existing = await db.select().from(users).where(eq(users.id, TEST_USER.userId)).limit(1);
-  if (existing.length === 0) {
-    await db.insert(users).values({
-      id: TEST_USER.userId,
-      discordId: TEST_USER.userId,
-      username: TEST_USER.username,
-      handle: TEST_USER.handle,
-      avatarUrl: TEST_USER.avatarUrl,
-    });
-  }
+  // onConflictDoNothing makes this concurrency-safe for the upcoming
+  // 4-way sharded auth-e2e job: every shard runs `npx tsx seed.ts`
+  // before its specs, and a select-then-insert pattern would race
+  // (UNIQUE_VIOLATION on whichever shard inserts second).
+  await db.insert(users).values({
+    id: TEST_USER.userId,
+    discordId: TEST_USER.userId,
+    username: TEST_USER.username,
+    handle: TEST_USER.handle,
+    avatarUrl: TEST_USER.avatarUrl,
+  }).onConflictDoNothing();
 }
 
 // Allow direct execution: `npx tsx e2e/helpers/seed.ts`
