@@ -19,7 +19,7 @@ import { InlineSuggestionList, RevertSuggestionBanner } from './SessionSuggestio
 import { SessionSuggestComposer } from './SessionSuggestComposer';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { PERSIST_KEYS } from '../persistence';
-import type { TradeCard, CardVariant } from '../types';
+import { tradeCardKey, type TradeCard, type CardVariant } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
 type TradeCardSnapshot = CardSnapshot;
 import { extractVariantLabel } from '../variants';
@@ -151,6 +151,18 @@ export function SessionView({ sessionId }: { sessionId: string }) {
     viewerSnapshotsRef.current = session?.yourCards ?? [];
   }, [session?.yourCards]);
 
+  // TradeSide hands edits back keyed by tradeCardKey(card) =
+  // `${productId||name}-${set}`. Set slugs are hyphenated
+  // ("jump-to-lightspeed") so a naive split-on-'-' yields the wrong
+  // productId; we map keys → productId via the rendered card list.
+  const keyToProductId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const tc of viewerTradeCards) {
+      map.set(tradeCardKey(tc.card), tc.card.productId || tc.card.name);
+    }
+    return map;
+  }, [viewerTradeCards]);
+
   const writeCards = useCallback((next: TradeCardSnapshot[]) => {
     viewerSnapshotsRef.current = next;
     void saveCards(next);
@@ -170,20 +182,20 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   }, [writeCards]);
 
   const handleRemove = useCallback((key: string) => {
-    // TradeSide's key is tradeCardKey(card) = `${productId||name}-${set}`.
-    // We keyed our snapshots by productId, so strip the trailing -set.
-    const productId = key.split('-').slice(0, -1).join('-') || key;
+    const productId = keyToProductId.get(key);
+    if (!productId) return;
     const next = viewerSnapshotsRef.current.filter(s => s.productId !== productId);
     writeCards(next);
-  }, [writeCards]);
+  }, [keyToProductId, writeCards]);
 
   const handleChangeQty = useCallback((key: string, delta: number) => {
-    const productId = key.split('-').slice(0, -1).join('-') || key;
+    const productId = keyToProductId.get(key);
+    if (!productId) return;
     const next = viewerSnapshotsRef.current
       .map(s => s.productId === productId ? { ...s, qty: s.qty + delta } : s)
       .filter(s => s.qty > 0);
     writeCards(next);
-  }, [writeCards]);
+  }, [keyToProductId, writeCards]);
 
   const handleLoadAllSets = useCallback(() => {
     priceData.loadAllSets();
@@ -698,7 +710,7 @@ function TimelineToggle({ unreadCount, onClick }: { unreadCount: number; onClick
     <button
       type="button"
       onClick={onClick}
-      aria-label={hasUnread ? `Chat & activity (${unreadCount} unread)` : 'Chat & activity'}
+      aria-label={hasUnread ? `Chat & history (${unreadCount} unread)` : 'Chat & history'}
       className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold uppercase tracking-wide transition-colors ${
         hasUnread
           ? 'bg-gold/20 border-gold/60 text-gold-bright hover:bg-gold/30 animate-pulse-unread'

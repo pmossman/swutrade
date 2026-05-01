@@ -166,7 +166,7 @@ body::before {
   animation: pulse-glow-crimson 2.4s ease-in-out infinite;
 }
 
-/* Subtle gold pulse for the Chat & activity toggle when unread
+/* Subtle gold pulse for the Chat & history toggle when unread
    messages are pending. Slow + low-amplitude so it draws the eye
    without nagging. Suppressed via the prefers-reduced-motion block
    below. */

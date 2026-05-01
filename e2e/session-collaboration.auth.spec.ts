@@ -81,7 +81,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
     try {
       // A opens the timeline + sends a chat message.
-      await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
+      await a.page.getByRole('button', { name: /Chat & history/i }).first().click();
       const draft = a.page.getByPlaceholder(/Send a message/i);
       await expect(draft).toBeVisible({ timeout: 5_000 });
       await draft.fill('hey, want to balance things out?');
@@ -89,7 +89,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
       // B opens their timeline. Within the 2.5s poll window, the
       // chat bubble should arrive.
-      await b.page.getByRole('button', { name: /Chat & activity/i }).first().click();
+      await b.page.getByRole('button', { name: /Chat & history/i }).first().click();
       await expect(
         b.page.getByText(/hey, want to balance things out\?/),
       ).toBeVisible({ timeout: 8_000 });
@@ -195,7 +195,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       // labeled "Revert options" — distinct from TradeRow's "More
       // actions" kebab so the test doesn't pick up the wrong one.
       // Click reveals a popover with "Revert to this state".
-      await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
+      await a.page.getByRole('button', { name: /Chat & history/i }).first().click();
       const revertKebabs = a.page.getByRole('button', { name: /^Revert options$/i });
       await expect(revertKebabs.first()).toBeVisible({ timeout: 8_000 });
       // The OLDEST edit (alice's first edit, where alice has the card

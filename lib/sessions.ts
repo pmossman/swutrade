@@ -352,10 +352,12 @@ export async function listEventsForSession(
 }
 
 /**
- * Count events newer than `lastReadAt`. `null` means never read →
- * count everything. Only counts viewer-relevant events (excludes
- * snapshot rows + the viewer's own actions, since those don't need
- * to surface as "unread"). */
+ * Count unread *chat* messages newer than `lastReadAt`. `null` means
+ * never read → count everything. The badge is chat-specific so it
+ * stays meaningful: edits, suggestions, and reverts are all already
+ * visible on the canvas (cards move, pills appear), so promoting them
+ * to "unread" on the chat button just made it pulse on every +/−.
+ * Counterpart-authored only — your own messages aren't unread to you. */
 async function countUnreadEvents(
   db: Db,
   sessionId: string,
@@ -375,14 +377,8 @@ async function countUnreadEvents(
     })
     .from(sessionEvents)
     .where(where);
-  // Filter to "events the viewer hasn't seen and would care about":
-  //   - exclude snapshots (internal pairing for the revert flow,
-  //     not a user-visible beat)
-  //   - exclude the viewer's own actions (they already know — they
-  //     just did them; popping their own unread badge made the chat
-  //     button look noisy on every +/− click).
   return rows.filter(r =>
-    r.type !== 'edit-snapshot'
+    r.type === 'chat'
     && r.actorUserId !== viewerUserId,
   ).length;
 }
