@@ -40,7 +40,13 @@ export async function openSessionParticipant(
   browser: Browser,
   options: OpenParticipantOptions = {},
 ): Promise<SessionParticipant> {
-  const { url = '/', signedInAs, suppressTour = true } = options;
+  // Discord-signed-in users land on HomeView at `/`, which doesn't
+  // expose "Invite someone" — that affordance lives in the trade
+  // builder's action strip. Default signed-in participants to
+  // `/?view=trade` so the rest of the helpers (createAndClaim, etc.)
+  // can find the button without each spec having to know.
+  const defaultUrl = options.signedInAs ? '/?view=trade' : '/';
+  const { url = defaultUrl, signedInAs, suppressTour = true } = options;
   const context = await browser.newContext();
   if (signedInAs) {
     await signIn(context, signedInAs);
