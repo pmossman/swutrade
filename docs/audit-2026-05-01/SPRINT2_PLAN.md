@@ -12,8 +12,20 @@ identical: `[ ]` / `[~]` / `[x]` / `[B]`.
 - [x] **S2.1** — `proposalStatuses` + `ProposalStatus` exported (40010b4 · run 25232808778)
 - [x] **S2.2** — Re-export schema types instead of redeclaring (fe1f6ea · run 25233170931)
 - [x] **S2.3** — Shared `MeResponse` type (174e580 · run 25233432932)
-- [~] **S2.4** — Add zod-validation overload to `apiClient.request()` — `request<T>(method, url, body, schema?)`. Schema validates parsed JSON before the optimistic cast.
-- [ ] **S2.5** — Migrate `/api/auth/me` consumer (`useAuth`) to the zod overload as the proof-of-pattern. Defer the other 43 consumers behind opportunistic future migration.
+- [x] **S2.4** — Zod-validation overload on apiClient (a052cd4 · run 25233670630)
+- [~] **S2.5** — Migrate useAuth to zod overload (proof-of-pattern)
+
+## Sprint 2 complete — 5/5 milestones pending CI verification on the last
+
+Sprint 2's foundational type safety is in place:
+  - Schema enums (`proposalStatuses`, `sessionStatuses`,
+    `sessionEventTypes`) are the canonical source for status types
+  - Wire shape of `/api/auth/me` is the only one defined in one
+    place; server constructs via type, client validates via schema
+  - apiClient supports incremental zod adoption per call site
+
+Remaining 43 apiClient consumers can migrate opportunistically.
+Sprint 3 (the perf cluster) is the next gate.
 
 ## Run log
 

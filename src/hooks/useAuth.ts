@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '../services/apiClient';
-import type { MeResponse, MeResponseUser } from '../../lib/shared';
+import { MeResponseSchema, type MeResponseUser } from '../../lib/shared';
 
 // `User` was previously hand-rolled here in parallel with
 // `SessionData` (lib/auth.ts) and the wire shape in api/auth.ts.
@@ -75,7 +75,12 @@ export function useAuth(): AuthApi {
 
   useEffect(() => {
     (async () => {
-      const result = await apiGet<MeResponse>('/api/auth/me');
+      // Pass MeResponseSchema so the wire shape is validated at the
+      // boundary — drift produces a typed `error` reason instead of
+      // a runtime crash deep in the consumer (audit
+      // 08-types-deadcode #2). useAuth is the proof-of-pattern;
+      // other apiGet call sites can opt in opportunistically.
+      const result = await apiGet('/api/auth/me', MeResponseSchema);
       if (result.ok) {
         setUser(result.data.user ?? null);
         setBotInstallUrl(result.data.botInstallUrl ?? null);

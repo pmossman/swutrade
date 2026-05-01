@@ -11,27 +11,37 @@
  * shape was hand-rolled in three sites (`lib/auth.ts` SessionData,
  * `api/auth.ts` handleMe response, `src/hooks/useAuth.ts` User);
  * audit 04-auth #5 flagged the drift class.
+ *
+ * The zod schema is the source of truth; the TS types below are
+ * inferred from it via `z.infer`. Pass `MeResponseSchema` to
+ * `apiGet` to validate the wire shape at the boundary instead of
+ * trusting the as-T cast (audit 08-types-deadcode #2).
  */
-export interface MeResponseUser {
-  id: string;
-  username: string;
-  handle: string;
-  avatarUrl: string | null;
+import { z } from 'zod';
+
+export const MeResponseUserSchema = z.object({
+  id: z.string(),
+  username: z.string(),
+  handle: z.string(),
+  avatarUrl: z.string().nullable(),
   /** True when the signed-in user is a ghost minted for an
    *  anonymous session claim. Used to gate "sign in to save"
    *  CTAs and hide community-feature surfaces. */
-  isAnonymous?: boolean;
-}
+  isAnonymous: z.boolean().optional(),
+});
 
-export interface MeResponse {
-  user: MeResponseUser | null;
-  botInstallUrl: string | null;
+export const MeResponseSchema = z.object({
+  user: MeResponseUserSchema.nullable(),
+  botInstallUrl: z.string().nullable(),
   /** UX-A5: when the just-completed OAuth callback merged ghost
    *  sessions into this real-user account, the server flags how
    *  many rows moved over. Null in steady state; set for one
    *  /api/auth/me read after sign-in until dismissed. */
-  pendingMergeBanner: { carriedCount: number } | null;
-}
+  pendingMergeBanner: z.object({ carriedCount: z.number() }).nullable(),
+});
+
+export type MeResponseUser = z.infer<typeof MeResponseUserSchema>;
+export type MeResponse = z.infer<typeof MeResponseSchema>;
 
 /**
  * Stable signature for a variant restriction. Two wants items with
