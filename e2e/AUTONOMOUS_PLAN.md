@@ -31,7 +31,8 @@ milestone — it IS the source of truth for "where are we."
 - [x] A5: SKIPPED — sharding alone is fast enough; within-shard parallelism risks StrictMode issues for marginal gain.
 
 ## Phase B — Ghost-only specs (broaden coverage)
-- [x] B1: `session-edits.auth.spec.ts` — qty +/− regression + cross-side sync (b940368 · run 25204427148)
+- [x] B1: `session-edits.auth.spec.ts` — qty +/− regression + cross-side sync (b940368 · run 25204427148; race-fix 7e98efb · run 25204903857)
+- [x] B2: `session-suggestions-extended.auth.spec.ts` (e701908 · run 25204903857)
 - [ ] B2: `session-suggestions-extended.auth.spec.ts` — multi-card add/remove, swap, dismiss, card-lock UX, max-10, auto-merge
 - [ ] B3: `session-revert.auth.spec.ts` — multiple candidates, dismiss, latest-state kebab hidden, satisfied auto-dismiss
 - [ ] B4: `session-chat.auth.spec.ts` — rate limit, char limit, empty trim, mark-read on visibility, chat-only badge
@@ -73,3 +74,4 @@ milestone — it IS the source of truth for "where are we."
 | 2026-04-30 22:42 | A3 seed helpers | 2aee40b | 25204081829 | ✅ green |
 | 2026-04-30 22:51 | A4 CI sharding | c69c81d | 25204239301 | ✅ green (4 shards × ~1.5min) |
 | 2026-04-30 22:58 | B1 session-edits | b940368 | 25204427148 | ✅ green |
+| 2026-04-30 23:08 | B2 + B1 flake fix | 7e98efb | 25204903857 | ✅ green |
