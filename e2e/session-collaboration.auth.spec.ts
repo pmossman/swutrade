@@ -1,5 +1,9 @@
-import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect } from '@playwright/test';
+import {
+  addOneCardToSide as addOneCard,
+  closeAllParticipants as closeAll,
+  createAndClaimSession as createAndClaim,
+} from './helpers/sessions';
 
 /**
  * Pins the Phase 5b session-collaboration slice end-to-end:
@@ -12,66 +16,9 @@ import { test, expect } from '@playwright/test';
  *     (double-sided confirm)
  *
  * Both participants are ghost users via the open-slot QR flow —
- * same pattern as session-lifecycle.auth.spec.ts. No Discord OAuth
- * needed; the spec is self-contained against the preview's Postgres.
+ * same pattern as session-lifecycle.auth.spec.ts. Helpers in
+ * `e2e/helpers/sessions.ts` are shared across both specs.
  */
-
-interface Participant {
-  context: BrowserContext;
-  page: Page;
-}
-
-async function openParticipant(browser: Parameters<Parameters<typeof test>[1]>[0]['browser'], url = '/'): Promise<Participant> {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.addInitScript(() => {
-    try { window.localStorage.setItem('swu.tour.dismissedAt', 'suppressed-by-e2e'); } catch {}
-  });
-  await page.goto(url);
-  return { context, page };
-}
-
-async function closeAll(parts: Participant[]): Promise<void> {
-  for (const p of parts) {
-    await p.context.close().catch(() => {});
-  }
-}
-
-/**
- * Drive the "Add cards to Your side" picker and add a single card.
- * Mirrors the helper in session-lifecycle.auth.spec.ts so the
- * canonical seed (Luke Skywalker - Hero of Yavin) stays consistent
- * across specs.
- */
-async function addOneCard(page: Page, query: string = 'luke jtl', cardName: RegExp = /Luke Skywalker - Hero of Yavin \(Standard\)/i): Promise<void> {
-  await page.getByRole('button', { name: /Add cards to Your side/i }).first().click();
-  const input = page.getByRole('textbox', { name: /Search cards/i }).first();
-  await input.fill(query);
-  const tile = page.getByRole('button', { name: cardName }).first();
-  await expect(tile).toBeVisible({ timeout: 10_000 });
-  await tile.click();
-  await page.getByRole('button', { name: 'Close search' }).first().click();
-}
-
-async function createAndClaim(
-  browser: Parameters<Parameters<typeof test>[1]>[0]['browser'],
-): Promise<{ a: Participant; b: Participant; sessionUrl: string }> {
-  const a = await openParticipant(browser, '/');
-  await a.page.getByRole('button', { name: /Invite someone/i }).first().click();
-  await expect(a.page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
-  const sessionUrl = a.page.url();
-
-  const b = await openParticipant(browser, sessionUrl);
-  const joinBtn = b.page.getByRole('button', { name: /Join this trade/i });
-  await expect(joinBtn).toBeVisible({ timeout: 10_000 });
-  await joinBtn.click();
-  await expect(b.page.getByText(/Shared · both editing/i)).toBeVisible({ timeout: 10_000 });
-
-  await a.page.reload();
-  await expect(a.page.getByText(/Shared · both editing/i)).toBeVisible({ timeout: 10_000 });
-
-  return { a, b, sessionUrl };
-}
 
 test.describe('Session collaboration — chat, suggestions, revert', () => {
   test.describe.configure({ mode: 'serial' });

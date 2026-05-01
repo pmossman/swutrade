@@ -1,16 +1,15 @@
-import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect } from '@playwright/test';
 import { filterConsoleErrors } from './_fixtures';
+import {
+  addOneCardToSide as addOneCard,
+  closeAllParticipants as closeAll,
+  createAndClaimSession as createAndClaim,
+  openSessionParticipant as openParticipant,
+} from './helpers/sessions';
 
 /**
  * Pins the shared-session lifecycle — create → claim → both-add →
  * both-confirm → settled — plus the terminal-cancelled read-only path.
- *
- * Why this file exists: the UX pass in commit 4b49c7e restructured
- * SessionView (controls moved below cards, readOnly TradeSide on the
- * counterpart half, terminal banners), and dogfooding caught three
- * bugs that CI missed because no integration test walks the happy
- * path. This is that coverage.
  *
  * Both participants are anonymous (ghost) users — `/api/sessions/
  * create-open` mints a ghost for the creator, `/api/sessions/:id/
@@ -18,90 +17,9 @@ import { filterConsoleErrors } from './_fixtures';
  * the spec is self-contained; the only runtime dep is the preview's
  * Postgres (shared with all other *.auth specs).
  *
- * Runs under `playwright.auth.config.ts` (matched by the `.auth.spec
- * .ts` suffix), which targets the Vercel preview URL in CI and is
- * excluded by local `npm run e2e`.
+ * Helpers live in `e2e/helpers/sessions.ts` so other session specs
+ * can share the same primitives.
  */
-
-interface Participant {
-  context: BrowserContext;
-  page: Page;
-  errors: string[];
-}
-
-async function openParticipant(browser: Parameters<Parameters<typeof test>[1]>[0]['browser'], url = '/'): Promise<Participant> {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  // Signed-out participants trigger the first-run tutorial overlay,
-  // which would intercept the first locator click. Pre-dismiss via
-  // localStorage before navigation so specs stay focused on their
-  // own flows.
-  await page.addInitScript(() => {
-    try { window.localStorage.setItem('swu.tour.dismissedAt', 'suppressed-by-e2e'); } catch {}
-  });
-  const errors: string[] = [];
-  page.on('console', msg => {
-    if (msg.type() === 'error') errors.push(msg.text());
-  });
-  page.on('pageerror', err => errors.push(err.message));
-  await page.goto(url);
-  return { context, page, errors };
-}
-
-async function closeAll(participants: Participant[]): Promise<void> {
-  for (const p of participants) {
-    await p.context.close().catch(() => {});
-  }
-}
-
-/**
- * Drive the "Add cards to Your side" picker and add a single card —
- * the same pattern e2e/trade-flow.spec.ts uses. The specific card
- * doesn't matter; Luke Skywalker Hero of Yavin (Standard) is the
- * stable seed cross-referenced across other specs.
- */
-async function addOneCard(page: Page): Promise<void> {
-  // The empty-side tile is "Add cards to Your side" — once cards are
-  // present the footer button takes over under the same aria-label.
-  await page.getByRole('button', { name: /Add cards to Your side/i }).first().click();
-  const input = page.getByRole('textbox', { name: /Search cards/i }).first();
-  await input.fill('luke jtl');
-  const tile = page.getByRole('button', {
-    name: /Luke Skywalker - Hero of Yavin \(Standard\)/i,
-  }).first();
-  await expect(tile).toBeVisible({ timeout: 10_000 });
-  await tile.click();
-  await page.getByRole('button', { name: 'Close search' }).first().click();
-}
-
-/**
- * Create an invite from context A and have context B claim it.
- * Returns both participants + the shared session URL.
- */
-async function createAndClaim(
-  browser: Parameters<Parameters<typeof test>[1]>[0]['browser'],
-): Promise<{ a: Participant; b: Participant; sessionUrl: string }> {
-  const a = await openParticipant(browser, '/');
-  // Kick off the invite flow from anonymous context A.
-  await a.page.getByRole('button', { name: /Invite someone/i }).first().click();
-  await expect(a.page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
-  const sessionUrl = a.page.url();
-
-  // Context B navigates to the shared URL and claims the open slot.
-  const b = await openParticipant(browser, sessionUrl);
-  const joinBtn = b.page.getByRole('button', { name: /Join this trade/i });
-  await expect(joinBtn).toBeVisible({ timeout: 10_000 });
-  await joinBtn.click();
-  // Joined view: the shared chrome identifies the counterpart.
-  await expect(b.page.getByText(/Shared · both editing/i)).toBeVisible({ timeout: 10_000 });
-
-  // Context A reloads to pick up the claim — the open-slot invite
-  // collapses into the full session canvas.
-  await a.page.reload();
-  await expect(a.page.getByText(/Shared · both editing/i)).toBeVisible({ timeout: 10_000 });
-
-  return { a, b, sessionUrl };
-}
 
 test.describe('Shared session lifecycle', () => {
   test.describe.configure({ mode: 'serial' });
@@ -169,7 +87,7 @@ test.describe('Shared session lifecycle', () => {
     // this invitation" surface instead of the terminal banner. The
     // fix derives openSlot as "unclaimed AND active" so a cancelled
     // open invite transitions into the terminal banner path.
-    const a = await openParticipant(browser, '/');
+    const a = await openParticipant(browser);
     try {
       await a.page.getByRole('button', { name: /Invite someone/i }).first().click();
       await expect(a.page).toHaveURL(/\/s\/[A-Z0-9]{8}$/, { timeout: 10_000 });
