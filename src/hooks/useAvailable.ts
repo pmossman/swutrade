@@ -89,7 +89,14 @@ export function useAvailable(): AvailableApi {
       writePersisted(PERSIST_KEYS.available, result.items);
       return result.items;
     });
-    return created as unknown as AvailableItem;
+    // setState callback runs synchronously in React 19; throw rather
+    // than cast through `unknown` so a future reducer-returns-null
+    // regression surfaces immediately, not as a `null` typed as
+    // AvailableItem at the call site.
+    if (!created) {
+      throw new Error('useAvailable.add: reducer returned no created item');
+    }
+    return created;
   }, []);
 
   const update = useCallback((id: string, patch: Partial<Omit<AvailableItem, 'id'>>) => {

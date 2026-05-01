@@ -151,8 +151,14 @@ export function useWants(): WantsApi {
       return result.items;
     });
     // setState callback is synchronous with React 19's useState — `created`
-    // is populated before we return.
-    return created as unknown as WantsItem;
+    // is populated before we return. Throw on null rather than casting
+    // through `unknown` (which lied if the reducer ever returned a null
+    // `created` field) — caller treats the null path as an invariant
+    // violation, not as a normal return.
+    if (!created) {
+      throw new Error('useWants.add: reducer returned no created item');
+    }
+    return created;
   }, []);
 
   const update = useCallback((id: string, patch: Partial<Omit<WantsItem, 'id'>>) => {
