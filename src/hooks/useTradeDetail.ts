@@ -18,7 +18,11 @@ export interface CardSnapshot {
   unitPrice: number | null;
 }
 
-export type TradeStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered';
+// TradeStatus mirrors the schema's `proposalStatuses` enum (single
+// source of truth in lib/schema.ts). Aliased + re-exported so existing
+// consumers don't need to chase the canonical import.
+import type { ProposalStatus } from '../../lib/schema';
+export type TradeStatus = ProposalStatus;
 
 export interface UserStub {
   handle: string;

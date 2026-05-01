@@ -350,6 +350,16 @@ export interface TradeCardSnapshot {
  *     time the other responds; the proposal should still show what
  *     was offered, not what's currently listed.
  */
+/**
+ * Canonical proposal-status enum. `'expired'` is reserved for a
+ * future TTL transition — currently no writer sets it (only signals
+ * and sessions actually expire), but it stays in the union so adding
+ * the writer doesn't require a schema migration. See audit
+ * `02-trades.md` #2.
+ */
+export const proposalStatuses = ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] as const;
+export type ProposalStatus = typeof proposalStatuses[number];
+
 export const tradeProposals = pgTable(
   'trade_proposals',
   {
@@ -360,7 +370,7 @@ export const tradeProposals = pgTable(
     recipientUserId: text('recipient_user_id')
       .references(() => users.id, { onDelete: 'cascade' })
       .notNull(),
-    status: text('status', { enum: ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] })
+    status: text('status', { enum: proposalStatuses })
       .default('pending')
       .notNull(),
     // Self-FK: when set, points to the proposal this one was made
