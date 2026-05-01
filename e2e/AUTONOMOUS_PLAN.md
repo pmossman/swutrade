@@ -35,7 +35,7 @@ milestone — it IS the source of truth for "where are we."
 - [x] B2: `session-suggestions-extended.auth.spec.ts` (e701908 · run 25204903857)
 - [ ] B2: `session-suggestions-extended.auth.spec.ts` — multi-card add/remove, swap, dismiss, card-lock UX, max-10, auto-merge
 - [x] B3: `session-revert.auth.spec.ts` (f9f98c9 · run 25205061663)
-- [ ] B4: `session-chat.auth.spec.ts` — rate limit, char limit, empty trim, mark-read on visibility, chat-only badge
+- [x] B4: `session-chat.auth.spec.ts` (55c6766 + 2d0fb93 · run 25205427020 rerun)
 - [ ] B5: `session-mobile.auth.spec.ts` — split-view toggle, iOS keyboard panel sizing, no-zoom on input
 - [ ] B6: `session-cross-device.auth.spec.ts` — same ghost cookie in two contexts sees consistent state
 
@@ -76,3 +76,4 @@ milestone — it IS the source of truth for "where are we."
 | 2026-04-30 22:58 | B1 session-edits | b940368 | 25204427148 | ✅ green |
 | 2026-04-30 23:08 | B2 + B1 flake fix | 7e98efb | 25204903857 | ✅ green |
 | 2026-04-30 23:14 | B3 session-revert | f9f98c9 | 25205061663 | ✅ green |
+| 2026-05-01 00:02 | B4 session-chat + 429 filter | 2d0fb93 | 25205427020 (rerun) | ✅ green (1 infra cancel on shard 2 first run) |
