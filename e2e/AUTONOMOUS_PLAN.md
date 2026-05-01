@@ -37,7 +37,7 @@ milestone — it IS the source of truth for "where are we."
 - [x] B3: `session-revert.auth.spec.ts` (f9f98c9 · run 25205061663)
 - [x] B4: `session-chat.auth.spec.ts` (55c6766 + 2d0fb93 · run 25205427020 rerun)
 - [x] B5: `session-mobile.auth.spec.ts` (4281f38 · run 25205985365)
-- [ ] B6: `session-cross-device.auth.spec.ts` — same ghost cookie in two contexts sees consistent state
+- [x] B6: `session-cross-device.auth.spec.ts` — same Discord user across two browsers + ghost variant (ddbd1a5 + 2334705 · run 25206337925)
 
 ## Phase C — Frozen-fixture regression (Tier 2)
 - [ ] C1: `tests/e2e-fixtures/sessions/` library + Drizzle loader
@@ -78,3 +78,4 @@ milestone — it IS the source of truth for "where are we."
 | 2026-04-30 23:14 | B3 session-revert | f9f98c9 | 25205061663 | ✅ green |
 | 2026-05-01 00:02 | B4 session-chat + 429 filter | 2d0fb93 | 25205427020 (rerun) | ✅ green (1 infra cancel on shard 2 first run) |
 | 2026-05-01 00:08 | B5 session-mobile | 4281f38 | 25205985365 | ✅ green |
+| 2026-05-01 00:18 | B6 cross-device + helper fix | 2334705 | 25206337925 | ✅ green |
