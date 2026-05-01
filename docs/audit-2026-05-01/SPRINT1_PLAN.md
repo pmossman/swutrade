@@ -34,8 +34,8 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S1.8** — Race-fix in `useGuildMemberships.updateGuild` (0053435 · run 25227057716)
 - [x] **S1.9** — Race-fix in `/me/prefs` hooks (63088c1 · run 25227320067)
 - [x] **S1.10** — Nudge throttle + pollPausedRef rename (947e486 · run 25227643830)
-- [~] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup at 3 sites; fix CommunityView's lossy slug-titlecase fallback
-- [ ] **S1.12** — Consolidate `extractVariant` (3 copies in `api/og.ts`, `api/search.ts`, `ShareLiveTradeButton.tsx`); 2 of them miss the canonical `Regional` regex so OG-image + share-link payloads currently render TCGPlayer collector-numbers as variant labels
+- [x] **S1.11** — Replace `familyId.split('::')` parsing with map-lookup (2713731 · run 25227957542)
+- [~] **S1.12** — Consolidate `extractVariant` (3 copies in `api/og.ts`, `api/search.ts`, `ShareLiveTradeButton.tsx`)
 
 ## Run log
 

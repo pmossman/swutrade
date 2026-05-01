@@ -29,15 +29,12 @@ const VALID_SETS: Record<string, string> = {
 
 const TCGPLAYER_SEARCH_URL = 'https://mp-search-api.tcgplayer.com/v1/search/request?q=&isList=true&mpfev=2952';
 
-function extractVariant(name: string): string {
-  const match = name.match(/\(([^)]+)\)\s*$/);
-  if (!match) return 'Standard';
-  return match[1];
-}
-
-function extractBaseName(name: string): string {
-  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
+// Canonical variant + base-name helpers live in src/variants.ts so
+// client + server agree on the parse — including the `(\d+) →
+// 'Regional'` rule for collector-number-only suffixes that
+// TCGPlayer ships on regional-promo cards. Local copy missed that
+// rule (audit 14-domain-rendering #2).
+import { extractVariantLabel as extractVariant, extractBaseName } from '../src/variants.js';
 
 async function searchTcgPlayer(query: string, setNames: string[]): Promise<CardData[]> {
   // Build a search that uses TCGPlayer's search with the query text

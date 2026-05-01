@@ -3,6 +3,7 @@ import { apiPost } from '../services/apiClient';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { TradeCard } from '../types';
 import type { CardSnapshot } from '../hooks/useTradeDetail';
+import { extractVariantLabel as extractVariant } from '../variants';
 
 /**
  * "Invite someone" action for the trade builder's action strip.
@@ -77,13 +78,11 @@ function toSnapshot(tc: TradeCard): CardSnapshot {
   };
 }
 
-// Minimal variant parse to match lib/schema.ts' TradeCardSnapshot
-// shape. Kept local — the richer extractor in ../variants is wired
-// to whole-catalog assumptions we don't need here.
-function extractVariant(name: string): string {
-  const match = /\(([^)]+)\)/.exec(name);
-  return match?.[1] ?? 'Standard';
-}
+// Local extractVariant deleted — the canonical extractVariantLabel
+// from ../variants is now imported above. The local copy missed the
+// `(\d+) → 'Regional'` rule, so share-link snapshots rendered
+// TCGPlayer collector numbers as variant labels (audit
+// 14-domain-rendering #2).
 
 function QRGlyph({ className }: { className?: string }) {
   return (

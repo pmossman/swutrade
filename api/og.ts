@@ -114,14 +114,15 @@ function variantBadgeStyle(variant: string): { bg: string; text: string } | null
   }
 }
 
-function extractVariant(name: string): string {
-  const match = name.match(/\(([^)]+)\)\s*$/);
-  return match ? match[1] : 'Standard';
-}
-
-function extractBaseName(name: string): string {
-  return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
-}
+// Canonical variant + base-name helpers live in src/variants.ts so
+// client + server agree on the parse — including the `(\d+) →
+// 'Regional'` rule for collector-number-only suffixes (regional
+// promo cards). Local copies missed that rule, so OG images
+// previously rendered TCGPlayer collector numbers as variant
+// labels (audit 14-domain-rendering #2).
+//
+// Aliased to keep this file's call sites unchanged.
+import { extractVariantLabel as extractVariant, extractBaseName } from '../src/variants.js';
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
