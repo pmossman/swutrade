@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet } from '../services/apiClient';
 import { createKeyedCache } from './sharedCache';
 import {
@@ -210,14 +210,28 @@ export function useTradeDetail(id: string | null): TradeDetailApi {
   // transition, no page flip — so it doesn't share the `mutating`
   // flag. The reload after a successful nudge is what surfaces the
   // new event on the timeline.
+  //
+  // Per-id throttle: without it, two rapid taps on the Nudge button
+  // produced two timeline events + two DMs (audit
+  // 13-mutation-patterns.md #4). The ref guards against re-entry
+  // while a nudge is in flight; cleared on completion.
+  const nudgingRef = useRef(false);
   const nudge = useCallback(async (note?: string) => {
     if (!id) return { ok: false as const, reason: 'error' as const };
-    const result = await nudgeProposal(id, note);
-    if (result.ok) {
-      detailCache.delete(id);
-      setReloadTick(t => t + 1);
+    if (nudgingRef.current) {
+      return { ok: false as const, reason: 'error' as const };
     }
-    return result;
+    nudgingRef.current = true;
+    try {
+      const result = await nudgeProposal(id, note);
+      if (result.ok) {
+        detailCache.delete(id);
+        setReloadTick(t => t + 1);
+      }
+      return result;
+    } finally {
+      nudgingRef.current = false;
+    }
   }, [id]);
 
   return {

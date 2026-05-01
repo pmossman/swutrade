@@ -213,12 +213,26 @@ export function useSession(sessionId: string | null): SessionApi {
     latestRef.current = session;
   }, [session]);
 
-  // Mutex for in-flight mutations. If a save/confirm/cancel is
-  // pending, the poll skips its overwrite — otherwise a poll could
-  // land between the viewer's optimistic update and the server's
-  // response, temporarily reverting the edit. Set true at the top of
-  // every mutation, cleared on completion (success OR failure).
-  const mutationInFlightRef = useRef(false);
+  // Poll-pause flag — true while ANY mutation (save/confirm/cancel/
+  // suggest/etc.) is in flight. The polling loop checks it before
+  // applying a server response so a poll can't land between the
+  // viewer's optimistic update and that mutation's PUT response,
+  // temporarily reverting the edit.
+  //
+  // **NOT a mutex.** This does NOT prevent two simultaneous mutations
+  // of the same kind from racing (the saveCards rapid-click bug we
+  // caught was exactly this — both fired, both applied optimistic
+  // state, the first response overwrote the second). For real
+  // mutation-vs-mutation race protection, see the gen-counter pattern
+  // applied in useGuildMemberships / useAccountSettings /
+  // useCommunityMembers (audit 13-mutation-patterns.md).
+  //
+  // The contract is poll-vs-mutation. Set true at the top of every
+  // mutation, cleared on completion (success OR failure). Some paths
+  // (e.g. saveCards' rollback `fetchOnce()`) clear it mid-mutation
+  // because the rollback is itself a poll-style refetch that needs
+  // the pause released.
+  const pollPausedRef = useRef(false);
 
   const applyServerSession = useCallback((next: SessionView) => {
     cache.set(next.id, next);
@@ -228,12 +242,12 @@ export function useSession(sessionId: string | null): SessionApi {
 
   const fetchOnce = useCallback(async () => {
     if (!sessionId) return;
-    if (mutationInFlightRef.current) return;
+    if (pollPausedRef.current) return;
     const result = await apiGet<{
       session?: SessionView;
       preview?: SessionPreview;
     }>(`/api/sessions/${encodeURIComponent(sessionId)}`);
-    if (mutationInFlightRef.current) return;
+    if (pollPausedRef.current) return;
     if (!result.ok) {
       // Preserve any cached body but flag the right terminal status.
       if (result.reason === 'not-found') setStatus('not-found');
@@ -325,7 +339,7 @@ export function useSession(sessionId: string | null): SessionApi {
 
   const saveCards = useCallback(async (cards: TradeCardSnapshot[]) => {
     if (!sessionId || !session) return;
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     // Optimistic update — flip local state immediately so the viewer
     // sees their change land without waiting for the round-trip.
     // Confirmations also clear optimistically to match the server
@@ -349,7 +363,7 @@ export function useSession(sessionId: string | null): SessionApi {
         { cards },
       );
       if (!result.ok || !result.data.session) {
-        mutationInFlightRef.current = false;
+        pollPausedRef.current = false;
         // Rollback: re-fetch canonical server state.
         await fetchOnce();
         return;
@@ -357,13 +371,13 @@ export function useSession(sessionId: string | null): SessionApi {
       applyServerSession(result.data.session);
       setSeenCounterpartEditAt(result.data.session.lastEditedAt);
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, session, applyServerSession, fetchOnce]);
 
   const confirm = useCallback(async () => {
     if (!sessionId) return { settled: false };
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null; settled: boolean }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/confirm`,
@@ -372,13 +386,13 @@ export function useSession(sessionId: string | null): SessionApi {
       applyServerSession(result.data.session);
       return { settled: result.data.settled };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const unconfirm = useCallback(async () => {
     if (!sessionId) return;
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/unconfirm`,
@@ -386,13 +400,13 @@ export function useSession(sessionId: string | null): SessionApi {
       if (!result.ok || !result.data.session) return;
       applyServerSession(result.data.session);
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const cancel = useCallback(async () => {
     if (!sessionId) return;
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
@@ -400,13 +414,13 @@ export function useSession(sessionId: string | null): SessionApi {
       if (!result.ok || !result.data.session) return;
       applyServerSession(result.data.session);
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const claim = useCallback(async () => {
     if (!sessionId) return;
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/claim`,
@@ -415,14 +429,14 @@ export function useSession(sessionId: string | null): SessionApi {
         // On conflict (someone else claimed first), fall through and
         // re-fetch so the UI flips to whatever state the server
         // actually has — probably a 404 now that the slot is filled.
-        mutationInFlightRef.current = false;
+        pollPausedRef.current = false;
         await fetchOnce();
         return;
       }
       setPreview(null);
       applyServerSession(result.data.session);
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession, fetchOnce]);
 
@@ -432,7 +446,7 @@ export function useSession(sessionId: string | null): SessionApi {
     if (trimmed.length === 0 || trimmed.length > 500) {
       return { ok: false as const, reason: 'invalid' as const };
     }
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/chat`,
@@ -447,7 +461,7 @@ export function useSession(sessionId: string | null): SessionApi {
       if (result.data.session) applyServerSession(result.data.session);
       return { ok: true as const };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
@@ -490,7 +504,7 @@ export function useSession(sessionId: string | null): SessionApi {
     cardsToRemove?: TradeCardSnapshot[];
   }) => {
     if (!sessionId) return { ok: false as const, reason: 'no-session' };
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggest`,
@@ -504,13 +518,13 @@ export function useSession(sessionId: string | null): SessionApi {
       if (result.data.session) applyServerSession(result.data.session);
       return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const acceptSuggestion = useCallback(async (suggestionId: string) => {
     if (!sessionId) return { ok: false };
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/accept`,
@@ -519,13 +533,13 @@ export function useSession(sessionId: string | null): SessionApi {
       applyServerSession(result.data.session);
       return { ok: true };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const dismissSuggestion = useCallback(async (suggestionId: string) => {
     if (!sessionId) return { ok: false };
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/dismiss`,
@@ -534,13 +548,13 @@ export function useSession(sessionId: string | null): SessionApi {
       applyServerSession(result.data.session);
       return { ok: true };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
   const proposeRevert = useCallback(async (snapshotEventId: string) => {
     if (!sessionId) return { ok: false as const, reason: 'no-session' };
-    mutationInFlightRef.current = true;
+    pollPausedRef.current = true;
     try {
       const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/propose-revert`,
@@ -550,7 +564,7 @@ export function useSession(sessionId: string | null): SessionApi {
       if (result.data.session) applyServerSession(result.data.session);
       return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
     } finally {
-      mutationInFlightRef.current = false;
+      pollPausedRef.current = false;
     }
   }, [sessionId, applyServerSession]);
 
