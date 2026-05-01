@@ -9,7 +9,15 @@
  * without parsing error strings. `already-resolved` and `rate-limited`
  * are split out from the generic `error` bucket because they have
  * distinct UX (race-lost vs. cooldown).
+ *
+ * The actual HTTP machinery (status mapping, JSON serialization, the
+ * try/catch around fetch) lives in `./apiClient.ts`. This file used to
+ * carry its own duplicate `failure()` + `post()` — flagged by the
+ * 2026-05-01 audit (refactor candidates #5) — but now delegates to
+ * `apiPost` so there's one canonical mapping.
  */
+
+import { apiPost } from './apiClient';
 
 export type ActionFailureReason =
   | 'already-resolved'
@@ -30,67 +38,33 @@ export type ActionResult<T = Record<string, never>> =
       nextAvailableAt?: string;
     };
 
-function failure(
-  status: number,
-  body: Record<string, unknown> | null,
-): Extract<ActionResult, { ok: false }> {
-  const detail = typeof body?.detail === 'string' ? body.detail : undefined;
-  if (status === 409) return { ok: false, reason: 'already-resolved', detail };
-  if (status === 429) {
-    const nextAvailableAt = typeof body?.nextAvailableAt === 'string' ? body.nextAvailableAt : undefined;
-    return { ok: false, reason: 'rate-limited', detail, nextAvailableAt };
-  }
-  if (status === 404) return { ok: false, reason: 'not-found', detail };
-  if (status === 403) return { ok: false, reason: 'forbidden', detail };
-  if (status === 401) return { ok: false, reason: 'unauthorized', detail };
-  return { ok: false, reason: 'error', detail };
-}
-
-async function post<T = Record<string, never>>(
-  url: string,
-  body: unknown,
-): Promise<ActionResult<T>> {
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const parsed = await res.json().catch(() => null);
-    if (!res.ok) return failure(res.status, parsed);
-    return { ok: true, data: (parsed ?? {}) as T };
-  } catch {
-    return { ok: false, reason: 'error', detail: 'Network error' };
-  }
-}
-
 // Query-param form (?action=X) works regardless of whether the
 // `/api/trades/<x>` rewrite is wired up in vercel.json — the dispatcher
 // reads `req.query.action` directly. Used uniformly here so the UI
 // surface doesn't couple to the rewrite configuration.
 export function cancelProposal(id: string): Promise<ActionResult> {
-  return post('/api/trades?action=cancel', { id });
+  return apiPost('/api/trades?action=cancel', { id });
 }
 
 export function acceptProposal(id: string): Promise<ActionResult<{ id: string; status: string }>> {
-  return post('/api/trades?action=accept', { id });
+  return apiPost('/api/trades?action=accept', { id });
 }
 
 export function declineProposal(id: string): Promise<ActionResult<{ id: string; status: string }>> {
-  return post('/api/trades?action=decline', { id });
+  return apiPost('/api/trades?action=decline', { id });
 }
 
 export function nudgeProposal(
   id: string,
   note?: string,
 ): Promise<ActionResult<{ id: string; nudgedAt: string }>> {
-  return post('/api/trades?action=nudge', note ? { id, note } : { id });
+  return apiPost('/api/trades?action=nudge', note ? { id, note } : { id });
 }
 
 export function promoteProposalToShared(
   id: string,
 ): Promise<ActionResult<{ sessionId: string; created: boolean }>> {
-  return post('/api/trades?action=promote-to-shared', { proposalId: id });
+  return apiPost('/api/trades?action=promote-to-shared', { proposalId: id });
 }
 
 export interface BulkResolveResult {
@@ -114,5 +88,5 @@ export function bulkResolveProposals(
   ids: string[],
   action: 'decline' | 'cancel',
 ): Promise<ActionResult<BulkResolveResponse>> {
-  return post('/api/trades?action=bulk-resolve', { ids, action });
+  return apiPost('/api/trades?action=bulk-resolve', { ids, action });
 }

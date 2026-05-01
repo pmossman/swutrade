@@ -9,11 +9,10 @@
  *     race" (409), "cool it" (429 with nextAvailableAt), "gone" (404),
  *     "not yours" (403), "sign in again" (401) from generic errors.
  *
- * The result type is re-exported from `tradeActions.ts`, which
- * originated this pattern. `tradeActions.ts` continues to export its
- * stateless POST helpers unchanged (cancelProposal, accept, etc.).
- * It now piggy-backs on `apiPost` internally to avoid two copies of
- * the same status-mapping logic.
+ * The `ActionResult` type lives in `./tradeActions` (it originated
+ * there); both files share the type surface. `tradeActions.ts`'s
+ * stateless POST helpers (cancelProposal, accept, etc.) call `apiPost`
+ * for the actual HTTP work — there's no duplicate status-mapping.
  */
 import type { ActionResult, ActionFailureReason } from './tradeActions';
 export type { ActionResult, ActionFailureReason } from './tradeActions';
@@ -78,11 +77,6 @@ export function apiPut<T>(url: string, body?: unknown): Promise<ActionResult<T>>
 export function apiDelete<T>(url: string, body?: unknown): Promise<ActionResult<T>> {
   return request<T>('DELETE', url, body);
 }
-
-// Re-export the failure helper for tradeActions.ts so it can piggy-back
-// on the shared status mapping without duplicating the switch. Not part
-// of the public API surface — consumers should use the verb helpers.
-export { failure as __mapFailureForTradeActions };
 
 // Type-level assertion: ensure the exported ActionFailureReason from
 // tradeActions includes 'unauthorized' now that we've added that case.
