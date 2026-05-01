@@ -11,8 +11,8 @@ identical: `[ ]` / `[~]` / `[x]` / `[B]`.
 
 - [x] **S2.1** — `proposalStatuses` + `ProposalStatus` exported (40010b4 · run 25232808778)
 - [x] **S2.2** — Re-export schema types instead of redeclaring (fe1f6ea · run 25233170931)
-- [~] **S2.3** — Shared `MeResponse` type — server constructs response via the type, client types its `apiGet` call
-- [ ] **S2.4** — Add zod-validation overload to `apiClient.request()` — `request<T>(method, url, body, schema?)`. Schema validates parsed JSON before the optimistic cast.
+- [x] **S2.3** — Shared `MeResponse` type (174e580 · run 25233432932)
+- [~] **S2.4** — Add zod-validation overload to `apiClient.request()` — `request<T>(method, url, body, schema?)`. Schema validates parsed JSON before the optimistic cast.
 - [ ] **S2.5** — Migrate `/api/auth/me` consumer (`useAuth`) to the zod overload as the proof-of-pattern. Defer the other 43 consumers behind opportunistic future migration.
 
 ## Run log
