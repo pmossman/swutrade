@@ -1,16 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiGet, apiPost } from '../services/apiClient';
+import type { MeResponse, MeResponseUser } from '../../lib/shared';
 
-export interface User {
-  id: string;
-  username: string;
-  handle: string;
-  avatarUrl: string | null;
-  /** True when the signed-in user is a ghost minted for a shared-
-   *  trade claim. The UI uses this to show a "Sign in to save this
-   *  trade" CTA and to hide community-feature surfaces. */
-  isAnonymous?: boolean;
-}
+// `User` was previously hand-rolled here in parallel with
+// `SessionData` (lib/auth.ts) and the wire shape in api/auth.ts.
+// All three now derive from `MeResponseUser` in lib/shared.ts.
+// Audit 04-auth #5.
+export type User = MeResponseUser;
 
 export interface AuthApi {
   user: User | null;
@@ -79,11 +75,7 @@ export function useAuth(): AuthApi {
 
   useEffect(() => {
     (async () => {
-      const result = await apiGet<{
-        user?: User | null;
-        botInstallUrl?: string | null;
-        pendingMergeBanner?: { carriedCount: number } | null;
-      }>('/api/auth/me');
+      const result = await apiGet<MeResponse>('/api/auth/me');
       if (result.ok) {
         setUser(result.data.user ?? null);
         setBotInstallUrl(result.data.botInstallUrl ?? null);

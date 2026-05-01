@@ -7,6 +7,7 @@ import { getDb } from '../lib/db.js';
 import { users } from '../lib/schema.js';
 import { mergeGhostIntoRealUser } from '../lib/sessions.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
+import type { MeResponse } from '../lib/shared.js';
 
 /**
  * Consolidated /api/auth dispatcher. Four external endpoints
@@ -35,9 +36,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 export async function handleMe(req: VercelRequest, res: VercelResponse) {
   const session = await getSession(req, res);
   if (!session) {
-    return res.json({ user: null, botInstallUrl: null });
+    const body: MeResponse = { user: null, botInstallUrl: null, pendingMergeBanner: null };
+    return res.json(body);
   }
-  res.json({
+  const body: MeResponse = {
     user: {
       id: session.userId,
       username: session.username,
@@ -50,7 +52,8 @@ export async function handleMe(req: VercelRequest, res: VercelResponse) {
     // at least one session. Frontend renders a one-shot reassurance
     // banner; dismiss posts to /api/auth/dismiss-merge-banner.
     pendingMergeBanner: session.pendingMergeBanner ?? null,
-  });
+  };
+  res.json(body);
 }
 
 // --- /api/auth/dismiss-merge-banner ----------------------------------------
