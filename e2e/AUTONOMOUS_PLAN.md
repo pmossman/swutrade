@@ -40,9 +40,8 @@ milestone — it IS the source of truth for "where are we."
 - [x] B6: `session-cross-device.auth.spec.ts` — same Discord user across two browsers + ghost variant (ddbd1a5 + 2334705 · run 25206337925)
 
 ## Phase C — Frozen-fixture regression (Tier 2)
-- [ ] C1: `tests/e2e-fixtures/sessions/` library + Drizzle loader
-- [ ] C2: 3 fixtures: pre-suggestions, pre-diff-payload, pre-snapshot-pairing
-- [ ] C3: `session-frozen-fixtures.auth.spec.ts` — load each, render, edit, verify no console errors
+- [x] C1+C3: `e2e/fixtures/sessions/` + `session-frozen-fixtures.auth.spec.ts` (99eaca2 + f86a0b6 · run 25206721209)
+- [x] C2: One fixture (`legacy-events.ts`) covers null-payload + side-only-payload + modern-diff edited events + chat interleave. Future fixtures should land here per migration discipline.
 
 ## Phase D — Discord-identity specs (Tier 3a, uses `/api/test/auth-login`)
 - [ ] D1: `session-discord-handles.auth.spec.ts` — sender-handle, @mention in chat
@@ -79,3 +78,4 @@ milestone — it IS the source of truth for "where are we."
 | 2026-05-01 00:02 | B4 session-chat + 429 filter | 2d0fb93 | 25205427020 (rerun) | ✅ green (1 infra cancel on shard 2 first run) |
 | 2026-05-01 00:08 | B5 session-mobile | 4281f38 | 25205985365 | ✅ green |
 | 2026-05-01 00:18 | B6 cross-device + helper fix | 2334705 | 25206337925 | ✅ green |
+| 2026-05-01 00:30 | C frozen-fixtures + close-panel fix | f86a0b6 | 25206721209 | ✅ green |
