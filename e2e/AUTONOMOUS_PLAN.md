@@ -78,3 +78,47 @@ milestone — it IS the source of truth for "where are we."
 | 2026-05-01 00:18 | B6 cross-device + helper fix | 2334705 | 25206337925 | ✅ green |
 | 2026-05-01 00:30 | C frozen-fixtures + close-panel fix | f86a0b6 | 25206721209 | ✅ green |
 | 2026-05-01 00:43 | D Discord-identities + selector fix | 3e5e7ef | 25207051563 | ✅ green |
+| 2026-05-01 00:55 | E Discord OAuth runbook (doc-only) | f911c9b | 25207245901 | ✅ green |
+
+## Final summary
+
+All 5 phases complete on beta. 8 new spec files, 1 helper module,
+1 fixture library, 1 runbook. CI auth-e2e is sharded 4-way; full
+pipeline completes in ~5 min wallclock.
+
+**New spec coverage** (each in its own file, all ghost flows
+unless noted):
+- `session-edits` — qty stepper regression for hyphenated set slugs
+- `session-suggestions-extended` — multi-card, swap, dismiss, lock
+- `session-revert` — kebab visibility + dismiss path
+- `session-chat` — disabled-send, chat-only badge, rate limit
+- `session-mobile` — split-view toggle + 16px-input zoom guard
+- `session-cross-device` — same Discord user, two browsers
+- `session-frozen-fixtures` — direct-DB legacy event seeding
+- `session-discord-identities` — handle attribution + asymmetric claim
+
+**Infrastructure**:
+- `e2e/helpers/sessions.ts` — shared participant + click helpers
+- `e2e/helpers/session-seed.ts` — direct-DB fixture loader
+- `e2e/fixtures/sessions/legacy-events.ts` — first frozen fixture
+- 429 added to `_fixtures.ts` filter
+- `seed.ts` made concurrency-safe with onConflictDoNothing
+- `playwright.auth.config.ts` left at 1 worker (sharding gives 4×)
+- CI auth-e2e job → 4-way matrix (`--shard=N/4`)
+
+**Discoveries / mid-run pivots**:
+- A2 (test-login endpoint) skipped — existing `signIn()` already
+  seals iron-session cookies for any TestUser.
+- Two flake fixes worth remembering for future specs:
+  - rapid `+/-` clicks race the saveCards mutex; serialize with
+    `clickAndWaitForEdit` (waits for the PUT response).
+  - timeline panel overlay intercepts canvas clicks; close the
+    panel before reaching for trade buttons.
+- Signed-in users land on HomeView at `/` (no Invite button); the
+  helper now defaults to `/?view=trade` for `signedInAs`.
+
+**Deferred (parker drives)**:
+- Phase E (real Discord OAuth specs) — runbook captures all the
+  prereqs in `DISCORD_OAUTH_RUNBOOK.md`. Test accounts, storage-
+  state refresh script, nightly workflow design, and spec sketches
+  are documented; no code yet.
