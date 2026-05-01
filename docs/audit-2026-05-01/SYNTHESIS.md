@@ -152,22 +152,55 @@ No direct disagreements between agents — overlap consistently agrees. One nuan
 
 ## Recommended sequencing for execution
 
-If we run another autonomous-loop pass on this:
+Updated 2026-05-01 after the 4 follow-up audits (accessibility, empty/loading/error states, mutation patterns, domain rendering) added new tier-1 must-fix items. The mutation-race shape lives in 4 more hooks beyond the originally-fixed `saveCards`; the `familyId.split('::')` parser bug class has 3 more sites (one actively lossy in CommunityView). These are class-of-bug findings — ship them in Sprint 1.
 
-**Sprint 1 (fast wins, ~1 day of agent time):** M1 + M2 + M9 + H1 + H6 + H7 + N1 + N4 in one commit cluster. All XS-S, all low-risk, all converge on multiple agents' findings.
+**Sprint 1 (revised, ~12 commits):** Fast correctness wins + the highest-impact perf find + first-pass dedup. Runs autonomously once kicked off. Items in execution order:
 
-**Sprint 2 (foundational type safety):** H4 + H5. One commit lands `proposalStatuses` + `InferSelectModel`-based shared types; subsequent commits migrate hot paths to zod-validated `apiClient` overloads.
+| # | Source | Item | Effort |
+|---|---|---|---|
+| S1.1 | N1 | Delete dead code (~213 LOC: SearchResults.tsx, SetFilter.tsx, listEventsForGuilds, internal-only `export`s) | XS |
+| S1.2 | M1 | `handleLogout` POST-only method gate (CSRF) | XS |
+| S1.3 | M2 | Clear OAuth state/verifier cookies on every error path | XS |
+| S1.4 | M9 | Replace `created as unknown as Item` with throw-on-null in useWants/useAvailable | XS |
+| S1.5 | H1 | `countUnreadEvents` → `COUNT(*)` (every-2.5s-poll regression) | XS |
+| S1.6 | N4 | Make `tradeActions.post` call `apiPost`; delete duplicated `failure()` + `__mapFailureForTradeActions` re-export | XS |
+| S1.7 | H7 + D5 | Centralize `restrictionKey` + `normalizeRestriction` at server-pull boundary; align restriction-label divergence | S |
+| S1.8 | M10a | Mutation-race fix in `useGuildMemberships.updateGuild` (gen-counter + drop-stale-response) | S |
+| S1.9 | M10b | Mutation-race fix in `useAccountSettings.update` + `useCommunityMembers.setPeerPref` (shared `/me/prefs` shape) | S |
+| S1.10 | M10c + H6 | Mutation-race fix in `useTradeDetail.nudge`; rename `mutationInFlightRef` → `pollPauseRef`; extract `withMutationLock` for new race-aware shape | S |
+| S1.11 | M11 + D1 | Replace `familyId.split('::')` parsing with map-lookup at 3 sites (CommunityView's lossy slug-titlecase fix is the user-visible win) | S |
+| S1.12 | D2 | Consolidate `extractVariant` (3 copies, 2 missing canonical Regional regex; OG-image + share-link payloads currently render TCGPlayer collector-numbers as variant labels) | S |
 
-**Sprint 3 (the perf cluster):** H2 + H3 + H8. Memoize contexts, parallelize the four sequential-await sites, lazy-load views.
+**Sprint 2 (foundational type safety):** H4 + H5. Export `proposalStatuses` + `InferSelectModel`-based shared types; incremental zod-validated `apiClient` migration.
 
-**Sprint 4 (correctness + cleanup):** M3 + M5 + N6 + N10 + N12. Race-fixes and mid-size dedup.
+**Sprint 3 (the perf cluster):** H2 + H3 + H8 + N10 + N11. Memoize contexts, parallelize the four sequential-await sites, lazy-load non-builder routes, batch the signal-embed N+1, share-cache the four singleton-cache-missing hooks.
 
-**Sprint 5 (the big splits, do last and serially):** H9 (sessions split) → H10 (bot split) → H11 (trades split) → H12 (SessionView extract) → H13 (TradeBuilderContext + memo). Each is its own commit with CI verification.
+**Sprint 4 (UX primitive consolidation):** U1 (`ui/QtyAdjuster`) + U2 (Radix Dialog migration for hand-rolled modals — focus-trap + scroll-lock + a11y) + U3 (`ui/CardThumb` w/ landscape detection) + D3 (adopt `formatPrice` everywhere) + D4 (single `relativeTime` helper) + N15 + N16 (LoadingState `inline` variant; ErrorState variants).
 
-**Defer to RFC:** M6 (pendingSuggestions schema migration), M7/M8 (orphan sweeps — need cron infra check).
+**Sprint 5 (mid-size correctness):** M3 (`promote-to-shared` race-guard + `'promoted'` status) + M5 (`useServerSync` race) + N6 (`resolveSignalFamily`/`resolveVariantSpec` dedup) + N12 (typed prefs-registry column accessors) + N18 (KebabMenu aria-haspopup/expanded/controls) + N19 (`<button>` for tiles).
 
-Total scope: ~30 commits across 5 sprints. Each commit follows the autonomous-loop pattern (one milestone → CI verify → next).
+**Sprint 6 (the big splits, serial):** H9 (sessions split) → H10 (bot split) → H11 (trades split) → H12 (SessionView extract) → H13 (TradeBuilderContext + memo). Each its own commit with CI verification.
+
+**Defer to RFC:** M6 (pendingSuggestions schema migration), M7/M8 (orphan sweeps — need cron infra check), M4 (bot role overwrite — latent, not active).
+
+Total scope: ~40 commits across 6 sprints. Each commit follows the autonomous-loop pattern (one milestone → CI verify → next).
+
+## Addendum: Accessibility audit
+
+An 11th-agent pass (`11-accessibility.md`) sweeping every interactive element under `src/components/` for aria-label conventions, role usage, keyboard support, focus management, and color-only signaling. Headline: the same UX-primitive divergence flagged by agent 10 also fragments accessibility — the qty stepper's aria-label convention has four variants across `NumberStepper`, `TradeRow.tsx:283`, `CardTile.tsx:195`, `FamilyRow.tsx:149`, and `ListRows.tsx:24` (one says `"Remove"`, one says `"Decrease quantity"`, two say `"Decrease quantity of ${name}"`), and three of four hand-rolled dialogs (`NudgeDialog`, `HandlePickerDialog`, `TradeImageModal`) declare `role="dialog"` but skip focus-trap + focus-restore — all of which Radix `Dialog.Root` (already in deps via `ProposeBar` + `ListsDrawer`) gives free. Top XS wins: `KebabMenu.tsx:42` is missing `aria-haspopup`/`aria-expanded`/`aria-controls` despite `AccountMenu` and `NavMenu` wiring all three, and `AutoBalanceBanner.tsx:190` shows error state via red text alone (no `role="alert"`, icon `aria-hidden`) while `ProposeBar` does it correctly. Also flagged: tabs declare `role="tablist"`+`role="tab"` everywhere but only `ProfileView.tsx:396` pairs a `role="tabpanel"`; `<div role="button">` tiles in CardTile/FamilyRow reimplement what `<button>` gives free; four `window.confirm()` sites break the ARIA tree + palette (already captured in UX 10-5).
 
 ## Addendum: UX primitives audit
 
 A 10th-agent pass (`10-ux-primitives.md`) sweeping every `src/components/` file for behaviorally-equivalent reimplementations of UI primitives surfaced a class of duplication the original 9 missed. Headline finding: `ui/NumberStepper.tsx` exists and is used in 2 places, but TradeRow, CardTile, and FamilyRow each reimplement the +/− stepper inline — even sharing a byte-identical local `qtyBadgeClass: Record<'gold'|'emerald'|'blue', string>` map across CardTile.tsx:39-49 and FamilyRow.tsx:53-63. The fix is `ui/QtyAdjuster` with `accent` + `variant: 'split'|'pill'` props (preserving the deliberate emerald/blue side-coloring invariant) — call it **U1** and slot into Sprint 4 alongside the other dedup work. Adjacent findings: avatar duplicated 7× (folds into N2), 4 incompatible tab visuals, 6 inline card-thumbnail implementations where only TradeRow detects landscape orientation (subsumes N7 with a wider scope — extract `ui/CardThumb`), and 3 competing modal patterns that hand-rolled half the dialogs without focus-trap or scroll-lock. Lower priority: empty/loading-state strays (4 inline + 1 duplicate local definition in SignalBuilderView), `window.confirm` mixed with two-tap-arm. Anti-recommendations preserve the side-coloring invariant, the page-replacing overlays as distinct from dialogs, and `SetFilter`'s deliberate custom listbox.
+
+## Addendum: Empty/Loading/Error states audit
+
+A 12th-agent deeper sweep (`12-empty-loading-error-states.md`) found the 10th-agent's tally was conservative: `EmptyState` is reimplemented locally **six times** (WantsPanel/AvailablePanel/SignalBuilderView/SessionTimelinePanel/CardResultsGrid + HomeView's `EmptyListState`), inline `animate-pulse` loading text appears in five composer bars (AutoBalanceBanner/EditBar/CounterBar/ProposeBar/ProfileView), and 20+ surfaces ship bare `text-red-300/400` instead of `ErrorState` — including three near-byte-identical reimplementations of the canonical card chrome in NudgeDialog/TradesHistoryView/ProposeBar. Convergence path: add `inline` variant to `LoadingState` (XS), promote `ErrorLine` + `variant` prop to `ErrorState` (S), and either migrate WantsPanel/AvailablePanel/SignalBuilderView to canonical `EmptyState` or promote `EmptyListState` as a third primitive (S). Anti-recommendations: composer-bar inline errors stay (PrimaryActionBar pattern), per-row mutation errors stay (locality is intentional), TradeExpandPeek/TerminalBanner/CenteredMessage stay (distinct semantics).
+
+## Addendum: Mutation patterns audit
+
+A 13th-agent pass (`13-mutation-patterns.md`) tabulated every client mutation across `src/` (~29 entries). Headline: the recently-fixed qty-stepper race shape exists in **5 hooks** — `useSession.saveCards`, `useGuildMemberships.updateGuild`, `useAccountSettings.update`, `useCommunityMembers.setPeerPref`, plus `useTradeDetail.nudge` (which deliberately bypasses `wrap`'s mutex). Three are fully unguarded against rapid re-entry; only the e2e `clickAndWaitForEdit` helper enforces serialization, and only on `saveCards`. The fix shape — gen-counter ref + drop-stale-response in setState — applies uniformly without forcing per-feature optimistic-shape convergence (the original "don't extract a generic `useOptimistic`" anti-recommendation still holds). Also flagged: `useSession`'s `mutationInFlightRef` is mis-named as a mutex when it's actually a poll-pause flag, `useFavorites.add`/`remove` are asymmetric (remove optimistic, add server-leads), `TradeSummary.handleSave` (`:194`) is the lone call site bypassing `apiClient`.
+
+## Addendum: Domain rendering audit
+
+A 14th-agent pass (`14-domain-rendering.md`) catalogued every rendering surface for cards, variants, prices, sets, handles, dates, keys, and quantities. Highest-leverage findings: three places parse `familyId` as a substitute for a `familyId → card` lookup (`SignalBuilderView.tsx:122`, `CommunityView.tsx:727-737`, `lib/signalMatching.ts:68`) — and CommunityView's slug-titlecase fallback is actively lossy (loses "of"/"the" and parens; the comment self-flags the upgrade). Two duplicate `extractVariant` copies in `api/og.ts:117`, `api/search.ts:32`, and `ShareLiveTradeButton.tsx:83` miss the canonical `(\d+) → 'Regional'` rule, so OG-image and share-link payloads render TCGPlayer's collector-number parens as variant labels. Eight+ proposal/list surfaces inline `` `$${n.toFixed(2)}` `` instead of `formatPrice` (renders `$0.00` for null where it's most misleading); the refactor agent's "4 timeAgo variants" is actually 5+ relative-time helpers + 5 raw `toLocaleString` sites; `cardBaseName(card)` exists but five components inline the equivalent expression. Slot into Sprint 4 alongside H7 — call them **D1** (familyId→card map), **D2** (canonicalize `extractVariantLabel` for `/api`), **D3** (adopt `formatPrice` everywhere + surface `countMissingPrices` on proposal views), **D4** (single `relativeTime` helper, supersedes N2). Plus a smaller **D5** for restriction-label divergence between editor (`'Hyperspace or Showcase'`), read-only (`'HS / SC'`), and dedup key (`Hyperspace|Showcase`). Anti-recommendations preserve the breadcrumb-vs-panel "Trade with @handle" / "with @handle" split, the `tradeCardKey` name fallback, the `cardFamilyId` `::` separator, the `'3 variants'` editor collapse, and `formatPrice`'s `'N/A'` (not `$0.00`) behavior.
