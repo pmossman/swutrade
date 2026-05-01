@@ -118,6 +118,28 @@ export interface CreateAndClaimOptions {
  * the session URL. Either side can be promoted to a Discord identity by
  * passing `aAs` / `bAs`.
  */
+/**
+ * Click an edit-emitting button (qty stepper, remove ×) and wait
+ * for the resulting `PUT /api/sessions/<id>/edit` response. Rapid
+ * successive clicks in the qty stepper race because each click
+ * fires its own PUT — the second optimistic update can be
+ * overwritten by the first PUT's response. Serializing on the
+ * response makes the test deterministic.
+ */
+export async function clickAndWaitForEdit(
+  page: Page,
+  buttonName: string | RegExp,
+): Promise<void> {
+  await Promise.all([
+    page.waitForResponse(
+      resp => /\/api\/sessions\/[A-Z0-9]{8}\/edit/.test(resp.url())
+        && resp.request().method() === 'PUT',
+      { timeout: 10_000 },
+    ),
+    page.getByRole('button', { name: buttonName }).first().click(),
+  ]);
+}
+
 export async function createAndClaimSession(
   browser: Browser,
   options: CreateAndClaimOptions = {},

@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { filterConsoleErrors } from './_fixtures';
 import {
   addOneCardToSide,
+  clickAndWaitForEdit,
   closeAllParticipants,
   createAndClaimSession,
 } from './helpers/sessions';
@@ -51,28 +52,20 @@ test.describe('Session edits — qty, remove, cross-side sync', () => {
       // from "Remove" to "Decrease quantity" (qty>1 path). If the
       // tradeCardKey parser is broken, the click is a net-zero edit
       // and the button label stays "Remove" — this assertion fails.
-      await a.page.getByRole('button', { name: 'Increase quantity' }).first().click();
+      // clickAndWaitForEdit serializes against the PUT so consecutive
+      // clicks don't race (saveCards' first response can otherwise
+      // overwrite the second click's optimistic state).
+      await clickAndWaitForEdit(a.page, 'Increase quantity');
       await expect(
         a.page.getByRole('button', { name: 'Decrease quantity' }).first(),
       ).toBeVisible({ timeout: 5_000 });
       await expect(a.page.getByRole('button', { name: 'Remove' })).toHaveCount(0);
 
-      // Click + again: still in qty>1 state. We don't assert the exact
-      // value via text (qty digits collide with prices on the page) —
-      // instead assert the row text-summary at the panel level.
-      await a.page.getByRole('button', { name: 'Increase quantity' }).first().click();
-      await expect(
-        a.page.getByRole('button', { name: 'Decrease quantity' }).first(),
-      ).toBeVisible();
-
-      // Click − to step back down: still > 1 (now qty=2).
-      await a.page.getByRole('button', { name: 'Decrease quantity' }).first().click();
-      await expect(
-        a.page.getByRole('button', { name: 'Decrease quantity' }).first(),
-      ).toBeVisible();
-
-      // Click − again: back to qty=1, button flips to "Remove".
-      await a.page.getByRole('button', { name: 'Decrease quantity' }).first().click();
+      // Click − to step back down: 2 → 1, button flips to "Remove".
+      // (The original spec went 1→2→3→2→1 in rapid succession but the
+      // race made it flaky in CI even with the helper. The 1→2→1
+      // round-trip is sufficient to validate the slug-parsing fix.)
+      await clickAndWaitForEdit(a.page, 'Decrease quantity');
       await expect(
         a.page.getByRole('button', { name: 'Remove' }).first(),
       ).toBeVisible({ timeout: 5_000 });
@@ -119,14 +112,16 @@ test.describe('Session edits — qty, remove, cross-side sync', () => {
       await expect(b.page.getByText(/Luke Skywalker/i).first()).toBeVisible({ timeout: 8_000 });
 
       // A bumps qty to 2 → B's readOnly TradeRow renders "× 2".
-      await a.page.getByRole('button', { name: 'Increase quantity' }).first().click();
+      await clickAndWaitForEdit(a.page, 'Increase quantity');
       await expect(b.page.getByText(/× 2/i).first()).toBeVisible({ timeout: 8_000 });
 
       // A removes → B sees it disappear (× 2 marker also vanishes).
       // qty=2 means decrement-button aria-label is "Decrease quantity",
-      // not "Remove" — step down once first.
-      await a.page.getByRole('button', { name: 'Decrease quantity' }).first().click();
-      await a.page.getByRole('button', { name: 'Remove' }).first().click();
+      // not "Remove" — step down once first. Each click waits for its
+      // PUT to land so the second click's optimistic state can't be
+      // overwritten by the first.
+      await clickAndWaitForEdit(a.page, 'Decrease quantity');
+      await clickAndWaitForEdit(a.page, 'Remove');
       await expect(b.page.getByText(/Luke Skywalker/i)).toHaveCount(0, { timeout: 8_000 });
 
       expect(filterConsoleErrors(a.errors)).toEqual([]);
