@@ -102,10 +102,10 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
     const { a, b } = await createAndClaim(browser);
 
     try {
-      // The "+ Suggest changes" button now lives inside the
-      // counterpart's panel header (so the suggestion is anchored
-      // visually to the side it would affect).
-      await a.page.getByRole('button', { name: /^\+ Suggest changes$/ }).click();
+      // The "Suggest a card" button now lives in the counterpart
+      // panel's footer slot (where Add Card would normally be on an
+      // editable side), making the affordance spatially obvious.
+      await a.page.getByRole('button', { name: /Suggest a card/i }).click();
       await expect(a.page.getByText(/Suggest changes/i).first()).toBeVisible({ timeout: 5_000 });
 
       // Pick Luke (Standard) — composer uses the standard ListCardPicker.
@@ -151,7 +151,7 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
 
     try {
       // A opens the suggest composer + suggests Luke for B.
-      await a.page.getByRole('button', { name: /^\+ Suggest changes$/ }).click();
+      await a.page.getByRole('button', { name: /Suggest a card/i }).click();
       const input = a.page.getByRole('textbox', { name: /Search cards/i }).first();
       await input.fill('luke jtl');
       const tile = a.page.getByRole('button', {

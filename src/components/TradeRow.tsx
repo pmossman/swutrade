@@ -113,6 +113,11 @@ interface TradeRowProps {
    *  shared trade session and for the viewer's side once the session
    *  is settled / cancelled / expired. */
   readOnly?: boolean;
+  /** Extra kebab-menu items appended to the row's defaults. When the
+   *  row is otherwise read-only, providing extras keeps the kebab
+   *  rendered so callers can attach context-specific actions
+   *  (e.g. session counterpart panel: "Suggest remove this card"). */
+  extraMenuItems?: KebabMenuItem[];
 }
 
 /**
@@ -131,6 +136,7 @@ export function TradeRow({
   onRemove,
   onReplace,
   readOnly = false,
+  extraMenuItems,
 }: TradeRowProps) {
   const unitPrice = adjustPrice(getCardPrice(card, priceMode), percentage);
   const altUnitPrice = adjustPrice(getAltPrice(card, priceMode), percentage);
@@ -182,15 +188,23 @@ export function TradeRow({
       ),
     });
   }
-  menuItems.push({
-    label: 'Swap variant',
-    onClick: onReplace,
-    icon: (
-      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3l4 4m0 0l-4 4m4-4H4m4 14l-4-4m0 0l4-4m-4 4h16" />
-      </svg>
-    ),
-  });
+  // Swap variant is editor-side only — it routes through onReplace
+  // which opens the picker on the row's own panel. Read-only rows
+  // (counterpart side) skip it.
+  if (!readOnly) {
+    menuItems.push({
+      label: 'Swap variant',
+      onClick: onReplace,
+      icon: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3l4 4m0 0l-4 4m4-4H4m4 14l-4-4m0 0l4-4m-4 4h16" />
+        </svg>
+      ),
+    });
+  }
+  if (extraMenuItems && extraMenuItems.length > 0) {
+    menuItems.push(...extraMenuItems);
+  }
 
   const qtyBtn = QTY_BTN_COLORS[accentColor];
   // hit-area-44 expands the tap zone to WCAG's 44×44 minimum without
@@ -251,17 +265,17 @@ export function TradeRow({
           </div>
         )}
       </div>
+      {/* Kebab renders when there's something in the menu — for
+          read-only rows that would normally hide the kebab, callers
+          can still surface actions via `extraMenuItems` (e.g. session
+          counterpart panel: "Suggest remove this card"). */}
+      {menuItems.length > 0 && (
+        <div className="shrink-0 hover-reveal">
+          <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
+        </div>
+      )}
       {!readOnly && (
         <>
-          {/* Secondary actions collapsed behind a kebab to keep the row
-              scannable. Qty controls stay primary. `hover-reveal` hides
-              the kebab until the row is hovered or focused — touch
-              devices (no hover) see it at 0.7 opacity via the media-query
-              in index.css, so mobile still has access without the dense
-              always-on eight-zone row. */}
-          <div className="shrink-0 hover-reveal">
-            <KebabMenu items={menuItems} size={isCompact ? 'xs' : isLarge ? 'md' : 'sm'} />
-          </div>
           <div className="flex items-center gap-0.5 shrink-0">
             <button
               onClick={() => qty <= 1 ? onRemove() : onChangeQty(-1)}

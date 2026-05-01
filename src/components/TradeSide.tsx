@@ -98,6 +98,14 @@ interface TradeSideProps {
    *  the side it would actually affect. Hidden when collapsed so the
    *  panel chrome doesn't peek. */
   aboveCardList?: React.ReactNode;
+  /** Per-row kebab actions appended to TradeRow's defaults. Lets
+   *  callers attach context-specific actions (session counterpart
+   *  panel: "Suggest remove this card"). */
+  cardActions?: (card: TradeCard) => Array<{ label: string; onClick?: () => void; href?: string; icon?: React.ReactNode }>;
+  /** Replaces the default Add Card footer. Used by session
+   *  counterpart side to render a "+ Suggest a card" affordance in
+   *  the same spatial slot a normal Add Card would occupy. */
+  customFooter?: React.ReactNode;
 }
 
 const headerColors: Record<string, string> = {
@@ -174,6 +182,8 @@ export function TradeSide({
   readOnly = false,
   readOnlyEmptyLabel,
   aboveCardList,
+  cardActions,
+  customFooter,
 }: TradeSideProps) {
   const { byFamilyAll, byProductId } = useCardIndexContext();
   const isMobile = useIsMobile();
@@ -557,6 +567,7 @@ export function TradeSide({
                     onRemove={() => onRemove(key)}
                     onReplace={() => handleReplace(tc.card)}
                     readOnly={readOnly}
+                    extraMenuItems={cardActions ? cardActions(tc) : undefined}
                   />
                 );
               })}
@@ -567,8 +578,13 @@ export function TradeSide({
         {/* Sticky Add Card footer — reads as the natural "next step" after
             the card list. Hidden when collapsed (nothing to append to) or
             when empty (AddCardsTile above is already the CTA) or in
-            read-only mode (counterpart side / settled session). */}
-        {!collapsed && !readOnly && cards.length > 0 && (
+            read-only mode (counterpart side / settled session). When
+            customFooter is provided (counterpart-side suggest-add)
+            we render that instead of the default Add Card button. */}
+        {!collapsed && customFooter && (
+          <div className="shrink-0">{customFooter}</div>
+        )}
+        {!collapsed && !customFooter && !readOnly && cards.length > 0 && (
           <button
             type="button"
             onClick={openOverlay}

@@ -408,16 +408,58 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                       : 'Waiting for your counterpart to add cards.'
                   }
                   // Outgoing suggestions render at the top of the
-                  // counterpart's panel (where their cards would land),
-                  // along with the "+ Suggest changes" button.
-                  aboveCardList={!terminal ? (
-                    <CounterpartPanelHeader
-                      outgoingSuggestions={outgoingSuggestions}
+                  // counterpart's panel (where their cards would land
+                  // on accept).
+                  aboveCardList={!terminal && outgoingSuggestions.length > 0 ? (
+                    <InlineSuggestionList
+                      suggestions={outgoingSuggestions}
                       counterpartHandle={counterpartHandle}
                       onAccept={acceptSuggestion}
                       onDismiss={dismissSuggestion}
-                      onOpenComposer={() => setSuggestComposerOpen(true)}
                     />
+                  ) : undefined}
+                  // Per-card "Suggest remove" action — fires
+                  // immediately with cardsToRemove: [thisCard]. The
+                  // counterpart accepts to apply.
+                  cardActions={!terminal ? (tc) => {
+                    if (!tc.card.productId) return [];
+                    const productId = tc.card.productId;
+                    return [{
+                      label: 'Suggest remove this card',
+                      onClick: () => {
+                        void suggest({
+                          targetSide: counterpartSide,
+                          cardsToRemove: [{
+                            productId,
+                            name: tc.card.name,
+                            variant: extractVariantLabel(tc.card.name),
+                            qty: tc.qty,
+                            unitPrice: tc.card.marketPrice ?? null,
+                          }],
+                        });
+                      },
+                      icon: (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                        </svg>
+                      ),
+                    }];
+                  } : undefined}
+                  // Footer in the counterpart-panel slot becomes a
+                  // "+ Suggest a card" button — same spatial slot
+                  // an Add Card would normally occupy on an editable
+                  // side, so the affordance is where the user expects.
+                  customFooter={!terminal ? (
+                    <button
+                      type="button"
+                      onClick={() => setSuggestComposerOpen(true)}
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 border-t border-space-600 bg-amber-950/20 hover:bg-amber-900/30 text-amber-200 text-xs font-bold tracking-wide uppercase transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                      </svg>
+                      Suggest a card
+                    </button>
                   ) : undefined}
                 />
               </div>
@@ -523,53 +565,6 @@ function SplitViewToggle({
         @{counterpartHandle ?? 'Theirs'}
       </button>
     </div>
-  );
-}
-
-// --- Counterpart panel header --------------------------------------------
-
-/**
- * Inline header for the counterpart's TradeSide. Stacks (a) outgoing
- * suggestion pills the viewer authored (target = counterpart side, so
- * they'd land here on accept) and (b) a "+ Suggest changes" button.
- *
- * Lives in TradeSide's `aboveCardList` slot so the suggestion UI is
- * spatially anchored to where the cards would actually go — easier
- * for users to map "tap → goes there."
- */
-function CounterpartPanelHeader({
-  outgoingSuggestions,
-  counterpartHandle,
-  onAccept,
-  onDismiss,
-  onOpenComposer,
-}: {
-  outgoingSuggestions: import('../hooks/useSession').PendingSuggestionView[];
-  counterpartHandle: string | null;
-  onAccept: (id: string) => Promise<{ ok: boolean }>;
-  onDismiss: (id: string) => Promise<{ ok: boolean }>;
-  onOpenComposer: () => void;
-}) {
-  return (
-    <>
-      {outgoingSuggestions.length > 0 && (
-        <InlineSuggestionList
-          suggestions={outgoingSuggestions}
-          counterpartHandle={counterpartHandle}
-          onAccept={onAccept}
-          onDismiss={onDismiss}
-        />
-      )}
-      <div className="px-3 py-1.5 flex justify-end">
-        <button
-          type="button"
-          onClick={onOpenComposer}
-          className="px-2.5 py-1 rounded-md border border-amber-500/40 bg-amber-950/20 hover:bg-amber-900/30 text-amber-200 text-[11px] font-bold tracking-wide uppercase transition-colors"
-        >
-          + Suggest changes
-        </button>
-      </div>
-    </>
   );
 }
 
