@@ -40,10 +40,12 @@ export { expect };
 /**
  * Filter out expected-noise console messages. Current patterns:
  *
- *   - "Failed to load resource … 401 | 404" — browser warning for
- *     API fetches returning those statuses. Tests hitting not-found
- *     ids + anonymous viewers hitting auth-gated endpoints log
- *     these constantly.
+ *   - "Failed to load resource … 401 | 404 | 429" — browser warning
+ *     for API fetches returning those statuses. Tests hitting
+ *     not-found ids, anonymous viewers hitting auth-gated endpoints,
+ *     or rate-limited endpoints (chat hits 10/min cap) log these as
+ *     part of normal flows. Real regressions surface as 5xx, not
+ *     these explicit-API-decision codes.
  *   - CORS preflight failures on third-party hosts (gstatic font
  *     CDN specifically). Emitted when running against Vercel preview
  *     URLs with deployment-protection-bypass headers — Playwright's
@@ -58,7 +60,7 @@ export { expect };
  */
 export function filterConsoleErrors(errors: readonly string[]): string[] {
   return errors.filter(msg =>
-    !/Failed to load resource.*(?:401|404)/i.test(msg)
+    !/Failed to load resource.*(?:401|404|429)/i.test(msg)
     && !/blocked by CORS policy/i.test(msg)
     && !/Failed to load resource:\s*net::ERR_FAILED/i.test(msg)
     && !/fonts\.gstatic\.com/i.test(msg),
