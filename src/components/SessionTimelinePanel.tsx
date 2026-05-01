@@ -55,6 +55,16 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
       .reverse();
   }, [session.events]);
 
+  // The most recent edited event represents the *current* state, so
+  // "Revert to this state" on it is a no-op (and confusing). Suppress
+  // the kebab on that row only — older edits keep it.
+  const latestEditedId = useMemo(() => {
+    for (let i = visibleEvents.length - 1; i >= 0; i--) {
+      if (visibleEvents[i].type === 'edited') return visibleEvents[i].id;
+    }
+    return null;
+  }, [visibleEvents]);
+
   const handleRevert = async (snapshotEventId: string) => {
     setRevertingId(snapshotEventId);
     setRevertError(null);
@@ -182,13 +192,14 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
               const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
                 ? event.payload.snapshotEventId
                 : null;
+              const revertable = snapshotId && event.id !== latestEditedId;
               return (
                 <EventRow
                   key={event.id}
                   event={event}
                   counterpartHandle={counterpartHandle}
-                  onRevert={snapshotId ? () => handleRevert(snapshotId) : undefined}
-                  reverting={snapshotId ? revertingId === snapshotId : false}
+                  onRevert={revertable ? () => handleRevert(snapshotId!) : undefined}
+                  reverting={revertable ? revertingId === snapshotId : false}
                 />
               );
             })

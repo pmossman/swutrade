@@ -976,7 +976,7 @@ function ConfirmBadge({ label, confirmed }: { label: string; confirmed: boolean 
   }
   return (
     <span className="inline-flex items-center gap-1 px-2 h-6 rounded-md border border-space-600 bg-space-800/60 text-gray-500 text-[11px]">
-      {label} not confirmed
+      Awaiting {label}
     </span>
   );
 }
