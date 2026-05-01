@@ -315,7 +315,7 @@ function EventRow({
   }
 
   // Structured event — small one-liner with subtle chrome.
-  const summary = summarizeStructuredEvent(event, actor);
+  const summary = summarizeStructuredEvent(event, actor, event.actorIsViewer);
   if (!summary) return null;
   return (
     <div className="text-[11px] text-gray-500 italic text-center py-1">
@@ -419,7 +419,7 @@ function CardDiffSection({
   );
 }
 
-function summarizeStructuredEvent(event: SessionEvent, actor: string): string | null {
+function summarizeStructuredEvent(event: SessionEvent, actor: string, actorIsViewer: boolean): string | null {
   switch (event.type) {
     case 'created':
       return 'Session opened';
@@ -433,9 +433,12 @@ function summarizeStructuredEvent(event: SessionEvent, actor: string): string | 
       if (viaSuggestion) {
         return `${actor} accepted a suggestion`;
       }
+      // "your side" when the actor is the viewer; "their side"
+      // otherwise. Mirrors the headline in the diff-renderer above.
+      const sideLabel = actorIsViewer ? 'your side' : 'their side';
       return count != null
-        ? `${actor} edited their side (${count} card${count === 1 ? '' : 's'})`
-        : `${actor} edited their side`;
+        ? `${actor} edited ${sideLabel} (${count} card${count === 1 ? '' : 's'})`
+        : `${actor} edited ${sideLabel}`;
     }
     case 'confirmed':
       return `${actor} confirmed`;
