@@ -43,13 +43,11 @@ milestone — it IS the source of truth for "where are we."
 - [x] C1+C3: `e2e/fixtures/sessions/` + `session-frozen-fixtures.auth.spec.ts` (99eaca2 + f86a0b6 · run 25206721209)
 - [x] C2: One fixture (`legacy-events.ts`) covers null-payload + side-only-payload + modern-diff edited events + chat interleave. Future fixtures should land here per migration discipline.
 
-## Phase D — Discord-identity specs (Tier 3a, uses `/api/test/auth-login`)
-- [ ] D1: `session-discord-handles.auth.spec.ts` — sender-handle, @mention in chat
-- [ ] D2: `session-discord-to-discord.auth.spec.ts` — full session between two Discord users
-- [ ] D3: `session-anon-to-discord.auth.spec.ts` — anon claims session created by Discord user
+## Phase D — Discord-identity specs (consolidated into one file)
+- [x] D1+D2+D3: `session-discord-identities.auth.spec.ts` (0b61d42 + 3e5e7ef · run 25207051563) — Discord-to-Discord with handle attribution + anon-claims-Discord-created session.
 
 ## Phase E — Real Discord OAuth (DEFERRED — runbook only)
-- [ ] E0: Write `e2e/DISCORD_OAUTH_RUNBOOK.md` with setup steps for parker. No code. Stop after writing.
+- [x] E0: `e2e/DISCORD_OAUTH_RUNBOOK.md` written. Captures Discord dev-app setup, two test accounts, storage-state refresh script, nightly workflow design, two spec sketches, maintenance cadence. No code. parker drives the rest.
 
 ## Anti-flakiness checklist (applied to every new spec)
 - Each test creates its own session (no cross-test state)
@@ -79,3 +77,4 @@ milestone — it IS the source of truth for "where are we."
 | 2026-05-01 00:08 | B5 session-mobile | 4281f38 | 25205985365 | ✅ green |
 | 2026-05-01 00:18 | B6 cross-device + helper fix | 2334705 | 25206337925 | ✅ green |
 | 2026-05-01 00:30 | C frozen-fixtures + close-panel fix | f86a0b6 | 25206721209 | ✅ green |
+| 2026-05-01 00:43 | D Discord-identities + selector fix | 3e5e7ef | 25207051563 | ✅ green |
