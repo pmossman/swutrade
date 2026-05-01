@@ -188,22 +188,21 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       await addOneCard(b.page);
 
       // Wait for the post-edit poll to reach A so its timeline carries
-      // the snapshot events.
+      // both edited events.
       await a.page.waitForTimeout(3_000);
 
-      // A opens the timeline; the most-recent edit-snapshot row has
-      // a "↶ Revert here" affordance.
+      // A opens the timeline. Each edited event row has a kebab (⋮)
+      // that opens a popover with "↶ Revert to this state" — moved
+      // from a per-snapshot pill into a kebab so the rarely-used
+      // affordance doesn't visually compete with the chat log.
       await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
-      const revertBtns = a.page.getByRole('button', { name: /↶ Revert here/i });
-      await expect(revertBtns.first()).toBeVisible({ timeout: 8_000 });
-      // Click the OLDEST visible revert (last in DOM order — events
-      // render top-to-bottom newest-first reversed; so .last() is the
-      // earliest snapshot, before either side added cards).
-      const all = await revertBtns.all();
-      // Grab the second-to-last revert (after A's edit, before B's).
-      // Falls back to .last() when there aren't enough snapshots yet.
-      const target = all[all.length - 2] ?? all[all.length - 1];
-      await target.click();
+      const kebabs = a.page.getByRole('button', { name: /^More actions$/i });
+      await expect(kebabs.first()).toBeVisible({ timeout: 8_000 });
+      // The OLDEST edit (alice's first edit, where alice has the card
+      // but bob doesn't yet) is at the TOP of the timeline since the
+      // panel renders chronological top-to-bottom. .first() clicks it.
+      await kebabs.first().click();
+      await a.page.getByRole('button', { name: /Revert to this state/i }).click();
 
       // A's revert banner appears (collapsed pill above the canvas).
       await expect(a.page.getByText(/proposed reverting both sides/i)).toBeVisible({ timeout: 5_000 });
