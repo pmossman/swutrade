@@ -1,26 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
 import { createKeyedCache } from './sharedCache';
-import type { CardSnapshot } from './useTradeDetail';
+import type {
+  TradeCardSnapshot as SchemaTradeCardSnapshot,
+  SessionStatus as SchemaSessionStatus,
+  SessionEventType as SchemaSessionEventType,
+} from '../../lib/schema';
 
-export type TradeCardSnapshot = CardSnapshot;
-
-export type SessionStatus = 'active' | 'settled' | 'cancelled' | 'expired';
-
-export type SessionEventType =
-  | 'created'
-  | 'edited'
-  | 'edit-snapshot'
-  | 'confirmed'
-  | 'unconfirmed'
-  | 'settled'
-  | 'cancelled'
-  | 'expired'
-  | 'notified'
-  | 'chat'
-  | 'suggestion-created'
-  | 'suggestion-accepted'
-  | 'suggestion-dismissed';
+// Re-export the canonical shapes from lib/schema.ts. The hook's
+// public API surface stays identical; the schema is now the single
+// source of truth instead of having parallel hand-rolled copies
+// here (audit 08-types-deadcode #1).
+export type TradeCardSnapshot = SchemaTradeCardSnapshot;
+export type SessionStatus = SchemaSessionStatus;
+export type SessionEventType = SchemaSessionEventType;
 
 /**
  * Cross-side suggestion as projected to the viewer. `targetIsViewer`

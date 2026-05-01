@@ -10,18 +10,14 @@ import {
   type ActionResult,
 } from '../services/tradeActions';
 
-export interface CardSnapshot {
-  productId: string;
-  name: string;
-  variant: string;
-  qty: number;
-  unitPrice: number | null;
-}
-
-// TradeStatus mirrors the schema's `proposalStatuses` enum (single
-// source of truth in lib/schema.ts). Aliased + re-exported so existing
-// consumers don't need to chase the canonical import.
-import type { ProposalStatus } from '../../lib/schema';
+// CardSnapshot + TradeStatus are wire-shape types that the schema
+// already defines (TradeCardSnapshot at lib/schema.ts:326,
+// proposalStatuses enum at lib/schema.ts:357). Re-exported here as
+// aliases so call sites that import from this hook don't need to
+// chase the canonical path. Single source of truth lives in
+// lib/schema.ts; adding/removing a field touches one place.
+import type { ProposalStatus, TradeCardSnapshot } from '../../lib/schema';
+export type CardSnapshot = TradeCardSnapshot;
 export type TradeStatus = ProposalStatus;
 
 export interface UserStub {

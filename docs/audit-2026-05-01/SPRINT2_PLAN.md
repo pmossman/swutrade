@@ -9,8 +9,8 @@ identical: `[ ]` / `[~]` / `[x]` / `[B]`.
 
 ## Milestones
 
-- [~] **S2.1** — Export `proposalStatuses` + `ProposalStatus` enum from `lib/schema.ts` (mirroring `sessionStatuses`). Update consumers in `api/trades.ts`, `useTradeDetail.ts`, history/detail views.
-- [ ] **S2.2** — Use Drizzle `InferSelectModel` to derive a canonical `TradeProposalRow` type. Replace duplicate frontend declarations of `TradeCardSnapshot`, `TradeStatus`. Define shared API-response types in `src/types/api.ts`.
+- [x] **S2.1** — `proposalStatuses` + `ProposalStatus` exported (40010b4 · run 25232808778)
+- [~] **S2.2** — Use Drizzle `InferSelectModel` to derive a canonical `TradeProposalRow` type. Replace duplicate frontend declarations of `TradeCardSnapshot`, `TradeStatus`. Define shared API-response types in `src/types/api.ts`.
 - [ ] **S2.3** — Shared `MeResponse` type module so `lib/auth.ts` `SessionData`, `api/auth.ts` response shape, and `src/hooks/useAuth.ts` `User` agree. Adding a field touches one place.
 - [ ] **S2.4** — Add zod-validation overload to `apiClient.request()` — `request<T>(method, url, body, schema?)`. Schema validates parsed JSON before the optimistic cast.
 - [ ] **S2.5** — Migrate `/api/auth/me` consumer (`useAuth`) to the zod overload as the proof-of-pattern. Defer the other 43 consumers behind opportunistic future migration.
