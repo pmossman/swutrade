@@ -66,9 +66,13 @@ test.describe('Session frozen-fixture regression', () => {
       // one-liner summarizer; the assertion below is enough to
       // confirm the panel didn't error out for them.)
 
+      // Close the timeline panel before reaching for the qty stepper —
+      // the panel's `fixed inset-0 z-40` overlay otherwise intercepts
+      // pointer events on the canvas behind it.
+      await a.page.getByRole('button', { name: /Close activity/i }).click();
+
       // Make a new edit — bump qty on the seeded card. This validates
       // that the underlying tradeSessions row is still mutable.
-      await a.page.keyboard.press('Escape'); // Close the panel.
       await a.page.getByRole('button', { name: 'Increase quantity' }).first().click();
       // Confirm the qty stepper flipped (qty 1 → 2) — Decrease button
       // appears, Remove disappears.
