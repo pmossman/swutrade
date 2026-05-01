@@ -600,6 +600,146 @@ export async function recordSessionEvent(
 }
 
 /**
+ * Record an `edited` event PAIRED with its `edit-snapshot`, with
+ * smart merging when the previous timeline event is also a same-actor
+ * `edited` within `EDITED_MERGE_WINDOW_MS` and nothing has interrupted
+ * (counterpart edit, chat, confirm, suggestion). Merging UPDATEs the
+ * prior pair in place — recomputing the cumulative diff using the
+ * `baseSideCards` snapshot stored in the existing payload — so a
+ * card-add binge collapses into one timeline row instead of N.
+ *
+ * The `edited` event's payload carries `snapshotEventId` pointing at
+ * its paired snapshot row, letting the client offer a "↶ Revert to
+ * here" affordance from the edited row directly without searching
+ * for the timestamped snapshot pair.
+ *
+ * Returns the `snapshotEventId` so callers can chain it (e.g. into
+ * a `viaSuggestion` audit field).
+ */
+async function recordOrMergeEditedPair(
+  db: Db,
+  args: {
+    sessionId: string;
+    actorUserId: string;
+    viewerIsA: boolean;
+    /** Pre-edit cards on the actor's own side. Used as the baseline
+     *  for diff computation on a fresh (non-merging) edit. */
+    oldActorSideCards: TradeCardSnapshot[];
+    /** Post-edit cards on the actor's own side. */
+    newActorSideCards: TradeCardSnapshot[];
+    /** Full both-sides post-edit state captured into the snapshot. */
+    postEditUserACards: TradeCardSnapshot[];
+    postEditUserBCards: TradeCardSnapshot[];
+    now: Date;
+    /** Extra payload merged into the `edited` event (e.g. viaSuggestion). */
+    extraPayload?: Record<string, unknown>;
+  },
+): Promise<{ snapshotEventId: string }> {
+  // Pull the most recent events to detect a merge target. Limit small —
+  // we only need the very latest few entries.
+  const recent = await db
+    .select()
+    .from(sessionEvents)
+    .where(eq(sessionEvents.sessionId, args.sessionId))
+    .orderBy(desc(sessionEvents.createdAt))
+    .limit(10);
+
+  // "Meaningful" events for the merge check: anything user-visible.
+  // We exclude `edit-snapshot` (paired with edited; not its own beat)
+  // and `notified` (system telemetry).
+  const meaningful = recent.filter(e => e.type !== 'edit-snapshot' && e.type !== 'notified');
+  const last = meaningful[0];
+
+  let mergeTarget: { editedId: string; snapshotId: string; baseSideCards: TradeCardSnapshot[]; existingExtras: Record<string, unknown> } | null = null;
+
+  if (
+    last
+    && last.type === 'edited'
+    && last.actorUserId === args.actorUserId
+    && (args.now.getTime() - last.createdAt.getTime()) <= EDITED_MERGE_WINDOW_MS
+  ) {
+    const lastPayload = (last.payload ?? {}) as Record<string, unknown>;
+    const snapshotId = typeof lastPayload.snapshotEventId === 'string' ? lastPayload.snapshotEventId : null;
+    if (snapshotId) {
+      // Verify the snapshot row still exists.
+      const snap = recent.find(e => e.id === snapshotId);
+      if (snap) {
+        const baseSideCards = Array.isArray(lastPayload.baseSideCards)
+          ? lastPayload.baseSideCards as TradeCardSnapshot[]
+          : args.oldActorSideCards;
+        // Strip the fields we re-derive from extras (so we keep
+        // `viaSuggestion` etc. but replace `side`, `count`, `added`,
+        // `removed`, `baseSideCards`, `snapshotEventId`).
+        const { side: _s, count: _c, added: _a, removed: _r, baseSideCards: _b, snapshotEventId: _sid, ...existingExtras } = lastPayload;
+        void _s; void _c; void _a; void _r; void _b; void _sid;
+        mergeTarget = { editedId: last.id, snapshotId, baseSideCards, existingExtras };
+      }
+    }
+  }
+
+  const baseCards = mergeTarget ? mergeTarget.baseSideCards : args.oldActorSideCards;
+  const cumulativeDiff = diffCardSets(baseCards, args.newActorSideCards);
+
+  if (mergeTarget) {
+    const editedPayload: Record<string, unknown> = {
+      ...mergeTarget.existingExtras,
+      ...(args.extraPayload ?? {}),
+      side: args.viewerIsA ? 'a' : 'b',
+      count: args.newActorSideCards.length,
+      added: cumulativeDiff.added,
+      removed: cumulativeDiff.removed,
+      baseSideCards: baseCards,
+      snapshotEventId: mergeTarget.snapshotId,
+    };
+    await db
+      .update(sessionEvents)
+      .set({ payload: editedPayload, createdAt: args.now })
+      .where(eq(sessionEvents.id, mergeTarget.editedId));
+    await db
+      .update(sessionEvents)
+      .set({
+        payload: { userACards: args.postEditUserACards, userBCards: args.postEditUserBCards },
+        createdAt: args.now,
+      })
+      .where(eq(sessionEvents.id, mergeTarget.snapshotId));
+    return { snapshotEventId: mergeTarget.snapshotId };
+  }
+
+  // Fresh pair — insert snapshot first so we have its id for the
+  // edited event's payload.
+  const snapshotEventId = crypto.randomUUID();
+  try {
+    await db.insert(sessionEvents).values({
+      id: snapshotEventId,
+      sessionId: args.sessionId,
+      actorUserId: args.actorUserId,
+      type: 'edit-snapshot',
+      payload: { userACards: args.postEditUserACards, userBCards: args.postEditUserBCards },
+    });
+    await db.insert(sessionEvents).values({
+      id: crypto.randomUUID(),
+      sessionId: args.sessionId,
+      actorUserId: args.actorUserId,
+      type: 'edited',
+      payload: {
+        ...(args.extraPayload ?? {}),
+        side: args.viewerIsA ? 'a' : 'b',
+        count: args.newActorSideCards.length,
+        added: cumulativeDiff.added,
+        removed: cumulativeDiff.removed,
+        baseSideCards: baseCards,
+        snapshotEventId,
+      },
+    });
+  } catch (err) {
+    // Same fire-and-forget posture as recordSessionEvent — don't roll
+    // back the parent state change because audit-log writes failed.
+    console.error('sessions.recordOrMergeEditedPair: insert failed', args.sessionId, err);
+  }
+  return { snapshotEventId };
+}
+
+/**
  * Default session TTL — 14 days from last edit, refreshed each time
  * either party mutates the row. Longer than proposal TTL (30 days
  * absolute from creation) because sessions are expected to span
@@ -882,37 +1022,21 @@ export async function editSessionSide(
     })
     .where(eq(tradeSessions.id, args.sessionId));
 
-  // Diff old vs new on the viewer's side so the timeline can render
-  // "Added 2× Luke, removed 1× Han" instead of a generic "edited."
-  // Captured per-edit as part of the audit payload — saves the
-  // renderer from walking snapshot pairs to derive deltas.
-  const oldViewerCards = viewerIsA ? row.userACards : row.userBCards;
-  const editDiff = diffCardSets(oldViewerCards, args.cards);
-  await recordSessionEvent(db, {
+  // Record the edited+snapshot pair via the merging helper. Rapid
+  // same-actor edits within EDITED_MERGE_WINDOW_MS collapse into one
+  // timeline row instead of N — keeps the panel readable during a
+  // card-add binge. Cumulative diff is recomputed against the
+  // baseSideCards captured in the existing edited event.
+  const oldActorSideCards = viewerIsA ? row.userACards : row.userBCards;
+  await recordOrMergeEditedPair(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
-    type: 'edited',
-    payload: {
-      side: viewerIsA ? 'a' : 'b',
-      count: args.cards.length,
-      added: editDiff.added,
-      removed: editDiff.removed,
-    },
-  });
-
-  // Snapshot the post-edit state so PR 3's revert-to-snapshot can
-  // surface "set both sides back to this" without a schema migration.
-  // Stored in the same event log so the timeline carries the audit
-  // trail; filtered out of the default timeline render via
-  // listEventsForSession's includeSnapshots gate.
-  await recordSessionEvent(db, {
-    sessionId: args.sessionId,
-    actorUserId: args.viewerUserId,
-    type: 'edit-snapshot',
-    payload: {
-      userACards: viewerIsA ? args.cards : row.userACards,
-      userBCards: viewerIsA ? row.userBCards : args.cards,
-    },
+    viewerIsA,
+    oldActorSideCards,
+    newActorSideCards: args.cards,
+    postEditUserACards,
+    postEditUserBCards,
+    now,
   });
 
   if (priorConfirmations > 0) {
@@ -1724,6 +1848,16 @@ function cardListsEqual(a: TradeCardSnapshot[], b: TradeCardSnapshot[]): boolean
 }
 
 /**
+ * Window during which consecutive same-actor `edited` events get
+ * merged into a single timeline row. Without this, a card-add
+ * binge floods the panel ("@A edited their side · @A edited their
+ * side · @A edited their side"). 30s tracks the actual ergonomics
+ * — long enough to absorb a multi-card session, short enough that
+ * a deliberate two-step edit registers as two events.
+ */
+export const EDITED_MERGE_WINDOW_MS = 30 * 1000;
+
+/**
  * Per-productId diff of two card snapshot lists. `added` carries the
  * delta count for productIds whose qty went up (or appeared); `removed`
  * carries the delta for productIds whose qty went down (or
@@ -2111,42 +2245,30 @@ export async function acceptSuggestion(
     payload: acceptedPayload,
   });
 
-  // Diff the per-side change so the timeline can render the same
-  // "Added X, removed Y" detail it does for direct edits. For
-  // 'both'-target reverts we diff each side separately and merge —
-  // the renderer shows them as one combined "edited (both sides)" row.
-  const acceptedDiff = suggestion.targetSide === 'both'
-    ? (() => {
-        const a = diffCardSets(row.userACards, nextUserACards);
-        const b = diffCardSets(row.userBCards, nextUserBCards);
-        return { added: [...a.added, ...b.added], removed: [...a.removed, ...b.removed] };
-      })()
-    : diffCardSets(
-        viewerIsA ? row.userACards : row.userBCards,
-        viewerIsA ? nextUserACards : nextUserBCards,
-      );
-
-  await recordSessionEvent(db, {
+  // Acceptance produces an edited+snapshot pair the same way a direct
+  // edit does. For 'both'-target reverts the actor's "side" is both —
+  // we still call the merging helper but pass cumulative both-side
+  // arrays as the actor side; the merge window will rarely catch this
+  // because revert-acceptance is a deliberate event, but we keep the
+  // path uniform.
+  const oldActorSideCards = suggestion.targetSide === 'both'
+    ? [...row.userACards, ...row.userBCards]
+    : (viewerIsA ? row.userACards : row.userBCards);
+  const newActorSideCards = suggestion.targetSide === 'both'
+    ? [...nextUserACards, ...nextUserBCards]
+    : (viewerIsA ? nextUserACards : nextUserBCards);
+  await recordOrMergeEditedPair(db, {
     sessionId: args.sessionId,
     actorUserId: args.viewerUserId,
-    type: 'edited',
-    payload: {
-      side: suggestion.targetSide === 'both' ? 'both' : viewerSide,
-      count: suggestion.targetSide === 'both'
-        ? nextUserACards.length + nextUserBCards.length
-        : (viewerIsA ? nextUserACards.length : nextUserBCards.length),
+    viewerIsA,
+    oldActorSideCards,
+    newActorSideCards,
+    postEditUserACards: nextUserACards,
+    postEditUserBCards: nextUserBCards,
+    now,
+    extraPayload: {
       viaSuggestion: suggestion.id,
-      added: acceptedDiff.added,
-      removed: acceptedDiff.removed,
-    },
-  });
-  await recordSessionEvent(db, {
-    sessionId: args.sessionId,
-    actorUserId: args.viewerUserId,
-    type: 'edit-snapshot',
-    payload: {
-      userACards: nextUserACards,
-      userBCards: nextUserBCards,
+      ...(suggestion.targetSide === 'both' ? { side: 'both' as const } : {}),
     },
   });
   if (priorConfirmations > 0) {

@@ -42,10 +42,16 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Server returns events newest-first; reverse for chronological
-  // top-to-bottom render. Skip system-internal types.
+  // top-to-bottom render. Filter out system-internal events
+  // ('notified') AND the paired 'edit-snapshot' rows — those carry
+  // the snapshot payload for the revert flow but don't belong in the
+  // user-visible timeline. Each `edited` event references its
+  // companion snapshot via payload.snapshotEventId, so the revert
+  // affordance can hang off the edited row's kebab menu without a
+  // visible snapshot pill.
   const visibleEvents = useMemo(() => {
     return [...session.events]
-      .filter(e => e.type !== 'notified')
+      .filter(e => e.type !== 'notified' && e.type !== 'edit-snapshot')
       .reverse();
   }, [session.events]);
 
@@ -168,15 +174,24 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
           {visibleEvents.length === 0 ? (
             <EmptyState />
           ) : (
-            visibleEvents.map(event => (
-              <EventRow
-                key={event.id}
-                event={event}
-                counterpartHandle={counterpartHandle}
-                onRevert={event.type === 'edit-snapshot' ? () => handleRevert(event.id) : undefined}
-                reverting={revertingId === event.id}
-              />
-            ))
+            visibleEvents.map(event => {
+              // Edited events carry their paired snapshot id in payload —
+              // hand the revert callback bound to that id so the kebab
+              // menu can fire propose-revert without searching for the
+              // snapshot row.
+              const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
+                ? event.payload.snapshotEventId
+                : null;
+              return (
+                <EventRow
+                  key={event.id}
+                  event={event}
+                  counterpartHandle={counterpartHandle}
+                  onRevert={snapshotId ? () => handleRevert(snapshotId) : undefined}
+                  reverting={snapshotId ? revertingId === snapshotId : false}
+                />
+              );
+            })
           )}
           <div ref={scrollAnchorRef} />
         </div>
@@ -257,33 +272,10 @@ function EventRow({
     );
   }
 
-  // edit-snapshot rows render as compact "snapshot pill + revert-here
-  // button" so the user can pick any past state to propose reverting
-  // to. The matching 'edited' event is rendered separately as the
-  // human-readable description.
-  if (event.type === 'edit-snapshot' && onRevert) {
-    return (
-      <div className="flex items-center justify-center gap-2 text-[11px] py-1">
-        <span className="text-gray-600 italic">snapshot · {time}</span>
-        <button
-          type="button"
-          onClick={onRevert}
-          disabled={reverting}
-          className="px-2 py-0.5 rounded border border-amber-500/30 hover:border-amber-400/60 hover:bg-amber-900/20 text-amber-300 hover:text-amber-100 text-[10px] font-bold uppercase tracking-wide transition-colors disabled:opacity-50"
-          title="Propose a revert to this state"
-        >
-          {reverting ? 'Sending…' : '↶ Revert here'}
-        </button>
-      </div>
-    );
-  }
-
-  // 'edited' events with a card-diff payload render as a card-diff
-  // panel instead of a plain one-liner — users see exactly what
-  // changed (with thumbnails) instead of "edited their side."
-  // Fall through to the simple one-liner for legacy events that
-  // don't carry the diff (anything recorded before the diff
-  // enrichment landed).
+  // 'edited' events render as a card-diff panel with a kebab menu
+  // for the (rarely-used) "↶ Revert here" affordance. Fall through to
+  // the simple one-liner for legacy events that don't carry the diff
+  // payload (anything recorded before the diff enrichment landed).
   if (event.type === 'edited') {
     const added = Array.isArray(event.payload?.added) ? event.payload.added as TradeCardSnapshot[] : [];
     const removed = Array.isArray(event.payload?.removed) ? event.payload.removed as TradeCardSnapshot[] : [];
@@ -291,15 +283,25 @@ function EventRow({
     const side = event.payload?.side;
 
     if (added.length > 0 || removed.length > 0) {
+      // Wording: when the actor IS the viewer ("you"), the side
+      // expression is "your side." Otherwise it's "their side." The
+      // earlier blanket "edited their side" was wrong from the
+      // viewer's POV when they themselves did the edit.
+      const sideLabel = event.actorIsViewer ? 'your side' : 'their side';
       const headline = viaSuggestion && side === 'both'
         ? `${actor} accepted a revert`
         : viaSuggestion
           ? `${actor} accepted a suggestion`
-          : `${actor} edited their side`;
+          : `${actor} edited ${sideLabel}`;
 
       return (
         <div className="rounded-md border border-space-700 bg-space-800/40 px-2.5 py-1.5">
-          <div className="text-[11px] text-gray-400 italic mb-1">{headline} · {time}</div>
+          <div className="flex items-start justify-between gap-2 mb-1">
+            <div className="text-[11px] text-gray-400 italic">{headline} · {time}</div>
+            {onRevert && (
+              <RevertKebab onRevert={onRevert} reverting={reverting ?? false} />
+            )}
+          </div>
           {added.length > 0 && (
             <CardDiffSection label="Added" tone="add" cards={added} />
           )}
@@ -318,6 +320,53 @@ function EventRow({
   return (
     <div className="text-[11px] text-gray-500 italic text-center py-1">
       {summary} · {time}
+    </div>
+  );
+}
+
+/**
+ * Kebab menu hanging off each edited-event row. Default-collapsed
+ * because the revert path is rarely used — the prominent "↶ Revert
+ * here" pill from the previous iteration trained the eye on a
+ * destructive action it didn't need to see. Click opens a small
+ * popover with the revert option; click anywhere else closes.
+ */
+function RevertKebab({ onRevert, reverting }: { onRevert: () => void; reverting: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-label="More actions"
+        aria-expanded={open}
+        className="px-1 -mt-0.5 -mr-0.5 text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
+      >
+        ⋮
+      </button>
+      {open && (
+        <>
+          {/* Backdrop swallow-clicks to dismiss the popover. */}
+          <button
+            type="button"
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-30 cursor-default"
+          />
+          <div className="absolute right-0 top-full z-40 mt-1 rounded-md border border-space-700 bg-space-900 shadow-lg overflow-hidden min-w-[10rem]">
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onRevert(); }}
+              disabled={reverting}
+              className="w-full text-left px-3 py-1.5 text-[11px] text-amber-200 hover:bg-amber-900/30 disabled:opacity-50 transition-colors"
+              title="Propose a revert to this state — counterpart accepts to apply"
+            >
+              {reverting ? 'Sending…' : '↶ Revert to this state'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

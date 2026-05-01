@@ -173,22 +173,39 @@ describeWithDb('POST /api/sessions — revert (snapshot history)', () => {
     fixtures.push(bob);
     const id = await createSession(alice, bob.handle);
 
-    // Alice edits twice.
+    // Alice edits, then Bob's edit breaks the merge window so
+    // alice's two edits stay as distinct snapshots. (Without the
+    // intervening counterpart edit, server-side merging would
+    // overwrite snap1's payload with alice's later state — the
+    // revert target would no longer be a meaningful past state.)
     const e1 = await edit(alice.id, id, [snap('luke-1', 1)]);
     const snap1 = e1.session.events.find(ev => ev.type === 'edit-snapshot')!;
+    await edit(bob.id, id, [snap('b-1', 1)]);
     await edit(alice.id, id, [snap('luke-1', 1), snap('han-1', 1)]);
 
     // Alice proposes revert to snap1.
     const proposeRes = await proposeRevert(alice.id, id, snap1.id);
     expect(proposeRes._status).toBe(200);
 
-    // Alice manually edits back to snap1 state (single luke). Auto-
-    // sweep on edit should find the revert satisfied → auto-dismiss.
+    // Alice manually edits back to snap1 state (single luke + bob's
+    // b-1 since the snapshot captured both sides). Auto-sweep on
+    // edit should find the revert satisfied → auto-dismiss.
     const e3 = await edit(alice.id, id, [snap('luke-1', 1)]);
-    expect(e3.session.suggestions).toHaveLength(0);
-    const dismissEvent = e3.session.events.find(ev => ev.type === 'suggestion-dismissed');
+    // Note: revert satisfaction requires BOTH sides to match. Alice
+    // is back to luke-only; bob still has b-1. snap1 had bob with
+    // empty side. So actually this won't satisfy. Force satisfaction
+    // by also reverting bob's side.
+    await edit(bob.id, id, []);
+    // Final poll-equivalent fetch via another no-op-ish edit on
+    // alice's side to trigger the sweep.
+    const e4 = await edit(alice.id, id, [snap('luke-1', 1)]);
+    expect(e4.session.suggestions).toHaveLength(0);
+    // The dismissal happens on whichever edit pushed the residual to
+    // empty — could be e3 or e4 depending on order. Find the
+    // satisfied dismissal anywhere in the recent timeline.
+    const all = [...e3.session.events, ...e4.session.events];
+    const dismissEvent = all.find(ev => ev.type === 'suggestion-dismissed' && ev.payload?.reason === 'satisfied');
     expect(dismissEvent).toBeDefined();
-    expect(dismissEvent!.payload?.reason).toBe('satisfied');
   });
 
   it('rejects revert to a non-snapshot event id with 404 (no-such-snapshot)', async () => {
