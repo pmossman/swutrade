@@ -24,11 +24,11 @@ milestone — it IS the source of truth for "where are we."
 - `[B]` blocked — annotate with reason
 
 ## Phase A — Infrastructure
-- [~] A1: Shared `e2e/helpers/` library extracted from existing auth specs
-- [ ] A2: `/api/test/auth-login` endpoint gated by `E2E_TEST_AUTH_TOKEN`
-- [ ] A3: `tests/e2e-seed/` Drizzle helpers for direct DB seeding
+- [x] A1: Shared `e2e/helpers/sessions.ts` library (e268beb · run 25203930211)
+- [x] A2: SKIPPED — existing `signIn()` helper in `e2e/helpers/auth.ts` already mints sealed Discord cookies via iron-session, no new endpoint needed.
+- [~] A3: `e2e/helpers/session-seed.ts` Drizzle helpers for direct DB seeding
 - [ ] A4: CI auth-e2e sharded across 4 workers
-- [ ] A5: Playwright workers raised to 6 in `playwright.auth.config.ts`
+- [ ] A5: Playwright workers raised in `playwright.auth.config.ts` (CI only)
 
 ## Phase B — Ghost-only specs (broaden coverage)
 - [ ] B1: `session-edits.auth.spec.ts` — qty +/− (incl. hyphenated set slugs), remove, swap variant, empty side
@@ -69,4 +69,4 @@ milestone — it IS the source of truth for "where are we."
 
 | When | Milestone | SHA | CI Run | Result |
 |------|-----------|-----|--------|--------|
-| — | — | — | — | starting A1 |
+| 2026-04-30 22:35 | A1 helpers | e268beb | 25203930211 | ✅ green |
