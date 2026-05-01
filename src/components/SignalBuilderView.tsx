@@ -10,16 +10,9 @@ import { NumberStepper } from './ui/NumberStepper';
 import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId, variantBadgeColor, variantChipLabel } from '../variants';
 import { apiPost } from '../services/apiClient';
+import { restrictionKeyFromVariants } from '../../lib/shared';
 
-/**
- * Stable key for a variant restriction. Same shape useWants /
- * lib/shared use, inlined here to avoid pulling lib/* into the
- * client bundle.
- */
-function restrictionKeyOf(variants: readonly string[] | null): string {
-  if (!variants || variants.length === 0) return 'any';
-  return [...variants].sort().join('|');
-}
+const restrictionKeyOf = restrictionKeyFromVariants;
 
 /**
  * Web Signal Builder — replaces the deprecated Discord

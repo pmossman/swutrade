@@ -1,8 +1,24 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { apiGet, apiPut } from '../services/apiClient';
 import type { User } from './useAuth';
-import type { WantsApi } from './useWants';
+import { normalizeRestriction, type WantsApi } from './useWants';
 import type { AvailableApi } from './useAvailable';
+
+/**
+ * Apply `normalizeRestriction` to every server-pulled wants row so a
+ * pre-fix client (or any future bug that wrote a 10-variant
+ * restriction) is collapsed back to `{ mode: 'any' }` on this
+ * device's hydration. Without this, DB-resident bad data would
+ * propagate back on every PUT.
+ */
+function normalizeServerWants<T extends { restriction: Parameters<typeof normalizeRestriction>[0] }>(
+  items: readonly T[],
+): T[] {
+  return items.map(item => ({
+    ...item,
+    restriction: normalizeRestriction(item.restriction),
+  }));
+}
 
 export type SyncStatus = 'idle' | 'syncing' | 'error' | 'offline';
 
@@ -97,7 +113,7 @@ export function useServerSync(
             syncGet<unknown[]>('/api/sync/available'),
           ]);
           writingBackRef.current = true;
-          wants.setAll(w as typeof wants.items);
+          wants.setAll(normalizeServerWants(w as typeof wants.items));
           available.setAll(a as typeof available.items);
           writingBackRef.current = false;
           initialSyncDoneRef.current = true;
@@ -112,7 +128,7 @@ export function useServerSync(
         // because the user's seen-state across devices is the
         // server view.
         writingBackRef.current = true;
-        wants.setAll(serverWants as typeof wants.items);
+        wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
         available.setAll(serverAvailable as typeof available.items);
         writingBackRef.current = false;
         initialSyncDoneRef.current = true;
@@ -149,7 +165,7 @@ export function useServerSync(
           syncGet<unknown[]>('/api/sync/available'),
         ]);
         writingBackRef.current = true;
-        wants.setAll(serverWants as typeof wants.items);
+        wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
         available.setAll(serverAvailable as typeof available.items);
         writingBackRef.current = false;
         setStatus('idle');

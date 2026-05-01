@@ -15,6 +15,7 @@ import {
 import { CardResultsGrid } from './CardResultsGrid';
 import { CardTile } from './CardTile';
 import { FamilyRow } from './FamilyRow';
+import { restrictionKeyFromVariants } from '../../lib/shared';
 import { SelectionFilterBar } from './SelectionFilterBar';
 import { applySelectionFilters } from '../applySelectionFilters';
 
@@ -153,10 +154,8 @@ function cheapestVariant(variants: CardVariant[], priceMode: PriceMode): CardVar
   });
 }
 
-function restrictionKeyOf(variants: readonly string[]): string {
-  if (variants.length === 0) return 'any';
-  return [...variants].sort().join('|');
-}
+// `restrictionKeyFromVariants` lives in lib/shared.ts so the dedup
+// signature stays in lockstep with what useWants and the API enforce.
 
 interface TileBadge {
   text: string;
@@ -412,7 +411,7 @@ export function ListCardPicker({
       // family or either: family-keyed entries.
       const entries = (savedEntries ?? []) as readonly PickerWantsSavedEntry[];
       if (activeMode === 'family') {
-        const filterKey = restrictionKeyOf(selectedVariants);
+        const filterKey = restrictionKeyFromVariants(selectedVariants);
         for (const entry of entries) {
           if (entry.restrictionKey !== filterKey) continue;
           push(entry.familyId, entry.id, entry.qty);

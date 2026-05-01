@@ -5,6 +5,7 @@ import { cardFamilyId } from '../../variants';
 import { bestMatchForWant } from '../../listMatching';
 import { ListCardPicker } from '../ListCardPicker';
 import { WantsRow } from '../ListRows';
+import { restrictionKey } from '../../../lib/shared';
 
 /**
  * Shared wants-list body used by both the embedded drawer (quick-edit
@@ -82,9 +83,7 @@ export function WantsPanel({
           // tile when its current variant filter matches — Hyperspace-
           // saved Luke shouldn't badge under a "Standard" filter, that's
           // a different intent.
-          restrictionKey: item.restriction.mode === 'any'
-            ? 'any'
-            : [...item.restriction.variants].sort().join('|'),
+          restrictionKey: restrictionKey(item.restriction),
         }))}
         onDecrement={id => {
           const item = wants.items.find(i => i.id === id);

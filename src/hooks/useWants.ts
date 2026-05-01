@@ -9,6 +9,12 @@ import {
   type VariantRestriction,
 } from '../persistence';
 import { CANONICAL_VARIANTS } from '../variants';
+import { restrictionKey } from '../../lib/shared';
+
+// Re-export so existing call-sites that import from this hook keep
+// working. The canonical implementation now lives in lib/shared.ts;
+// this re-export is the migration shim until call-sites move.
+export { restrictionKey } from '../../lib/shared';
 
 /**
  * Collapse a "restricted to every canonical variant" restriction back
@@ -28,20 +34,6 @@ export function normalizeRestriction(r: VariantRestriction): VariantRestriction 
     return { mode: 'any' };
   }
   return r;
-}
-
-/**
- * Stable signature for a restriction. Two wants items with the same
- * (familyId, restrictionKey) are treated as the same item — adding
- * bumps qty rather than creating a duplicate row. Different keys
- * (e.g., Hyperspace vs Hyperspace Foil restrictions on the same
- * card) are tracked as separate items.
- *
- * Shared with API sync endpoints via lib/shared.ts re-export.
- */
-export function restrictionKey(r: VariantRestriction): string {
-  if (r.mode === 'any') return 'any';
-  return [...r.variants].sort().join('|');
 }
 
 function newId(): string {

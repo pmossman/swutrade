@@ -29,8 +29,8 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S1.3** — Clear OAuth cookies on every error path (fc6c7fb · run 25225673064)
 - [x] **S1.4** — Replace `created as unknown as Item` with throw-on-null (49e005e · run 25225903094)
 - [x] **S1.5** — `countUnreadEvents` → `COUNT(*)` (a1f50b7 · run 25226153744)
-- [~] **S1.6** — `tradeActions.post` calls `apiPost`; delete duplicated `failure()` + `__mapFailureForTradeActions` re-export
-- [ ] **S1.7** — Centralize `restrictionKey` + `normalizeRestriction`; normalize at server-pull boundary; align restriction-label divergence between editor / read-only / dedup-key
+- [x] **S1.6** — `tradeActions` consolidation (adea637 · run 25226431194)
+- [~] **S1.7** — Centralize `restrictionKey` + `normalizeRestriction`; normalize at server-pull boundary
 - [ ] **S1.8** — Mutation-race fix in `useGuildMemberships.updateGuild` (gen-counter ref + drop-stale-response in setState)
 - [ ] **S1.9** — Mutation-race fix in `useAccountSettings.update` + `useCommunityMembers.setPeerPref` (shared `/me/prefs` shape)
 - [ ] **S1.10** — Mutation-race fix in `useTradeDetail.nudge`; rename `mutationInFlightRef` → `pollPauseRef`; extract `withMutationLock` helper for the new race-aware shape
