@@ -10,10 +10,18 @@ import { extractVariantLabel } from '../variants';
  * search UI; the picker fires `onPick` when the user taps a tile and
  * we convert each tap into a snapshot for the suggestion payload.
  *
- * v0 keeps this minimal — single targetSide (counterpart's), only
- * cardsToAdd suggestions, no qty tweaks (each tap = +1 qty of that
- * productId). Multi-card suggestions are built up by repeated taps;
- * a "Send N suggestions" footer commits them.
+ * Two entry points:
+ *   - "+ Suggest a card" (counterpart panel footer): opens with both
+ *     drafts empty. User picks 1+ cards, hits Send → cardsToAdd flows
+ *     to the suggestion.
+ *   - "Suggest swap" (kebab on a counterpart card): opens with that
+ *     card pre-filled into the cardsToRemove draft. User picks the
+ *     replacement card(s), hits Send → cardsToAdd + cardsToRemove
+ *     flow to the suggestion together.
+ *
+ * Submit is allowed when EITHER add OR remove draft is non-empty —
+ * a swap with no replacement is just a remove suggestion (still
+ * useful), and an add-only is the original flow.
  */
 
 interface SessionSuggestComposerProps {
@@ -26,7 +34,12 @@ interface SessionSuggestComposerProps {
   onSubmit: (args: {
     targetSide: 'a' | 'b';
     cardsToAdd: TradeCardSnapshot[];
+    cardsToRemove: TradeCardSnapshot[];
   }) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
+  /** Pre-fill cardsToRemove draft. Used by the per-card "Suggest
+   *  swap" entry point — opens the composer with the card already
+   *  set up to be removed, leaving the user to pick the replacement. */
+  initialCardsToRemove?: TradeCardSnapshot[];
 }
 
 export function SessionSuggestComposer({
@@ -35,8 +48,10 @@ export function SessionSuggestComposer({
   allCards,
   onClose,
   onSubmit,
+  initialCardsToRemove,
 }: SessionSuggestComposerProps) {
   const [draft, setDraft] = useState<TradeCardSnapshot[]>([]);
+  const [removeDraft, setRemoveDraft] = useState<TradeCardSnapshot[]>(() => initialCardsToRemove ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,15 +83,22 @@ export function SessionSuggestComposer({
     });
   }, []);
 
-  const totalCards = draft.reduce((n, s) => n + s.qty, 0);
+  const removeRemoval = useCallback((productId: string) => {
+    setRemoveDraft(prev => prev.filter(c => c.productId !== productId));
+  }, []);
+
+  const addCount = draft.reduce((n, s) => n + s.qty, 0);
+  const removeCount = removeDraft.reduce((n, s) => n + s.qty, 0);
+  const hasContent = addCount > 0 || removeCount > 0;
 
   const handleSubmit = useCallback(async () => {
-    if (draft.length === 0 || submitting) return;
+    if (!hasContent || submitting) return;
     setSubmitting(true);
     setError(null);
     const result = await onSubmit({
       targetSide: counterpartSide,
       cardsToAdd: draft,
+      cardsToRemove: removeDraft,
     });
     setSubmitting(false);
     if (result.ok) {
@@ -88,7 +110,7 @@ export function SessionSuggestComposer({
           : 'Could not send the suggestion — try again.',
       );
     }
-  }, [draft, submitting, counterpartSide, onSubmit, onClose]);
+  }, [hasContent, draft, removeDraft, submitting, counterpartSide, onSubmit, onClose]);
 
   return (
     <div className="fixed inset-0 z-40 bg-space-900 flex flex-col">
@@ -108,6 +130,10 @@ export function SessionSuggestComposer({
           ×
         </button>
       </header>
+
+      {removeDraft.length > 0 && (
+        <RemovingStrip cards={removeDraft} onRemoveOne={removeRemoval} />
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col">
         <ListCardPicker
@@ -132,20 +158,71 @@ export function SessionSuggestComposer({
         )}
         {!error && (
           <div className="text-[11px] text-gray-500 flex-1">
-            {totalCards === 0
+            {!hasContent
               ? 'Tap cards to add them to your suggestion.'
-              : `${totalCards} card${totalCards === 1 ? '' : 's'} ready to suggest.`}
+              : (() => {
+                  const parts: string[] = [];
+                  if (addCount > 0) parts.push(`+${addCount}`);
+                  if (removeCount > 0) parts.push(`-${removeCount}`);
+                  const summary = parts.join(' · ');
+                  return `${summary} ready to suggest.`;
+                })()}
           </div>
         )}
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={draft.length === 0 || submitting}
+          disabled={!hasContent || submitting}
           className="shrink-0 px-3 py-1.5 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {submitting ? 'Sending…' : 'Send suggestion'}
         </button>
       </footer>
+    </div>
+  );
+}
+
+/**
+ * Pill row above the picker showing cards staged for removal in this
+ * suggestion. Each pill has an X to drop it from the suggestion (in
+ * case the user changed their mind after opening the swap composer).
+ * Hidden when the remove draft is empty.
+ */
+function RemovingStrip({
+  cards,
+  onRemoveOne,
+}: {
+  cards: TradeCardSnapshot[];
+  onRemoveOne: (productId: string) => void;
+}) {
+  return (
+    <div className="shrink-0 px-3 py-2 border-b border-space-800 bg-red-950/15">
+      <div className="text-[10px] font-bold uppercase tracking-wider text-red-300 mb-1.5">
+        Removing
+      </div>
+      <ul className="flex flex-wrap gap-1.5">
+        {cards.map(card => (
+          <li
+            key={`${card.productId}-${card.variant}`}
+            className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-md border border-red-500/40 bg-red-950/30 text-[11px] text-red-100"
+          >
+            <span className="font-bold tabular-nums">×{card.qty}</span>
+            <span className="truncate max-w-[160px]">{card.name}</span>
+            {card.variant && card.variant !== 'Standard' && (
+              <span className="text-[10px] text-red-300/70 shrink-0">({card.variant})</span>
+            )}
+            <button
+              type="button"
+              onClick={() => onRemoveOne(card.productId)}
+              aria-label={`Drop ${card.name} from suggestion`}
+              className="ml-1 px-1 text-red-300 hover:text-red-100 transition-colors leading-none"
+              title="Drop from suggestion"
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

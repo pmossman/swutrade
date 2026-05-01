@@ -73,6 +73,11 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const [unconfirming, setUnconfirming] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [suggestComposerOpen, setSuggestComposerOpen] = useState(false);
+  // Pre-filled cardsToRemove for the composer — set by the per-card
+  // "Suggest swap" kebab so the composer opens with the card already
+  // staged for removal, leaving the user to pick the replacement.
+  // Reset on close.
+  const [suggestComposerInitialRemove, setSuggestComposerInitialRemove] = useState<TradeCardSnapshot[]>([]);
   // Mobile split-view: same pattern as the trade builder. Each side
   // can be tap-collapsed; on desktop the panels render side-by-side
   // and these flags are ignored. Single-column collapse cap: at most
@@ -418,32 +423,50 @@ export function SessionView({ sessionId }: { sessionId: string }) {
                       onDismiss={dismissSuggestion}
                     />
                   ) : undefined}
-                  // Per-card "Suggest remove" action — fires
-                  // immediately with cardsToRemove: [thisCard]. The
-                  // counterpart accepts to apply.
+                  // Per-card actions on counterpart cards:
+                  //   - "Suggest remove this card" fires a one-tap
+                  //     suggestion with cardsToRemove: [thisCard].
+                  //   - "Suggest swap" opens the composer pre-filled
+                  //     with this card in cardsToRemove; the user
+                  //     picks the replacement card(s) for cardsToAdd.
                   cardActions={!terminal ? (tc) => {
                     if (!tc.card.productId) return [];
                     const productId = tc.card.productId;
-                    return [{
-                      label: 'Suggest remove this card',
-                      onClick: () => {
-                        void suggest({
-                          targetSide: counterpartSide,
-                          cardsToRemove: [{
-                            productId,
-                            name: tc.card.name,
-                            variant: extractVariantLabel(tc.card.name),
-                            qty: tc.qty,
-                            unitPrice: tc.card.marketPrice ?? null,
-                          }],
-                        });
+                    const snapshot: TradeCardSnapshot = {
+                      productId,
+                      name: tc.card.name,
+                      variant: extractVariantLabel(tc.card.name),
+                      qty: tc.qty,
+                      unitPrice: tc.card.marketPrice ?? null,
+                    };
+                    return [
+                      {
+                        label: 'Suggest remove this card',
+                        onClick: () => {
+                          void suggest({
+                            targetSide: counterpartSide,
+                            cardsToRemove: [snapshot],
+                          });
+                        },
+                        icon: (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                          </svg>
+                        ),
                       },
-                      icon: (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                        </svg>
-                      ),
-                    }];
+                      {
+                        label: 'Suggest swap…',
+                        onClick: () => {
+                          setSuggestComposerInitialRemove([snapshot]);
+                          setSuggestComposerOpen(true);
+                        },
+                        icon: (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3l4 4m0 0l-4 4m4-4H4m4 14l-4-4m0 0l4-4m-4 4h16" />
+                          </svg>
+                        ),
+                      },
+                    ];
                   } : undefined}
                   // Footer in the counterpart-panel slot becomes a
                   // "+ Suggest a card" button — same spatial slot
@@ -504,7 +527,11 @@ export function SessionView({ sessionId }: { sessionId: string }) {
           counterpartSide={counterpartSide}
           counterpartHandle={session.counterpart?.handle ?? null}
           allCards={cardIndex.allLoadedCards}
-          onClose={() => setSuggestComposerOpen(false)}
+          initialCardsToRemove={suggestComposerInitialRemove}
+          onClose={() => {
+            setSuggestComposerOpen(false);
+            setSuggestComposerInitialRemove([]);
+          }}
           onSubmit={suggest}
         />
       )}
