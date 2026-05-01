@@ -93,6 +93,24 @@ function callbackReq(opts: {
   });
 }
 
+/**
+ * Verifies that handleCallback's exit emitted Set-Cookie entries
+ * that null out the OAuth state + verifier cookies. The serialize
+ * format is `name=; Max-Age=0; HttpOnly; Path=/`.
+ */
+function assertOAuthCookiesCleared(res: ReturnType<typeof mockResponse>): void {
+  const setCookie = res._headers['set-cookie'] as string[] | undefined;
+  expect(setCookie).toBeDefined();
+  const stateCleared = setCookie!.some(c =>
+    c.startsWith('swu_oauth_state=') && /Max-Age=0/i.test(c),
+  );
+  const verifierCleared = setCookie!.some(c =>
+    c.startsWith('swu_oauth_verifier=') && /Max-Age=0/i.test(c),
+  );
+  expect(stateCleared, 'swu_oauth_state cookie should be cleared').toBe(true);
+  expect(verifierCleared, 'swu_oauth_verifier cookie should be cleared').toBe(true);
+}
+
 describeWithDb('handleCallback (api/auth)', () => {
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -114,6 +132,9 @@ describeWithDb('handleCallback (api/auth)', () => {
     expect(res._json).toMatchObject({ error: expect.stringMatching(/missing code/i) });
     // Discord wasn't touched — the validate stub never ran.
     expect(mockValidateAuthCode).not.toHaveBeenCalled();
+    // OAuth cookies cleared so a stale verifier doesn't sit through the
+    // 600s TTL when sign-in fails (S1.3).
+    assertOAuthCookiesCleared(res);
   });
 
   it('returns 400 when `state` cookie does not match query state (CSRF)', async () => {
@@ -128,6 +149,7 @@ describeWithDb('handleCallback (api/auth)', () => {
     expect(res._status).toBe(400);
     expect(res._json).toMatchObject({ error: expect.stringMatching(/invalid state/i) });
     expect(mockValidateAuthCode).not.toHaveBeenCalled();
+    assertOAuthCookiesCleared(res);
   });
 
   it('returns 400 with detail when validateAuthorizationCode throws', async () => {
@@ -145,6 +167,7 @@ describeWithDb('handleCallback (api/auth)', () => {
       error: expect.stringMatching(/failed to exchange/i),
       detail: 'token endpoint says 401',
     });
+    assertOAuthCookiesCleared(res);
   });
 
   it('returns 502 when users/@me fetch fails', async () => {
@@ -167,6 +190,7 @@ describeWithDb('handleCallback (api/auth)', () => {
     await handleCallback(req, res);
     expect(res._status).toBe(502);
     expect(res._json).toMatchObject({ error: expect.stringMatching(/discord profile/i) });
+    assertOAuthCookiesCleared(res);
   });
 
   it('happy path: new user — inserts a row with derived handle + public-by-default flags', async () => {

@@ -216,9 +216,29 @@ function htmlEscape(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Clear the short-lived OAuth state + verifier cookies.
+ *
+ * Called from every handleCallback exit path — success AND each
+ * 4xx/5xx — so a failed sign-in doesn't leave a verifier cookie
+ * sitting next to a fresh state for the full 600s TTL. Pre-fix the
+ * cookies persisted on every error branch, opening a small replay
+ * window if `state=` ever leaked via referrer / logs / shared
+ * screenshots.
+ */
+function clearOAuthCookies(res: VercelResponse): void {
+  const clearOpts = { httpOnly: true, maxAge: 0, path: '/' };
+  res.setHeader('Set-Cookie', [
+    ...((res.getHeader('Set-Cookie') as string[]) ?? []),
+    serialize('swu_oauth_state', '', clearOpts),
+    serialize('swu_oauth_verifier', '', clearOpts),
+  ]);
+}
+
 export async function handleCallback(req: VercelRequest, res: VercelResponse) {
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code || !state) {
+    clearOAuthCookies(res);
     return res.status(400).json({ error: 'Missing code or state' });
   }
 
@@ -227,6 +247,7 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
   const codeVerifier = cookies.swu_oauth_verifier;
 
   if (!storedState || !codeVerifier || state !== storedState) {
+    clearOAuthCookies(res);
     return res.status(400).json({ error: 'Invalid state — try signing in again' });
   }
 
@@ -243,6 +264,7 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('OAuth token exchange failed:', msg, 'redirect_uri:', redirectUri);
+    clearOAuthCookies(res);
     return res.status(400).json({ error: 'Failed to exchange code — try signing in again', detail: msg });
   }
 
@@ -250,6 +272,7 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
     headers: { Authorization: `Bearer ${tokens.accessToken()}` },
   });
   if (!userRes.ok) {
+    clearOAuthCookies(res);
     return res.status(502).json({ error: 'Failed to fetch Discord profile' });
   }
   const discordUser = (await userRes.json()) as {
@@ -350,13 +373,6 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
     pendingMergeBanner: carriedCount > 0 ? { carriedCount } : undefined,
   });
 
-  // Clear OAuth cookies.
-  const clearOpts = { httpOnly: true, maxAge: 0, path: '/' };
-  res.setHeader('Set-Cookie', [
-    ...((res.getHeader('Set-Cookie') as string[]) ?? []),
-    serialize('swu_oauth_state', '', clearOpts),
-    serialize('swu_oauth_verifier', '', clearOpts),
-  ]);
-
+  clearOAuthCookies(res);
   res.redirect(302, '/');
 }

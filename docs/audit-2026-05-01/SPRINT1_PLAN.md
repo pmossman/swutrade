@@ -25,8 +25,8 @@ Each milestone is one commit; one CI verification gates the next.
 ## Milestones
 
 - [x] **S1.1** — Delete dead code (daab55d · run 25225054981)
-- [~] **S1.2** — `handleLogout` POST-only method gate (CSRF surface)
-- [ ] **S1.3** — Clear OAuth `swu_oauth_state` + `swu_oauth_verifier` cookies on every error path in `handleCallback`
+- [x] **S1.2** — `handleLogout` POST-only method gate (01194fd · run 25225372369)
+- [~] **S1.3** — Clear OAuth `swu_oauth_state` + `swu_oauth_verifier` cookies on every error path in `handleCallback`
 - [ ] **S1.4** — Replace `created as unknown as Item` with throw-on-null in `useWants.ts:155` + `useAvailable.ts:92`
 - [ ] **S1.5** — `countUnreadEvents` → `COUNT(*)` query (regression: full-table SELECT every 2.5s poll)
 - [ ] **S1.6** — `tradeActions.post` calls `apiPost`; delete duplicated `failure()` + `__mapFailureForTradeActions` re-export
