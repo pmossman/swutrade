@@ -192,16 +192,16 @@ test.describe('Session collaboration — chat, suggestions, revert', () => {
       await a.page.waitForTimeout(3_000);
 
       // A opens the timeline. Each edited event row has a kebab (⋮)
-      // that opens a popover with "↶ Revert to this state" — moved
-      // from a per-snapshot pill into a kebab so the rarely-used
-      // affordance doesn't visually compete with the chat log.
+      // labeled "Revert options" — distinct from TradeRow's "More
+      // actions" kebab so the test doesn't pick up the wrong one.
+      // Click reveals a popover with "Revert to this state".
       await a.page.getByRole('button', { name: /Chat & activity/i }).first().click();
-      const kebabs = a.page.getByRole('button', { name: /^More actions$/i });
-      await expect(kebabs.first()).toBeVisible({ timeout: 8_000 });
+      const revertKebabs = a.page.getByRole('button', { name: /^Revert options$/i });
+      await expect(revertKebabs.first()).toBeVisible({ timeout: 8_000 });
       // The OLDEST edit (alice's first edit, where alice has the card
       // but bob doesn't yet) is at the TOP of the timeline since the
       // panel renders chronological top-to-bottom. .first() clicks it.
-      await kebabs.first().click();
+      await revertKebabs.first().click();
       await a.page.getByRole('button', { name: /Revert to this state/i }).click();
 
       // A's revert banner appears (collapsed pill above the canvas).

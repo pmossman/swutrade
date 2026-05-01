@@ -338,7 +338,7 @@ function RevertKebab({ onRevert, reverting }: { onRevert: () => void; reverting:
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        aria-label="More actions"
+        aria-label="Revert options"
         aria-expanded={open}
         className="px-1 -mt-0.5 -mr-0.5 text-gray-500 hover:text-gray-200 transition-colors text-base leading-none"
       >
