@@ -273,7 +273,7 @@ export async function getSessionForViewer(
   const lastReadAt = viewerIsA ? row.userALastReadAt : row.userBLastReadAt;
   const [events, unreadCount] = await Promise.all([
     listEventsForSession(db, sessionId, { viewerUserId, limit: SESSION_EVENT_PAGE_SIZE }),
-    countUnreadEvents(db, sessionId, lastReadAt),
+    countUnreadEvents(db, sessionId, viewerUserId, lastReadAt),
   ]);
   const suggestions = projectSuggestionsForViewer(
     row.pendingSuggestions ?? [],
@@ -359,6 +359,7 @@ export async function listEventsForSession(
 async function countUnreadEvents(
   db: Db,
   sessionId: string,
+  viewerUserId: string,
   lastReadAt: Date | null,
 ): Promise<number> {
   const where = lastReadAt
@@ -375,9 +376,15 @@ async function countUnreadEvents(
     .from(sessionEvents)
     .where(where);
   // Filter to "events the viewer hasn't seen and would care about":
-  // exclude snapshots (internal), exclude their own actions (they
-  // already know about them since they triggered them).
-  return rows.filter(r => r.type !== 'edit-snapshot').length;
+  //   - exclude snapshots (internal pairing for the revert flow,
+  //     not a user-visible beat)
+  //   - exclude the viewer's own actions (they already know — they
+  //     just did them; popping their own unread badge made the chat
+  //     button look noisy on every +/− click).
+  return rows.filter(r =>
+    r.type !== 'edit-snapshot'
+    && r.actorUserId !== viewerUserId,
+  ).length;
 }
 
 /**
