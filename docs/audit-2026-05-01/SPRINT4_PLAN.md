@@ -53,11 +53,34 @@ behavior-changing extractions come last.
       Split + pill variants; emerald/blue/gold accents. Pill variant
       stops propagation by default since it always nests inside a
       clickable parent.
-- [ ] **S4.7** — U2: Radix `Dialog.Root` migration for `NudgeDialog`,
-      `HandlePickerDialog`, `TradeImageModal`. Free focus-trap +
-      scroll-lock + ESC + `aria-modal`. Page-replacing overlays
-      (`TradeSearchOverlay`, `SessionSuggestComposer`, `TradeSummary`)
-      stay hand-rolled per the anti-rec.
+- [x] **S4.7** — U2: Radix `Dialog.Root` migration
+      (ebb8a27 · run 25247506161). NudgeDialog / HandlePickerDialog /
+      TradeImageModal all on Radix; free focus-trap + scroll-lock +
+      ESC + `aria-modal`. Page-replacing overlays kept hand-rolled
+      per anti-rec.
+
+## Sprint 4 complete — 7/7 milestones shipped
+
+The UX-primitive consolidation cluster is live on beta. Summary:
+- **N15** — `LoadingState` `inline` variant; 4 composer-bar strays
+  + ProfileView's centered case migrated.
+- **N16** — `ErrorState` `card` / `line` / `banner` variants; 4
+  near-byte-identical reimplementations + SettingsView's local
+  `ErrorLine` (5 sites) folded onto canonical.
+- **D4** — Single `relativeTime` helper at `src/utils/relativeTime.ts`;
+  5 reimplementations replaced; threshold normalized to 30 days.
+- **D3** — `formatPrice` adopted across 13+ proposal/list surfaces;
+  TradeBalance's local `formatDollars` deleted.
+- **U3** — `ui/CardThumb` extracted as a reusable primitive;
+  TradeRow / ListRows RowShell / FamilyRow CardStack / TradeSummary
+  migrated. CardTile preserved per coordinated-landscape design.
+- **U1** — `ui/QtyAdjuster` (split + pill variants); TradeRow,
+  CardTile, FamilyRow migrated; `qtyBadgeClass` byte-identical
+  duplicates removed.
+- **U2** — 3 hand-rolled dialogs migrated to Radix Dialog;
+  free focus-trap, focus-restore, scroll-lock, ESC handling.
+
+Next: Sprint 5 (mid-size correctness) when parker green-lights.
 
 ## Run log
 
