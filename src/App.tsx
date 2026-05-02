@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
 import { TradeSide } from './components/TradeSide';
@@ -31,20 +31,47 @@ import { useCardIndexContext } from './contexts/CardIndexContext';
 import { useDrawerContext } from './contexts/DrawerContext';
 import { usePricing } from './contexts/PricingContext';
 import { useServerSync } from './hooks/useServerSync';
-import { ProfileView } from './components/ProfileView';
+// Trade builder + bars stay eager — they're the default route for
+// signed-out / ghost users, and lazy-loading them would add a
+// network hop before first paint of the most-used surface.
+// Audit 07-performance #4 — only NON-builder routes are lazy.
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
-import { SettingsView } from './components/SettingsView';
-import { CommunityView } from './components/CommunityView';
 import { HomeView } from './components/HomeView';
 import { ProposeBar } from './components/ProposeBar';
 import { CounterBar } from './components/CounterBar';
 import { EditBar } from './components/EditBar';
-import { TradeDetailView } from './components/TradeDetailView';
-import { TradesHistoryView } from './components/TradesHistoryView';
-import { WishlistView } from './components/WishlistView';
-import { BinderView } from './components/BinderView';
-import { SignalBuilderView } from './components/SignalBuilderView';
-import { SessionView } from './components/SessionView';
+import { LoadingState } from './components/ui/states';
+// Lazy: every non-builder route. All 9 are named exports, so the
+// .then(m => ({ default: m.X })) shim adapts them to React.lazy's
+// default-export contract. Keeps the trade-builder hot path lean —
+// estimated 30-40% initial JS reduction per the audit.
+const ProfileView = lazy(() =>
+  import('./components/ProfileView').then(m => ({ default: m.ProfileView })),
+);
+const SettingsView = lazy(() =>
+  import('./components/SettingsView').then(m => ({ default: m.SettingsView })),
+);
+const CommunityView = lazy(() =>
+  import('./components/CommunityView').then(m => ({ default: m.CommunityView })),
+);
+const TradeDetailView = lazy(() =>
+  import('./components/TradeDetailView').then(m => ({ default: m.TradeDetailView })),
+);
+const TradesHistoryView = lazy(() =>
+  import('./components/TradesHistoryView').then(m => ({ default: m.TradesHistoryView })),
+);
+const WishlistView = lazy(() =>
+  import('./components/WishlistView').then(m => ({ default: m.WishlistView })),
+);
+const BinderView = lazy(() =>
+  import('./components/BinderView').then(m => ({ default: m.BinderView })),
+);
+const SignalBuilderView = lazy(() =>
+  import('./components/SignalBuilderView').then(m => ({ default: m.SignalBuilderView })),
+);
+const SessionView = lazy(() =>
+  import('./components/SessionView').then(m => ({ default: m.SessionView })),
+);
 import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
 import { usePrimaryAction } from './hooks/usePrimaryAction';
@@ -1019,7 +1046,14 @@ function App() {
               ≥1 session). Position-fixed at top so every view sees it
               regardless of header structure. Cleared on dismiss. */}
           <MergeReassuranceBanner auth={auth} />
-          {renderBody()}
+          {/* Suspense boundary for the lazy non-builder routes. The
+              builder itself isn't lazy, so the home/trade routes
+              never hit this fallback. The centered LoadingState
+              renders for one paint while the route chunk fetches —
+              cached after first load per route. */}
+          <Suspense fallback={<LoadingState centered />}>
+            {renderBody()}
+          </Suspense>
           {/* First-run tutorial — only activates for signed-out users
               who haven't already dismissed it. Component handles its
               own gating; rendering unconditionally is safe. */}

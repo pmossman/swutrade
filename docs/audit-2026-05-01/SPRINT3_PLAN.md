@@ -33,11 +33,12 @@ Each milestone is one commit; one CI verification gates the next.
 - [x] **S3.1** — Memoize `AuthContext` + `PriceDataContext` values
       (e56c682 · run 25243972910). `PrimaryActionContext` was already
       memoized — verified, no change needed.
-- [ ] **S3.2** — `Promise.all` the sequential-await offenders (H3):
-      `handlePropose` proposer/recipient/guild lookups in
-      `api/trades.ts`, `syncGuildMemberships` upsert loop in
-      `lib/guildSync.ts`, and the 200-card upsert loop in
-      `api/sync.ts`.
+- [x] **S3.2** — `Promise.all` the sequential-await offenders
+      (95bc7b1 · run 25244153501). handlePropose: proposer + recipient
+      parallel; merged proposer's two SELECTs (handle/username +
+      discordId) into one. syncGuildMemberships: parallel upsert.
+      api/sync.ts: parallel upsert in both handleWants and
+      handleAvailable.
 - [ ] **S3.3** — `React.lazy` the non-builder routes (H8):
       SessionView, SettingsView, CommunityView, SignalBuilderView,
       TradesHistoryView, ProfileView, BinderView, WishlistView,
