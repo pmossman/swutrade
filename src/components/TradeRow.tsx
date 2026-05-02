@@ -10,6 +10,7 @@ import { extractBaseName, extractVariantLabel } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { KebabMenu, type KebabMenuItem } from './KebabMenu';
 import { CardThumb, type ThumbSize } from './ui/CardThumb';
+import { QtyAdjuster } from './ui/QtyAdjuster';
 
 export type { ThumbSize };
 export type AccentColor = 'emerald' | 'blue';
@@ -25,11 +26,6 @@ const MissingPriceIcon = ({ className = 'w-3.5 h-3.5' }: { className?: string })
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
   </svg>
 );
-
-const QTY_BTN_COLORS: Record<AccentColor, string> = {
-  emerald: 'text-emerald-400 bg-emerald-900/30 hover:bg-emerald-900/50 active:bg-emerald-900/70',
-  blue: 'text-blue-400 bg-blue-900/30 hover:bg-blue-900/50 active:bg-blue-900/70',
-};
 
 const ROW_PADS: Record<ThumbSize, string> = {
   lg: 'px-3 py-3 gap-3',
@@ -152,14 +148,7 @@ export function TradeRow({
     menuItems.push(...extraMenuItems);
   }
 
-  const qtyBtn = QTY_BTN_COLORS[accentColor];
-  // hit-area-44 expands the tap zone to WCAG's 44×44 minimum without
-  // visually growing the buttons — mobile-critical for the 20–24px
-  // compact/default sizes where the visual would otherwise be a
-  // finger-sized target at best.
-  const decrementClasses = `hit-area-44 ${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qty <= 1 ? 'text-red-400 bg-red-900/30 hover:bg-red-900/50' : qtyBtn}`;
-  const incrementClasses = `hit-area-44 ${isCompact ? 'w-5 h-5 text-[10px]' : isLarge ? 'w-8 h-8 text-sm' : 'w-6 h-6 text-xs'} rounded flex items-center justify-center font-bold transition-colors active:scale-90 ${qtyBtn}`;
-  const qtyValueClasses = `${isCompact ? 'w-4 text-[10px]' : isLarge ? 'w-6 text-sm' : 'w-5 text-xs'} text-center font-bold text-gray-200 tabular-nums`;
+  const stepperSize: 'sm' | 'md' | 'lg' = isCompact ? 'sm' : isLarge ? 'lg' : 'md';
   const lineTotalClasses = `${isCompact ? 'text-[10px] w-11' : isLarge ? 'text-sm w-16' : 'text-xs w-14'} font-semibold tabular-nums shrink-0 text-right ${priceClass(lineTotal, 'text-gold')}`;
 
   return (
@@ -221,25 +210,15 @@ export function TradeRow({
         </div>
       )}
       {!readOnly && (
-        <>
-          <div className="flex items-center gap-0.5 shrink-0">
-            <button
-              onClick={() => qty <= 1 ? onRemove() : onChangeQty(-1)}
-              className={decrementClasses}
-              aria-label={qty <= 1 ? 'Remove' : 'Decrease quantity'}
-            >
-              {qty <= 1 ? '×' : '−'}
-            </button>
-            <span className={qtyValueClasses}>{qty}</span>
-            <button
-              onClick={() => onChangeQty(1)}
-              className={incrementClasses}
-              aria-label="Increase quantity"
-            >
-              +
-            </button>
-          </div>
-        </>
+        <QtyAdjuster
+          variant="split"
+          accent={accentColor}
+          size={stepperSize}
+          qty={qty}
+          onIncrement={() => onChangeQty(1)}
+          onDecrement={() => onChangeQty(-1)}
+          onRemove={onRemove}
+        />
       )}
       {readOnly && qty > 1 && (
         <span className={`shrink-0 ${isCompact ? 'text-[10px]' : isLarge ? 'text-sm' : 'text-xs'} tabular-nums text-gray-400 font-semibold`}>

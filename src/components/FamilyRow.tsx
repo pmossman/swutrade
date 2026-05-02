@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
 import { CardThumb } from './ui/CardThumb';
+import { QtyAdjuster } from './ui/QtyAdjuster';
 import { extractVariantLabel } from '../variants';
 
 /**
@@ -51,12 +52,6 @@ const STACK_OFFSET_PX = 22; // how much of each behind-card peeks out
 const THUMB_HEIGHT_PX = 96; // 5:7 card → ~68px wide at this height
 const MAX_STACK = 4; // beyond this, render a "+N" indicator
 
-const qtyBadgeClass: Record<'gold' | 'emerald' | 'blue', string> = {
-  gold: 'bg-black/85 text-white ring-1 ring-gold/70',
-  emerald: 'bg-black/85 text-white ring-1 ring-emerald-400/70',
-  blue: 'bg-black/85 text-white ring-1 ring-blue-400/70',
-};
-
 const accentBorderClass: Record<'gold' | 'emerald' | 'blue', string> = {
   gold: 'border-gold/50 shadow-[0_0_0_1px_rgba(245,166,35,0.25)]',
   emerald: 'border-emerald-500/50 shadow-[0_0_0_1px_rgba(52,211,153,0.25)]',
@@ -93,11 +88,6 @@ export function FamilyRow({
     onAdd(primary);
     setTimeout(() => setPulsing(false), 200);
   }, [primary, onAdd]);
-
-  const handleDecrement = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDecrement(primary);
-  }, [primary, onDecrement]);
 
   const handleKeyActivate = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -143,18 +133,14 @@ export function FamilyRow({
       </div>
 
       {inDraft && (
-        <button
-          type="button"
-          onClick={handleDecrement}
-          className={`shrink-0 inline-flex items-center gap-1 pl-2 pr-1.5 h-7 rounded-full text-[12px] font-bold tabular-nums transition-colors ${qtyBadgeClass[accent]} hover:brightness-110 active:scale-95`}
-          aria-label={qty <= 1 ? `Remove ${displayName}` : `Decrease quantity of ${displayName}`}
-          title={qty <= 1 ? 'Remove' : `Decrease (${qty} on list)`}
-        >
-          <span>×{qty}</span>
-          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black/25 text-xs leading-none">
-            {qty <= 1 ? '×' : '−'}
-          </span>
-        </button>
+        <QtyAdjuster
+          variant="pill"
+          accent={accent}
+          size="lg"
+          qty={qty}
+          itemName={displayName}
+          onDecrement={() => onDecrement(primary)}
+        />
       )}
     </div>
   );

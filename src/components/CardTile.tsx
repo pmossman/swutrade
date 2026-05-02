@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, getAltPrice } from '../services/priceService';
 import { extractVariantLabel, variantBadgeColor } from '../variants';
+import { QtyAdjuster } from './ui/QtyAdjuster';
 
 export interface CardTileBadge {
   text: string;
@@ -35,12 +36,6 @@ interface CardTileProps {
   onAdd: (card: CardVariant) => void;
   onDecrement: (card: CardVariant) => void;
 }
-
-const qtyBadgeClass: Record<'gold' | 'emerald' | 'blue', string> = {
-  gold: 'bg-black/85 text-white ring-1 ring-gold/70',
-  emerald: 'bg-black/85 text-white ring-1 ring-emerald-400/70',
-  blue: 'bg-black/85 text-white ring-1 ring-blue-400/70',
-};
 
 const accentBorderClass: Record<'gold' | 'emerald' | 'blue', string> = {
   gold: 'border-gold/50 shadow-[0_0_0_1px_rgba(245,166,35,0.25)]',
@@ -95,11 +90,6 @@ export function CardTile({
     onAdd(card);
     setTimeout(() => setPulsing(false), 200);
   }, [card, onAdd]);
-
-  const handleDecrement = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    onDecrement(card);
-  }, [card, onDecrement]);
 
   const handleImageClick = useCallback((e: React.MouseEvent) => {
     // Clicking the image adds to trade — the whole tile is the button.
@@ -188,18 +178,14 @@ export function CardTile({
             )}
           </div>
           {inTrade && (
-            <button
-              type="button"
-              onClick={handleDecrement}
-              className={`shrink-0 inline-flex items-center gap-1 pl-2 pr-1.5 h-6 rounded-full text-[11px] font-bold tabular-nums transition-colors ${qtyBadgeClass[accent]} hover:brightness-110 active:scale-95`}
-              aria-label={qty <= 1 ? `Remove ${card.name}` : `Decrease quantity of ${card.name}`}
-              title={qty <= 1 ? 'Remove (one in trade)' : `Decrease (${qty} in trade)`}
-            >
-              <span>×{qty}</span>
-              <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-black/25 text-xs leading-none">
-                {qty <= 1 ? '×' : '−'}
-              </span>
-            </button>
+            <QtyAdjuster
+              variant="pill"
+              accent={accent}
+              size="md"
+              qty={qty}
+              itemName={card.name}
+              onDecrement={() => onDecrement(card)}
+            />
           )}
         </div>
         <div className="flex items-baseline gap-1 leading-tight">

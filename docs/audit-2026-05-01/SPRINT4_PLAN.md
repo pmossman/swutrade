@@ -44,10 +44,11 @@ behavior-changing extractions come last.
       (61e03d9 · run 25247203858). 13+ inline sites migrated;
       TradeBalance's local `formatDollars` deleted. SignalBuilderView
       `~$` estimate prefix + spread tooltips skipped per intent.
-- [ ] **S4.5** — U3: extract `ui/CardThumb` from `TradeRow:28-69`
-      with the landscape-detection. Migrate CardTile, FamilyRow's
-      CardStack, ListRows, TradeSummary, ListCardPicker,
-      SessionSuggestComposer. Subsumes synthesis N7.
+- [x] **S4.5** — U3: extract `ui/CardThumb` (f150bc8 · run 25247310567).
+      TradeRow / ListRows RowShell / FamilyRow CardStack / TradeSummary
+      tile migrated. CardTile already had its own landscape detection
+      and a parent-coordinated `landscape` prop; left unchanged per
+      the audit's "do not flatten coordinated cases."
 - [ ] **S4.6** — U1: extract `ui/QtyAdjuster` with
       `accent: 'gold'|'emerald'|'blue'` and
       `variant: 'split'|'pill'`. TradeRow → split-emerald/blue;
