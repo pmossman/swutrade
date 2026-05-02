@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import { useCommunityMembers, type CommunityMember } from '../hooks/useCommunityMembers';
 import { useRecentPartners, type RecentPartner } from '../hooks/useRecentPartners';
 import { useFavorites, type Favorite } from '../hooks/useFavorites';
@@ -29,10 +30,10 @@ const MAX_RECENT_CHIPS = 5;
  *   3) Pick from the viewer's community directory (members of the
  *      mutual Discord guilds they're enrolled in).
  *
- * Deliberately mirrors NudgeDialog's plain-overlay look: fixed
- * inset-0 bg-black/70, centered `max-w-md` panel, Escape + click
- * outside to close. No Radix — keeps the single-purpose surface
- * cheap and the dependency surface unchanged.
+ * Migrated from a hand-rolled `role="dialog"` shell to Radix's
+ * `Dialog.Root` to gain focus-trap, focus-restore, scroll-lock,
+ * `inert` siblings, and ESC handling for free. Audit
+ * 10-ux-primitives.md #3.
  */
 export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialogProps) {
   const nav = useNavigation();
@@ -58,26 +59,17 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
   const { partners: recentPartners, status: recentStatus } = useRecentPartners();
 
   // Reset transient input every time the dialog opens so yesterday's
-  // "@ja…" doesn't ghost in.
+  // "@ja…" doesn't ghost in. Radix's onOpenAutoFocus is suppressed
+  // below so we can focus the input directly here, matching the prior
+  // mobile-Safari-friendly setTimeout(0) approach.
   useEffect(() => {
     if (open) {
       setQuery('');
       setValidation({ kind: 'idle' });
-      // Defer autofocus until after the panel paints — mobile
-      // Safari otherwise ignores focus on a freshly-mounted input.
       const id = window.setTimeout(() => inputRef.current?.focus(), 0);
       return () => window.clearTimeout(id);
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, onClose]);
 
   // Clear validation error as the user keeps typing — the handle has
   // changed, the stale "no such user" message shouldn't linger.
@@ -123,8 +115,6 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
     );
     return recentPartners.filter(p => !favHandles.has(p.handle.toLowerCase()));
   }, [recentPartners, favoritesApi.favorites]);
-
-  if (!open) return null;
 
   const canSubmit = trimmedHandle.length > 0 && validation.kind !== 'checking';
 
@@ -208,20 +198,22 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="handle-picker-title"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div
-        className="w-full max-w-md rounded-xl bg-space-900 border border-space-700 p-5 shadow-xl"
-        tabIndex={-1}
-      >
-        <h2 id="handle-picker-title" className="text-sm font-bold text-gray-100 mb-1">
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          onOpenAutoFocus={e => {
+            // Skip Radix's default focus so our setTimeout-based
+            // autofocus on inputRef can grab focus cleanly (avoids a
+            // mobile-Safari ignore-on-fresh-mount bug).
+            e.preventDefault();
+          }}
+          className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100vw-2rem)] max-w-md rounded-xl bg-space-900 border border-space-700 p-5 shadow-xl"
+        >
+        <Dialog.Title className="text-sm font-bold text-gray-100 mb-1">
           Trade with…
-        </h2>
+        </Dialog.Title>
         <p className="text-[11px] text-gray-500 leading-relaxed mb-3">
           Pick someone, then choose to send a formal proposal or start a shared trade you can edit together.
         </p>
@@ -360,13 +352,14 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
         </div>
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-xs font-medium text-gray-300 hover:text-gold transition-colors"
-          >
-            Cancel
-          </button>
+          <Dialog.Close asChild>
+            <button
+              type="button"
+              className="px-3 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-xs font-medium text-gray-300 hover:text-gold transition-colors"
+            >
+              Cancel
+            </button>
+          </Dialog.Close>
           <button
             type="button"
             onClick={() => void handleStartSession()}
@@ -386,8 +379,9 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             {validation.kind === 'checking' ? 'Checking…' : 'Send proposal'}
           </button>
         </div>
-      </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

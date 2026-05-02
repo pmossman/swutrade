@@ -1,24 +1,27 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 
 interface TradeImageModalProps {
   imageUrl: string;
   onClose: () => void;
 }
 
+/**
+ * Hero-image preview for shared trade images. Migrated from a
+ * hand-rolled `role="dialog"` shell to Radix's `Dialog.Root` to gain
+ * focus-trap, focus-restore, scroll-lock, and ESC handling for free.
+ * Audit 10-ux-primitives.md #3.
+ *
+ * Parent mounts/unmounts conditionally; the Dialog is always `open`
+ * while mounted, and Radix's `onOpenChange` (via overlay click or
+ * ESC) calls `onClose` to drive the unmount.
+ */
 export function TradeImageModal({ imageUrl, onClose }: TradeImageModalProps) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const canShare =
     typeof navigator !== 'undefined' &&
@@ -76,25 +79,30 @@ export function TradeImageModal({ imageUrl, onClose }: TradeImageModalProps) {
   }, [imageUrl, copying]);
 
   return (
-    <div
-      className="fixed inset-0 z-[60] modal-vignette flex flex-col items-center justify-center p-4 animate-fade-in"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Trade image"
-    >
-      {/* Close — top-right of the whole modal */}
-      <button
-        onClick={onClose}
-        className="absolute top-3 right-3 text-gray-400 hover:text-gray-200 transition-colors p-2 z-10"
-        aria-label="Close"
-      >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay
+          className="fixed inset-0 z-[60] modal-vignette animate-fade-in"
+          onClick={onClose}
+        />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed inset-0 z-[60] flex flex-col items-center justify-center p-4 pointer-events-none"
+        >
+        <Dialog.Title className="sr-only">Trade image</Dialog.Title>
+        <Dialog.Close asChild>
+          <button
+            type="button"
+            className="absolute top-3 right-3 text-gray-400 hover:text-gray-200 transition-colors p-2 z-10 pointer-events-auto"
+            aria-label="Close"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </Dialog.Close>
 
-      <div className="relative max-w-5xl w-full flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
+        <div className="relative max-w-5xl w-full flex flex-col items-center gap-4 pointer-events-auto" onClick={e => e.stopPropagation()}>
         {/* Image — gold-framed hero */}
         <div className="relative w-full">
           {!loaded && !errored && (
@@ -186,6 +194,8 @@ export function TradeImageModal({ imageUrl, onClose }: TradeImageModalProps) {
           </div>
         )}
       </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

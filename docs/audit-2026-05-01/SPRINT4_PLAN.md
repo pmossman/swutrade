@@ -49,12 +49,10 @@ behavior-changing extractions come last.
       tile migrated. CardTile already had its own landscape detection
       and a parent-coordinated `landscape` prop; left unchanged per
       the audit's "do not flatten coordinated cases."
-- [ ] **S4.6** — U1: extract `ui/QtyAdjuster` with
-      `accent: 'gold'|'emerald'|'blue'` and
-      `variant: 'split'|'pill'`. TradeRow → split-emerald/blue;
-      CardTile + FamilyRow → pill-emerald/blue. Preserves SWU
-      side-color invariant. ListRows keeps `NumberStepper` for the
-      typeable case.
+- [x] **S4.6** — U1: extract `ui/QtyAdjuster` (fd7f1c9 · run 25247403088).
+      Split + pill variants; emerald/blue/gold accents. Pill variant
+      stops propagation by default since it always nests inside a
+      clickable parent.
 - [ ] **S4.7** — U2: Radix `Dialog.Root` migration for `NudgeDialog`,
       `HandlePickerDialog`, `TradeImageModal`. Free focus-trap +
       scroll-lock + ESC + `aria-modal`. Page-replacing overlays
