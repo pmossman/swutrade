@@ -52,12 +52,39 @@ correctness fixes that require integration testing.
       `serverWriteGenRef` + `lastSeenWriteGenRef` gen-counter pair;
       items-changed effect now correctly distinguishes writeback
       from real local edit.
-- [ ] **S5.6** — M3: `promote-to-shared` race-guard + new
-      `'promoted'` status. Add `'promoted'` to proposalStatuses
-      enum + matching event type. `promoteProposalToSession`
-      captures UPDATE with `.returning({id})` and rolls back the
-      session insert on zero rows. Frontend renders `'promoted'`
-      separately from `'countered'`. Audit 02-trades #1.
+- [x] **S5.6** — M3: `promote-to-shared` race-guard + `'promoted'`
+      status (d636026 · run 25255786207). Status + event-type enums
+      gain `'promoted'`; UPDATE returns rows for race detection;
+      cyan StatusBadge variant + frontend branches added across 9
+      sites.
+
+## Sprint 5 complete — 6/6 milestones shipped
+
+The mid-size correctness cluster is live on beta. Summary:
+- **N18** — KebabMenu trigger gains aria-haspopup / aria-expanded
+  / aria-controls. SR users now hear menu disclosure state.
+- **N12** — `getUserPrefColumn` / `getPeerPrefColumn` typed
+  accessors. 5 sites in api/bot.ts + 2 in lib/prefsResolver.ts
+  migrated; the dynamic-cast escape hatch is now confined to two
+  module-level constants.
+- **N19** — CardTile + FamilyRow tiles converted from
+  `<div role="button">` to `<button>`. Hand-rolled onKeyDown
+  handlers removed; browser handles Enter/Space.
+- **N6** — `resolveSignalFamily` / `resolveSignalVariantSpec` /
+  `resolveSignalCardsBatch` moved to `lib/signalMatching.ts`.
+  Dynamic-import workaround dropped; api/* call sites pass `db`
+  explicitly to match the existing findMatches contract.
+- **M5** — useServerSync's writingBackRef synchronous-clear race
+  replaced with a gen-counter pair. Items-changed effect now
+  correctly distinguishes a server writeback from a real local
+  edit; spurious-PUT-after-every-foreground-pull regression closed.
+- **M3** — promote-to-shared race-guard + new `'promoted'` status.
+  Misclassification of promoted proposals as 'countered' fixed;
+  optimistic-concurrency check via .returning() rolls back the
+  session insert when the proposal raced off `pending`.
+
+Next: Sprint 6 (the big splits — H9 sessions, H10 bot, H11 trades,
+H12 SessionView, H13 TradeBuilderContext) when parker green-lights.
 
 ## Run log
 
