@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiGet, apiPost } from '../services/apiClient';
 import { MeResponseSchema, type MeResponseUser } from '../../lib/shared';
 
@@ -117,14 +117,31 @@ export function useAuth(): AuthApi {
 
   const isSignedIn = !!user || (isLoading && initialHint);
 
-  return {
-    user,
-    isLoading,
-    isSignedIn,
-    botInstallUrl,
-    pendingMergeBanner,
-    dismissMergeBanner,
-    login,
-    logout,
-  };
+  // Memoize the returned API so AuthContext consumers don't re-render
+  // on every parent re-render (the 60s minute-tick in App.tsx, every
+  // useSession setState, etc.). The four useCallback'd functions are
+  // already stable; primitives + nullable user/banner are the only
+  // identity-changing keys.
+  return useMemo<AuthApi>(
+    () => ({
+      user,
+      isLoading,
+      isSignedIn,
+      botInstallUrl,
+      pendingMergeBanner,
+      dismissMergeBanner,
+      login,
+      logout,
+    }),
+    [
+      user,
+      isLoading,
+      isSignedIn,
+      botInstallUrl,
+      pendingMergeBanner,
+      dismissMergeBanner,
+      login,
+      logout,
+    ],
+  );
 }
