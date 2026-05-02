@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Popover } from './Popover';
 
 export interface KebabMenuItem {
@@ -33,12 +34,15 @@ export function KebabMenu({ items, size = 'sm', ariaLabel = 'More actions' }: Ke
   // the row so the kebab doesn't read as the biggest thing.
   const triggerSize = size === 'xs' ? 'w-5 h-5' : size === 'sm' ? 'w-6 h-6' : 'w-7 h-7';
   const dotSize = size === 'xs' ? 'w-3 h-3' : size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  // Stable id so the trigger can claim ownership of the menu via
+  // aria-controls. Audit 11-accessibility #4.
+  const menuId = useId();
 
   return (
     <Popover
       align="right"
       panelClassName="min-w-[160px] py-1"
-      trigger={({ toggle }) => (
+      trigger={({ open, toggle }) => (
         <button
           type="button"
           onClick={e => {
@@ -50,6 +54,9 @@ export function KebabMenu({ items, size = 'sm', ariaLabel = 'More actions' }: Ke
           // the click target meets WCAG 44×44 on touch devices.
           className={`hit-area-44 ${triggerSize} flex items-center justify-center rounded-md bg-space-700 text-gray-300 hover:text-gray-100 hover:bg-space-600 transition-colors`}
           aria-label={ariaLabel}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-controls={menuId}
         >
           <svg className={dotSize} fill="currentColor" viewBox="0 0 24 24" aria-hidden>
             <circle cx="12" cy="5" r="2.2" />
@@ -60,7 +67,7 @@ export function KebabMenu({ items, size = 'sm', ariaLabel = 'More actions' }: Ke
       )}
     >
       {({ close }) => (
-        <ul role="menu" className="text-xs text-gray-200">
+        <ul id={menuId} role="menu" className="text-xs text-gray-200">
           {items.map((item, i) => {
             const onActivate = () => {
               if (item.disabled) return;
