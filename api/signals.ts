@@ -23,7 +23,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import {
@@ -39,8 +39,8 @@ import { requireSession } from '../lib/auth.js';
 import { restrictionKey } from '../lib/shared.js';
 import {
   findMatches,
-  lookupSignalCard,
   lookupSignalFamily,
+  resolveSignalCardsBatch,
   type VariantSpec,
 } from '../lib/signalMatching.js';
 import {
@@ -459,7 +459,7 @@ export async function handleCancel(
   if (firstRow.messageId) {
     try {
       const bot = deps.bot ?? createDiscordBotClient();
-      const resolved = await resolveSignalCardsBatch(groupRows);
+      const resolved = await resolveSignalCardsBatch(db, groupRows);
       const cards = groupRows.map((row) => {
         if (!row.wantsItemId && !row.availableItemId) return null;
         const r = resolved.get(row.id);
@@ -537,7 +537,7 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
 
   // Batch-resolve every row's family + variantSpec in two SELECTs
   // total, then iterate groups synchronously. Audit 07-performance #2.
-  const resolved = await resolveSignalCardsBatch(rows);
+  const resolved = await resolveSignalCardsBatch(db, rows);
   const groups = Array.from(byGroup.entries()).map(([groupId, groupRows]) => {
     const cards = groupRows.map((row) => {
       const r = resolved.get(row.id);
@@ -569,85 +569,6 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
   });
 
   return res.status(200).json({ groups });
-}
-
-// --- shared helpers (kept colocated; api/bot.ts has near-identical
-//     versions but they read the same tables — duplication beats
-//     introducing a circular import or a new lib module just for
-//     this) ---------------------------------------------------------
-
-interface ResolvedSignalCard {
-  family: NonNullable<ReturnType<typeof lookupSignalFamily>>;
-  variantSpec: VariantSpec;
-}
-
-/**
- * Batch-resolve a set of signal rows to their family + variantSpec in
- * a fixed two-query budget (one inArray for wants, one for available),
- * regardless of how many rows are passed. Replaces the per-row
- * resolveFamily + resolveVariantSpec calls — those issued 2 SELECTs
- * per row, scaling linearly with active signals. A user with 8 active
- * signals across 3 groups was ~16 SELECTs on every Signals view mount.
- *
- * Audit 07-performance #2.
- */
-async function resolveSignalCardsBatch(
-  rows: ReadonlyArray<typeof cardSignals.$inferSelect>,
-): Promise<Map<string, ResolvedSignalCard>> {
-  const db = getDb();
-  const wantsIds: string[] = [];
-  const availableIds: string[] = [];
-  for (const row of rows) {
-    if (row.kind === 'wanted' && row.wantsItemId) wantsIds.push(row.wantsItemId);
-    if (row.kind === 'offering' && row.availableItemId) availableIds.push(row.availableItemId);
-  }
-  const [wantsRows, availableRows] = await Promise.all([
-    wantsIds.length > 0
-      ? db.select({
-          id: wantsItems.id,
-          familyId: wantsItems.familyId,
-          restrictionMode: wantsItems.restrictionMode,
-          restrictionVariants: wantsItems.restrictionVariants,
-        }).from(wantsItems).where(inArray(wantsItems.id, wantsIds))
-      : Promise.resolve([] as Array<{
-          id: string;
-          familyId: string;
-          restrictionMode: string;
-          restrictionVariants: string[] | null;
-        }>),
-    availableIds.length > 0
-      ? db.select({
-          id: availableItems.id,
-          productId: availableItems.productId,
-        }).from(availableItems).where(inArray(availableItems.id, availableIds))
-      : Promise.resolve([] as Array<{ id: string; productId: string }>),
-  ]);
-  const wantsMap = new Map(wantsRows.map(r => [r.id, r] as const));
-  const availableMap = new Map(availableRows.map(r => [r.id, r] as const));
-
-  const result = new Map<string, ResolvedSignalCard>();
-  for (const row of rows) {
-    if (row.kind === 'wanted' && row.wantsItemId) {
-      const w = wantsMap.get(row.wantsItemId);
-      if (!w) continue;
-      const family = lookupSignalFamily(w.familyId);
-      if (!family) continue;
-      const variantSpec: VariantSpec = w.restrictionMode === 'any'
-        ? { mode: 'any' }
-        : { mode: 'restricted', variants: w.restrictionVariants ?? [] };
-      result.set(row.id, { family, variantSpec });
-    } else if (row.kind === 'offering' && row.availableItemId) {
-      const a = availableMap.get(row.availableItemId);
-      if (!a) continue;
-      const card = lookupSignalCard(a.productId);
-      if (!card) continue;
-      const family = lookupSignalFamily(card.familyId);
-      if (!family) continue;
-      const variantSpec: VariantSpec = { mode: 'restricted', variants: [card.variant] };
-      result.set(row.id, { family, variantSpec });
-    }
-  }
-  return result;
 }
 
 // Avoid unused-import lint on CardSignalKind — exported via the

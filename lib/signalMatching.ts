@@ -27,6 +27,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   availableItems,
   cardSignalKinds,
+  cardSignals,
   userGuildMemberships,
   users,
   wantsItems,
@@ -390,3 +391,150 @@ export async function findMatches(
   return rows.map(r => ({ ...r, discordId: r.discordId! }));
 }
 
+// -- signal-row → family/variantSpec resolvers ------------------------------
+
+/**
+ * `card_signals` rows reference either a `wants_items` row (kind='wanted')
+ * or an `available_items` row (kind='offering'); both helpers below
+ * walk the foreign key to recover the family + variant the signal
+ * embed needs to render.
+ *
+ * Previously duplicated colocated in api/signals.ts (lines 577-629)
+ * and api/bot.ts (lines 749-805). The "duplication beats circular
+ * import" comment was spurious — both files already statically
+ * imported lookupSignalFamily / lookupSignalCard from this module.
+ * Audit 03-discord #2.
+ */
+
+export interface ResolvedSignalCard {
+  family: SignalFamily;
+  variantSpec: VariantSpec;
+}
+
+/** Single-row family lookup for signal-flow handlers. Use for
+ *  single-shot interaction sites (variant-open / variant-pick) where
+ *  batching offers no benefit; loops should call
+ *  `resolveSignalCardsBatch` instead. */
+export async function resolveSignalFamily(
+  db: Db,
+  signal: typeof cardSignals.$inferSelect,
+): Promise<SignalFamily | null> {
+  if (signal.kind === 'wanted' && signal.wantsItemId) {
+    const [row] = await db
+      .select({ familyId: wantsItems.familyId })
+      .from(wantsItems)
+      .where(eq(wantsItems.id, signal.wantsItemId))
+      .limit(1);
+    return row ? lookupSignalFamily(row.familyId) : null;
+  }
+  if (signal.kind === 'offering' && signal.availableItemId) {
+    const [row] = await db
+      .select({ productId: availableItems.productId })
+      .from(availableItems)
+      .where(eq(availableItems.id, signal.availableItemId))
+      .limit(1);
+    if (!row) return null;
+    const card = lookupSignalCard(row.productId);
+    return card ? lookupSignalFamily(card.familyId) : null;
+  }
+  return null;
+}
+
+/** Single-row variantSpec resolver. For wanted: read
+ *  wants_items.restriction_mode + variants. For offering: always
+ *  'restricted' to the chosen product's variant. */
+export async function resolveSignalVariantSpec(
+  db: Db,
+  signal: typeof cardSignals.$inferSelect,
+): Promise<VariantSpec> {
+  if (signal.kind === 'wanted' && signal.wantsItemId) {
+    const [row] = await db
+      .select({
+        restrictionMode: wantsItems.restrictionMode,
+        restrictionVariants: wantsItems.restrictionVariants,
+      })
+      .from(wantsItems)
+      .where(eq(wantsItems.id, signal.wantsItemId))
+      .limit(1);
+    if (!row || row.restrictionMode === 'any') return { mode: 'any' };
+    return { mode: 'restricted', variants: row.restrictionVariants ?? [] };
+  }
+  if (signal.kind === 'offering' && signal.availableItemId) {
+    const [row] = await db
+      .select({ productId: availableItems.productId })
+      .from(availableItems)
+      .where(eq(availableItems.id, signal.availableItemId))
+      .limit(1);
+    if (!row) return { mode: 'any' };
+    const card = lookupSignalCard(row.productId);
+    return card ? { mode: 'restricted', variants: [card.variant] } : { mode: 'any' };
+  }
+  return { mode: 'any' };
+}
+
+/**
+ * Batch-resolve a set of signal rows to their family + variantSpec
+ * in a fixed two-query budget (one inArray for wants_items, one for
+ * available_items), regardless of how many rows are passed. Loop
+ * call sites (`handleListMine`, `handleSignalCancel`,
+ * `cron-signals` embed-refresh) collapse from 2 SELECTs per row to
+ * 2 SELECTs total. Audit 07-performance #2.
+ */
+export async function resolveSignalCardsBatch(
+  db: Db,
+  rows: ReadonlyArray<typeof cardSignals.$inferSelect>,
+): Promise<Map<string, ResolvedSignalCard>> {
+  const wantsIds: string[] = [];
+  const availableIds: string[] = [];
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) wantsIds.push(row.wantsItemId);
+    if (row.kind === 'offering' && row.availableItemId) availableIds.push(row.availableItemId);
+  }
+  const [wantsRows, availableRows] = await Promise.all([
+    wantsIds.length > 0
+      ? db.select({
+          id: wantsItems.id,
+          familyId: wantsItems.familyId,
+          restrictionMode: wantsItems.restrictionMode,
+          restrictionVariants: wantsItems.restrictionVariants,
+        }).from(wantsItems).where(inArray(wantsItems.id, wantsIds))
+      : Promise.resolve([] as Array<{
+          id: string;
+          familyId: string;
+          restrictionMode: string;
+          restrictionVariants: string[] | null;
+        }>),
+    availableIds.length > 0
+      ? db.select({
+          id: availableItems.id,
+          productId: availableItems.productId,
+        }).from(availableItems).where(inArray(availableItems.id, availableIds))
+      : Promise.resolve([] as Array<{ id: string; productId: string }>),
+  ]);
+  const wantsMap = new Map(wantsRows.map(r => [r.id, r] as const));
+  const availableMap = new Map(availableRows.map(r => [r.id, r] as const));
+
+  const result = new Map<string, ResolvedSignalCard>();
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) {
+      const w = wantsMap.get(row.wantsItemId);
+      if (!w) continue;
+      const family = lookupSignalFamily(w.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = w.restrictionMode === 'any'
+        ? { mode: 'any' }
+        : { mode: 'restricted', variants: w.restrictionVariants ?? [] };
+      result.set(row.id, { family, variantSpec });
+    } else if (row.kind === 'offering' && row.availableItemId) {
+      const a = availableMap.get(row.availableItemId);
+      if (!a) continue;
+      const card = lookupSignalCard(a.productId);
+      if (!card) continue;
+      const family = lookupSignalFamily(card.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = { mode: 'restricted', variants: [card.variant] };
+      result.set(row.id, { family, variantSpec });
+    }
+  }
+  return result;
+}

@@ -39,9 +39,10 @@ correctness fixes that require integration testing.
       (5dd1806 · run 25255269351). 5 sites in api/bot.ts + 2 in
       lib/prefsResolver.ts migrated. Cast confined to two consts at
       the top of prefsRegistry; helpers throw on unknown keys.
-- [ ] **S5.3** — N19: convert tile `<div role="button">` to `<button>`
-      in `CardTile.tsx` + `FamilyRow.tsx`. Drop the manual Enter/Space
-      onKeyDown — browser handles. Audit 11-accessibility #5.
+- [x] **S5.3** — N19: convert tile `<div role="button">` to `<button>`
+      (02b4995 · run 25255381537). CardTile + FamilyRow migrated;
+      manual onKeyDown removed. Nested QtyAdjuster pill is invalid
+      HTML per spec but works in browsers; revisit if support shifts.
 - [ ] **S5.4** — N6: move `resolveSignalFamily` / `resolveVariantSpec`
       / `resolveSignalCardsBatch` to `lib/signalMatching.ts`. Drop
       the dynamic `await import('../lib/signalMatching.js')`

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
 import { botInstalledGuilds, tradeProposals, userGuildMemberships, userPeerPrefs, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
@@ -44,9 +44,8 @@ import { ensureSwutradeCategory, getGuildTradesChannel } from '../lib/tradeGuild
 import { waitUntil } from '@vercel/functions';
 import {
   findMatches,
-  lookupSignalCard,
-  lookupSignalFamily,
-  type SignalFamily,
+  resolveSignalCardsBatch,
+  resolveSignalFamily,
   type VariantSpec,
 } from '../lib/signalMatching.js';
 import {
@@ -708,7 +707,7 @@ async function handleCancelLive(
     .where(eq(users.id, groupRows[0].userId))
     .limit(1);
 
-  const resolvedCards = await resolveSignalCardsBatch(groupRows);
+  const resolvedCards = await resolveSignalCardsBatch(db, groupRows);
   const cards = groupRows.map((row) => {
     const r = resolvedCards.get(row.id);
     if (!r) return null;
@@ -750,141 +749,12 @@ async function handleCancelLive(
   });
 }
 
-/** Family lookup helper for signal-flow handlers — resolves the
- *  family attached to either a wants_items or available_items row. */
-async function resolveSignalFamily(
-  signal: typeof cardSignals.$inferSelect,
-): Promise<SignalFamily | null> {
-  const db = getDb();
-  if (signal.kind === 'wanted' && signal.wantsItemId) {
-    const [row] = await db
-      .select({ familyId: wantsItemsTable.familyId })
-      .from(wantsItemsTable)
-      .where(eq(wantsItemsTable.id, signal.wantsItemId))
-      .limit(1);
-    return row ? lookupSignalFamily(row.familyId) : null;
-  }
-  if (signal.kind === 'offering' && signal.availableItemId) {
-    const [row] = await db
-      .select({ productId: availableItemsTable.productId })
-      .from(availableItemsTable)
-      .where(eq(availableItemsTable.id, signal.availableItemId))
-      .limit(1);
-    if (!row) return null;
-    const card = lookupSignalCard(row.productId);
-    return card ? lookupSignalFamily(card.familyId) : null;
-  }
-  return null;
-}
-
-/** Compute the current variantSpec from a signal's underlying
- *  inventory row. For wanted: read wants_items.restriction_mode +
- *  variants. For offering: always 'restricted' to the chosen
- *  product's variant (since available_items is product-keyed). */
-async function resolveVariantSpec(
-  signal: typeof cardSignals.$inferSelect,
-): Promise<VariantSpec> {
-  const db = getDb();
-  if (signal.kind === 'wanted' && signal.wantsItemId) {
-    const [row] = await db
-      .select({
-        restrictionMode: wantsItemsTable.restrictionMode,
-        restrictionVariants: wantsItemsTable.restrictionVariants,
-      })
-      .from(wantsItemsTable)
-      .where(eq(wantsItemsTable.id, signal.wantsItemId))
-      .limit(1);
-    if (!row || row.restrictionMode === 'any') return { mode: 'any' };
-    return { mode: 'restricted', variants: row.restrictionVariants ?? [] };
-  }
-  if (signal.kind === 'offering' && signal.availableItemId) {
-    const [row] = await db
-      .select({ productId: availableItemsTable.productId })
-      .from(availableItemsTable)
-      .where(eq(availableItemsTable.id, signal.availableItemId))
-      .limit(1);
-    if (!row) return { mode: 'any' };
-    const card = lookupSignalCard(row.productId);
-    return card ? { mode: 'restricted', variants: [card.variant] } : { mode: 'any' };
-  }
-  return { mode: 'any' };
-}
-
-/**
- * Batch-resolve a set of signal rows to family + variantSpec in two
- * SELECTs total (one inArray for wants_items, one for available_items),
- * regardless of how many rows are passed. Replaces the per-row
- * resolveSignalFamily + resolveVariantSpec calls inside Promise.all
- * loops in handleSignalCancel and the cron-signals sweep — those issued
- * 2 SELECTs per row.
- *
- * Single-row callers (handleVariantOpen, handleVariantPick) keep using
- * the per-row helpers. Audit 07-performance #2.
- */
-async function resolveSignalCardsBatch(
-  rows: ReadonlyArray<typeof cardSignals.$inferSelect>,
-): Promise<Map<string, { family: SignalFamily; variantSpec: VariantSpec }>> {
-  const db = getDb();
-  const wantsIds: string[] = [];
-  const availableIds: string[] = [];
-  for (const row of rows) {
-    if (row.kind === 'wanted' && row.wantsItemId) wantsIds.push(row.wantsItemId);
-    if (row.kind === 'offering' && row.availableItemId) availableIds.push(row.availableItemId);
-  }
-  const [wantsRows, availableRows] = await Promise.all([
-    wantsIds.length > 0
-      ? db.select({
-          id: wantsItemsTable.id,
-          familyId: wantsItemsTable.familyId,
-          restrictionMode: wantsItemsTable.restrictionMode,
-          restrictionVariants: wantsItemsTable.restrictionVariants,
-        }).from(wantsItemsTable).where(inArray(wantsItemsTable.id, wantsIds))
-      : Promise.resolve([] as Array<{
-          id: string;
-          familyId: string;
-          restrictionMode: string;
-          restrictionVariants: string[] | null;
-        }>),
-    availableIds.length > 0
-      ? db.select({
-          id: availableItemsTable.id,
-          productId: availableItemsTable.productId,
-        }).from(availableItemsTable).where(inArray(availableItemsTable.id, availableIds))
-      : Promise.resolve([] as Array<{ id: string; productId: string }>),
-  ]);
-  const wantsMap = new Map(wantsRows.map(r => [r.id, r] as const));
-  const availableMap = new Map(availableRows.map(r => [r.id, r] as const));
-
-  const result = new Map<string, { family: SignalFamily; variantSpec: VariantSpec }>();
-  for (const row of rows) {
-    if (row.kind === 'wanted' && row.wantsItemId) {
-      const w = wantsMap.get(row.wantsItemId);
-      if (!w) continue;
-      const family = lookupSignalFamily(w.familyId);
-      if (!family) continue;
-      const variantSpec: VariantSpec = w.restrictionMode === 'any'
-        ? { mode: 'any' }
-        : { mode: 'restricted', variants: w.restrictionVariants ?? [] };
-      result.set(row.id, { family, variantSpec });
-    } else if (row.kind === 'offering' && row.availableItemId) {
-      const a = availableMap.get(row.availableItemId);
-      if (!a) continue;
-      const card = lookupSignalCard(a.productId);
-      if (!card) continue;
-      const family = lookupSignalFamily(card.familyId);
-      if (!family) continue;
-      const variantSpec: VariantSpec = { mode: 'restricted', variants: [card.variant] };
-      result.set(row.id, { family, variantSpec });
-    }
-  }
-  return result;
-}
 
 async function handleVariantOpen(
   signal: typeof cardSignals.$inferSelect,
   res: VercelResponse,
 ): Promise<void> {
-  const family = await resolveSignalFamily(signal);
+  const family = await resolveSignalFamily(getDb(), signal);
   if (!family) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
@@ -910,7 +780,7 @@ async function handleVariantPick(
   res: VercelResponse,
   deps: BotDeps,
 ): Promise<void> {
-  const family = await resolveSignalFamily(signal);
+  const family = await resolveSignalFamily(getDb(), signal);
   if (!family || !family.variants.some(v => v.variant === pickedVariant)) {
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
@@ -1093,7 +963,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
       .where(eq(users.id, firstRow.userId))
       .limit(1);
 
-    const resolvedCards = await resolveSignalCardsBatch(rows);
+    const resolvedCards = await resolveSignalCardsBatch(db, rows);
     const cards = rows.map((row) => {
       const r = resolvedCards.get(row.id);
       if (!r) return null;
