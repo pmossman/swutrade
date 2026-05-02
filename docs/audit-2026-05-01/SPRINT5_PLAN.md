@@ -43,10 +43,10 @@ correctness fixes that require integration testing.
       (02b4995 · run 25255381537). CardTile + FamilyRow migrated;
       manual onKeyDown removed. Nested QtyAdjuster pill is invalid
       HTML per spec but works in browsers; revisit if support shifts.
-- [ ] **S5.4** — N6: move `resolveSignalFamily` / `resolveVariantSpec`
-      / `resolveSignalCardsBatch` to `lib/signalMatching.ts`. Drop
-      the dynamic `await import('../lib/signalMatching.js')`
-      workaround in `api/signals.ts:594, 624`. Audit 03-discord #2.
+- [x] **S5.4** — N6: move signal-row resolvers to `lib/signalMatching`
+      (ddbd28b · run 25255509604). 3 helpers moved; dynamic-import
+      workaround dropped; api/signals.ts and api/bot.ts pass `db`
+      explicitly to match findMatches contract.
 - [ ] **S5.5** — M5: `useServerSync` writingBackRef race. The guard
       is cleared synchronously around `wants.setAll()`, but the
       items-changed effect fires after the surrounding async

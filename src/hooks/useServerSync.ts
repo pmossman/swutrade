@@ -54,7 +54,17 @@ export function useServerSync(
   const prevUserRef = useRef<User | null>(null);
   const syncVersionRef = useRef(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const writingBackRef = useRef(false);
+  // Server-write generation counter. Each writeback increments it
+  // BEFORE the setAll calls; the items-changed effect compares
+  // against the value it last observed and skips scheduling a
+  // debounced PUT when a writeback caused the change. Replaces the
+  // earlier `writingBackRef` flag, which was synchronously cleared
+  // around `setAll(...)` — by the time React fired the items effect,
+  // the flag had already flipped to false and the debounce ran a
+  // spurious round-trip 500ms later. Audit 06-lists #1; same
+  // gen-counter pattern as Sprint 1's saveCards-shape race fixes.
+  const serverWriteGenRef = useRef(0);
+  const lastSeenWriteGenRef = useRef(0);
   // Once initial sync completes, debounced mutations are allowed.
   const initialSyncDoneRef = useRef(false);
 
@@ -112,10 +122,9 @@ export function useServerSync(
             syncGet<unknown[]>('/api/sync/wants'),
             syncGet<unknown[]>('/api/sync/available'),
           ]);
-          writingBackRef.current = true;
+          serverWriteGenRef.current += 1;
           wants.setAll(normalizeServerWants(w as typeof wants.items));
           available.setAll(a as typeof available.items);
-          writingBackRef.current = false;
           initialSyncDoneRef.current = true;
           setStatus('idle');
           return;
@@ -127,10 +136,9 @@ export function useServerSync(
         // this device get overwritten — that's the right behavior
         // because the user's seen-state across devices is the
         // server view.
-        writingBackRef.current = true;
+        serverWriteGenRef.current += 1;
         wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
         available.setAll(serverAvailable as typeof available.items);
-        writingBackRef.current = false;
         initialSyncDoneRef.current = true;
         setStatus('idle');
       } catch (err: unknown) {
@@ -164,10 +172,9 @@ export function useServerSync(
           syncGet<unknown[]>('/api/sync/wants'),
           syncGet<unknown[]>('/api/sync/available'),
         ]);
-        writingBackRef.current = true;
+        serverWriteGenRef.current += 1;
         wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
         available.setAll(serverAvailable as typeof available.items);
-        writingBackRef.current = false;
         setStatus('idle');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : '';
@@ -193,7 +200,18 @@ export function useServerSync(
 
   // Debounced sync on local mutations — only after initial sync.
   useEffect(() => {
-    if (!user || writingBackRef.current || !initialSyncDoneRef.current) return;
+    if (!user || !initialSyncDoneRef.current) return;
+
+    // Skip when this items change came from a server writeback
+    // (initial sync, foreground re-pull, etc.) instead of a real
+    // local edit. The writeback path increments
+    // `serverWriteGenRef`; comparing against the gen we last saw
+    // tells us whether the items effect was triggered by us flipping
+    // the writeback gen, in which case there's no user edit to push.
+    if (serverWriteGenRef.current !== lastSeenWriteGenRef.current) {
+      lastSeenWriteGenRef.current = serverWriteGenRef.current;
+      return;
+    }
 
     syncVersionRef.current += 1;
     const version = syncVersionRef.current;
