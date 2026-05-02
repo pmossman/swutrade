@@ -729,7 +729,6 @@ async function handleCancelLive(
 
     cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
     note: firstRow.signalNote,
-    maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
     requester: {
       discordId: signaler?.discordId ?? null,
       handle: signaler?.handle ?? '?',
@@ -910,7 +909,6 @@ async function handleVariantPick(
           matchedUsers: matches.map(m => ({ discordId: m.discordId, handle: m.handle })),
         }],
         note: signal.signalNote,
-        maxUnitPrice: signal.maxUnitPrice ? Number(signal.maxUnitPrice) : null,
         requester: { discordId: null, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
         expiryHint: formatExpiryHint(signal.expiresAt),
       }));
@@ -1044,7 +1042,6 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
   
       cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
       note: firstRow.signalNote,
-      maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
       requester: {
         discordId: signaler?.discordId ?? null,
         handle: signaler?.handle ?? '?',

@@ -72,7 +72,6 @@ export interface SignalEmbedContext {
   status: CardSignalStatus;
   cards: SignalEmbedCard[];
   note?: string | null;
-  maxUnitPrice?: number | null;
   requester: {
     discordId: string | null;
     handle: string;
@@ -120,13 +119,15 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   // Build the description block. Layout differs between single-
   // and multi-card.
   const lines: string[] = [];
+  // Max/asking price was removed 2026-05-01 — signals are
+  // conversation-starters; specific pricing is worked out fairly in
+  // the trade thread, not pre-committed in the post. Old signal
+  // rows still carry maxUnitPrice in DB; ctx.maxUnitPrice is now
+  // ignored on render so re-rendered (cancelled/expired) old posts
+  // also drop the line.
   if (ctx.cards.length === 1) {
     const c = ctx.cards[0];
     lines.push(`**${c.qty}×** · ${formatCardLabel(c)}`);
-    if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
-      const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
-      lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
-    }
     const matchLine = formatMatchLine(c.matchedUsers, ctx.kind);
     if (matchLine) lines.push(matchLine);
   } else {
@@ -138,10 +139,6 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
       const matchLine = formatMatchLine(c.matchedUsers, ctx.kind);
       if (matchLine) lines.push(`  ${matchLine}`);
       lines.push('');
-    }
-    if (ctx.maxUnitPrice && ctx.maxUnitPrice > 0) {
-      const verb = ctx.kind === 'wanted' ? 'Max' : 'Asking';
-      lines.push(`${verb} **$${ctx.maxUnitPrice.toFixed(2)}** per copy`);
     }
   }
   if (ctx.note) {

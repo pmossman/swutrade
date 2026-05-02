@@ -18,10 +18,13 @@ const restrictionKeyOf = restrictionKeyFromVariants;
  * Web Signal Builder — replaces the deprecated Discord
  * `/looking-for` and `/offering` slash commands. Lets the user
  * compose a multi-card signal with the shared card picker, per-card
- * variant + qty + max-price, an optional note, a chosen target
- * guild, and a live preview before posting. On submit, calls
- * `/api/signals` which inserts the rows + posts the embed via the
- * bot client.
+ * variant + qty, an optional note, a chosen target guild, and a
+ * live preview before posting. On submit, calls `/api/signals`
+ * which inserts the rows + posts the embed via the bot client.
+ *
+ * Max-price was removed in 2026-05-01 — signals are conversation
+ * starters; specific pricing is worked out fairly in the trade
+ * thread, not pre-committed.
  */
 
 interface SignalBuilderViewProps {
@@ -48,8 +51,6 @@ interface SignalCardEntry {
    *      and rendered in the Discord embed as "A / B only"). */
   variants: string[] | null;
   qty: number;
-  /** null = no ceiling. */
-  maxPrice: number | null;
 }
 
 interface FamilyDisplay {
@@ -185,7 +186,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         familyId: w.familyId,
         variants,
         qty: w.qty,
-        maxPrice: w.maxUnitPrice ?? null,
       });
     }
     setCards(seeded.slice(0, 20));
@@ -241,7 +241,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
       if (existing >= 0) {
         return prev.map((c, i) => i === existing ? { ...c, qty: Math.min(99, c.qty + 1) } : c);
       }
-      return [...prev, { familyId, variants, qty: 1, maxPrice: null }];
+      return [...prev, { familyId, variants, qty: 1 }];
     });
   }
 
@@ -263,7 +263,6 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         familyId: c.familyId,
         variants: c.variants,
         qty: c.qty,
-        maxPrice: c.maxPrice,
       })),
       note: note.trim() || null,
       guildId,
@@ -701,12 +700,16 @@ function EmptyState({
  *
  *   • 2× Luke Skywalker — Hero of Yavin [JTL] (Leader) · any printing
  *
- * The qty / variant / max-price controls render inline as small
- * editable chips so the user is *editing the rendered post*, not
- * filling out a labelled form. A small thumbnail anchors the row
- * (matches the live embed's single-card thumbnail; multi-card posts
- * drop the embed thumbnail but the form keeps a small one as a
- * recognition cue).
+ * The qty / variant controls render inline as small editable chips
+ * so the user is *editing the rendered post*, not filling out a
+ * labelled form. A small thumbnail anchors the row (matches the
+ * live embed's single-card thumbnail; multi-card posts drop the
+ * embed thumbnail but the form keeps a small one as a recognition
+ * cue).
+ *
+ * Max-price was removed in 2026-05-01 — signals are
+ * conversation-starters; specific pricing gets worked out fairly
+ * later in the trade thread, not pre-committed up front.
  */
 function CardRow({
   card,
@@ -783,22 +786,6 @@ function CardRow({
               ))}
             </select>
           )}
-          <span className="text-gray-600">·</span>
-          <span className="flex items-center gap-1">
-            max&nbsp;$
-            <NumberStepper
-              value={card.maxPrice}
-              onChange={n => onChange({ maxPrice: n })}
-              min={0}
-              max={10000}
-              step={0.5}
-              decimal
-              allowEmpty
-              ariaLabel="Max price"
-              size="compact"
-              inputClassName="w-12"
-            />
-          </span>
         </div>
       </div>
       <button

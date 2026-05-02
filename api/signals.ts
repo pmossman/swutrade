@@ -70,7 +70,11 @@ const CardInputSchema = z.object({
    *  embed renders multi-variant restrictions as "A / B only". */
   variants: z.array(z.string().min(1).max(60)).max(20).nullable().optional(),
   qty: z.number().int().min(1).max(99),
-  maxPrice: z.number().min(0).max(10000).nullable().optional(),
+  // maxPrice removed 2026-05-01 — signals are conversation
+  // starters; specific pricing is worked out fairly in the trade
+  // thread, not pre-committed in the post. Zod's default strips
+  // extra fields, so cached old clients that still send maxPrice
+  // POST successfully — the field is silently dropped.
 });
 
 const CreateBodySchema = z.object({
@@ -191,7 +195,6 @@ export async function handleCreate(
     variantSpec: VariantSpec;
     representativeProductId: string;
     qty: number;
-    maxPrice: number | null;
   };
   const resolved: ResolvedCard[] = [];
   for (const c of body.cards) {
@@ -218,7 +221,6 @@ export async function handleCreate(
       variantSpec,
       representativeProductId,
       qty: c.qty,
-      maxPrice: c.maxPrice ?? null,
     });
   }
 
@@ -248,7 +250,11 @@ export async function handleCreate(
         restrictionMode: restriction.mode,
         restrictionVariants: restriction.mode === 'restricted' ? restriction.variants : null,
         restrictionKey: restrictionKey(restriction),
-        maxUnitPrice: rc.maxPrice != null ? String(rc.maxPrice) : null,
+        // wantsItems.maxUnitPrice (the user's standing personal
+        // ceiling) is unrelated to the removed signal-side max-$
+        // — but signals never set it; that's a wishlist-UI-only
+        // concern. Leave null on signal-driven inserts.
+        maxUnitPrice: null,
         isPriority: true,
         addedAt: now.getTime(),
       }).onConflictDoUpdate({
@@ -307,7 +313,10 @@ export async function handleCreate(
       channelId,
       expiresAt,
       signalNote: body.note ?? null,
-      maxUnitPrice: rc.maxPrice != null ? String(rc.maxPrice) : null,
+      // maxUnitPrice removed from the signal API 2026-05-01.
+      // Column kept on card_signals for backwards-compat with
+      // already-posted rows; new writes always null.
+      maxUnitPrice: null,
       status: 'active',
     });
     drafts.push({ ...rc, signalId });
@@ -336,15 +345,6 @@ export async function handleCreate(
     };
   }));
 
-  // Card-level max-price doesn't render in the embed today (the
-  // embed honours a single signal-wide max). Using the highest of
-  // the per-card values gives a useful display when the user set
-  // any of them; if all null, omits the line.
-  const groupMaxPrice = drafts.reduce<number | null>((acc, d) => {
-    if (d.maxPrice == null) return acc;
-    return acc == null ? d.maxPrice : Math.max(acc, d.maxPrice);
-  }, null);
-
   // Absolute URL for the OG composite image referenced by the embed.
   // Discord caches embed images by URL, so we include the groupId in
   // the path; status changes (cancel / expire) just drop the embed's
@@ -360,7 +360,6 @@ export async function handleCreate(
     status: 'active',
     cards: cardsForEmbed,
     note: body.note ?? null,
-    maxUnitPrice: groupMaxPrice,
     requester: { discordId: signaler.discordId, handle: signaler.handle, avatarUrl: signaler.avatarUrl },
     expiryHint: formatExpiryHint(expiresAt, now),
     imageUrl,
@@ -487,10 +486,8 @@ export async function handleCancel(
         groupId,
         kind: firstRow.kind,
         status: 'cancelled',
-    
         cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
         note: firstRow.signalNote,
-        maxUnitPrice: firstRow.maxUnitPrice ? Number(firstRow.maxUnitPrice) : null,
         requester: {
           discordId: signaler?.discordId ?? null,
           handle: signaler?.handle ?? '?',
