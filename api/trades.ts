@@ -185,16 +185,33 @@ export async function handlePropose(
 
   const db = getDb();
 
-  const [recipient] = await db
-    .select({
-      id: users.id,
-      discordId: users.discordId,
-      handle: users.handle,
-      profileVisibility: users.profileVisibility,
-    })
-    .from(users)
-    .where(eq(users.handle, recipientHandle))
-    .limit(1);
+  // Recipient and proposer SELECTs are independent — fetch in parallel
+  // and merge the proposer's two old projections (handle/username here,
+  // discordId later) into a single round-trip. Audit 07-performance H3
+  // + lower-priority debt #3.
+  const [recipientRows, proposerRows] = await Promise.all([
+    db
+      .select({
+        id: users.id,
+        discordId: users.discordId,
+        handle: users.handle,
+        profileVisibility: users.profileVisibility,
+      })
+      .from(users)
+      .where(eq(users.handle, recipientHandle))
+      .limit(1),
+    db
+      .select({
+        handle: users.handle,
+        username: users.username,
+        discordId: users.discordId,
+      })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1),
+  ]);
+  const [recipient] = recipientRows;
+  const [proposer] = proposerRows;
   if (!recipient) {
     return res.status(404).json({ error: 'Recipient not found' });
   }
@@ -207,15 +224,6 @@ export async function handlePropose(
     // found" to avoid confirming existence of a private account.
     return res.status(404).json({ error: 'Recipient not found' });
   }
-
-  const [proposer] = await db
-    .select({
-      handle: users.handle,
-      username: users.username,
-    })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
   if (!proposer) {
     // Session is valid but user row vanished — data inconsistency,
     // shouldn't happen in practice but fail loud if it does.
@@ -249,14 +257,6 @@ export async function handlePropose(
     actorUserId: session.userId,
     type: 'created',
   });
-
-  // Get proposer's discordId too — thread flow adds both users as
-  // members, not just the recipient.
-  const [proposerFull] = await db
-    .select({ discordId: users.discordId })
-    .from(users)
-    .where(eq(users.id, session.userId))
-    .limit(1);
 
   const bot = deps.bot ?? createDiscordBotClient();
 
@@ -292,7 +292,7 @@ export async function handlePropose(
   let threadId: string | null = null;
   let threadParentChannelId: string | null = null;
 
-  const canCreateThread = !!resolvedGuild && !!proposerFull?.discordId;
+  const canCreateThread = !!resolvedGuild && !!proposer.discordId;
 
   if (delivery === 'thread-immediately' && canCreateThread) {
     let createdThreadId: string | null = null;
@@ -317,7 +317,7 @@ export async function handlePropose(
       // same guild as the bot), we bail and fall through to DM. The
       // catch below cleans up the partial thread.
       await Promise.all([
-        bot.addThreadMember(thread.id, proposerFull!.discordId),
+        bot.addThreadMember(thread.id, proposer.discordId!),
         bot.addThreadMember(thread.id, recipient.discordId),
       ]);
       const posted = await bot.postChannelMessage(thread.id, payload);

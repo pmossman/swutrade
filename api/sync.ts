@@ -87,10 +87,15 @@ export async function handleWants(req: VercelRequest, res: VercelResponse) {
 
     const clientIds = items.map(i => i.id).filter(Boolean);
 
-    for (const item of items) {
-      if (!item.id || !item.familyId) continue;
+    // Run upserts in parallel — each row targets a distinct id, so
+    // order doesn't matter. Sequential awaits previously made a
+    // 200-card binder PUT take 6-10s wall-clock per round-trip;
+    // Promise.all collapses to one round-trip-batch. Audit
+    // 07-performance H3 + 06-lists #2.
+    await Promise.all(items.map(item => {
+      if (!item.id || !item.familyId) return Promise.resolve();
       const row = wantsToDbRow(item, session.userId);
-      await db.insert(wantsItems).values(row)
+      return db.insert(wantsItems).values(row)
         .onConflictDoUpdate({
           target: wantsItems.id,
           set: {
@@ -105,7 +110,7 @@ export async function handleWants(req: VercelRequest, res: VercelResponse) {
             updatedAt: row.updatedAt,
           },
         });
-    }
+    }));
 
     if (clientIds.length > 0) {
       await db.delete(wantsItems).where(
@@ -178,10 +183,13 @@ export async function handleAvailable(req: VercelRequest, res: VercelResponse) {
 
     const clientIds = items.map(i => i.id).filter(Boolean);
 
-    for (const item of items) {
-      if (!item.id || !item.productId) continue;
+    // Run upserts in parallel — each row targets a distinct id, so
+    // order doesn't matter. See handleWants above for the full
+    // perf rationale. Audit 07-performance H3 + 06-lists #2.
+    await Promise.all(items.map(item => {
+      if (!item.id || !item.productId) return Promise.resolve();
       const row = availableToDbRow(item, session.userId);
-      await db.insert(availableItems).values(row)
+      return db.insert(availableItems).values(row)
         .onConflictDoUpdate({
           target: availableItems.id,
           set: {
@@ -191,7 +199,7 @@ export async function handleAvailable(req: VercelRequest, res: VercelResponse) {
             updatedAt: row.updatedAt,
           },
         });
-    }
+    }));
 
     if (clientIds.length > 0) {
       await db.delete(availableItems).where(

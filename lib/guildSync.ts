@@ -65,10 +65,16 @@ export async function syncGuildMemberships(
   // Upsert every current guild. onConflictDoUpdate preserves consent
   // flags (enrolled / includeInRollups / appearInQueries) by omitting
   // them from the SET clause.
-  for (const g of guilds) {
+  //
+  // Run upserts in parallel — each row targets a distinct
+  // (userId, guildId) pair, so order doesn't matter and they don't
+  // contend. Sequential awaits here previously blocked OAuth
+  // sign-in for ~1s per guild on the user. Audit 07-performance H3
+  // + 04-auth #2.
+  await Promise.all(guilds.map(g => {
     const canManage = g.permissions ? (BigInt(g.permissions) & MANAGE_GUILD) !== 0n : false;
     const autoEnroll = botInstalledIds.has(g.id);
-    await db
+    return db
       .insert(userGuildMemberships)
       .values({
         id: `ugm-${userId}-${g.id}`,
@@ -92,7 +98,7 @@ export async function syncGuildMemberships(
           lastSeenAt: now,
         },
       });
-  }
+  }));
 
   // Prune: rows where the guild_id is NOT in the freshly fetched set.
   // If the user left every server, guildIds is [] and we'd drop all

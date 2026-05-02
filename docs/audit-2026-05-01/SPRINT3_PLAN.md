@@ -30,8 +30,9 @@ Each milestone is one commit; one CI verification gates the next.
 
 ## Milestones
 
-- [ ] **S3.1** — Memoize `AuthContext` + `PriceDataContext` values
-      (H2). `PrimaryActionContext` already memoizes; verify and skip.
+- [x] **S3.1** — Memoize `AuthContext` + `PriceDataContext` values
+      (e56c682 · run 25243972910). `PrimaryActionContext` was already
+      memoized — verified, no change needed.
 - [ ] **S3.2** — `Promise.all` the sequential-await offenders (H3):
       `handlePropose` proposer/recipient/guild lookups in
       `api/trades.ts`, `syncGuildMemberships` upsert loop in
