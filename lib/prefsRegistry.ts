@@ -17,6 +17,9 @@
  * column, same sitting.
  */
 
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { users, userPeerPrefs } from './schema.js';
+
 // -- types -------------------------------------------------------------------
 
 export interface PrefOption {
@@ -266,6 +269,50 @@ export function getPrefDefinition(
   scope: PrefScope['kind'],
 ): PrefDefinition | undefined {
   return PREF_DEFINITIONS.find(d => d.key === key && d.scope.kind === scope);
+}
+
+// -- typed column accessors --------------------------------------------------
+
+// Cast the Drizzle table objects to a string-keyed record once at
+// module init. Inside this file the cast is the standard escape
+// hatch for dynamic column lookup; downstream callers see a typed
+// `AnyPgColumn` from the helpers below. Audit 03-discord #4.
+const userColumns = users as unknown as Record<string, AnyPgColumn>;
+const peerColumns = userPeerPrefs as unknown as Record<string, AnyPgColumn>;
+
+/**
+ * Resolve the Drizzle column on `users` for a self-scoped pref key.
+ * Throws if the key isn't registered (typo) or if the def's `column`
+ * value doesn't exist on the schema (registry/schema drift).
+ *
+ * Callers in `api/bot.ts` and `lib/prefsResolver.ts` previously
+ * inlined `users as unknown as Record<…>; cols[def.column]` five
+ * places; a typo there returned `undefined` and crashed the SQL
+ * builder downstream with a confusing error.
+ */
+export function getUserPrefColumn(key: string): AnyPgColumn {
+  const def = getPrefDefinition(key, 'self');
+  if (!def) {
+    throw new Error(`getUserPrefColumn: no self-scoped def for key "${key}"`);
+  }
+  const column = userColumns[def.column];
+  if (!column) {
+    throw new Error(`getUserPrefColumn: column "${def.column}" not on users schema (key="${key}")`);
+  }
+  return column;
+}
+
+/** Same as `getUserPrefColumn` but resolves against the peer table. */
+export function getPeerPrefColumn(key: string): AnyPgColumn {
+  const def = getPrefDefinition(key, 'peer');
+  if (!def) {
+    throw new Error(`getPeerPrefColumn: no peer-scoped def for key "${key}"`);
+  }
+  const column = peerColumns[def.column];
+  if (!column) {
+    throw new Error(`getPeerPrefColumn: column "${def.column}" not on userPeerPrefs schema (key="${key}")`);
+  }
+  return column;
 }
 
 export type PrefValidationResult =

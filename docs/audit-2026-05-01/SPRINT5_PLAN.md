@@ -31,10 +31,10 @@ Each milestone is one commit; one CI verification gates the next.
 Order chosen so cheap mechanical wins clear before the higher-risk
 correctness fixes that require integration testing.
 
-- [ ] **S5.1** — N18: KebabMenu aria. Thread `open` from
-      `Popover` render-prop into the trigger; add
+- [x] **S5.1** — N18: KebabMenu aria
+      (a490a00 · run 25255171822). `open` threaded into trigger;
       `aria-haspopup="menu"` + `aria-expanded={open}` +
-      `aria-controls={useId()}`. Audit 11-accessibility #4.
+      `aria-controls={useId()}` matched to menu list id.
 - [ ] **S5.2** — N12: typed prefs-registry accessors. Add
       `getUserPrefColumn(key)` / `getPeerPrefColumn(key)` in
       `lib/prefsRegistry.ts` that throw on unknown keys; replace 5

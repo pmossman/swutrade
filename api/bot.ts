@@ -29,7 +29,13 @@ import {
   buildServerEnrollConfirmationMessage,
 } from '../lib/proposalMessages.js';
 import { handleThreadRequest, type CommunicationPref } from '../lib/threadConsent.js';
-import { PREF_DEFINITIONS, getPrefDefinition, validatePrefValue } from '../lib/prefsRegistry.js';
+import {
+  PREF_DEFINITIONS,
+  getPeerPrefColumn,
+  getPrefDefinition,
+  getUserPrefColumn,
+  validatePrefValue,
+} from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
 import { resolveProposal } from '../lib/proposalResolve.js';
@@ -1929,15 +1935,11 @@ export async function handlePrefsButton(
   }
 
   const db = getDb();
-  // Dynamic column access — `def.column` is validated against the
-  // users schema at registry test time, so the runtime property
-  // lookup is safe. Used for both read (selector highlight) and
-  // write (commit).
-  const usersColumns = users as unknown as Record<
-    string,
-    import('drizzle-orm/pg-core').AnyPgColumn
-  >;
-  const column = usersColumns[def.column];
+  // Typed column accessor throws if `def.key` is unregistered or
+  // its column drifted off the schema — runtime property lookup
+  // protected at the boundary instead of crashing in the SQL
+  // builder.
+  const column = getUserPrefColumn(def.key);
 
   if (action === 'open') {
     const [row] = await db
@@ -2044,12 +2046,8 @@ async function handleCombinedPrefsButton(
   // (shouldn't happen — proposer != recipient is a handlePropose
   // invariant), fall back to the self-only selector.
   if (viewer.id === peerUserId) {
-    const usersColumns = users as unknown as Record<
-      string,
-      import('drizzle-orm/pg-core').AnyPgColumn
-    >;
     const [row] = await db
-      .select({ value: usersColumns[selfDef.column] })
+      .select({ value: getUserPrefColumn(selfDef.key) })
       .from(users)
       .where(eq(users.id, viewer.id))
       .limit(1);
@@ -2062,22 +2060,13 @@ async function handleCombinedPrefsButton(
   }
 
   // Pull the three values the combined view displays in parallel.
-  const usersColumns = users as unknown as Record<
-    string,
-    import('drizzle-orm/pg-core').AnyPgColumn
-  >;
-  const peerColumns = userPeerPrefs as unknown as Record<
-    string,
-    import('drizzle-orm/pg-core').AnyPgColumn
-  >;
-
   const [selfRow] = await db
-    .select({ value: usersColumns[selfDef.column] })
+    .select({ value: getUserPrefColumn(selfDef.key) })
     .from(users)
     .where(eq(users.id, viewer.id))
     .limit(1);
   const [overrideRow] = await db
-    .select({ value: peerColumns[peerDef.column] })
+    .select({ value: getPeerPrefColumn(peerDef.key) })
     .from(userPeerPrefs)
     .where(and(
       eq(userPeerPrefs.userId, viewer.id),
@@ -2179,11 +2168,7 @@ async function handlePeerPrefButton(
     .limit(1);
   const peerHandle = peerRow?.handle ?? peerUserId.slice(0, 8);
 
-  const peerColumns = userPeerPrefs as unknown as Record<
-    string,
-    import('drizzle-orm/pg-core').AnyPgColumn
-  >;
-  const column = peerColumns[def.column];
+  const column = getPeerPrefColumn(def.key);
 
   if (action === 'open') {
     const [row] = await db

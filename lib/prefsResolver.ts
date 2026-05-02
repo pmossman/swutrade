@@ -1,9 +1,10 @@
 import { and, eq } from 'drizzle-orm';
-import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { getDb } from './db.js';
 import { users, userPeerPrefs } from './schema.js';
 import {
+  getPeerPrefColumn,
   getPrefDefinition,
+  getUserPrefColumn,
   type PrefValue,
 } from './prefsRegistry.js';
 
@@ -43,35 +44,27 @@ export async function resolvePref(opts: {
   // Step 1: peer override.
   const peerDef = getPrefDefinition(opts.key, 'peer');
   if (peerDef && opts.peerUserId) {
-    const peerCols = userPeerPrefs as unknown as Record<string, AnyPgColumn>;
-    const peerColumn = peerCols[peerDef.column];
-    if (peerColumn) {
-      const [row] = await db
-        .select({ value: peerColumn })
-        .from(userPeerPrefs)
-        .where(and(
-          eq(userPeerPrefs.userId, opts.viewerUserId),
-          eq(userPeerPrefs.peerUserId, opts.peerUserId),
-        ))
-        .limit(1);
-      if (row?.value !== undefined && row.value !== null) {
-        return row.value as PrefValue;
-      }
-    }
-  }
-
-  // Step 2: viewer's self-scoped column.
-  const selfCols = users as unknown as Record<string, AnyPgColumn>;
-  const selfColumn = selfCols[selfDef.column];
-  if (selfColumn) {
     const [row] = await db
-      .select({ value: selfColumn })
-      .from(users)
-      .where(eq(users.id, opts.viewerUserId))
+      .select({ value: getPeerPrefColumn(peerDef.key) })
+      .from(userPeerPrefs)
+      .where(and(
+        eq(userPeerPrefs.userId, opts.viewerUserId),
+        eq(userPeerPrefs.peerUserId, opts.peerUserId),
+      ))
       .limit(1);
     if (row?.value !== undefined && row.value !== null) {
       return row.value as PrefValue;
     }
+  }
+
+  // Step 2: viewer's self-scoped column.
+  const [row] = await db
+    .select({ value: getUserPrefColumn(selfDef.key) })
+    .from(users)
+    .where(eq(users.id, opts.viewerUserId))
+    .limit(1);
+  if (row?.value !== undefined && row.value !== null) {
+    return row.value as PrefValue;
   }
 
   // Step 3: registry default.
