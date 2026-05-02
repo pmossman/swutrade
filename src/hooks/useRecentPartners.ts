@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../services/apiClient';
+import { createSingletonCache } from './sharedCache';
 
 export interface RecentPartner {
   userId: string;
@@ -14,6 +15,16 @@ export interface RecentPartnersApi {
   status: 'loading' | 'ready' | 'error';
 }
 
+// Module-scoped cache: HandlePickerDialog re-mounts on every open and
+// would otherwise re-fetch each time even though the partner list
+// changes only on mutation. Audit 07-performance #5.
+const cache = createSingletonCache<RecentPartner[]>();
+
+/** Testing-only: reset the module-scoped cache between test cases. */
+export function __resetRecentPartnersCache() {
+  cache.clear();
+}
+
 /**
  * Pulls up to five distinct counterparties the viewer has recently
  * exchanged a proposal with, newest first. Used by HandlePickerDialog
@@ -24,8 +35,12 @@ export interface RecentPartnersApi {
  * list stays reasonably current without any explicit refresh path).
  */
 export function useRecentPartners(): RecentPartnersApi {
-  const [partners, setPartners] = useState<RecentPartner[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [partners, setPartners] = useState<RecentPartner[]>(
+    () => cache.get() ?? [],
+  );
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
+    () => (cache.has() ? 'ready' : 'loading'),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -35,9 +50,10 @@ export function useRecentPartners(): RecentPartnersApi {
       );
       if (cancelled) return;
       if (!result.ok) {
-        setStatus('error');
+        if (!cache.has()) setStatus('error');
         return;
       }
+      cache.set(result.data.partners);
       setPartners(result.data.partners);
       setStatus('ready');
     })();

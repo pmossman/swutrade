@@ -43,10 +43,11 @@ Each milestone is one commit; one CI verification gates the next.
       (04b475f · run 25244275784). All 9 views now ship as separate
       chunks (~57 kB gzipped deferred from initial bundle). Trade
       builder + composer bars stay eager.
-- [ ] **S3.4** — Batch the signal embed N+1 (N10): replace per-row
-      `resolveFamily` + `resolveVariantSpec` with two `inArray()`
-      lookups (wants_items, available_items) in `api/signals.ts` and
-      `api/bot.ts`.
+- [x] **S3.4** — Batch the signal embed N+1 (a946b3e · run 25244441315).
+      `resolveSignalCardsBatch(rows)` added to both `api/signals.ts`
+      and `api/bot.ts`; per-row `resolveSignalFamily`/`resolveVariantSpec`
+      kept for the two single-row callers (`handleVariantOpen`,
+      `handleVariantPick`). 26 signal tests still pass.
 - [ ] **S3.5** — Adopt `createSingletonCache` in `useFavorites`,
       `useRecentPartners`, `useCommunityCards`, `useMutualBotGuilds`
       (N11). Mirror the `useTradesList` / `useGuildMemberships`

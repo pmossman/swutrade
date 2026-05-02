@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiDelete, apiGet, apiPost } from '../services/apiClient';
+import { createSingletonCache } from './sharedCache';
 
 export interface Favorite {
   userId: string;
@@ -26,6 +27,18 @@ export interface FavoritesApi {
   isFavorite: (handle: string) => boolean;
 }
 
+// Module-scoped cache: shared across hook instances for the SPA
+// session. HandlePickerDialog mounts useFavorites on every open even
+// when HomeView already mounted it; without the cache we'd pay an
+// extra `/api/me/favorites` round-trip per open. Audit
+// 07-performance #5.
+const cache = createSingletonCache<Favorite[]>();
+
+/** Testing-only: reset the module-scoped cache between test cases. */
+export function __resetFavoritesCache() {
+  cache.clear();
+}
+
 /**
  * Explicit trading-partner bookmarks. Companion to `useRecentPartners`
  * (auto-populated from proposal history); Favorites covers the
@@ -37,13 +50,19 @@ export interface FavoritesApi {
  * endpoint 401s. Callers should only mount this when `!!user`.
  */
 export function useFavorites(enabled: boolean): FavoritesApi {
-  const [favorites, setFavorites] = useState<Favorite[]>([]);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
-    enabled ? 'loading' : 'ready',
+  const [favorites, setFavorites] = useState<Favorite[]>(
+    () => (enabled ? cache.get() ?? [] : []),
   );
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(() => {
+    if (!enabled) return 'ready';
+    return cache.has() ? 'ready' : 'loading';
+  });
 
   useEffect(() => {
     if (!enabled) {
+      // Sign-out boundary: drop the cached list so the next signed-in
+      // mount fetches fresh (could be a different user).
+      cache.clear();
       setFavorites([]);
       setStatus('ready');
       return;
@@ -53,9 +72,12 @@ export function useFavorites(enabled: boolean): FavoritesApi {
       const result = await apiGet<{ favorites: Favorite[] }>('/api/me/favorites');
       if (cancelled) return;
       if (!result.ok) {
-        setStatus('error');
+        // If we have cached data, keep showing it rather than flipping
+        // to error — the user already saw something real.
+        if (!cache.has()) setStatus('error');
         return;
       }
+      cache.set(result.data.favorites);
       setFavorites(result.data.favorites);
       setStatus('ready');
     })();
@@ -72,7 +94,9 @@ export function useFavorites(enabled: boolean): FavoritesApi {
     // and dedupe in case of an idempotent re-favorite.
     setFavorites(prev => {
       const without = prev.filter(f => f.userId !== result.data.favorite.userId);
-      return [result.data.favorite, ...without];
+      const next = [result.data.favorite, ...without];
+      cache.set(next);
+      return next;
     });
     return { ok: true as const, favorite: result.data.favorite };
   }, []);
@@ -82,7 +106,11 @@ export function useFavorites(enabled: boolean): FavoritesApi {
     // Optimistically drop the row — the server is 204-on-success and
     // treats "not present" as the same desired end state, so rollback
     // would be masking a bug, not a real conflict.
-    setFavorites(prev => prev.filter(f => f.handle.toLowerCase() !== normalized));
+    setFavorites(prev => {
+      const next = prev.filter(f => f.handle.toLowerCase() !== normalized);
+      cache.set(next);
+      return next;
+    });
     await apiDelete(`/api/me/favorites/${encodeURIComponent(normalized)}`);
   }, []);
 
