@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import type { CardVariant, PriceMode } from '../types';
-import { adjustPrice, cardImageUrl, formatPrice, getCardPrice } from '../services/priceService';
+import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
+import { CardThumb } from './ui/CardThumb';
 import { extractVariantLabel } from '../variants';
 
 /**
@@ -179,7 +180,6 @@ function CardStack({ variants, dimmed = false }: { variants: CardVariant[]; dimm
       aria-hidden
     >
       {visible.map((v, i) => {
-        const url = cardImageUrl(v.productId, 'sm');
         return (
           <div
             key={`${v.productId ?? v.name}`}
@@ -191,14 +191,7 @@ function CardStack({ variants, dimmed = false }: { variants: CardVariant[]; dimm
               zIndex: visible.length - i,
             }}
           >
-            {url && (
-              <img
-                src={url}
-                alt=""
-                loading="lazy"
-                className="w-full h-full object-cover"
-              />
-            )}
+            <CardThumb productId={v.productId} name={v.name ?? ''} size="md" className="w-full h-full" imgSize="sm" />
             {i === visible.length - 1 && overflow > 0 && (
               <span className="absolute bottom-0 right-0 px-1 py-0.5 bg-black/85 text-white text-[10px] font-bold rounded-tl">
                 +{overflow}

@@ -40,11 +40,10 @@ behavior-changing extractions come last.
 - [x] **S4.3** — D4: single `relativeTime` helper
       (dba85be · run 25247094988). 5 reimplementations replaced; 30d
       threshold + NaN-safe.
-- [ ] **S4.4** — D3: adopt `formatPrice` everywhere. Replace inline
-      `` `$${n.toFixed(2)}` `` in TradeBalance, TradeSummary,
-      TradeDetailView, ProposeBar, ListRows, ListView, ProfileView,
-      TradeSearchOverlay. Inline copies render `$0.00` for null
-      prices; canonical renders `N/A` (the documented choice).
+- [x] **S4.4** — D3: adopt `formatPrice` everywhere
+      (61e03d9 · run 25247203858). 13+ inline sites migrated;
+      TradeBalance's local `formatDollars` deleted. SignalBuilderView
+      `~$` estimate prefix + spread tooltips skipped per intent.
 - [ ] **S4.5** — U3: extract `ui/CardThumb` from `TradeRow:28-69`
       with the landscape-detection. Migrate CardTile, FamilyRow's
       CardStack, ListRows, TradeSummary, ListCardPicker,

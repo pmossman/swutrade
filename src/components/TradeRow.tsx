@@ -1,8 +1,6 @@
-import { useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   adjustPrice,
-  cardImageUrl,
   cardTcgPlayerUrl,
   formatPrice,
   getCardPrice,
@@ -11,62 +9,10 @@ import {
 import { extractBaseName, extractVariantLabel } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { KebabMenu, type KebabMenuItem } from './KebabMenu';
+import { CardThumb, type ThumbSize } from './ui/CardThumb';
 
-export type ThumbSize = 'xs' | 'sm' | 'md' | 'lg';
+export type { ThumbSize };
 export type AccentColor = 'emerald' | 'blue';
-
-interface CardThumbProps {
-  productId?: string;
-  name: string;
-  size: ThumbSize;
-}
-
-// Adaptive card image — leaders are landscape, units are portrait.
-// Detected on image load (naturalWidth > naturalHeight) so the box can
-// flip its aspect to show the full card instead of crop-covering to
-// portrait.
-function CardThumb({ productId, name, size }: CardThumbProps) {
-  const [errored, setErrored] = useState(false);
-  const [isLandscape, setIsLandscape] = useState(false);
-  const imgSize = size === 'lg' ? 'lg' : 'md';
-  const src = cardImageUrl(productId, imgSize);
-
-  const sizeClassesPortrait: Record<ThumbSize, string> = {
-    xs: 'w-5 h-7 rounded-sm text-[8px]',
-    sm: 'w-7 h-10 rounded text-[9px]',
-    md: 'w-10 h-14 rounded-md text-[10px]',
-    lg: 'w-20 h-28 rounded-lg text-sm',
-  };
-  const sizeClassesLandscape: Record<ThumbSize, string> = {
-    xs: 'w-7 h-5 rounded-sm text-[8px]',
-    sm: 'w-10 h-7 rounded text-[9px]',
-    md: 'w-14 h-10 rounded-md text-[10px]',
-    lg: 'w-28 h-20 rounded-lg text-sm',
-  };
-  const sizeClass = (isLandscape ? sizeClassesLandscape : sizeClassesPortrait)[size];
-
-  if (!src || errored) {
-    return (
-      <div className={`${sizeClass} bg-space-600 shrink-0 flex items-center justify-center text-gray-600`}>
-        ?
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={name}
-      loading="lazy"
-      onError={() => setErrored(true)}
-      onLoad={e => {
-        const img = e.currentTarget;
-        if (img.naturalWidth > img.naturalHeight) setIsLandscape(true);
-      }}
-      className={`${sizeClass} object-cover shrink-0 bg-space-600`}
-    />
-  );
-}
 
 // Missing prices silently get treated as $0 in the totals, which can throw
 // off a trade by a lot — make them loud at every level (row tint, border,

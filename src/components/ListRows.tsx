@@ -1,6 +1,7 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
-import { cardImageUrl, formatPrice, getCardPrice } from '../services/priceService';
+import { formatPrice, getCardPrice } from '../services/priceService';
+import { CardThumb } from './ui/CardThumb';
 import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { NumberStepper } from './ui/NumberStepper';
@@ -32,11 +33,11 @@ function RemoveButton({ onRemove }: { onRemove: () => void }) {
   );
 }
 
-function RowShell({ imgUrl, title, children }: { imgUrl: string | null; title: string; children: React.ReactNode }) {
+function RowShell({ productId, title, children }: { productId: string | undefined; title: string; children: React.ReactNode }) {
   return (
     <li className="flex items-center gap-3 px-3 py-2 rounded-lg bg-space-800/60 border border-space-700">
       <div className="w-10 h-14 shrink-0 rounded bg-space-900 overflow-hidden">
-        {imgUrl ? <img src={imgUrl} alt={title} loading="lazy" className="w-full h-full object-cover" /> : null}
+        <CardThumb productId={productId} name={title} size="md" className="w-full h-full" imgSize="sm" />
       </div>
       <div className="flex-1 min-w-0 flex flex-col gap-1">{children}</div>
     </li>
@@ -80,7 +81,6 @@ export function WantsRow({
   onToggleEdit,
   onChangeRestriction,
 }: WantsRowProps) {
-  const imgUrl = sampleCard?.productId ? cardImageUrl(sampleCard.productId, 'sm') : null;
   // Strip the variant suffix from the fallback name so unenriched cards
   // don't show "(Showcase)" in the title — variant is already conveyed
   // by the thumbnail art.
@@ -89,7 +89,7 @@ export function WantsRow({
     ?? item.familyId;
 
   return (
-    <RowShell imgUrl={imgUrl} title={title}>
+    <RowShell productId={sampleCard?.productId} title={title}>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
@@ -282,14 +282,13 @@ export function AvailableRow({
   onChangeQty,
   onRemove,
 }: AvailableRowProps) {
-  const imgUrl = card?.productId ? cardImageUrl(card.productId, 'sm') : null;
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
   const price = card ? getCardPrice(card, priceMode) : null;
   const showWantBadge = typeof wantCount === 'number' && wantCount > 0;
 
   return (
-    <RowShell imgUrl={imgUrl} title={title}>
+    <RowShell productId={card?.productId} title={title}>
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>

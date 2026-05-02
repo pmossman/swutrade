@@ -5,7 +5,8 @@ import { PriceSlider } from './PriceSlider';
 import { ShareButtons } from './ShareButtons';
 import { MobileActionsKebab } from './MobileActionsKebab';
 import { tradeCardKey } from '../types';
-import { adjustPrice, cardImageUrl, formatPrice, getCardPrice, countMissingPrices } from '../services/priceService';
+import { adjustPrice, formatPrice, getCardPrice, countMissingPrices } from '../services/priceService';
+import { CardThumb } from './ui/CardThumb';
 import { extractVariantLabel, extractBaseName } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
@@ -33,11 +34,9 @@ function SummaryTile({ tc, percentage, priceMode, accentColor }: {
   priceMode: PriceMode;
   accentColor: 'emerald' | 'blue';
 }) {
-  const [errored, setErrored] = useState(false);
   const unitPrice = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
   const lineTotal = unitPrice !== null ? unitPrice * tc.qty : null;
   const missingPrice = unitPrice === null;
-  const src = cardImageUrl(tc.card.productId, 'md');
   const qtyBg = accentColor === 'emerald'
     ? 'bg-black/85 text-white ring-1 ring-emerald-400/70'
     : 'bg-black/85 text-white ring-1 ring-blue-400/70';
@@ -52,17 +51,12 @@ function SummaryTile({ tc, percentage, priceMode, accentColor }: {
       title={`${tc.card.name}${tc.qty > 1 ? ` × ${tc.qty}` : ''}`}
     >
       <div className="relative w-full aspect-[5/7] bg-space-900 overflow-hidden">
-        {src && !errored ? (
-          <img
-            src={src}
-            alt={tc.card.name}
-            loading="lazy"
-            onError={() => setErrored(true)}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-gray-600">?</div>
-        )}
+        <CardThumb
+          productId={tc.card.productId}
+          name={tc.card.name}
+          size="md"
+          className="w-full h-full"
+        />
         {tc.qty > 1 && (
           <span className={`absolute top-1 right-1 min-w-[22px] h-[18px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold tabular-nums shadow-lg ${qtyBg}`}>
             ×{tc.qty}
