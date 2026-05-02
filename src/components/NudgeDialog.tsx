@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ActionResult } from '../services/tradeActions';
+import { ErrorState } from './ui/states';
 
 interface NudgeDialogProps {
   open: boolean;
@@ -109,14 +110,14 @@ export function NudgeDialog({ open, recipientHandle, onClose, onNudge }: NudgeDi
         </div>
 
         {errorMessage && (
-          <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
+          <ErrorState variant="line" className="mt-3">
             {errorMessage}
             {cooldownUntil && (
               <div className="mt-0.5 text-red-400/80">
                 Try again after {new Date(cooldownUntil).toLocaleString()}.
               </div>
             )}
-          </div>
+          </ErrorState>
         )}
 
         <div className="mt-4 flex justify-end gap-2">

@@ -11,6 +11,7 @@ import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId, variantBadgeColor, variantChipLabel } from '../variants';
 import { apiPost } from '../services/apiClient';
 import { restrictionKeyFromVariants } from '../../lib/shared';
+import { ErrorState } from './ui/states';
 
 const restrictionKeyOf = restrictionKeyFromVariants;
 
@@ -548,9 +549,9 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
         </article>
 
         {postError && (
-          <div role="alert" className="mt-3 px-3 py-2 rounded-md border border-red-500/40 bg-red-500/10 text-sm text-red-300">
+          <ErrorState variant="line" role="alert" className="mt-3">
             {postError}
-          </div>
+          </ErrorState>
         )}
       </div>
 

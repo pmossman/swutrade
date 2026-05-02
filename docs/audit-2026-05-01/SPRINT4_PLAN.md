@@ -30,10 +30,9 @@ Each milestone is one commit; one CI verification gates the next.
 Order chosen so cheap, low-risk dedup work clears first; the medium-risk
 behavior-changing extractions come last.
 
-- [ ] **S4.1** — N15: `LoadingState` `inline` variant. Add bare-span
-      branch (no wrapper, no fixed text-size, flex-friendly), then
-      migrate 5 composer-bar strays: AutoBalanceBanner, EditBar,
-      CounterBar, ProposeBar, ProfileView.
+- [x] **S4.1** — N15: `LoadingState` `inline` variant
+      (d3426a5 · run 25246901896). 4 composer bars + ProfileView's
+      centered case migrated.
 - [ ] **S4.2** — N16: `ErrorState` `variant: 'card' | 'line' | 'banner'`.
       Migrate the 4 near-byte-identical reimplementations
       (NudgeDialog, TradesHistoryView, ProposeBar:628,

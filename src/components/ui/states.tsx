@@ -64,19 +64,46 @@ export function EmptyState({
 }
 
 /**
- * Card-style error state. Distinct red tint so it stands out from the
- * surrounding chrome without being an alert banner. Use for failed
- * fetches where the user can retry by refreshing.
+ * Red-tinted error rendering. Three variants:
+ *   - `card` (default): full chrome (rounded-lg, py-3, text-sm).
+ *     Page-level fetch failures where the user can refresh.
+ *   - `line`: compact chrome (rounded-md, py-2, text-[11px]).
+ *     Action-context errors near a button or input. Convergence
+ *     target for byte-near-identical reimplementations across
+ *     NudgeDialog / TradesHistoryView (rowError) / ProposeBar /
+ *     SignalBuilderView. Audit 12-empty-loading-error-states #3.
+ *   - `banner`: bare line (text-xs, no chrome). Form-field-level
+ *     errors that sit under a label. Replaces SettingsView's local
+ *     `ErrorLine`.
+ *
+ * `role` opt-in: pass `role="alert"` on action errors so SRs
+ * announce the failure when it appears. Not auto-added — page-level
+ * loads where the error renders on first paint don't want the alert
+ * announcement.
  */
 export function ErrorState({
   children,
+  variant = 'card',
+  role,
   className = '',
 }: {
   children: ReactNode;
+  variant?: 'card' | 'line' | 'banner';
+  role?: 'alert' | 'status';
   className?: string;
 }) {
+  if (variant === 'banner') {
+    return <div role={role} className={`text-xs text-red-300 ${className}`}>{children}</div>;
+  }
+  if (variant === 'line') {
+    return (
+      <div role={role} className={`rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300 ${className}`}>
+        {children}
+      </div>
+    );
+  }
   return (
-    <div className={`rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-sm text-red-300 ${className}`}>
+    <div role={role} className={`rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-sm text-red-300 ${className}`}>
       {children}
     </div>
   );

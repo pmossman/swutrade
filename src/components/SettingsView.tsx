@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
-import { LoadingState, EmptyState } from './ui/states';
+import { LoadingState, EmptyState, ErrorState } from './ui/states';
 import {
   useAccountSettings,
   type AccountSettingsApi,
@@ -382,7 +382,7 @@ function ProfileSection({
     <div className="mt-4 flex flex-col gap-6">
       {status === 'loading' && <LoadingState />}
       {status === 'error' && !settings && (
-        <ErrorLine>Couldn't load your settings. Try refreshing.</ErrorLine>
+        <ErrorState variant="banner" className="mb-1">Couldn't load your settings. Try refreshing.</ErrorState>
       )}
 
       {settings && profileVisibility && (
@@ -497,7 +497,7 @@ function PreferencesSection({ account }: { account: AccountSettingsApi }) {
     <div className="mt-4 flex flex-col gap-6">
       {status === 'loading' && <LoadingState />}
       {status === 'error' && !settings && (
-        <ErrorLine>Couldn't load your settings. Try refreshing.</ErrorLine>
+        <ErrorState variant="banner" className="mb-1">Couldn't load your settings. Try refreshing.</ErrorState>
       )}
 
       {settings && sections.map(section => {
@@ -563,12 +563,12 @@ function ServersHub({
 
       {refreshStatus === 'needs-reauth' && <ReauthBanner />}
       {refreshStatus === 'error' && (
-        <ErrorLine>Couldn't refresh from Discord. Try again in a moment.</ErrorLine>
+        <ErrorState variant="banner" className="mb-1">Couldn't refresh from Discord. Try again in a moment.</ErrorState>
       )}
 
       {status === 'loading' && <LoadingState />}
       {status === 'error' && enrollable.length === 0 && (
-        <ErrorLine>Couldn't load your Discord memberships. Try refreshing.</ErrorLine>
+        <ErrorState variant="banner" className="mb-1">Couldn't load your Discord memberships. Try refreshing.</ErrorState>
       )}
 
       {status !== 'loading' && enrollable.length === 0 && (
@@ -1069,10 +1069,6 @@ function InviteBotBlock({ botInstallUrl }: { botInstallUrl: string | null }) {
       )}
     </div>
   );
-}
-
-function ErrorLine({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-red-300 mb-1">{children}</div>;
 }
 
 function RefreshIcon({ className }: { className?: string }) {

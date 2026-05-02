@@ -12,7 +12,7 @@ import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
 import { useMutualBotGuilds, type MutualBotGuildOption } from '../hooks/useMutualBotGuilds';
 import { usePrimaryAction } from '../hooks/usePrimaryAction';
 import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
-import { LoadingState } from './ui/states';
+import { LoadingState, ErrorState } from './ui/states';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -626,12 +626,9 @@ function ConfirmProposalDialog({
             </div>
 
             {errorMessage && (
-              <div
-                role="alert"
-                className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-300"
-              >
+              <ErrorState variant="line" role="alert">
                 Couldn't send: {errorMessage}
-              </div>
+              </ErrorState>
             )}
           </div>
 

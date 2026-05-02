@@ -205,9 +205,9 @@ export function TradesHistoryView() {
         />
 
         {rowError && (
-          <div className="mt-3 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
+          <ErrorState variant="line" role="alert" className="mt-3">
             {rowError}
-          </div>
+          </ErrorState>
         )}
 
         {status === 'loading' && <LoadingState className="mt-6" />}
