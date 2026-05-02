@@ -35,11 +35,10 @@ correctness fixes that require integration testing.
       (a490a00 · run 25255171822). `open` threaded into trigger;
       `aria-haspopup="menu"` + `aria-expanded={open}` +
       `aria-controls={useId()}` matched to menu list id.
-- [ ] **S5.2** — N12: typed prefs-registry accessors. Add
-      `getUserPrefColumn(key)` / `getPeerPrefColumn(key)` in
-      `lib/prefsRegistry.ts` that throw on unknown keys; replace 5
-      `as unknown as Record<string, AnyPgColumn>` casts in
-      `api/bot.ts`. Audit 03-discord #4.
+- [x] **S5.2** — N12: typed prefs-registry accessors
+      (5dd1806 · run 25255269351). 5 sites in api/bot.ts + 2 in
+      lib/prefsResolver.ts migrated. Cast confined to two consts at
+      the top of prefsRegistry; helpers throw on unknown keys.
 - [ ] **S5.3** — N19: convert tile `<div role="button">` to `<button>`
       in `CardTile.tsx` + `FamilyRow.tsx`. Drop the manual Enter/Space
       onKeyDown — browser handles. Audit 11-accessibility #5.

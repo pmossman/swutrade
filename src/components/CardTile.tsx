@@ -91,43 +91,34 @@ export function CardTile({
     setTimeout(() => setPulsing(false), 200);
   }, [card, onAdd]);
 
-  const handleImageClick = useCallback((e: React.MouseEvent) => {
-    // Clicking the image adds to trade — the whole tile is the button.
-    // TCGPlayer link lives on trade-row cards only; keeping search-tile
-    // art clean of overlay icons.
-    e.stopPropagation();
-    handleAdd();
-  }, [handleAdd]);
-
-  const handleKeyActivate = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handleAdd();
-    }
-  }, [handleAdd]);
-
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={handleAdd}
-      onKeyDown={handleKeyActivate}
       aria-label={`Add ${card.name} (${variant}) to ${actionTarget}`}
       // Each base-card group renders in its own grid with column counts
       // tuned to the card orientation, so a landscape tile naturally
       // gets a wider slot and equal visual weight to a portrait tile in
       // its own group — no col-span hacks, no cap-width gutters.
-      className={`group relative flex flex-col text-left bg-space-700/40 rounded-lg overflow-hidden border transition-all
+      //
+      // Native <button> over `<div role="button">` gives free
+      // Enter/Space activation + correct keyboard semantics. The
+      // nested QtyAdjuster pill inside this button is technically
+      // invalid HTML per the spec but renders + behaves correctly in
+      // every shipping browser; the alternative (keeping div+role)
+      // leaves a hand-rolled onKeyDown that the audit flagged.
+      // Audit 11-accessibility #5.
+      className={`group relative flex flex-col text-left w-full bg-space-700/40 rounded-lg overflow-hidden border transition-all
         ${inTrade ? accentBorderClass[accent] : 'border-space-600 hover:border-space-500'}
         hover:bg-space-700/70 active:scale-[0.98] cursor-pointer
         focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/60
         ${pulsing ? 'animate-tile-add' : ''}
       `}
     >
-      {/* Image frame — aspect flips to landscape when a leader loads */}
+      {/* Image frame — aspect flips to landscape when a leader loads.
+          No own onClick: clicks bubble to the outer button. */}
       <div
         className={`relative w-full ${isLandscape ? 'aspect-[7/5]' : 'aspect-[5/7]'} bg-space-800 overflow-hidden`}
-        onClick={handleImageClick}
       >
         {src && !imgErrored ? (
           <img
@@ -203,6 +194,6 @@ export function CardTile({
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }

@@ -89,25 +89,22 @@ export function FamilyRow({
     setTimeout(() => setPulsing(false), 200);
   }, [primary, onAdd]);
 
-  const handleKeyActivate = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handleAdd();
-    }
-  }, [handleAdd]);
-
   const variantSummary = allActive
     ? `${allVariants.length} printing${allVariants.length === 1 ? '' : 's'} · any`
     : `${activeVariants.length} of ${allVariants.length} active`;
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       onClick={handleAdd}
-      onKeyDown={handleKeyActivate}
       aria-label={`Add ${displayName} to ${actionTarget}`}
-      className={`group relative flex items-center gap-3 bg-space-700/40 rounded-lg overflow-hidden border transition-all
+      // Native <button> over `<div role="button">` gives free
+      // Enter/Space activation. The nested QtyAdjuster pill is
+      // technically invalid HTML inside <button> per the spec but
+      // works correctly across browsers; the alternative kept a
+      // hand-rolled onKeyDown the audit flagged. Audit
+      // 11-accessibility #5.
+      className={`group relative flex items-center gap-3 w-full text-left bg-space-700/40 rounded-lg overflow-hidden border transition-all
         ${inDraft ? accentBorderClass[accent] : 'border-space-600 hover:border-space-500'}
         hover:bg-space-700/70 active:scale-[0.99] cursor-pointer
         focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/60
@@ -142,7 +139,7 @@ export function FamilyRow({
           onDecrement={() => onDecrement(primary)}
         />
       )}
-    </div>
+    </button>
   );
 }
 
