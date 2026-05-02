@@ -1393,19 +1393,20 @@ export async function mergeGhostIntoRealUser(
  *      `already-active-session` — the caller can redirect the viewer
  *      into that existing canvas rather than creating a parallel one.
  *      Belt for the partial unique index's suspenders.
- *   4. On success: the proposal flips to `countered` (reuses the
- *      existing terminal state — a promoted proposal has effectively
- *      been replaced by the session) and a new session row is seeded
- *      with both parties' cards positioned correctly under the
- *      canonical a<b ordering.
+ *   4. On success: the proposal flips to `promoted` and a new
+ *      session row is seeded with both parties' cards positioned
+ *      correctly under the canonical a<b ordering. (Earlier this
+ *      reused `'countered'` — see audit 02-trades.md #1; that
+ *      misclassified promoted proposals as counter-offers in
+ *      useTradesList history filtering.)
  *
  * Write ordering is deliberate: the session insert commits FIRST, then
  * the proposal transition. If the session insert fails mid-flight the
  * proposal stays pending — the recipient can retry or fall back to
- * accept/decline/counter. If the proposal transition fails after the
- * session insert, the try/catch surfaces `error` (see below) and the
- * orphan session is cleaned up so we don't leave both primitives
- * pointing at each other.
+ * accept/decline/counter. If the proposal transition's UPDATE matches
+ * zero rows (proposal raced — was cancelled/declined between our
+ * lookup and the update), we roll back the session insert and return
+ * `not-pending` so the UI can surface the race.
  */
 export type PromoteProposalResult =
   | { ok: true; sessionId: string }
@@ -1497,20 +1498,27 @@ export async function promoteProposalToSession(
     throw err;
   }
 
-  // Transition the proposal. If this fails we clean up the session
-  // row to avoid orphaning both sides of the promotion.
+  // Transition the proposal under an optimistic `WHERE status='pending'`
+  // guard. `.returning({ id })` lets us detect the race where another
+  // path (cancel, decline) flipped the row between our lookup and our
+  // update — in that case the UPDATE matches zero rows and we must NOT
+  // record a `promoted` event for a proposal that's now in a different
+  // terminal state. Roll back the session insert and surface
+  // `not-pending` so the UI handles it like the up-front status check.
+  let updated: { id: string }[];
   try {
-    await db
+    updated = await db
       .update(tradeProposals)
       .set({
-        status: 'countered',
+        status: 'promoted',
         respondedAt: now,
         updatedAt: now,
       })
       .where(and(
         eq(tradeProposals.id, proposal.id),
         eq(tradeProposals.status, 'pending'),
-      ));
+      ))
+      .returning({ id: tradeProposals.id });
   } catch (err) {
     await db
       .delete(tradeSessions)
@@ -1528,11 +1536,28 @@ export async function promoteProposalToSession(
     throw err;
   }
 
+  if (updated.length === 0) {
+    // Race-loss: the proposal moved off `pending` between our initial
+    // SELECT and the UPDATE. Roll back the session insert so we
+    // don't leave an orphan canvas pointing at a closed proposal.
+    await db
+      .delete(tradeSessions)
+      .where(eq(tradeSessions.id, sessionId))
+      .catch((cleanupErr) => {
+        console.error(
+          'promoteProposalToSession: orphan session cleanup failed (race-loss)',
+          sessionId,
+          cleanupErr,
+        );
+      });
+    return { ok: false, reason: 'not-pending' };
+  }
+
   // Event bookkeeping — best-effort, same pattern as elsewhere.
   // Session-side: reuse `created` with a `promotedFromProposalId`
   // payload flag so the timeline can distinguish a promoted session
   // from a direct-create without adding a new event type.
-  // Proposal-side: `countered` with the new session id so the
+  // Proposal-side: `promoted` with the new session id so the
   // proposal timeline shows what happened to it.
   await recordSessionEvent(db, {
     sessionId,
@@ -1543,7 +1568,7 @@ export async function promoteProposalToSession(
   await recordProposalEvent(db, {
     proposalId: proposal.id,
     actorUserId: args.viewerUserId,
-    type: 'countered',
+    type: 'promoted',
     payload: { promotedToSessionId: sessionId },
   });
 

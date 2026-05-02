@@ -1257,7 +1257,7 @@ interface TradeRow {
   id: string;
   proposerUserId: string;
   recipientUserId: string;
-  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered';
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered' | 'promoted';
   offeringCards: import('../lib/schema.js').TradeCardSnapshot[];
   receivingCards: import('../lib/schema.js').TradeCardSnapshot[];
   message: string | null;

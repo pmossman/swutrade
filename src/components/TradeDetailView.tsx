@@ -240,6 +240,7 @@ export function TradeDetailView({ tradeId }: TradeDetailViewProps) {
                   {trade.status === 'declined' && 'Declined '}
                   {trade.status === 'cancelled' && 'Cancelled '}
                   {trade.status === 'countered' && 'Countered '}
+                  {trade.status === 'promoted' && 'Promoted '}
                   {new Date(trade.respondedAt).toLocaleString()}
                 </div>
               )}
@@ -483,6 +484,8 @@ function describeEvent(event: ProposalEvent): {
       return { label: 'Cancelled', actorText: actor, tone: 'danger' };
     case 'countered':
       return { label: 'Countered', actorText: actor, tone: 'warn' };
+    case 'promoted':
+      return { label: 'Promoted to shared trade', actorText: actor, tone: 'neutral' };
     case 'expired':
       return { label: 'Expired', actorText: null, tone: 'neutral' };
   }

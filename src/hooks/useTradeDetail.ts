@@ -41,6 +41,7 @@ export type ProposalEventType =
   | 'declined'
   | 'cancelled'
   | 'countered'
+  | 'promoted'
   | 'expired';
 
 export interface ProposalEventActor {

@@ -598,6 +598,7 @@ function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof type
     case 'cancelled':       return { label: 'Cancelled', tone: 'neutral' };
     case 'expired':         return { label: 'Expired',  tone: 'neutral' };
     case 'countered':       return { label: 'Countered', tone: 'purple' };
+    case 'promoted':        return { label: 'Promoted', tone: 'cyan' };
   }
 }
 

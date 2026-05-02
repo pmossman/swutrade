@@ -356,8 +356,14 @@ export interface TradeCardSnapshot {
  * and sessions actually expire), but it stays in the union so adding
  * the writer doesn't require a schema migration. See audit
  * `02-trades.md` #2.
+ *
+ * `'promoted'` distinguishes a proposal converted into a shared
+ * trade session from one that was countered with a new proposal.
+ * `promoteProposalToSession` previously reused `'countered'`, which
+ * misled `useTradesList` (filed under History) and the UI's
+ * "Counter" chip. See audit `02-trades.md` #1.
  */
-export const proposalStatuses = ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered'] as const;
+export const proposalStatuses = ['pending', 'accepted', 'declined', 'cancelled', 'expired', 'countered', 'promoted'] as const;
 export type ProposalStatus = typeof proposalStatuses[number];
 
 export const tradeProposals = pgTable(
@@ -500,6 +506,7 @@ export const proposalEventTypes = [
   'declined',
   'cancelled',
   'countered',
+  'promoted',
   'expired',
 ] as const;
 export type ProposalEventType = typeof proposalEventTypes[number];

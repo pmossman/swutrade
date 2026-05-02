@@ -30,6 +30,7 @@ export type TradeActivityType =
   | 'declined'
   | 'cancelled'
   | 'countered'
+  | 'promoted'
   | 'expired';
 
 export interface TradeActivityEntry {

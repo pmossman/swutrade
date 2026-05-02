@@ -34,7 +34,11 @@ export type TradeRowState =
   | 'declined'
   | 'cancelled'
   | 'expired'
-  | 'countered';
+  | 'countered'
+  /** Proposal converted into a shared trade session — the session
+   *  surfaces under `shared` separately; the proposal row is the
+   *  terminal "this became X" record. */
+  | 'promoted';
 
 export interface TradeRowCounterpart {
   userId: string;

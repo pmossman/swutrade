@@ -47,11 +47,11 @@ correctness fixes that require integration testing.
       (ddbd28b · run 25255509604). 3 helpers moved; dynamic-import
       workaround dropped; api/signals.ts and api/bot.ts pass `db`
       explicitly to match findMatches contract.
-- [ ] **S5.5** — M5: `useServerSync` writingBackRef race. The guard
-      is cleared synchronously around `wants.setAll()`, but the
-      items-changed effect fires after the surrounding async
-      function returns. Fix with a generation-counter or
-      queueMicrotask hold. Audit 06-lists #1.
+- [x] **S5.5** — M5: `useServerSync` writingBackRef race
+      (85edf19 · run 25255620001). Replaced flag with
+      `serverWriteGenRef` + `lastSeenWriteGenRef` gen-counter pair;
+      items-changed effect now correctly distinguishes writeback
+      from real local edit.
 - [ ] **S5.6** — M3: `promote-to-shared` race-guard + new
       `'promoted'` status. Add `'promoted'` to proposalStatuses
       enum + matching event type. `promoteProposalToSession`

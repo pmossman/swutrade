@@ -35,6 +35,10 @@ const VARIANTS: Record<Size, Record<TradeStatus, PaletteEntry>> = {
     cancelled: { label: 'Cancelled', cls: 'bg-space-700 border-space-600 text-gray-400' },
     expired:   { label: 'Expired',   cls: 'bg-space-700 border-space-600 text-gray-400' },
     countered: { label: 'Countered', cls: 'bg-purple-500/15 border-purple-400/40 text-purple-200' },
+    // Distinct from countered — promoted means "the proposal became a
+    // shared trade session." Cyan ties it visually to the session
+    // entry surfaces (cyan accents on shared-trade chrome).
+    promoted:  { label: 'Promoted',  cls: 'bg-cyan-500/15 border-cyan-400/40 text-cyan-200' },
   },
   md: {
     pending:   { label: 'Pending',   cls: 'bg-gold/20 border-gold/40 text-gold' },
@@ -43,5 +47,6 @@ const VARIANTS: Record<Size, Record<TradeStatus, PaletteEntry>> = {
     cancelled: { label: 'Cancelled', cls: 'bg-space-700/60 border-space-600 text-gray-400' },
     expired:   { label: 'Expired',   cls: 'bg-space-700/60 border-space-600 text-gray-400' },
     countered: { label: 'Countered', cls: 'bg-purple-500/20 border-purple-400/50 text-purple-200' },
+    promoted:  { label: 'Promoted',  cls: 'bg-cyan-500/20 border-cyan-400/50 text-cyan-200' },
   },
 };

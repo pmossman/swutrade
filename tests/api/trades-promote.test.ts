@@ -138,13 +138,13 @@ describeWithDb('POST /api/trades?action=promote-to-shared', () => {
     expect(sessionRow.lastEditedByUserId).toBe(recipient.id);
     expect(sessionRow.confirmedByUserIds).toEqual([]);
 
-    // Proposal row flips to `countered` with respondedAt set.
+    // Proposal row flips to `promoted` with respondedAt set.
     const [proposalRow] = await db
       .select()
       .from(tradeProposals)
       .where(eq(tradeProposals.id, proposalId))
       .limit(1);
-    expect(proposalRow.status).toBe('countered');
+    expect(proposalRow.status).toBe('promoted');
     expect(proposalRow.respondedAt).not.toBeNull();
 
     // Session event carries the promotedFromProposalId pointer.
@@ -162,10 +162,10 @@ describeWithDb('POST /api/trades?action=promote-to-shared', () => {
       .select()
       .from(proposalEvents)
       .where(eq(proposalEvents.proposalId, proposalId));
-    const countered = pEvents.find(e => e.type === 'countered');
-    expect(countered).toBeTruthy();
-    expect(countered?.actorUserId).toBe(recipient.id);
-    expect(countered?.payload).toMatchObject({ promotedToSessionId: body.sessionId });
+    const promoted = pEvents.find(e => e.type === 'promoted');
+    expect(promoted).toBeTruthy();
+    expect(promoted?.actorUserId).toBe(recipient.id);
+    expect(promoted?.payload).toMatchObject({ promotedToSessionId: body.sessionId });
   });
 
   it('403 when the proposer tries to promote their own proposal', async () => {

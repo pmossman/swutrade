@@ -23,7 +23,7 @@ interface EditBarProps {
 
 interface EditingTradeResponse {
   id: string;
-  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered';
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired' | 'countered' | 'promoted';
   offeringCards: CardSnapshot[];
   receivingCards: CardSnapshot[];
   message: string | null;
