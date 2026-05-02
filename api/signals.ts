@@ -23,7 +23,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import {
@@ -39,6 +39,7 @@ import { requireSession } from '../lib/auth.js';
 import { restrictionKey } from '../lib/shared.js';
 import {
   findMatches,
+  lookupSignalCard,
   lookupSignalFamily,
   type VariantSpec,
 } from '../lib/signalMatching.js';
@@ -458,11 +459,12 @@ export async function handleCancel(
   if (firstRow.messageId) {
     try {
       const bot = deps.bot ?? createDiscordBotClient();
-      const cards = await Promise.all(groupRows.map(async (row) => {
+      const resolved = await resolveSignalCardsBatch(groupRows);
+      const cards = groupRows.map((row) => {
         if (!row.wantsItemId && !row.availableItemId) return null;
-        const family = await resolveFamily(row);
-        if (!family) return null;
-        const variantSpec = await resolveVariantSpec(row);
+        const r = resolved.get(row.id);
+        if (!r) return null;
+        const { family, variantSpec } = r;
         const representative = variantSpec.mode === 'restricted'
           ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
           : family.variants[0];
@@ -476,7 +478,7 @@ export async function handleCancel(
           qty: 1,
           matchedUsers: [],
         };
-      }));
+      });
       const [signaler] = await db
         .select({ handle: users.handle, avatarUrl: users.avatarUrl, discordId: users.discordId })
         .from(users)
@@ -533,11 +535,14 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
     byGroup.set(key, list);
   }
 
-  const groups = await Promise.all(Array.from(byGroup.entries()).map(async ([groupId, groupRows]) => {
-    const cards = await Promise.all(groupRows.map(async (row) => {
-      const family = await resolveFamily(row);
-      if (!family) return null;
-      const variantSpec = await resolveVariantSpec(row);
+  // Batch-resolve every row's family + variantSpec in two SELECTs
+  // total, then iterate groups synchronously. Audit 07-performance #2.
+  const resolved = await resolveSignalCardsBatch(rows);
+  const groups = Array.from(byGroup.entries()).map(([groupId, groupRows]) => {
+    const cards = groupRows.map((row) => {
+      const r = resolved.get(row.id);
+      if (!r) return null;
+      const { family, variantSpec } = r;
       return {
         signalId: row.id,
         familyId: family.familyId,
@@ -546,7 +551,7 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
         cardType: family.cardType,
         variantSpec,
       };
-    }));
+    });
     const firstRow = groupRows[0];
     return {
       groupId,
@@ -561,7 +566,7 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
       note: firstRow.signalNote,
       cards: cards.filter(c => c !== null),
     };
-  }));
+  });
 
   return res.status(200).json({ groups });
 }
@@ -571,58 +576,78 @@ export async function handleListMine(req: VercelRequest, res: VercelResponse) {
 //     introducing a circular import or a new lib module just for
 //     this) ---------------------------------------------------------
 
-async function resolveFamily(row: typeof cardSignals.$inferSelect) {
-  const db = getDb();
-  if (row.kind === 'wanted' && row.wantsItemId) {
-    const [w] = await db
-      .select({ familyId: wantsItems.familyId })
-      .from(wantsItems)
-      .where(eq(wantsItems.id, row.wantsItemId))
-      .limit(1);
-    return w ? lookupSignalFamily(w.familyId) : null;
-  }
-  if (row.kind === 'offering' && row.availableItemId) {
-    const [a] = await db
-      .select({ productId: availableItems.productId })
-      .from(availableItems)
-      .where(eq(availableItems.id, row.availableItemId))
-      .limit(1);
-    if (!a) return null;
-    // Reverse productId → family via lib/signalMatching's
-    // in-memory product index.
-    const { lookupSignalCard } = await import('../lib/signalMatching.js');
-    const card = lookupSignalCard(a.productId);
-    return card ? lookupSignalFamily(card.familyId) : null;
-  }
-  return null;
+interface ResolvedSignalCard {
+  family: NonNullable<ReturnType<typeof lookupSignalFamily>>;
+  variantSpec: VariantSpec;
 }
 
-async function resolveVariantSpec(row: typeof cardSignals.$inferSelect): Promise<VariantSpec> {
+/**
+ * Batch-resolve a set of signal rows to their family + variantSpec in
+ * a fixed two-query budget (one inArray for wants, one for available),
+ * regardless of how many rows are passed. Replaces the per-row
+ * resolveFamily + resolveVariantSpec calls — those issued 2 SELECTs
+ * per row, scaling linearly with active signals. A user with 8 active
+ * signals across 3 groups was ~16 SELECTs on every Signals view mount.
+ *
+ * Audit 07-performance #2.
+ */
+async function resolveSignalCardsBatch(
+  rows: ReadonlyArray<typeof cardSignals.$inferSelect>,
+): Promise<Map<string, ResolvedSignalCard>> {
   const db = getDb();
-  if (row.kind === 'wanted' && row.wantsItemId) {
-    const [w] = await db
-      .select({
-        restrictionMode: wantsItems.restrictionMode,
-        restrictionVariants: wantsItems.restrictionVariants,
-      })
-      .from(wantsItems)
-      .where(eq(wantsItems.id, row.wantsItemId))
-      .limit(1);
-    if (!w || w.restrictionMode === 'any') return { mode: 'any' };
-    return { mode: 'restricted', variants: w.restrictionVariants ?? [] };
+  const wantsIds: string[] = [];
+  const availableIds: string[] = [];
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) wantsIds.push(row.wantsItemId);
+    if (row.kind === 'offering' && row.availableItemId) availableIds.push(row.availableItemId);
   }
-  if (row.kind === 'offering' && row.availableItemId) {
-    const [a] = await db
-      .select({ productId: availableItems.productId })
-      .from(availableItems)
-      .where(eq(availableItems.id, row.availableItemId))
-      .limit(1);
-    if (!a) return { mode: 'any' };
-    const { lookupSignalCard } = await import('../lib/signalMatching.js');
-    const card = lookupSignalCard(a.productId);
-    return card ? { mode: 'restricted', variants: [card.variant] } : { mode: 'any' };
+  const [wantsRows, availableRows] = await Promise.all([
+    wantsIds.length > 0
+      ? db.select({
+          id: wantsItems.id,
+          familyId: wantsItems.familyId,
+          restrictionMode: wantsItems.restrictionMode,
+          restrictionVariants: wantsItems.restrictionVariants,
+        }).from(wantsItems).where(inArray(wantsItems.id, wantsIds))
+      : Promise.resolve([] as Array<{
+          id: string;
+          familyId: string;
+          restrictionMode: string;
+          restrictionVariants: string[] | null;
+        }>),
+    availableIds.length > 0
+      ? db.select({
+          id: availableItems.id,
+          productId: availableItems.productId,
+        }).from(availableItems).where(inArray(availableItems.id, availableIds))
+      : Promise.resolve([] as Array<{ id: string; productId: string }>),
+  ]);
+  const wantsMap = new Map(wantsRows.map(r => [r.id, r] as const));
+  const availableMap = new Map(availableRows.map(r => [r.id, r] as const));
+
+  const result = new Map<string, ResolvedSignalCard>();
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) {
+      const w = wantsMap.get(row.wantsItemId);
+      if (!w) continue;
+      const family = lookupSignalFamily(w.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = w.restrictionMode === 'any'
+        ? { mode: 'any' }
+        : { mode: 'restricted', variants: w.restrictionVariants ?? [] };
+      result.set(row.id, { family, variantSpec });
+    } else if (row.kind === 'offering' && row.availableItemId) {
+      const a = availableMap.get(row.availableItemId);
+      if (!a) continue;
+      const card = lookupSignalCard(a.productId);
+      if (!card) continue;
+      const family = lookupSignalFamily(card.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = { mode: 'restricted', variants: [card.variant] };
+      result.set(row.id, { family, variantSpec });
+    }
   }
-  return { mode: 'any' };
+  return result;
 }
 
 // Avoid unused-import lint on CardSignalKind — exported via the

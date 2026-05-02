@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
 import { botInstalledGuilds, tradeProposals, userGuildMemberships, userPeerPrefs, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
@@ -702,10 +702,11 @@ async function handleCancelLive(
     .where(eq(users.id, groupRows[0].userId))
     .limit(1);
 
-  const cards = await Promise.all(groupRows.map(async (row) => {
-    const family = await resolveSignalFamily(row);
-    const variantSpec = await resolveVariantSpec(row);
-    if (!family) return null;
+  const resolvedCards = await resolveSignalCardsBatch(groupRows);
+  const cards = groupRows.map((row) => {
+    const r = resolvedCards.get(row.id);
+    if (!r) return null;
+    const { family, variantSpec } = r;
     const representative = variantSpec.mode === 'restricted'
       ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
       : family.variants[0];
@@ -719,7 +720,7 @@ async function handleCancelLive(
       qty: 1,
       matchedUsers: [],
     };
-  }));
+  });
 
   const firstRow = groupRows[0];
   const cancelledEmbed = buildSignalPost({
@@ -801,6 +802,76 @@ async function resolveVariantSpec(
     return card ? { mode: 'restricted', variants: [card.variant] } : { mode: 'any' };
   }
   return { mode: 'any' };
+}
+
+/**
+ * Batch-resolve a set of signal rows to family + variantSpec in two
+ * SELECTs total (one inArray for wants_items, one for available_items),
+ * regardless of how many rows are passed. Replaces the per-row
+ * resolveSignalFamily + resolveVariantSpec calls inside Promise.all
+ * loops in handleSignalCancel and the cron-signals sweep — those issued
+ * 2 SELECTs per row.
+ *
+ * Single-row callers (handleVariantOpen, handleVariantPick) keep using
+ * the per-row helpers. Audit 07-performance #2.
+ */
+async function resolveSignalCardsBatch(
+  rows: ReadonlyArray<typeof cardSignals.$inferSelect>,
+): Promise<Map<string, { family: SignalFamily; variantSpec: VariantSpec }>> {
+  const db = getDb();
+  const wantsIds: string[] = [];
+  const availableIds: string[] = [];
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) wantsIds.push(row.wantsItemId);
+    if (row.kind === 'offering' && row.availableItemId) availableIds.push(row.availableItemId);
+  }
+  const [wantsRows, availableRows] = await Promise.all([
+    wantsIds.length > 0
+      ? db.select({
+          id: wantsItemsTable.id,
+          familyId: wantsItemsTable.familyId,
+          restrictionMode: wantsItemsTable.restrictionMode,
+          restrictionVariants: wantsItemsTable.restrictionVariants,
+        }).from(wantsItemsTable).where(inArray(wantsItemsTable.id, wantsIds))
+      : Promise.resolve([] as Array<{
+          id: string;
+          familyId: string;
+          restrictionMode: string;
+          restrictionVariants: string[] | null;
+        }>),
+    availableIds.length > 0
+      ? db.select({
+          id: availableItemsTable.id,
+          productId: availableItemsTable.productId,
+        }).from(availableItemsTable).where(inArray(availableItemsTable.id, availableIds))
+      : Promise.resolve([] as Array<{ id: string; productId: string }>),
+  ]);
+  const wantsMap = new Map(wantsRows.map(r => [r.id, r] as const));
+  const availableMap = new Map(availableRows.map(r => [r.id, r] as const));
+
+  const result = new Map<string, { family: SignalFamily; variantSpec: VariantSpec }>();
+  for (const row of rows) {
+    if (row.kind === 'wanted' && row.wantsItemId) {
+      const w = wantsMap.get(row.wantsItemId);
+      if (!w) continue;
+      const family = lookupSignalFamily(w.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = w.restrictionMode === 'any'
+        ? { mode: 'any' }
+        : { mode: 'restricted', variants: w.restrictionVariants ?? [] };
+      result.set(row.id, { family, variantSpec });
+    } else if (row.kind === 'offering' && row.availableItemId) {
+      const a = availableMap.get(row.availableItemId);
+      if (!a) continue;
+      const card = lookupSignalCard(a.productId);
+      if (!card) continue;
+      const family = lookupSignalFamily(card.familyId);
+      if (!family) continue;
+      const variantSpec: VariantSpec = { mode: 'restricted', variants: [card.variant] };
+      result.set(row.id, { family, variantSpec });
+    }
+  }
+  return result;
 }
 
 async function handleVariantOpen(
@@ -1016,10 +1087,11 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
       .where(eq(users.id, firstRow.userId))
       .limit(1);
 
-    const cards = await Promise.all(rows.map(async (row) => {
-      const family = await resolveSignalFamily(row);
-      const variantSpec = await resolveVariantSpec(row);
-      if (!family) return null;
+    const resolvedCards = await resolveSignalCardsBatch(rows);
+    const cards = rows.map((row) => {
+      const r = resolvedCards.get(row.id);
+      if (!r) return null;
+      const { family, variantSpec } = r;
       const representative = variantSpec.mode === 'restricted'
         ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
         : family.variants[0];
@@ -1033,7 +1105,7 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
         qty: 1,
         matchedUsers: [],
       };
-    }));
+    });
 
     const expiredEmbed = buildSignalPost({
       groupId,

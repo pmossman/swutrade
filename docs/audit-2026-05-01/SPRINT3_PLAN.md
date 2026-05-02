@@ -39,11 +39,10 @@ Each milestone is one commit; one CI verification gates the next.
       discordId) into one. syncGuildMemberships: parallel upsert.
       api/sync.ts: parallel upsert in both handleWants and
       handleAvailable.
-- [ ] **S3.3** — `React.lazy` the non-builder routes (H8):
-      SessionView, SettingsView, CommunityView, SignalBuilderView,
-      TradesHistoryView, ProfileView, BinderView, WishlistView,
-      TradeDetailView. Trade builder stays eager. Wrap `renderBody()`
-      in `<Suspense fallback={…}>`.
+- [x] **S3.3** — `React.lazy` the non-builder routes
+      (04b475f · run 25244275784). All 9 views now ship as separate
+      chunks (~57 kB gzipped deferred from initial bundle). Trade
+      builder + composer bars stay eager.
 - [ ] **S3.4** — Batch the signal embed N+1 (N10): replace per-row
       `resolveFamily` + `resolveVariantSpec` with two `inArray()`
       lookups (wants_items, available_items) in `api/signals.ts` and
