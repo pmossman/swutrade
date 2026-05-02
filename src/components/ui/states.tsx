@@ -3,18 +3,28 @@ import type { ReactNode } from 'react';
 /**
  * Small pulsing text line used while a view's primary resource is in
  * flight. Matches the `text-xs text-gray-500 animate-pulse` pattern
- * that recurred across every list-fetching view. Use the centered
- * variant when the view has no other content to anchor yet.
+ * that recurred across every list-fetching view. Three variants:
+ *   - default block: list/panel-level loads with the canonical
+ *     `text-xs` size.
+ *   - `centered`: full-bleed page-level load (e.g. ProfileView root).
+ *   - `inline`: bare span with no wrapper or fixed text-size, for
+ *     composer bars where the parent owns flex sizing. Audit
+ *     12-empty-loading-error-states #2.
  */
 export function LoadingState({
   label = 'Loading…',
   centered = false,
+  inline = false,
   className = '',
 }: {
   label?: string;
   /** Center the pulse in a full-bleed container (for page-level loads
    *  where the whole viewport is waiting). */
   centered?: boolean;
+  /** Render as a bare span — no wrapper, no fixed size. The parent
+   *  composer bar owns layout (flex-1, min-w-0, etc.). Mutually
+   *  exclusive with `centered`. */
+  inline?: boolean;
   className?: string;
 }) {
   if (centered) {
@@ -23,6 +33,9 @@ export function LoadingState({
         <span className="text-gray-500 animate-pulse">{label}</span>
       </div>
     );
+  }
+  if (inline) {
+    return <span className={`text-gray-400 animate-pulse ${className}`}>{label}</span>;
   }
   return <div className={`text-xs text-gray-500 animate-pulse ${className}`}>{label}</div>;
 }

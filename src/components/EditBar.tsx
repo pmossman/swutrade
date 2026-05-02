@@ -4,6 +4,7 @@ import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { useComposerBar } from '../hooks/useComposerBar';
 import { usePrimaryAction } from '../hooks/usePrimaryAction';
 import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
+import { LoadingState } from './ui/states';
 
 interface CardSnapshot {
   productId: string;
@@ -201,7 +202,7 @@ export function EditBar({
 
   const body = (() => {
     if (loadState === 'loading') {
-      return <span className="flex-1 min-w-0 text-gray-400 animate-pulse">Loading the proposal…</span>;
+      return <LoadingState inline className="flex-1 min-w-0" label="Loading the proposal…" />;
     }
     if (loadState === 'not-found' || loadState === 'forbidden') {
       return (

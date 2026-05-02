@@ -5,6 +5,7 @@ import { computeMatch, type MatchResult } from '../utils/matchmaker';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { usePricing } from '../contexts/PricingContext';
+import { LoadingState } from './ui/states';
 
 interface AutoBalanceBannerProps {
   senderHandle: string | null;
@@ -195,9 +196,11 @@ export function AutoBalanceBanner({
 
     if (!preview) {
       return (
-        <span className="flex-1 text-gray-400 animate-pulse">
-          Checking what you could trade with @{senderHandle}…
-        </span>
+        <LoadingState
+          inline
+          className="flex-1"
+          label={`Checking what you could trade with @${senderHandle}…`}
+        />
       );
     }
 

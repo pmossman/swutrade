@@ -12,6 +12,7 @@ import { useComposerBar, type SnapshotCard } from '../hooks/useComposerBar';
 import { useMutualBotGuilds, type MutualBotGuildOption } from '../hooks/useMutualBotGuilds';
 import { usePrimaryAction } from '../hooks/usePrimaryAction';
 import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
+import { LoadingState } from './ui/states';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -297,9 +298,11 @@ export function ProposeBar({
 
     if (!profile) {
       return (
-        <span className="flex-1 min-w-0 text-gray-400 animate-pulse">
-          Loading @{recipientHandle}'s lists…
-        </span>
+        <LoadingState
+          inline
+          className="flex-1 min-w-0"
+          label={`Loading @${recipientHandle}'s lists…`}
+        />
       );
     }
 

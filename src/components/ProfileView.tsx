@@ -16,6 +16,7 @@ import { useAuthContext } from '../contexts/AuthContext';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { usePriceDataContext } from '../contexts/PriceDataContext';
 import { useFavorites } from '../hooks/useFavorites';
+import { LoadingState } from './ui/states';
 
 interface ProfileUser {
   username: string;
@@ -180,8 +181,8 @@ export function ProfileView({
 
   if (loading || isAnyLoading) {
     return (
-      <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex items-center justify-center">
-        <span className="text-gray-500 animate-pulse">Loading profile…</span>
+      <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex">
+        <LoadingState centered label="Loading profile…" />
       </div>
     );
   }
