@@ -33,10 +33,10 @@ behavior-changing extractions come last.
 - [x] **S4.1** — N15: `LoadingState` `inline` variant
       (d3426a5 · run 25246901896). 4 composer bars + ProfileView's
       centered case migrated.
-- [ ] **S4.2** — N16: `ErrorState` `variant: 'card' | 'line' | 'banner'`.
-      Migrate the 4 near-byte-identical reimplementations
-      (NudgeDialog, TradesHistoryView, ProposeBar:628,
-      SignalBuilderView:555) + SettingsView local `ErrorLine`.
+- [x] **S4.2** — N16: `ErrorState` `variant: 'card' | 'line' | 'banner'`
+      (43a424e · run 25247001225). 4 near-byte-identical sites folded
+      onto `line`; SettingsView's `ErrorLine` (5 call sites + local
+      component) folded onto `banner`.
 - [ ] **S4.3** — D4: single `relativeTime` helper at
       `src/utils/relativeTime.ts`. Replace 5 reimplementations
       (App.tsx `timeAgo`, TradeDetailView `timeAgo`, TradesHistoryView

@@ -83,6 +83,7 @@ import { TutorialProvider } from './contexts/TutorialContext';
 import { useTutorial } from './hooks/useTutorial';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { TUTORIAL_STEPS } from './tutorial/steps';
+import { relativeTime } from './utils/relativeTime';
 
 /** Extract the handle from either `?profile=<handle>` or the
  *  `/u/<handle>` pathname — whichever the user navigated via. */
@@ -94,15 +95,6 @@ function readProfileHandle(): string {
   return m ? decodeURIComponent(m[1]) : '';
 }
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 function App() {
   const auth = useAuthContext();
@@ -973,7 +965,7 @@ function App() {
             <>
               <span className="text-space-600" aria-hidden>·</span>
               <span title={`Prices updated ${priceData.priceTimestamp}`}>
-                Prices updated {timeAgo(priceData.priceTimestamp)}
+                Prices updated {relativeTime(priceData.priceTimestamp)}
               </span>
             </>
           )}
@@ -984,7 +976,7 @@ function App() {
           >
             {isBetaChannel() ? 'beta' : 'v'}&nbsp;{APP_COMMIT}
             {isBetaChannel() && (
-              <span className="text-gold/40"> · built {timeAgo(APP_BUILD_TIME)}</span>
+              <span className="text-gold/40"> · built {relativeTime(APP_BUILD_TIME)}</span>
             )}
           </span>
           {user && syncStatus !== 'idle' && (

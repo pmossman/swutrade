@@ -5,6 +5,7 @@ import { LoadingState, ErrorState } from './ui/states';
 import { NudgeDialog } from './NudgeDialog';
 import { useAuthContext } from '../contexts/AuthContext';
 import { hapticMedium, hapticSuccess, hapticError } from '../utils/haptics';
+import { relativeTime } from '../utils/relativeTime';
 import {
   useTradeDetail,
   type CardSnapshot,
@@ -447,7 +448,7 @@ function TimelineRow({ event }: { event: ProposalEvent }) {
           {label}
           {actorText && <span className="text-gray-500 font-normal"> · {actorText}</span>}
         </span>
-        <span className="text-gray-500 tabular-nums shrink-0">{timeAgo(event.createdAt)}</span>
+        <span className="text-gray-500 tabular-nums shrink-0">{relativeTime(event.createdAt)}</span>
       </div>
       {noteText && (
         <div className="mt-0.5 text-gray-400 italic truncate">{noteText}</div>
@@ -486,17 +487,6 @@ function describeEvent(event: ProposalEvent): {
   }
 }
 
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 /**
  * Shows the implied cash settlement between the two sides. The number

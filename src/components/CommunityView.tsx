@@ -13,6 +13,7 @@ import {
   useCommunityActivity,
   type CommunityEvent,
 } from '../hooks/useCommunityActivity';
+import { relativeTime } from '../utils/relativeTime';
 import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
@@ -556,25 +557,12 @@ function ActivityRow({ event }: { event: CommunityEvent }) {
       )}
       <div className="min-w-0 flex-1">
         <div className="text-[12px] text-gray-200">{body}</div>
-        <div className="text-[10px] text-gray-500 mt-0.5">{formatRelative(event.createdAt)}</div>
+        <div className="text-[10px] text-gray-500 mt-0.5">{relativeTime(event.createdAt)}</div>
       </div>
     </li>
   );
 }
 
-function formatRelative(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diff = Date.now() - then;
-  const min = 60_000;
-  const hr = 60 * min;
-  const day = 24 * hr;
-  if (diff < min) return 'just now';
-  if (diff < hr) return `${Math.floor(diff / min)}m ago`;
-  if (diff < day) return `${Math.floor(diff / hr)}h ago`;
-  if (diff < 7 * day) return `${Math.floor(diff / day)}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 // --- Members ---------------------------------------------------------------
 
