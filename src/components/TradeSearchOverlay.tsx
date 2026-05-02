@@ -3,7 +3,7 @@ import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { ListCardPicker } from './ListCardPicker';
 import { CollapsibleChipFilter } from './CollapsibleChipFilter';
-import { adjustPrice, getCardPrice } from '../services/priceService';
+import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
 
@@ -264,7 +264,7 @@ export function TradeSearchOverlay({
                   {pickedCount > 0 && (
                     <div className="text-[10px] text-gray-500 mt-0.5">
                       Picked so far: <strong className="text-gray-300">{pickedCount}</strong>
-                      {pickedTotal > 0 && <> · <strong className="text-gray-300">${pickedTotal.toFixed(2)}</strong></>}
+                      {pickedTotal > 0 && <> · <strong className="text-gray-300">{formatPrice(pickedTotal)}</strong></>}
                     </div>
                   )}
                 </div>

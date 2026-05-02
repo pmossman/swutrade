@@ -211,7 +211,7 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
 
   let actionLine: React.ReactNode = null;
   if (balance.tier !== 'balanced' && balance.absDiff >= 0.01) {
-    const amount = `$${balance.absDiff.toFixed(2)}`;
+    const amount = formatPrice(balance.absDiff);
     const verb = balance.favored === 'them' ? 'Ask for' : 'Offer';
     actionLine = (
       <>
@@ -275,12 +275,12 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
               <div className="flex items-center gap-2 text-[11px] tabular-nums shrink-0">
                 <span className="flex items-baseline gap-1">
                   <span className="text-emerald-400/70 uppercase text-[9px] tracking-widest font-semibold">Offer</span>
-                  <span className="text-emerald-200 font-semibold">${yourTotal.toFixed(2)}</span>
+                  <span className="text-emerald-200 font-semibold">{formatPrice(yourTotal)}</span>
                 </span>
                 <span className="text-space-600" aria-hidden>·</span>
                 <span className="flex items-baseline gap-1">
                   <span className="text-blue-400/70 uppercase text-[9px] tracking-widest font-semibold">Receive</span>
-                  <span className="text-blue-200 font-semibold">${theirTotal.toFixed(2)}</span>
+                  <span className="text-blue-200 font-semibold">{formatPrice(theirTotal)}</span>
                 </span>
               </div>
             </div>

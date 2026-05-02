@@ -1,5 +1,5 @@
 import type { TradeCard, PriceMode } from '../types';
-import { adjustPrice, getCardPrice, countMissingPrices } from '../services/priceService';
+import { adjustPrice, getCardPrice, countMissingPrices, formatPrice } from '../services/priceService';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 import { PriceSlider } from './PriceSlider';
 import { PriceModeToggle } from './PriceModeToggle';
@@ -21,10 +21,6 @@ function calcTotal(cards: TradeCard[], percentage: number, priceMode: PriceMode)
     const adj = adjustPrice(getCardPrice(tc.card, priceMode), percentage);
     return sum + (adj ?? 0) * tc.qty;
   }, 0);
-}
-
-function formatDollars(n: number) {
-  return `$${n.toFixed(2)}`;
 }
 
 export function TradeBalance({
@@ -63,7 +59,7 @@ export function TradeBalance({
   // an option.
   let actionLine: React.ReactNode = null;
   if (balance.tier !== 'balanced' && balance.absDiff >= 0.01) {
-    const amount = formatDollars(balance.absDiff);
+    const amount = formatPrice(balance.absDiff);
     if (balance.favored === 'them') {
       actionLine = (
         <>
@@ -108,7 +104,7 @@ export function TradeBalance({
         )}
         {!isEmpty && !actionLine && (
           <span className="text-[11px] text-gray-500 tabular-nums">
-            · {formatDollars(yourTotal)} / {formatDollars(theirTotal)}
+            · {formatPrice(yourTotal)} / {formatPrice(theirTotal)}
           </span>
         )}
       </div>
@@ -197,12 +193,12 @@ export function TradeBalance({
             <>
               <span className="flex items-baseline gap-1">
                 <span className="text-emerald-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Offer</span>
-                <span className="text-emerald-200 font-semibold">{formatDollars(yourTotal)}</span>
+                <span className="text-emerald-200 font-semibold">{formatPrice(yourTotal)}</span>
               </span>
               <span className="text-space-600" aria-hidden>·</span>
               <span className="flex items-baseline gap-1">
                 <span className="text-blue-400/70 uppercase text-[8px] sm:text-[9px] tracking-widest font-semibold">Receive</span>
-                <span className="text-blue-200 font-semibold">{formatDollars(theirTotal)}</span>
+                <span className="text-blue-200 font-semibold">{formatPrice(theirTotal)}</span>
               </span>
               <span className="text-space-600" aria-hidden>·</span>
             </>

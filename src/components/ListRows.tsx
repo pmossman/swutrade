@@ -1,6 +1,6 @@
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
-import { cardImageUrl, getCardPrice } from '../services/priceService';
+import { cardImageUrl, formatPrice, getCardPrice } from '../services/priceService';
 import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { NumberStepper } from './ui/NumberStepper';
@@ -296,7 +296,7 @@ export function AvailableRow({
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
             <VariantBadge variant={variant} size="xs" />
             {price !== null && (
-              <span className="text-[10px] text-gold font-semibold">${price.toFixed(2)}</span>
+              <span className="text-[10px] text-gold font-semibold">{formatPrice(price)}</span>
             )}
             {showWantBadge && (
               <span

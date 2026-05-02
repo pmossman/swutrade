@@ -37,11 +37,9 @@ behavior-changing extractions come last.
       (43a424e · run 25247001225). 4 near-byte-identical sites folded
       onto `line`; SettingsView's `ErrorLine` (5 call sites + local
       component) folded onto `banner`.
-- [ ] **S4.3** — D4: single `relativeTime` helper at
-      `src/utils/relativeTime.ts`. Replace 5 reimplementations
-      (App.tsx `timeAgo`, TradeDetailView `timeAgo`, TradesHistoryView
-      `relativeTime`, HomeView `timeAgoShort`, CommunityView
-      `formatRelative`).
+- [x] **S4.3** — D4: single `relativeTime` helper
+      (dba85be · run 25247094988). 5 reimplementations replaced; 30d
+      threshold + NaN-safe.
 - [ ] **S4.4** — D3: adopt `formatPrice` everywhere. Replace inline
       `` `$${n.toFixed(2)}` `` in TradeBalance, TradeSummary,
       TradeDetailView, ProposeBar, ListRows, ListView, ProfileView,

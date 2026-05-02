@@ -5,6 +5,7 @@ import type { SharedLists } from '../hooks/useSharedLists';
 import {
   cardImageUrl,
   adjustPrice,
+  formatPrice,
   getCardPrice,
 } from '../services/priceService';
 import {
@@ -454,7 +455,7 @@ function ListRow({ row, tone, percentage, priceMode }: ListRowProps) {
         )}
         {price !== null && (
           <span className="text-xs text-gold font-semibold tabular-nums w-14 text-right">
-            ${price.toFixed(2)}
+            {formatPrice(price)}
           </span>
         )}
       </div>

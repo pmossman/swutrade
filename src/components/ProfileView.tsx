@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   cardImageUrl,
+  formatPrice,
   getCardPrice,
 } from '../services/priceService';
 import {
@@ -528,7 +529,7 @@ function ProfileRow({
         )}
         {price !== null && (
           <span className="text-xs text-gold font-semibold tabular-nums w-14 text-right">
-            ${price.toFixed(2)}
+            {formatPrice(price)}
           </span>
         )}
       </div>

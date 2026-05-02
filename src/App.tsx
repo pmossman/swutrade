@@ -16,7 +16,7 @@ import { useAvailable } from './hooks/useAvailable';
 import { useSharedLists } from './hooks/useSharedLists';
 import { useRecipientProfile } from './hooks/useRecipientProfile';
 import { useTradeViewMode } from './hooks/useTradeViewMode';
-import { adjustPrice, getCardPrice } from './services/priceService';
+import { adjustPrice, formatPrice, getCardPrice } from './services/priceService';
 import { useTradeIntent } from './hooks/useTradeIntent';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
@@ -1197,7 +1197,7 @@ function TradeTab({
       <span>{label}</span>
       {count > 0 && (
         <span className="text-[10px] tabular-nums opacity-80">
-          {count} · ${total.toFixed(2)}
+          {count} · {formatPrice(total)}
         </span>
       )}
     </button>

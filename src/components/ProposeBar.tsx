@@ -13,6 +13,7 @@ import { useMutualBotGuilds, type MutualBotGuildOption } from '../hooks/useMutua
 import { usePrimaryAction } from '../hooks/usePrimaryAction';
 import type { PrimaryActionSpec } from '../contexts/PrimaryActionContext';
 import { LoadingState, ErrorState } from './ui/states';
+import { formatPrice } from '../services/priceService';
 
 interface ProposeBarProps {
   recipientHandle: string;
@@ -768,7 +769,7 @@ function ConfirmCardGroup({
       <div className="flex items-baseline justify-between mb-1.5">
         <h3 className={`text-[10px] tracking-[0.18em] uppercase font-bold ${accent}`}>{label}</h3>
         {total > 0 && (
-          <span className="text-[11px] text-gray-400 tabular-nums">${total.toFixed(2)}</span>
+          <span className="text-[11px] text-gray-400 tabular-nums">{formatPrice(total)}</span>
         )}
       </div>
       {cards.length === 0 ? (
@@ -789,7 +790,7 @@ function ConfirmCardGroup({
               </span>
               {c.unitPrice !== null && c.unitPrice > 0 && (
                 <span className="text-[10px] text-gray-400 tabular-nums shrink-0 w-14 text-right">
-                  ${(c.unitPrice * c.qty).toFixed(2)}
+                  {formatPrice(c.unitPrice * c.qty)}
                 </span>
               )}
             </li>
@@ -826,12 +827,12 @@ function TotalsStrip({
     >
       <span>
         <span className="text-gray-500">Offering </span>
-        <strong className="text-emerald-300 tabular-nums">${offeringTotal.toFixed(2)}</strong>
+        <strong className="text-emerald-300 tabular-nums">{formatPrice(offeringTotal)}</strong>
       </span>
       <span className="text-gray-600">·</span>
       <span>
         <span className="text-gray-500">Receiving </span>
-        <strong className="text-blue-300 tabular-nums">${receivingTotal.toFixed(2)}</strong>
+        <strong className="text-blue-300 tabular-nums">{formatPrice(receivingTotal)}</strong>
       </span>
       <span className="text-gray-600">·</span>
       <span className="font-semibold">
@@ -839,7 +840,7 @@ function TotalsStrip({
           <>Balanced</>
         ) : (
           <>
-            <span className="tabular-nums">${Math.abs(diff).toFixed(2)}</span>{' '}
+            <span className="tabular-nums">{formatPrice(Math.abs(diff))}</span>{' '}
             imbalance{' '}
             <span className="text-gray-500 font-normal">
               (implied cash from {diff > 0 ? 'them' : 'you'})

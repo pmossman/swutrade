@@ -6,6 +6,7 @@ import { NudgeDialog } from './NudgeDialog';
 import { useAuthContext } from '../contexts/AuthContext';
 import { hapticMedium, hapticSuccess, hapticError } from '../utils/haptics';
 import { relativeTime } from '../utils/relativeTime';
+import { formatPrice } from '../services/priceService';
 import {
   useTradeDetail,
   type CardSnapshot,
@@ -517,7 +518,7 @@ function ImbalanceStrip({
   const receiverOfCash = offeringHasMore === offeringIsViewer ? 'you' : 'them';
   return (
     <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-      <span className="font-bold">${Math.abs(diff).toFixed(2)}</span>{' '}
+      <span className="font-bold">{formatPrice(Math.abs(diff))}</span>{' '}
       imbalance — typically settled in cash from{' '}
       <strong>{receiverOfCash === 'you' ? 'them' : 'you'}</strong> to{' '}
       <strong>{receiverOfCash}</strong>.
@@ -560,7 +561,7 @@ function CardGroup({
       <div className="flex items-baseline justify-between mb-1.5">
         <h2 className={`text-[11px] tracking-[0.18em] uppercase font-bold ${accent}`}>{label}</h2>
         {total > 0 && (
-          <span className="text-[11px] text-gray-400 tabular-nums">${total.toFixed(2)}</span>
+          <span className="text-[11px] text-gray-400 tabular-nums">{formatPrice(total)}</span>
         )}
       </div>
       {cards.length === 0 ? (
@@ -576,7 +577,7 @@ function CardGroup({
               <span className="text-[10px] text-gray-500 tracking-wider uppercase shrink-0">{c.variant}</span>
               {c.unitPrice !== null && c.unitPrice > 0 && (
                 <span className="text-[11px] text-gray-400 tabular-nums shrink-0 w-14 text-right">
-                  ${(c.unitPrice * c.qty).toFixed(2)}
+                  {formatPrice(c.unitPrice * c.qty)}
                 </span>
               )}
             </li>
