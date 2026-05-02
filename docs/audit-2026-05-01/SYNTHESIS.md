@@ -159,9 +159,10 @@ Updated 2026-05-01 after the 4 follow-up audits (accessibility, empty/loading/er
 - ✅ **Sprint 1 done** — see `SPRINT1_PLAN.md`. 12/12 milestones; commits `daab55d` → `af52de0`.
 - ✅ **Sprint 2 done** — see `SPRINT2_PLAN.md`. 5/5 milestones; commits `40010b4` → `6c58107`.
 - ✅ **Out-of-band fix** (`9ff0b00`): max-$ removed from signal builder + Discord embed per parker's call that signals are conversation-starters, not pre-committed prices. Wants/binder personal max-price unaffected; DB column kept for backwards-compat.
-- ⏳ **Sprint 3 next** — perf cluster, ~5-7 commits. Standing rules + autonomous-loop pattern same as Sprints 1-2.
+- ✅ **Sprint 3 done** — see `SPRINT3_PLAN.md`. 5/5 milestones; commits `e56c682` → `ad5fe14`. Perf cluster: H2 (context memoization), H3 (3 sequential-await sites parallelized), H8 (~57 kB gzipped lazy-deferred), N10 (signal embed N+1 → 2 inArray queries), N11 (4 hooks adopt sharedCache).
+- ⏳ **Sprint 4 next** — UX primitive consolidation, ~7 commits. Same standing rules + autonomous loop.
 
-Combined Sprint 1+2: 17 commits, all CI-verified. ~470 LOC net deleted (Sprint 1 dead-code sweep + signal-max-$ removal). Type drift across 5+ surfaces collapsed to single sources of truth. 4 mutation-race classes fixed (saveCards-shape was latent in 4 hooks before — now zero). Zod-validated apiClient pattern proven on `/api/auth/me`; remaining 43 consumers migrate opportunistically.
+Combined Sprint 1+2+3: 22 commits, all CI-verified. ~470 LOC net deleted (Sprint 1 dead-code sweep + signal-max-$ removal). Type drift across 5+ surfaces collapsed to single sources of truth. 4 mutation-race classes fixed (saveCards-shape was latent in 4 hooks before — now zero). Zod-validated apiClient pattern proven on `/api/auth/me`; remaining 43 consumers migrate opportunistically. Perf wins: 60s minute-tick no longer cascades through context consumers; binder/wants saves go from 6-10s to ~1 round-trip; initial JS bundle ~57 kB gzipped lighter; signal embed assembly is two queries flat.
 
 **Sprint 1 (revised, ~12 commits):** Fast correctness wins + the highest-impact perf find + first-pass dedup. Runs autonomously once kicked off. Items in execution order:
 

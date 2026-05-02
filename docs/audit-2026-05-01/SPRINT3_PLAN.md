@@ -48,11 +48,36 @@ Each milestone is one commit; one CI verification gates the next.
       and `api/bot.ts`; per-row `resolveSignalFamily`/`resolveVariantSpec`
       kept for the two single-row callers (`handleVariantOpen`,
       `handleVariantPick`). 26 signal tests still pass.
-- [ ] **S3.5** — Adopt `createSingletonCache` in `useFavorites`,
+- [x] **S3.5** — Adopt sharedCache in `useFavorites`,
       `useRecentPartners`, `useCommunityCards`, `useMutualBotGuilds`
-      (N11). Mirror the `useTradesList` / `useGuildMemberships`
-      pattern. `useMutualBotGuilds` is keyed by counterpart handle —
-      use `createKeyedCache` there.
+      (ad5fe14 · run 25244548188). useMutualBotGuilds uses
+      createKeyedCache (keyed by counterpart handle); the other three
+      use createSingletonCache. Sign-out gates (favorites + community)
+      clear the cache.
+
+## Sprint 3 complete — 5/5 milestones shipped
+
+The perf cluster is live on beta. Summary of what shipped:
+- **H2** — Memoizing `useAuth`'s return + the two non-memoized
+  context provider values stops the 60s minute-tick (and every
+  `useSession` poll setState) from cascading re-renders into every
+  context consumer.
+- **H3** — Three sequential-await sites (`handlePropose` recipient/
+  proposer SELECTs, `syncGuildMemberships` upsert loop, `api/sync.ts`
+  upsert loop) now run in parallel. The 200-card binder PUT is the
+  most user-visible — was 6-10s, now one round-trip-batch.
+- **H8** — All 9 non-builder routes lazy-loaded; ~57 kB gzipped
+  deferred from the initial bundle. Trade builder stays eager.
+- **N10** — Signal embed N+1 collapsed to two `inArray` queries.
+  Affects `handleListMine` (fired on every Signals view mount), the
+  cancel paths in both `api/signals.ts` and `api/bot.ts`, and the
+  cron-signals embed-refresh sweep.
+- **N11** — `useFavorites` / `useRecentPartners` / `useCommunityCards`
+  / `useMutualBotGuilds` adopted the existing `sharedCache` pattern,
+  removing redundant fetches when the same data is needed across
+  return-navigation or modal re-mounts.
+
+Next: Sprint 4 (UX primitive consolidation) when parker green-lights.
 
 ## Run log
 
