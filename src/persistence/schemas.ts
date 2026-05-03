@@ -75,8 +75,14 @@ export const PERSIST_KEYS = {
 } as const;
 
 export const DEFAULTS = {
-  percentage: 80,
-  priceMode: 'market',
+  // 100% TCG Low is the trader-default-friendly baseline: TCG Low is
+  // closer to "what cards actually move at" than Market, and 100%
+  // means the slider starts at parity (users who want to discount
+  // can pull it down). Old default of 80% market was a percentage-
+  // pulled-down market price, two non-default decisions stacked.
+  // Existing users keep their localStorage-stored preference.
+  percentage: 100,
+  priceMode: 'low',
   selVariants: [] as string[],
   selSets: [] as string[],
   wants: [] as WantsItem[],
