@@ -60,6 +60,8 @@ export function SessionView({ sessionId }: { sessionId: string }) {
   const filters = useSelectionFilters({
     variants: PERSIST_KEYS.tradeSelVariants,
     sets: PERSIST_KEYS.tradeSelSets,
+    rarities: PERSIST_KEYS.tradeSelRarities,
+    sortBy: PERSIST_KEYS.tradeSortBy,
   });
 
   const api = useSession(sessionId);

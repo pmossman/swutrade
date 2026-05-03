@@ -1,11 +1,21 @@
 import { useCallback, useState } from 'react';
 import {
   StringArraySchema,
+  SortBySchema,
   readPersisted,
   writePersisted,
   clearPersisted,
+  type SortBy,
 } from '../persistence';
 import type { CanonicalVariant } from '../variants';
+
+/** Rarity values we expose as filter chips. The catalog also has
+ *  "Special" (promo / convention exclusives) but we deliberately leave
+ *  it out of the chip row — most users browsing rarities want the
+ *  Common/Uncommon/Rare/Legendary axis. Special cards still surface
+ *  via the set filter's Special preset. */
+export const SELECTABLE_RARITIES = ['Common', 'Uncommon', 'Rare', 'Legendary'] as const;
+export type SelectableRarity = typeof SELECTABLE_RARITIES[number];
 
 // --- Pure reducers ---------------------------------------------------------
 // Extracted so the mutual-exclusion rules between individual set chips and
@@ -46,6 +56,8 @@ export function replaceGroupReducer(group: string | null): string[] {
 export interface SelectionFilters {
   selectedVariants: CanonicalVariant[];
   selectedSets: string[];
+  selectedRarities: SelectableRarity[];
+  sortBy: SortBy;
   toggleVariant: (v: CanonicalVariant) => void;
   toggleSet: (slug: string) => void;
   /** Swap the active set-group pseudo-slug, ensuring the two known
@@ -53,15 +65,28 @@ export interface SelectionFilters {
    *  exclusive. Pass null to clear the group while leaving any
    *  individual set chips intact. */
   replaceGroup: (group: string | null) => void;
+  toggleRarity: (r: SelectableRarity) => void;
+  setSortBy: (s: SortBy) => void;
   clearVariants: () => void;
   clearSets: () => void;
+  clearRarities: () => void;
+  /** Reset rarity + sort to defaults. Used by the "More filters"
+   *  popover's Clear action so the user can wipe just the niche
+   *  axes without touching variant/set. */
+  clearMoreFilters: () => void;
   clearAll: () => void;
   totalSelected: number;
+  /** Count of "more filter" axes that are non-default. Surfaces as
+   *  a badge on the popover trigger so users know without opening
+   *  whether anything's narrowing their view. */
+  moreFiltersActiveCount: number;
 }
 
 interface Keys {
   variants: string;
   sets: string;
+  rarities: string;
+  sortBy: string;
 }
 
 function loadArray<T extends string>(key: string): T[] {
@@ -81,12 +106,37 @@ function save(key: string, value: string[]) {
  * user sees in trade search. Empty array means "allow all" — narrowing
  * is opt-in.
  */
+/** Filter-out unrecognized rarity strings from a persisted array.
+ *  Defends against a future Common/Uncommon/Rare/Legendary rename
+ *  that'd otherwise leave stale localStorage entries narrowing the
+ *  catalog to the empty set. */
+function loadRarities(key: string): SelectableRarity[] {
+  const raw = readPersisted(key, StringArraySchema, []);
+  const allowed = new Set(SELECTABLE_RARITIES as readonly string[]);
+  return raw.filter((r): r is SelectableRarity => allowed.has(r));
+}
+
+function loadSortBy(key: string): SortBy {
+  return readPersisted(key, SortBySchema, 'relevance');
+}
+
+function saveSortBy(key: string, value: SortBy) {
+  if (value === 'relevance') clearPersisted(key);
+  else writePersisted(key, value);
+}
+
 export function useSelectionFilters(keys: Keys): SelectionFilters {
   const [selectedVariants, setSelectedVariants] = useState<CanonicalVariant[]>(
     () => loadArray<CanonicalVariant>(keys.variants),
   );
   const [selectedSets, setSelectedSets] = useState<string[]>(
     () => loadArray<string>(keys.sets),
+  );
+  const [selectedRarities, setSelectedRarities] = useState<SelectableRarity[]>(
+    () => loadRarities(keys.rarities),
+  );
+  const [sortBy, setSortByState] = useState<SortBy>(
+    () => loadSortBy(keys.sortBy),
   );
 
   const toggleVariant = useCallback((v: CanonicalVariant) => {
@@ -111,6 +161,19 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     save(keys.sets, next);
   }, [keys.sets]);
 
+  const toggleRarity = useCallback((r: SelectableRarity) => {
+    setSelectedRarities(prev => {
+      const next = toggleVariantReducer(prev, r);
+      save(keys.rarities, next);
+      return next;
+    });
+  }, [keys.rarities]);
+
+  const setSortBy = useCallback((s: SortBy) => {
+    setSortByState(s);
+    saveSortBy(keys.sortBy, s);
+  }, [keys.sortBy]);
+
   const clearVariants = useCallback(() => {
     setSelectedVariants([]);
     save(keys.variants, []);
@@ -121,22 +184,52 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     save(keys.sets, []);
   }, [keys.sets]);
 
+  const clearRarities = useCallback(() => {
+    setSelectedRarities([]);
+    save(keys.rarities, []);
+  }, [keys.rarities]);
+
+  const clearMoreFilters = useCallback(() => {
+    setSelectedRarities([]);
+    setSortByState('relevance');
+    save(keys.rarities, []);
+    saveSortBy(keys.sortBy, 'relevance');
+  }, [keys.rarities, keys.sortBy]);
+
   const clearAll = useCallback(() => {
     setSelectedVariants([]);
     setSelectedSets([]);
+    setSelectedRarities([]);
+    setSortByState('relevance');
     save(keys.variants, []);
     save(keys.sets, []);
-  }, [keys.variants, keys.sets]);
+    save(keys.rarities, []);
+    saveSortBy(keys.sortBy, 'relevance');
+  }, [keys.variants, keys.sets, keys.rarities, keys.sortBy]);
+
+  // "More filters" badge count: rarity narrowing counts as one axis
+  // regardless of how many rarities are picked; non-default sort is
+  // its own axis. Two axes max, matches the popover's content.
+  const moreFiltersActiveCount =
+    (selectedRarities.length > 0 ? 1 : 0)
+    + (sortBy !== 'relevance' ? 1 : 0);
 
   return {
     selectedVariants,
     selectedSets,
+    selectedRarities,
+    sortBy,
     toggleVariant,
     toggleSet,
     replaceGroup,
+    toggleRarity,
+    setSortBy,
     clearVariants,
     clearSets,
+    clearRarities,
+    clearMoreFilters,
     clearAll,
-    totalSelected: selectedVariants.length + selectedSets.length,
+    totalSelected: selectedVariants.length + selectedSets.length + selectedRarities.length,
+    moreFiltersActiveCount,
   };
 }

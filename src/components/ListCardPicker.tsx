@@ -263,6 +263,8 @@ export function ListCardPicker({
   const filters = useSelectionFilters({
     variants: PERSIST_KEYS.pickerSelVariants,
     sets: PERSIST_KEYS.pickerSelSets,
+    rarities: PERSIST_KEYS.pickerSelRarities,
+    sortBy: PERSIST_KEYS.pickerSortBy,
   });
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -352,11 +354,17 @@ export function ListCardPicker({
   // confusing.
   // Specific tile mode: show every variant as its own tile.
   const viewResults = useMemo<SetSearchGroup[]>(() => {
-    const setScoped = applySelectionFilters(
-      baseResults,
+    const setScoped = applySelectionFilters(baseResults, {
       selectedSets,
-      [],
-    );
+      // Variant filter applies in family tile mode but is handled
+      // explicitly below (the rep-picking step depends on it). Pass
+      // empty here so applySelectionFilters doesn't pre-filter
+      // variants out of the group BEFORE we collapse to a rep.
+      selectedVariants: [],
+      selectedRarities: filters.selectedRarities,
+      sortBy: filters.sortBy,
+      priceMode,
+    });
 
     if (activeMode !== 'family') return setScoped;
 

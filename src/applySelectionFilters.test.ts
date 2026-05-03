@@ -7,7 +7,11 @@ import {
   SPECIAL_GROUP,
 } from './applySelectionFilters';
 
-function card(set: string, name: string): CardVariant {
+function card(
+  set: string,
+  name: string,
+  overrides: Partial<CardVariant> = {},
+): CardVariant {
   return {
     name,
     variant: 'Standard',
@@ -18,6 +22,7 @@ function card(set: string, name: string): CardVariant {
     lowPrice: 1,
     set,
     setName: set,
+    ...overrides,
   };
 }
 
@@ -45,7 +50,7 @@ describe('applySelectionFilters', () => {
       group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A')]),
       group('legends-of-the-force', 'LOF', [card('legends-of-the-force', 'B')]),
     ];
-    expect(applySelectionFilters(input, [], [])).toEqual(input);
+    expect(applySelectionFilters(input, { selectedSets: [], selectedVariants: [] })).toEqual(input);
   });
 
   it('filters by exact set slug', () => {
@@ -53,7 +58,7 @@ describe('applySelectionFilters', () => {
       group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A')]),
       group('legends-of-the-force', 'LOF', [card('legends-of-the-force', 'B')]),
     ];
-    const out = applySelectionFilters(input, ['jump-to-lightspeed'], []);
+    const out = applySelectionFilters(input, { selectedSets: ['jump-to-lightspeed'], selectedVariants: [] });
     expect(out).toHaveLength(1);
     expect(out[0].setSlug).toBe('jump-to-lightspeed');
   });
@@ -66,7 +71,7 @@ describe('applySelectionFilters', () => {
         card('jump-to-lightspeed', 'A (Showcase)'),
       ]),
     ];
-    const out = applySelectionFilters(input, [], ['Hyperspace']);
+    const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: ['Hyperspace'] });
     expect(out).toHaveLength(1);
     // Only the Hyperspace variant survives inside the group
     expect(out[0].groups[0].variants).toHaveLength(1);
@@ -80,7 +85,7 @@ describe('applySelectionFilters', () => {
         card('jump-to-lightspeed', 'B (Hyperspace)'),
       ]),
     ];
-    const out = applySelectionFilters(input, [], ['Hyperspace']);
+    const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: ['Hyperspace'] });
     expect(out).toHaveLength(1);
     expect(out[0].groups).toHaveLength(1);
     expect(out[0].groups[0].baseName).toBe('B');
@@ -91,7 +96,7 @@ describe('applySelectionFilters', () => {
       group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A (Hyperspace)')]),
       group('legends-of-the-force', 'LOF', [card('legends-of-the-force', 'B (Standard)')]),
     ];
-    const out = applySelectionFilters(input, [], ['Hyperspace']);
+    const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: ['Hyperspace'] });
     expect(out).toHaveLength(1);
     expect(out[0].setSlug).toBe('jump-to-lightspeed');
   });
@@ -103,7 +108,7 @@ describe('applySelectionFilters', () => {
         group('a-lawless-time', 'LAW', [card('a-lawless-time', 'B')]),            // main
         group('judge-promos', 'JP', [card('judge-promos', 'C')]),                 // promo
       ];
-      const out = applySelectionFilters(input, [MAIN_GROUP], []);
+      const out = applySelectionFilters(input, { selectedSets: [MAIN_GROUP], selectedVariants: [] });
       expect(out.map(s => s.setSlug).sort()).toEqual(
         ['a-lawless-time', 'jump-to-lightspeed'],
       );
@@ -116,7 +121,7 @@ describe('applySelectionFilters', () => {
         group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A')]),
         group('judge-promos', 'JP', [card('judge-promos', 'B')]),
       ];
-      const out = applySelectionFilters(input, [SPECIAL_GROUP], []);
+      const out = applySelectionFilters(input, { selectedSets: [SPECIAL_GROUP], selectedVariants: [] });
       expect(out.map(s => s.setSlug)).toEqual(['judge-promos']);
     });
   });
@@ -130,7 +135,7 @@ describe('applySelectionFilters', () => {
       group('judge-promos', 'JP', [card('judge-promos', 'B')]),
       group('organized-play-promos', 'OPP', [card('organized-play-promos', 'C')]),
     ];
-    const out = applySelectionFilters(input, [MAIN_GROUP, 'judge-promos'], []);
+    const out = applySelectionFilters(input, { selectedSets: [MAIN_GROUP, 'judge-promos'], selectedVariants: [] });
     expect(out.map(s => s.setSlug).sort()).toEqual(
       ['judge-promos', 'jump-to-lightspeed'],
     );
@@ -146,10 +151,134 @@ describe('applySelectionFilters', () => {
         card('judge-promos', 'B (Hyperspace)'),
       ]),
     ];
-    const out = applySelectionFilters(input, [MAIN_GROUP], ['Hyperspace']);
+    const out = applySelectionFilters(input, { selectedSets: [MAIN_GROUP], selectedVariants: ['Hyperspace'] });
     expect(out).toHaveLength(1);
     expect(out[0].setSlug).toBe('jump-to-lightspeed');
     expect(out[0].groups[0].variants).toHaveLength(1);
     expect(out[0].groups[0].variants[0].name).toBe('A (Hyperspace)');
+  });
+
+  describe('rarity filter', () => {
+    it('passes through when selectedRarities is empty (default)', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          card('jump-to-lightspeed', 'A', { rarity: 'Common' }),
+          card('jump-to-lightspeed', 'B', { rarity: 'Legendary' }),
+        ]),
+      ];
+      const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: [], selectedRarities: [] });
+      expect(out).toEqual(input);
+    });
+
+    it('narrows to cards whose rarity matches the selection', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          card('jump-to-lightspeed', 'A', { rarity: 'Common' }),
+          card('jump-to-lightspeed', 'B', { rarity: 'Rare' }),
+          card('jump-to-lightspeed', 'C', { rarity: 'Legendary' }),
+        ]),
+      ];
+      const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: [], selectedRarities: ['Rare', 'Legendary'] });
+      expect(out).toHaveLength(1);
+      expect(out[0].groups.map(g => g.baseName).sort()).toEqual(['B', 'C']);
+    });
+
+    it('drops set-groups whose cards are all rarity-filtered out', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A', { rarity: 'Common' })]),
+        group('legends-of-the-force', 'LOF', [card('legends-of-the-force', 'B', { rarity: 'Rare' })]),
+      ];
+      const out = applySelectionFilters(input, { selectedSets: [], selectedVariants: [], selectedRarities: ['Rare'] });
+      expect(out).toHaveLength(1);
+      expect(out[0].setSlug).toBe('legends-of-the-force');
+    });
+
+    it('combines with variant filter (both must match)', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          card('jump-to-lightspeed', 'A (Standard)', { rarity: 'Rare' }),
+          card('jump-to-lightspeed', 'A (Hyperspace)', { rarity: 'Common' }),
+        ]),
+      ];
+      const out = applySelectionFilters(input, {
+        selectedSets: [],
+        selectedVariants: ['Hyperspace'],
+        selectedRarities: ['Rare'],
+      });
+      // Hyperspace + Rare: nothing matches both → group dropped.
+      expect(out).toHaveLength(0);
+    });
+  });
+
+  describe('sortBy="price-desc"', () => {
+    it('flattens to one synthetic group sorted by max price desc', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          card('jump-to-lightspeed', 'Cheap', { marketPrice: 0.5, lowPrice: 0.3 }),
+          card('jump-to-lightspeed', 'Mid',   { marketPrice: 5,   lowPrice: 4 }),
+        ]),
+        group('legends-of-the-force', 'LOF', [
+          card('legends-of-the-force', 'Spendy', { marketPrice: 100, lowPrice: 90 }),
+        ]),
+        group('a-lawless-time', 'LAW', [
+          card('a-lawless-time', 'Very Spendy', { marketPrice: 250, lowPrice: 240 }),
+        ]),
+      ];
+      const out = applySelectionFilters(input, {
+        selectedSets: [],
+        selectedVariants: [],
+        sortBy: 'price-desc',
+        priceMode: 'market',
+      });
+      // One synthetic group named for the new sort.
+      expect(out).toHaveLength(1);
+      expect(out[0].setName).toMatch(/Sorted by price/i);
+      // Card families ordered by max-price-desc, no set boundaries.
+      expect(out[0].groups.map(g => g.baseName)).toEqual(['Very Spendy', 'Spendy', 'Mid', 'Cheap']);
+    });
+
+    it('uses the active priceMode as the sort key', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          // Card A: high market, low low — should rank high under
+          // 'market' but low under 'low'.
+          card('jump-to-lightspeed', 'A', { marketPrice: 100, lowPrice: 1 }),
+          card('jump-to-lightspeed', 'B', { marketPrice: 5, lowPrice: 50 }),
+        ]),
+      ];
+
+      const market = applySelectionFilters(input, {
+        selectedSets: [], selectedVariants: [], sortBy: 'price-desc', priceMode: 'market',
+      });
+      expect(market[0].groups.map(g => g.baseName)).toEqual(['A', 'B']);
+
+      const low = applySelectionFilters(input, {
+        selectedSets: [], selectedVariants: [], sortBy: 'price-desc', priceMode: 'low',
+      });
+      expect(low[0].groups.map(g => g.baseName)).toEqual(['B', 'A']);
+    });
+
+    it('sinks unpriced groups to the bottom', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [
+          card('jump-to-lightspeed', 'Unpriced', { marketPrice: null, lowPrice: null }),
+          card('jump-to-lightspeed', 'Real', { marketPrice: 5, lowPrice: 4 }),
+        ]),
+      ];
+      const out = applySelectionFilters(input, {
+        selectedSets: [], selectedVariants: [], sortBy: 'price-desc', priceMode: 'market',
+      });
+      expect(out[0].groups.map(g => g.baseName)).toEqual(['Real', 'Unpriced']);
+    });
+
+    it('returns empty when filters drop everything before the sort step', () => {
+      const input = [
+        group('jump-to-lightspeed', 'JTL', [card('jump-to-lightspeed', 'A', { rarity: 'Common' })]),
+      ];
+      const out = applySelectionFilters(input, {
+        selectedSets: [], selectedVariants: [], selectedRarities: ['Legendary'], sortBy: 'price-desc',
+      });
+      expect(out).toEqual([]);
+    });
   });
 });

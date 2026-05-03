@@ -176,6 +176,8 @@ function App() {
   const filters = useSelectionFilters({
     variants: PERSIST_KEYS.tradeSelVariants,
     sets: PERSIST_KEYS.tradeSelSets,
+    rarities: PERSIST_KEYS.tradeSelRarities,
+    sortBy: PERSIST_KEYS.tradeSortBy,
   });
   const wants = useWants();
   const available = useAvailable();

@@ -5,6 +5,13 @@ export const PercentageSchema = z.number().int().min(1).max(100);
 export const PriceModeSchema = z.enum(['market', 'low']);
 export const StringArraySchema = z.array(z.string());
 
+/** Sort-by axis exposed in the picker's "More filters" popover.
+ *  'relevance' is the default — name-match-first within each set,
+ *  newest set first. 'price-desc' flattens the result and sorts by
+ *  the highest-priced variant in each card family. */
+export const SortBySchema = z.enum(['relevance', 'price-desc']);
+export type SortBy = z.infer<typeof SortBySchema>;
+
 export type PriceMode = z.infer<typeof PriceModeSchema>;
 
 // --- List feature schemas ---------------------------------------------------
@@ -61,8 +68,12 @@ export const PERSIST_KEYS = {
   // so a narrow picker filter doesn't also narrow the trade view.
   tradeSelVariants: 'swu.trade.selVariants',
   tradeSelSets: 'swu.trade.selSets',
+  tradeSelRarities: 'swu.trade.selRarities',
+  tradeSortBy: 'swu.trade.sortBy',
   pickerSelVariants: 'swu.picker.selVariants',
   pickerSelSets: 'swu.picker.selSets',
+  pickerSelRarities: 'swu.picker.selRarities',
+  pickerSortBy: 'swu.picker.sortBy',
   // v2: keyed by cardFamilyId (cross-printing) rather than swuapi's
   // baseCardId (per-printing). v1 data is not migrated — fresh start.
   wants: 'swu.wants.v2',
