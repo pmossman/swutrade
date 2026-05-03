@@ -3,7 +3,8 @@ import { and, count, desc, eq, inArray, ne, or } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
-import { requireSession, getDiscordAccessToken } from '../lib/auth.js';
+import { getSession, requireSession, getDiscordAccessToken } from '../lib/auth.js';
+import { reportFeedback, type FeedbackKind } from '../lib/feedbackReporter.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
 import {
@@ -60,6 +61,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleFavoriteDelete(req, res);
     case 'mutual-bot-guilds':
       return handleMutualBotGuilds(req, res);
+    case 'feedback':
+      return handleFeedback(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -1226,4 +1229,82 @@ export async function handleMutualBotGuilds(req: VercelRequest, res: VercelRespo
       isDefault: g.isDefault,
     })),
   );
+}
+
+// --- feedback ---------------------------------------------------------------
+
+const FeedbackContextSchema = z.object({
+  pageUrl: z.string().max(500).optional(),
+  productId: z.string().max(40).optional(),
+  cardName: z.string().max(200).optional(),
+  variant: z.string().max(60).optional(),
+  // Allow `null` (the "missing price" signal) explicitly — the
+  // canonical formatPrice renders null as N/A and we want to capture
+  // "user reported a missing price" reports too.
+  ourPrice: z.union([z.number(), z.null()]).optional(),
+  priceMode: z.enum(['market', 'low']).optional(),
+}).strict();
+
+const FeedbackBodySchema = z.object({
+  kind: z.enum(['price', 'general']),
+  message: z.string().trim().min(1).max(1000),
+  context: FeedbackContextSchema.optional(),
+}).strict();
+
+/**
+ * User-submitted feedback / problem reports. Routes to a dedicated
+ * Discord channel via `lib/feedbackReporter.ts` so parker can
+ * triage real complaints with concrete context (productId for price
+ * issues, page URL for general bugs).
+ *
+ * Auth-optional — uses `getSession` (not `requireSession`) because
+ * a non-signed-in visitor browsing the trade builder should still
+ * be able to flag a bad price they spotted. When signed in, the
+ * report carries the viewer's handle + userId so parker can ping
+ * the reporter back if needed; when signed out, those fields stay
+ * null and the report is marked "anonymous" in the embed.
+ *
+ * Returns 204 on success regardless of whether the Discord webhook
+ * round-trip succeeded — the reporter's contract is fire-and-forget,
+ * and the user shouldn't see a 5xx because the dev channel is down.
+ */
+export async function handleFeedback(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const parsed = FeedbackBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.flatten() });
+  }
+  const { kind, message, context } = parsed.data;
+
+  // Optional session — capture handle + userId when present. Ghosts
+  // and signed-out users still go through; report shows as anonymous.
+  let reporterHandle: string | null = null;
+  let reporterUserId: string | null = null;
+  const session = await getSession(req, res);
+  if (session) {
+    reporterUserId = session.userId;
+    const db = getDb();
+    const [row] = await db
+      .select({ handle: users.handle })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    reporterHandle = row?.handle ?? null;
+  }
+
+  // Fire-and-forget — webhook latency / availability shouldn't gate
+  // the user-facing 204.
+  void reportFeedback({
+    kind: kind as FeedbackKind,
+    message,
+    reporterHandle,
+    reporterUserId,
+    context,
+  });
+
+  return res.status(204).end();
 }

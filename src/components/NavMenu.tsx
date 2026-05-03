@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { Popover } from './Popover';
+import { ReportProblemDialog } from './ReportProblemDialog';
 
 interface NavMenuProps {
   /** True when the viewer has a real Discord-backed account (not a
@@ -31,7 +33,12 @@ interface NavMenuProps {
  * dedicated views are the canonical edit surface.
  */
 export function NavMenu({ hasAccount, hasAnySession }: NavMenuProps) {
+  // "Report a problem" dialog — opened from the menu's bottom row.
+  // State lives here (not on the row) so closing the popover doesn't
+  // unmount the dialog while it's open.
+  const [reportOpen, setReportOpen] = useState(false);
   return (
+    <>
     <Popover
       align="right"
       panelClassName="p-2 w-[220px]"
@@ -91,9 +98,26 @@ export function NavMenu({ hasAccount, hasAnySession }: NavMenuProps) {
               onClose={close}
             />
           )}
+          {/* Visual divider so the report-a-problem affordance reads
+              as a meta-action instead of another nav target. */}
+          <div className="h-px bg-space-700 my-1" />
+          <NavRow
+            onClick={() => {
+              close();
+              setReportOpen(true);
+            }}
+            icon={<FlagIcon className="w-3.5 h-3.5 text-gray-400" />}
+            label="Report a problem"
+          />
         </div>
       )}
     </Popover>
+    <ReportProblemDialog
+      open={reportOpen}
+      onClose={() => setReportOpen(false)}
+      kind="general"
+    />
+    </>
   );
 }
 
@@ -189,6 +213,15 @@ function MegaphoneIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 6.5h2.5L11 3v10L5.5 9.5H3a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1Z" />
       <path d="M5.5 9.5v3" />
+    </svg>
+  );
+}
+
+function FlagIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 2v12" />
+      <path d="M3 3h8l-1.5 2.25L11 7.5H3" />
     </svg>
   );
 }

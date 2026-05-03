@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   adjustPrice,
@@ -11,6 +12,7 @@ import { VariantBadge } from './VariantBadge';
 import { KebabMenu, type KebabMenuItem } from './KebabMenu';
 import { CardThumb, type ThumbSize } from './ui/CardThumb';
 import { QtyAdjuster } from './ui/QtyAdjuster';
+import { ReportProblemDialog } from './ReportProblemDialog';
 
 export type { ThumbSize };
 export type AccentColor = 'emerald' | 'blue';
@@ -85,6 +87,12 @@ export function TradeRow({
   const lineTotal = unitPrice !== null ? unitPrice * qty : null;
   const variant = extractVariantLabel(card.name);
 
+  // "Report inaccurate price" dialog — opened from the kebab. Lives
+  // here so each row owns its own dialog state and the card context
+  // doesn't have to thread through a parent. The card itself is the
+  // natural carrier for "what was the user looking at."
+  const [reportOpen, setReportOpen] = useState(false);
+
   // Market↔Low spread. Computed off raw (unadjusted) prices so the
   // percentage tracks the cards themselves, not the user's negotiation
   // slider. Require BOTH a meaningful ratio and a dollar-gap floor —
@@ -144,6 +152,21 @@ export function TradeRow({
       ),
     });
   }
+  // Report inaccurate price — available on every row, including
+  // read-only counterpart rows (the user might notice a bad price on
+  // either side). Sends the raw (pre-percentage) price to triage —
+  // TCGPlayer's quote is the unadjusted reference point, and parker
+  // shouldn't have to reverse the slider to compare.
+  menuItems.push({
+    label: 'Report inaccurate price',
+    onClick: () => setReportOpen(true),
+    icon: (
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l1.5-4.5L17 4l3 3-12.5 12.5L3 21z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 7l3 3" />
+      </svg>
+    ),
+  });
   if (extraMenuItems && extraMenuItems.length > 0) {
     menuItems.push(...extraMenuItems);
   }
@@ -226,6 +249,21 @@ export function TradeRow({
         </span>
       )}
       <span className={lineTotalClasses}>{formatPrice(lineTotal)}</span>
+      <ReportProblemDialog
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        kind="price"
+        context={{
+          productId: card.productId,
+          cardName: extractBaseName(card.name),
+          variant,
+          // Report the raw (unadjusted) market/low price so triage can
+          // compare directly against TCGPlayer without reversing the
+          // user's percentage slider.
+          ourPrice: getCardPrice(card, priceMode),
+          priceMode,
+        }}
+      />
     </div>
   );
 }
