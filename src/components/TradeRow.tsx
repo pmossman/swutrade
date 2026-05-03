@@ -1,12 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   adjustPrice,
   cardTcgPlayerUrl,
   formatPrice,
   getCardPrice,
-  getAltPrice,
 } from '../services/priceService';
+import { enqueueRefresh, useLivePrice } from '../services/livePrices';
 import { extractBaseName, extractVariantLabel } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { KebabMenu, type KebabMenuItem } from './KebabMenu';
@@ -82,8 +82,32 @@ export function TradeRow({
   readOnly = false,
   extraMenuItems,
 }: TradeRowProps) {
-  const unitPrice = adjustPrice(getCardPrice(card, priceMode), percentage);
-  const altUnitPrice = adjustPrice(getAltPrice(card, priceMode), percentage);
+  // Live-price overlay: every row showing a card auto-enqueues a
+  // background refresh on mount. Cards a user is *looking at right
+  // now* are the ones whose freshness matters; the bi-hourly cron
+  // can drift up to 10% on hot serialized cards inside its window.
+  // useLivePrice subscribes to the module store and re-renders this
+  // row when the override for its productId lands.
+  const { livePrice, isRefreshing } = useLivePrice(card.productId);
+  useEffect(() => {
+    enqueueRefresh(card.productId);
+  }, [card.productId]);
+
+  // Prefer live data when present; fall through to the static
+  // catalog when missing. Null `lowPrice` from live (no listings)
+  // also falls through — caller would otherwise display nothing
+  // for the active mode and confuse the user.
+  const liveMarket = livePrice?.marketPrice ?? null;
+  const liveLow = livePrice?.lowPrice ?? null;
+  const rawForMode = priceMode === 'market'
+    ? (liveMarket ?? getCardPrice(card, 'market'))
+    : (liveLow ?? getCardPrice(card, 'low'));
+  const rawForAlt = priceMode === 'market'
+    ? (liveLow ?? getCardPrice(card, 'low'))
+    : (liveMarket ?? getCardPrice(card, 'market'));
+
+  const unitPrice = adjustPrice(rawForMode, percentage);
+  const altUnitPrice = adjustPrice(rawForAlt, percentage);
   const lineTotal = unitPrice !== null ? unitPrice * qty : null;
   const variant = extractVariantLabel(card.name);
 
@@ -97,8 +121,9 @@ export function TradeRow({
   // percentage tracks the cards themselves, not the user's negotiation
   // slider. Require BOTH a meaningful ratio and a dollar-gap floor —
   // a $0.30 → $0.20 card is 33% but nobody cares about 10 cents.
-  const marketRaw = getCardPrice(card, 'market');
-  const lowRaw = getCardPrice(card, 'low');
+  // Use live values when present (same fallback as above).
+  const marketRaw = liveMarket ?? getCardPrice(card, 'market');
+  const lowRaw = liveLow ?? getCardPrice(card, 'low');
   const spreadDollar = (marketRaw !== null && lowRaw !== null) ? marketRaw - lowRaw : null;
   const spreadPct = (marketRaw !== null && lowRaw !== null && marketRaw > 0)
     ? (marketRaw - lowRaw) / marketRaw
@@ -172,7 +197,13 @@ export function TradeRow({
   }
 
   const stepperSize: 'sm' | 'md' | 'lg' = isCompact ? 'sm' : isLarge ? 'lg' : 'md';
-  const lineTotalClasses = `${isCompact ? 'text-[10px] w-11' : isLarge ? 'text-sm w-16' : 'text-xs w-14'} font-semibold tabular-nums shrink-0 text-right ${priceClass(lineTotal, 'text-gold')}`;
+  // While a live-price refresh is in flight for this card, gently
+  // pulse the line total so the user knows the number may shift.
+  // animate-pulse is the same Tailwind oscillation used by
+  // LoadingState — subtle (50%-100% opacity), instantly readable as
+  // "this is updating." When the refresh resolves and isRefreshing
+  // flips false, the pulse stops and the new number lands.
+  const lineTotalClasses = `${isCompact ? 'text-[10px] w-11' : isLarge ? 'text-sm w-16' : 'text-xs w-14'} font-semibold tabular-nums shrink-0 text-right ${priceClass(lineTotal, 'text-gold')}${isRefreshing ? ' animate-pulse' : ''}`;
 
   return (
     <div className={rowClasses}>
