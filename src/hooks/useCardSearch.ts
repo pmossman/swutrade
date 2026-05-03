@@ -206,7 +206,6 @@ export function localSearch(allCards: CardVariant[], query: string, setFilter: s
   );
 
   const result: SetSearchGroup[] = [];
-  let totalGroups = 0;
 
   for (const [slug, cards] of setEntries) {
     const setInfo = SETS.find(s => s.slug === slug);
@@ -221,17 +220,18 @@ export function localSearch(allCards: CardVariant[], query: string, setFilter: s
       return a.baseName.length - b.baseName.length;
     });
 
-    // Limit total groups across all sets
-    const remaining = 30 - totalGroups;
-    if (remaining <= 0) break;
-    const limited = groups.slice(0, remaining);
-    totalGroups += limited.length;
-
+    // No cap: CardResultsGrid uses @tanstack/react-virtual, so DOM
+    // cost is bounded by viewport regardless of group count. The
+    // earlier 30-group ceiling silently clipped older sets out of
+    // wide filter queries (e.g. a bare "showcase" returned LAW + the
+    // first dozen of JTL and dropped LOF / SEC / TWI / SHD / SOR
+    // entirely). Effectively-infinite scroll is the right shape here
+    // since the underlying data is in-memory and synchronous.
     result.push({
       setSlug: slug,
       setCode: setInfo.code,
       setName: setInfo.name,
-      groups: limited,
+      groups,
     });
   }
 
