@@ -5,6 +5,7 @@ import { getDb } from '../lib/db.js';
 import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
 import { getSession, requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { reportFeedback, type FeedbackKind } from '../lib/feedbackReporter.js';
+import { resolveLivePrices } from '../lib/livePriceCache.js';
 import { syncGuildMemberships } from '../lib/guildSync.js';
 import { createDiscordClient, type DiscordClient } from '../lib/discordClient.js';
 import {
@@ -63,6 +64,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleMutualBotGuilds(req, res);
     case 'feedback':
       return handleFeedback(req, res);
+    case 'prices':
+      return handlePrices(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/me action' });
   }
@@ -1307,4 +1310,68 @@ export async function handleFeedback(req: VercelRequest, res: VercelResponse) {
   });
 
   return res.status(204).end();
+}
+
+// --- prices -----------------------------------------------------------------
+
+/** Hard ceiling on ids per request — keeps individual responses
+ *  bounded and prevents a malicious client from convincing us to
+ *  shape a giant TCGPlayer query body. Real trades cap well below
+ *  this. */
+const PRICES_MAX_IDS = 50;
+
+/**
+ * Live price overlay against TCGPlayer. Auth-optional; same shape
+ * everyone calls. Caller passes `?ids=A,B,C` (productIds, ≤ 50);
+ * we return `{ [productId]: { marketPrice, lowPrice, fetchedAt } }`
+ * for every id we got a row for. Cache-fresh ids are served from
+ * memory; misses share a single batched upstream call via
+ * `lib/livePriceCache.ts`.
+ *
+ * Why on `/api/me`: bundled into the existing dispatcher to stay
+ * under the 12-fn Hobby ceiling. The `/api/prices` rewrite gives
+ * callers a clean external URL without burning a function slot.
+ *
+ * Cache-Control: `private, no-store` — we don't want an
+ * intermediate CDN holding stale prices when the whole point of
+ * this endpoint is freshness. The in-memory cache is the only
+ * caching layer we want.
+ */
+export async function handlePrices(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const raw = (req.query.ids as string | undefined) ?? '';
+  const ids = raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (ids.length === 0) {
+    return res.status(400).json({ error: 'Missing ids query param' });
+  }
+  if (ids.length > PRICES_MAX_IDS) {
+    return res.status(400).json({ error: `Too many ids (max ${PRICES_MAX_IDS})` });
+  }
+  // ProductIds are numeric strings from TCGPlayer; reject anything
+  // else cheaply at the boundary so we never shape a TCGPlayer
+  // query body with garbage.
+  for (const id of ids) {
+    if (!/^[0-9]+$/.test(id)) {
+      return res.status(400).json({ error: 'Invalid productId in ids' });
+    }
+  }
+
+  const dedupedIds = Array.from(new Set(ids));
+  const prices = await resolveLivePrices(dedupedIds);
+
+  const payload: Record<string, { marketPrice: number | null; lowPrice: number | null; fetchedAt: string }> = {};
+  for (const [id, price] of prices.entries()) {
+    payload[id] = price;
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(200).json({ prices: payload });
 }
