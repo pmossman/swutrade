@@ -11,8 +11,8 @@ import { usePriceDataContext } from '../contexts/PriceDataContext';
 import { useDrawerContext } from '../contexts/DrawerContext';
 import { usePricing } from '../contexts/PricingContext';
 import { useSelectionFilters } from '../hooks/useSelectionFilters';
-import { useWants } from '../hooks/useWants';
-import { useAvailable } from '../hooks/useAvailable';
+import type { WantsApi } from '../hooks/useWants';
+import type { AvailableApi } from '../hooks/useAvailable';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
 import { SessionTimelinePanel } from './SessionTimelinePanel';
 import { InlineSuggestionList, RevertSuggestionBanner } from './SessionSuggestions';
@@ -45,15 +45,26 @@ import { hapticMedium, hapticSoft, hapticSuccess } from '../utils/haptics';
  *   - A banner fires when the counterpart has edited since the
  *     viewer last saw it (dismissed by scrolling or clicking through).
  */
-export function SessionView({ sessionId }: { sessionId: string }) {
+// `wants` + `available` come from App's single useWants/useAvailable
+// instance — the same one useServerSync writes back to. Without prop
+// passing, calling useWants() inside this component would create a
+// second React-state instance whose mount-time snapshot drifts away
+// from the server-pull writeback (see HomeViewProps doc comment).
+export function SessionView({
+  sessionId,
+  wants,
+  available,
+}: {
+  sessionId: string;
+  wants: WantsApi;
+  available: AvailableApi;
+}) {
   const auth = useAuthContext();
   const viewerIsGhost = !!auth.user?.isAnonymous;
   const priceData = usePriceDataContext();
   const cardIndex = useCardIndexContext();
   const { listsDrawerOpen, setListsDrawerOpen } = useDrawerContext();
   const { percentage, priceMode } = usePricing();
-  const wants = useWants();
-  const available = useAvailable();
   // Fresh filter state per session — doesn't share with the main
   // trade builder so session-specific variant/set scope doesn't
   // bleed back into the user's calculator when they navigate home.

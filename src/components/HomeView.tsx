@@ -13,8 +13,8 @@ import { LoadingState } from './ui/states';
 import { relativeTime } from '../utils/relativeTime';
 import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
 import { TradeExpandPeek } from './TradeExpandPeek';
-import { useWants } from '../hooks/useWants';
-import { useAvailable } from '../hooks/useAvailable';
+import type { WantsApi } from '../hooks/useWants';
+import type { AvailableApi } from '../hooks/useAvailable';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -26,6 +26,17 @@ import type { WantsItem, AvailableItem } from '../persistence/schemas';
 
 interface HomeViewProps {
   auth: AuthApi;
+  // Wants + available are owned by App.tsx so useServerSync's writeback
+  // lands on a single React-state instance shared across views. An
+  // earlier version of HomeView called useWants()/useAvailable() itself,
+  // which created a second state instance: localStorage stayed in sync,
+  // but HomeView's React state held the mount-time snapshot and never
+  // reflected the post-sign-in server pull. Result on a freshly signed-
+  // in older device: home dashboard showed stale wants while the
+  // dedicated wishlist view (which already received the prop) showed
+  // the correct server-side list.
+  wants: WantsApi;
+  available: AvailableApi;
 }
 
 /**
@@ -55,7 +66,7 @@ interface HomeViewProps {
  * Trades/Communities don't have to match Wishlist/Binder in height.
  * Mobile collapses to a single column in priority order.
  */
-export function HomeView({ auth }: HomeViewProps) {
+export function HomeView({ auth, wants, available }: HomeViewProps) {
   const { user } = auth;
   const nav = useNavigation();
   // Local shorthands for readability — these wrap the `nav` primitive
@@ -72,8 +83,6 @@ export function HomeView({ auth }: HomeViewProps) {
   // had overflow/highlight chrome tuned to the proposal shape) but
   // everything inside the My Trades module reads from `myTrades`.
   const myTrades = useMyTrades();
-  const wants = useWants();
-  const available = useAvailable();
   const guilds = useGuildMemberships();
   // Only surface guilds the viewer is actually enrolled in. `enrollable`
   // is "bot is installed here AND the viewer is in the server"; the

@@ -509,7 +509,7 @@ function App() {
   // guest sees. HomeView pulls its navigation from `useNavigation()`
   // so the URL + intent + viewMode trio stays in lockstep.
   if (viewMode === 'home') {
-    return <HomeView auth={auth} />;
+    return <HomeView auth={auth} wants={wants} available={available} />;
   }
 
   // Settings view — /?settings=1 for account + per-guild preferences.
@@ -593,7 +593,7 @@ function App() {
     // rather than a bare 404 route.
     const match = window.location.pathname.match(/^\/s\/([^/]+)/);
     const sessionId = match ? decodeURIComponent(match[1]) : '';
-    return <SessionView sessionId={sessionId} />;
+    return <SessionView sessionId={sessionId} wants={wants} available={available} />;
   }
 
   // Profile view — /u/<handle> shows a user's public lists.
