@@ -5,6 +5,7 @@ import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { CollapsibleChipFilter, Chip } from './CollapsibleChipFilter';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
+import { MoreFiltersPopover } from './MoreFiltersPopover';
 
 const MAIN_SETS = SETS.filter(s => s.category === 'main');
 
@@ -200,6 +201,14 @@ export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: S
         onToggleSet={filters.toggleSet}
         onSelectGroup={filters.replaceGroup}
         onClear={filters.clearSets}
+      />
+      <MoreFiltersPopover
+        selectedRarities={filters.selectedRarities}
+        sortBy={filters.sortBy}
+        onToggleRarity={filters.toggleRarity}
+        onChangeSortBy={filters.setSortBy}
+        onClear={filters.clearMoreFilters}
+        activeCount={filters.moreFiltersActiveCount}
       />
       {extraChips}
     </div>
