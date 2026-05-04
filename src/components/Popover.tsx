@@ -80,7 +80,17 @@ export function Popover({ trigger, children, align = 'right', panelClassName = '
   const panel = open && pos && typeof document !== 'undefined' ? createPortal(
     <div
       ref={panelRef}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right }}
+      // pointerEvents: 'auto' is load-bearing when the popover is
+      // opened from inside a Radix Dialog. Radix's RemoveScroll +
+      // FocusScope set pointer-events: none on body's other
+      // descendants while a Dialog is open (so backdrop clicks
+      // route to the overlay) — without an explicit override here,
+      // the portaled popover panel inherits the pointer-events: none
+      // and chips inside it become non-interactive even though they
+      // paint correctly above the dialog. Discovered via e2e
+      // failures on the Lists drawer when Variant + Set filters
+      // moved from inline-expand to FilterPopover.
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, pointerEvents: 'auto' }}
       className={`z-[60] bg-space-800 border border-space-600 rounded-lg shadow-xl ${panelClassName}`}
       onClick={e => e.stopPropagation()}
     >

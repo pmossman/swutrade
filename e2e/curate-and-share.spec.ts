@@ -38,9 +38,12 @@ test.describe('Curator: build lists and share', () => {
     await dialog.getByRole('tab', { name: /^wishlist/i }).click();
     await dialog.getByRole('button', { name: /add card/i }).click();
 
-    // Open the variant filter, pick Hyperspace.
+    // Open the variant filter, pick Hyperspace. The Variant button
+    // lives inside the dialog, but its popover panel portals to
+    // document.body (so it can overflow the dialog's container) —
+    // chip lookups go through page scope, not dialog scope.
     await dialog.getByRole('button', { name: /Variant/i }).click();
-    await dialog.getByRole('button', { name: 'HYPERSPACE' }).click();
+    await page.getByRole('button', { name: 'HYPERSPACE' }).click();
 
     // Type to narrow the grid to Luke Skywalker - Hero of Yavin, then tap.
     await dialog.getByPlaceholder('Search cards...').fill('jtl luke');
@@ -107,7 +110,8 @@ test.describe('Curator: build lists and share', () => {
     // --- Second add: Hyperspace-only restriction ---------------------------
     await dialog.getByRole('button', { name: /add card/i }).click();
     await dialog.getByRole('button', { name: /Variant/i }).click();
-    await dialog.getByRole('button', { name: 'HYPERSPACE' }).click();
+    // Variant popover portals to body — page scope, not dialog scope.
+    await page.getByRole('button', { name: 'HYPERSPACE' }).click();
     await dialog.getByPlaceholder('Search cards...').fill('jtl luke');
     await dialog.getByRole('button', { name: LUKE_ANY }).first().click();
     await dialog.getByRole('button', { name: /^Done$/ }).click();
