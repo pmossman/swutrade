@@ -4,6 +4,9 @@ import {
   ArrowLeftRight,
   BookOpen,
   Handshake,
+  Megaphone,
+  Plus,
+  Search,
   Star,
   Users,
 } from 'lucide-react';
@@ -40,31 +43,37 @@ interface HomeViewProps {
 }
 
 /**
- * Home — dashboard layout.
+ * Home v2 — vertical-zone layout. Four zones top-to-bottom, each
+ * with a clear purpose:
  *
- * Four parallel "my" modules in a 2×2 grid, each owning a surface in
- * the IA:
- *
- *   Row 1: 💱 My Trades        | 👥 My Communities
- *   Row 2: ⭐ Your Wishlist    | 📘 Your Binder
- *
- * Plus a pinned ⏰ "Needs your response" callout above the grid when
- * the viewer has open received proposals.
+ *   Zone 1 — ⏰ Active trades (priority strip).
+ *            Combines pending proposals + active sessions. Hidden
+ *            entirely on a quiet day. Visual weight escalates to
+ *            "needs your attention" chrome when any row needs the
+ *            viewer's response.
+ *   Zone 2 — ⚡ Quick actions row.
+ *            Always visible. Three peer tiles today (Browse cards,
+ *            New trade, Post a signal). Designed to grow — drop a
+ *            new ActionTile in and the responsive grid wraps.
+ *   Zone 3 — 📦 Your Collection (Wishlist + Binder).
+ *            Lighter section heading + two sibling module cards
+ *            inside, side-by-side on desktop, stacked on mobile.
+ *   Zone 4 — 👥 Community (Communities + Partners).
+ *            Same lighter grouping pattern as zone 3.
  *
  * Layout history:
- *   - UX-A1 split the combined ListsModule into Wishlist + Binder as
- *     first-class modules (they're load-bearing, not sidebar chrome).
- *   - UX-A4 initially deleted CommunitiesModule entirely, then walked
- *     back: the full module was too loud, but removing it left a blank
- *     quadrant and buried enrolled servers behind a hamburger menu.
- *     Compact module reinstated as row-1 peer to Trades.
- *   - StoresModule (LGS placeholder) removed in the same pass — it was
- *     reserving real estate for a Phase 4 feature that'll have its own
- *     surface when it ships; no need to dim the dashboard with it today.
- *
- * Each row is its own grid so heights align per row independently —
- * Trades/Communities don't have to match Wishlist/Binder in height.
- * Mobile collapses to a single column in priority order.
+ *   - v1 was a 2×2 module grid (Trades / Communities / Wishlist /
+ *     Binder) plus a Greeting row + needs-response callout. Modules
+ *     stretched to match their tallest sibling's height, leaving
+ *     awkward empty wells under shorter ones; terminal-state trade
+ *     rows ("declined", "cancelled") flooded the dashboard with
+ *     non-actionable chrome.
+ *   - v2 (this) drops the greeting row entirely (real estate
+ *     premium on mobile; the avatar lives in AppHeader's account
+ *     menu), collapses the Trades module into the priority strip,
+ *     and groups the inventory + community modules under section
+ *     headings rather than as 2×2 cells. Mobile is a clean
+ *     single-column flow.
  */
 export function HomeView({ auth, wants, available }: HomeViewProps) {
   const { user } = auth;
@@ -110,96 +119,57 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
   // dedicated views via `nav.toWishlist()` / `nav.toBinder()`.
   const { byFamily, byProductId } = useCardIndexContext();
 
-  // `myTrades` already derives `needsResponse` + `counts` across the
-  // unified proposal + session stream, so we don't redo that work here.
-  const { needsResponse } = myTrades;
-  const tradeCounts = myTrades.counts;
+  // Active-trades filter for the priority strip. Excludes terminal
+  // states (settled / declined / cancelled / expired / promoted) AND
+  // the bookkeeping-only `promoted` rows whose underlying session
+  // surfaces under `shared` separately. The strip is hidden entirely
+  // when this is empty — Home v2's principle is "no zero-state
+  // chrome on a quiet day."
+  const activeTrades = useMemo(
+    () => myTrades.rows.filter(r => HOME_ACTIVE_STATES.has(r.state)),
+    [myTrades.rows],
+  );
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
       {/* Home is the root view for signed-in users — no breadcrumbs,
-          AppHeader's logo + NavMenu + AccountMenu anchor the page.
-          The Lists drawer lives at App root now, so we just toggle the
-          shared open-state via DrawerContext rather than rendering our
-          own <ListsDrawer> instance. */}
+          AppHeader's logo + NavMenu + AccountMenu anchor the page. */}
       <AppHeader auth={auth} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {/* GreetingRow renders unconditionally so the History + New
-            trade buttons are clickable on first paint, even before
-            `/api/auth/me` resolves. The user field can be null while
-            auth is in flight — the row shows a skeleton avatar +
-            "Welcome back" without a username, and the action buttons
-            don't depend on user state at all (toBuildTrade /
-            toTradesHistory just push view-mode state). The avatar
-            click target is disabled until the user lands so it
-            doesn't open `/u/null` while loading. */}
-        <GreetingRow
-          user={user}
-          onOpenProfile={onOpenProfile}
-          onBuildTrade={onBuildTrade}
-          onOpenTradesHistory={onOpenTradesHistory}
-        />
-
-        {/* Browse-cards entry point — search-bar-shaped affordance so
-            the dominant homepage workflow ("look up a card price")
-            has a one-click destination instead of being buried in the
-            hamburger menu. Tap routes to /?view=cards where
-            ListCardPicker autofocuses its real search input. */}
-        <BrowseCardsButton onClick={nav.toCardBrowser} />
-
-        {/* Needs-response callout is full-width above the grid so it
-            reads as "everything else waits — deal with this first." */}
-        {needsResponse.length > 0 && (
-          <NeedsResponseCallout
-            rows={needsResponse}
+        {/* === Zone 1: Priority strip — shown only when there's
+            something actionable. Combines pending incoming proposals
+            + active sessions + counter-proposals. Hidden on a quiet
+            day so the dashboard isn't dominated by a "you're all
+            caught up" empty state. */}
+        {activeTrades.length > 0 && (
+          <ActiveTradesStrip
+            rows={activeTrades}
             onOpenTrade={onOpenTrade}
             onOpenTradesHistory={onOpenTradesHistory}
           />
         )}
 
-        {/* Desktop: two explicit 2-column rows so each row's columns
-            align in height independently. Row 1 is "active surfaces"
-            (what's happening + who's around); row 2 is "inventory"
-            (what I want + what I have). Mobile collapses to a single
-            column in source order: trades → communities → wishlist →
-            binder. Lists used to be ONE combined module behind a
-            drawer — promoted to two first-class modules (UX-A1) so
-            "these are my cards" reads as load-bearing for the trading
-            loop, not a sidebar affordance. CommunitiesModule was
-            deleted in UX-A4 and then reinstated in the walk-back: the
-            original module was too loud but removing it left a blank
-            quadrant and buried enrolled servers behind the hamburger
-            menu. The reinstated version is a peer module (not a
-            sidebar widget) with a tighter member-count focus. */}
-        {/* Column pairing — chosen to make Wishlist + Binder visually
-            adjacent (right column) since they're a conceptual pair
-            ("what I want" + "what I have"). Trades + Communities go
-            in the left column. Each column packs tight independently
-            so short modules don't sit under awkward gaps:
-            - Left:  Trades  → Communities  (active surfaces)
-            - Right: Wishlist → Binder     (your inventory)
-            Heights roughly balance: Trades 5 rows + Communities 1 row
-            ≈ Wishlist 3 rows + Binder ~3 rows. Mobile collapses to one
-            column in document order: Trades → Communities → Wishlist
-            → Binder, matching the original priority. */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
-          <div className="flex flex-col gap-6 lg:gap-8">
-            <TradesModule
-              status={myTrades.status}
-              counts={tradeCounts}
-              rows={myTrades.rows}
-              onOpenTrade={onOpenTrade}
-              onOpenTradesHistory={onOpenTradesHistory}
-              onBuildTrade={onBuildTrade}
-            />
-            <CommunitiesModule
-              guilds={enrolledGuilds}
-              status={guilds.status}
-              onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
-            />
-          </div>
-          <div className="flex flex-col gap-6 lg:gap-8">
+        {/* === Zone 2: Quick actions — always visible, designed to
+            grow over time. Three peer tiles today; the responsive
+            grid wraps cleanly as new tiles land. Post-a-signal is
+            real-account-only since signals require an enrolled
+            community. */}
+        <QuickActionsRow
+          onBrowseCards={nav.toCardBrowser}
+          onNewTrade={onBuildTrade}
+          canPostToServer={canPostToServer}
+        />
+
+        {/* === Zone 3: Your collection — wishlist + binder under a
+            single section heading. Lighter grouping (no outer card
+            frame) so the existing module cards inside read as
+            siblings, not as nested chrome. */}
+        <SectionGroup
+          icon={<Star aria-hidden className="w-3.5 h-3.5" />}
+          label="Your Collection"
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
             <WishlistModule
               wants={wants.items}
               cardByFamily={byFamily}
@@ -213,146 +183,183 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
               canPostToServer={canPostToServer}
             />
           </div>
-        </div>
+        </SectionGroup>
 
-        {/* Trading partners — explicit bookmarks of people you want
-            to trade with, independent of community enrollment. Closes
-            the gap for Discord friends in no shared bot-enabled server;
-            complements Communities (server-scoped) with a user-scoped
-            list. Row-3 placement below the inventory grid so it reads
-            as "once you know what you have/want, here's who to trade
-            with." */}
-        <PartnersModule
-          favorites={favorites.favorites}
-          status={favorites.status}
-          onStartTradeWith={(handle) => nav.toStartTradeFrom(handle)}
-          onOpenProfile={onOpenProfile}
-        />
+        {/* === Zone 4: Community — communities + trading partners.
+            Same lighter grouping. Both modules render their own
+            empty states so the section header still anchors the area
+            even when the user is in zero servers / has no
+            partners. */}
+        <SectionGroup
+          icon={<Users aria-hidden className="w-3.5 h-3.5" />}
+          label="Community"
+        >
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <CommunitiesModule
+              guilds={enrolledGuilds}
+              status={guilds.status}
+              onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
+            />
+            <PartnersModule
+              favorites={favorites.favorites}
+              status={favorites.status}
+              onStartTradeWith={(handle) => nav.toStartTradeFrom(handle)}
+              onOpenProfile={onOpenProfile}
+            />
+          </div>
+        </SectionGroup>
       </main>
     </div>
   );
 }
 
-// --- Greeting / identity ---------------------------------------------------
+// --- ⚡ Quick actions row -------------------------------------------------
 
-function GreetingRow({
-  user,
-  onOpenProfile,
-  onBuildTrade,
-  onOpenTradesHistory,
+/**
+ * Top-of-page action row. Renders one tile per "common thing the
+ * viewer might want to do." Designed to grow: drop a new ActionTile
+ * into the children list and the responsive grid wraps cleanly. The
+ * tile chrome is identical across every action so the row reads as
+ * a peer set, not a hierarchy.
+ *
+ * Today's three:
+ *   - Browse cards   — discovery surface (search + price lookup)
+ *   - New trade      — kicks off the composer
+ *   - Post a signal  — broadcast a wishlist/binder to a community
+ *                      (signed-in only; ghosts can't post signals)
+ */
+function QuickActionsRow({
+  onBrowseCards,
+  onNewTrade,
+  canPostToServer,
 }: {
-  user: { handle: string; username: string; avatarUrl: string | null } | null;
-  onOpenProfile: (handle: string) => void;
-  onBuildTrade: () => void;
-  onOpenTradesHistory: () => void;
+  onBrowseCards: () => void;
+  onNewTrade: () => void;
+  canPostToServer: boolean;
 }) {
-  const displayName = user
-    ? (user.username && user.username !== user.handle ? user.username : `@${user.handle}`)
-    : null;
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      {/* Avatar is a button when the user is loaded (clicks through to
-          their public profile); a static placeholder while auth is
-          still resolving so we don't open `/u/null`. The dimensions
-          are identical so the row doesn't shift on auth resolution. */}
-      {user ? (
-        <button
-          type="button"
-          onClick={() => onOpenProfile(user.handle)}
-          aria-label="Open your public profile"
-          className="shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-gold/60"
-        >
-          <Avatar avatarUrl={user.avatarUrl} name={user.username || user.handle} />
-        </button>
-      ) : (
-        <span aria-hidden className="shrink-0">
-          <Avatar avatarUrl={null} name="?" />
-        </span>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <ActionTile
+        icon={<Search aria-hidden className="w-4 h-4" />}
+        label="Browse cards"
+        hint="Search any card and check prices"
+        onClick={onBrowseCards}
+      />
+      <ActionTile
+        icon={<Plus aria-hidden className="w-4 h-4" />}
+        label="New trade"
+        hint="Build a trade — solo or with a partner"
+        onClick={onNewTrade}
+      />
+      {canPostToServer && (
+        <ActionTile
+          icon={<Megaphone aria-hidden className="w-4 h-4" />}
+          label="Post a signal"
+          hint="Broadcast a wishlist to a community"
+          href="/?signals=new"
+        />
       )}
-      <div className="min-w-0 mr-auto">
-        <div className="text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold">
-          Welcome back
-        </div>
-        <div className="text-lg font-semibold text-gray-100 truncate">
-          {displayName ?? (
-            // Skeleton placeholder — same height as the loaded label
-            // so the layout doesn't jump when the username arrives.
-            <span aria-hidden className="inline-block w-32 h-4 my-0.5 rounded bg-space-700/60 animate-pulse" />
-          )}
-        </div>
-      </div>
-      {/* History + New trade are unconditional. They don't depend on
-          user identity — they're just nav.toX() pushes — and being
-          clickable on first paint is the whole point: a user with a
-          slow `/api/auth/me` response shouldn't have to wait to start
-          a trade. Tapping "+ New trade" before auth resolves works
-          fine; the trade builder itself doesn't gate on user either. */}
-      <div className="flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={onOpenTradesHistory}
-          className="flex items-center justify-center gap-1.5 px-3 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-sm font-medium text-gray-300 hover:text-gold transition-colors"
-        >
-          History
-        </button>
-        <button
-          type="button"
-          onClick={onBuildTrade}
-          className="flex items-center justify-center gap-1.5 px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
-        >
-          <PlusIcon className="w-4 h-4" />
-          New trade
-        </button>
-      </div>
     </div>
   );
 }
 
-// --- 🔍 Browse cards entry ------------------------------------------------
+/**
+ * Single action card used by QuickActionsRow. Renders as an `<a>`
+ * when given `href` (so middle-click + cmd-click work as expected
+ * for nav targets) or a `<button>` for callback-only actions like
+ * the trade builder. Same chrome either way.
+ */
+function ActionTile({
+  icon,
+  label,
+  hint,
+  onClick,
+  href,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+  onClick?: () => void;
+  href?: string;
+}) {
+  const cls = 'flex items-center gap-3 px-3 py-2.5 rounded-xl bg-space-800/40 border border-space-700 hover:border-gold/50 hover:bg-space-800/70 transition-colors text-left group';
+  const inner = (
+    <>
+      <span className="shrink-0 w-9 h-9 rounded-lg bg-space-800 border border-space-700 flex items-center justify-center text-gray-400 group-hover:text-gold group-hover:border-gold/40 transition-colors">
+        {icon}
+      </span>
+      <span className="min-w-0 flex flex-col">
+        <span className="text-sm font-semibold text-gray-100 group-hover:text-gold transition-colors">{label}</span>
+        <span className="text-[11px] text-gray-500 leading-tight mt-0.5 truncate">{hint}</span>
+      </span>
+    </>
+  );
+  if (href) {
+    return <a href={href} className={cls}>{inner}</a>;
+  }
+  return <button type="button" onClick={onClick} className={cls}>{inner}</button>;
+}
+
+// --- 📦 Section group helper ----------------------------------------------
 
 /**
- * Search-bar-shaped CTA that routes to the card-browser view. Sized
- * to read as a primary action (full-width, taller than the chip-style
- * filter buttons) so the "I just want to look up a card price" flow
- * has a discoverable Home entry point. The actual search input lives
- * inside CardBrowserView; this button is purely a visual cue and
- * navigation target.
+ * Lightweight section heading + container. Used to group sibling
+ * modules ("Your Collection" wraps Wishlist + Binder, "Community"
+ * wraps Communities + Partners). Heavier-handed alternatives (outer
+ * card frame around a heading + nested cards) duplicated chrome and
+ * stole vertical space; the section heading alone provides enough
+ * grouping cue when paired with consistent inter-module gap.
  */
-function BrowseCardsButton({ onClick }: { onClick: () => void }) {
+function SectionGroup({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex items-center gap-3 w-full px-4 h-11 rounded-xl bg-space-800/60 border border-space-700 hover:border-gold/50 hover:bg-space-800 text-left transition-colors group"
-    >
-      <SearchIcon className="w-4 h-4 text-gray-500 group-hover:text-gold transition-colors" />
-      <span className="text-sm text-gray-400 group-hover:text-gray-200 transition-colors">
-        Search any card by name…
-      </span>
-      <span className="ml-auto text-[10px] tracking-[0.18em] uppercase font-bold text-gray-600 group-hover:text-gold transition-colors">
-        Browse
-      </span>
-    </button>
+    <section className="flex flex-col gap-3">
+      <h2 className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold px-1">
+        {icon}
+        <span>{label}</span>
+      </h2>
+      {children}
+    </section>
   );
 }
 
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="7" cy="7" r="4.25" />
-      <path d="M10.25 10.25L13.5 13.5" />
-    </svg>
-  );
-}
+// --- ⏰ Active trades strip ----------------------------------------------
 
-// --- ⏰ Needs your response callout ----------------------------------------
+// Trade states that ARE actionable on Home. Anything not in this set
+// (settled, declined, cancelled, expired, promoted) is terminal and
+// belongs in History, not on the dashboard. Promoted is a special
+// case — the underlying session already surfaces under `shared`, so
+// the bookkeeping stub would double-render. Hide it from Home.
+const HOME_ACTIVE_STATES: ReadonlySet<TradeRowState> = new Set([
+  'shared',
+  'shared-waiting',
+  'awaiting',
+  'pitched',
+  'countered',
+]);
 
-// Cap on the Home screen so a user with dozens of pending proposals
-// doesn't get an endless wall — they see the N freshest and drop into
-// the full Trades history for the rest.
-const HOME_PROPOSAL_CAP = 5;
+const ACTIVE_TRADES_CAP = 5;
 
-function NeedsResponseCallout({
+/**
+ * Zone 1 — the priority strip. Combines pending incoming proposals,
+ * active sessions, and counter-proposals into one chronologically
+ * sorted list. The whole strip is hidden when empty, matching the
+ * Home v2 principle that a quiet day shouldn't be dominated by
+ * "you're all caught up" chrome.
+ *
+ * Visual weight scales with content: when there's an "awaiting" or
+ * "countered" row (something needing the viewer's response) the
+ * strip uses gold-attention chrome; otherwise it uses ambient chrome
+ * to read as informational rather than urgent.
+ */
+function ActiveTradesStrip({
   rows,
   onOpenTrade,
   onOpenTradesHistory,
@@ -361,25 +368,44 @@ function NeedsResponseCallout({
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
 }) {
-  const visible = rows.slice(0, HOME_PROPOSAL_CAP);
+  const visible = rows.slice(0, ACTIVE_TRADES_CAP);
   const overflow = rows.length - visible.length;
-  // Single row expanded at a time — collapses the previous peek when a
-  // new one is clicked, avoiding multiple card grids competing for the
-  // viewport at once.
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Anything where the BALL IS IN THE VIEWER'S COURT bumps the strip
+  // into "needs attention" chrome. Counter-proposals also count —
+  // they're awaiting the viewer's response on the new terms.
+  const needsAttention = rows.some(
+    r => r.state === 'awaiting' || r.state === 'countered',
+  );
+
   return (
     <section
-      aria-labelledby="needs-response-heading"
-      // Slight gold wash + gold left border so the callout reads as
-      // "attention required" without being alarming.
-      className="rounded-xl border border-gold/40 bg-gold/8 p-4"
+      aria-labelledby="active-trades-heading"
+      className={`rounded-xl p-4 border ${
+        needsAttention
+          ? 'border-gold/40 bg-gold/8'
+          : 'border-space-700 bg-space-800/30'
+      }`}
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
-        <h2 id="needs-response-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
-          <AlarmClock aria-hidden className="w-4 h-4" />
-          <span>Needs your response</span>
-          <span className="text-xs tabular-nums text-gold font-bold">{rows.length}</span>
+        <h2 id="active-trades-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
+          {needsAttention
+            ? <AlarmClock aria-hidden className="w-4 h-4 text-gold" />
+            : <ArrowLeftRight aria-hidden className="w-4 h-4 text-cyan-300" />
+          }
+          <span>{needsAttention ? 'Needs your attention' : 'Active trades'}</span>
+          <span className={`text-xs tabular-nums font-bold ${needsAttention ? 'text-gold' : 'text-gray-400'}`}>
+            {rows.length}
+          </span>
         </h2>
+        <button
+          type="button"
+          onClick={onOpenTradesHistory}
+          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
+        >
+          View history →
+        </button>
       </div>
       <ul className="flex flex-col gap-1.5">
         {visible.map(row => {
@@ -411,165 +437,10 @@ function NeedsResponseCallout({
           onClick={onOpenTradesHistory}
           className="mt-2 w-full flex items-center justify-center gap-1 px-4 py-2 rounded-lg bg-space-800/40 border border-space-700 hover:border-gold/40 hover:bg-space-800/60 text-xs font-medium text-gray-400 hover:text-gold transition-colors"
         >
-          See all {rows.length} pending →
+          See all {rows.length} →
         </button>
       )}
     </section>
-  );
-}
-
-// --- 💱 My Trades module ---------------------------------------------------
-
-// Trade states that don't belong on Home — they're terminal and
-// non-actionable. The viewer can't do anything with a cancelled or
-// declined proposal, and a `promoted` proposal is just the bookkeeping
-// stub for a proposal that became a session (which surfaces under
-// `shared` separately). Surfacing them on the dashboard turned the
-// module into a wall of grey "you got rejected" rows; settled stays
-// because a recent positive close is useful context for "trade with
-// them again" follow-ups. Resolved counts still appear in the header
-// summary, and the "View history" link routes to the full list.
-const HOME_TERMINAL_STATES: ReadonlySet<TradeRowState> = new Set([
-  'cancelled',
-  'declined',
-  'expired',
-  'promoted',
-]);
-
-function TradesModule({
-  status,
-  counts,
-  rows,
-  onOpenTrade,
-  onOpenTradesHistory,
-  onBuildTrade,
-}: {
-  status: 'loading' | 'ready' | 'error';
-  counts: { incoming: number; outgoing: number; resolved: number; activeSessions: number };
-  rows: TradeRow[];
-  onOpenTrade: (tradeId: string) => void;
-  onOpenTradesHistory: () => void;
-  onBuildTrade: () => void;
-}) {
-  const actionableRows = useMemo(
-    () => rows.filter(r => !HOME_TERMINAL_STATES.has(r.state)),
-    [rows],
-  );
-  const hasAny = actionableRows.length > 0;
-  // Mobile caps at 3 rows; desktop at 5. Past that, the "View
-  // history" link in the header is the overflow.
-  const MOBILE_CAP = 3;
-  const DESKTOP_CAP = 5;
-  const visible = actionableRows.slice(0, DESKTOP_CAP);
-  // Single expanded id across the unified list — opening one row
-  // collapses any other.
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  return (
-    <ModuleSection
-      icon={<ArrowLeftRight aria-hidden className="w-4 h-4" />}
-      label="My Trades"
-      headingId="my-trades-heading"
-      action={
-        <button
-          type="button"
-          onClick={onOpenTradesHistory}
-          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
-        >
-          View history →
-        </button>
-      }
-    >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex flex-wrap gap-x-3 gap-y-1">
-        {counts.activeSessions > 0 && (
-          <span>
-            <span className="text-cyan-300 font-semibold">{counts.activeSessions}</span>
-            {' shared'}
-          </span>
-        )}
-        <span>
-          <span className="text-gray-200 font-semibold">{counts.incoming}</span>
-          {' awaiting'}
-        </span>
-        <span>
-          <span className="text-gray-200 font-semibold">{counts.outgoing}</span>
-          {' pitched'}
-        </span>
-        <span>
-          <span className="text-gray-200 font-semibold">{counts.resolved}</span>
-          {' resolved'}
-        </span>
-      </div>
-
-      {status === 'loading' && <LoadingState label="Loading trades…" />}
-      {status !== 'loading' && !hasAny && (
-        <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
-          {counts.resolved > 0 ? (
-            <>
-              Nothing in flight.{' '}
-              <button
-                type="button"
-                onClick={onBuildTrade}
-                className="text-gold hover:text-gold-bright underline font-semibold"
-              >
-                Start a new one
-              </button>
-              {' — or '}
-              <button
-                type="button"
-                onClick={onOpenTradesHistory}
-                className="text-gold hover:text-gold-bright underline font-semibold"
-              >
-                view history
-              </button>
-              {' for past trades.'}
-            </>
-          ) : (
-            <>
-              No trades yet.{' '}
-              <button
-                type="button"
-                onClick={onBuildTrade}
-                className="text-gold hover:text-gold-bright underline font-semibold"
-              >
-                Start one
-              </button>
-              {' — build alone, invite someone to trade together, or share a QR at the shop.'}
-            </>
-          )}
-        </div>
-      )}
-      {hasAny && (
-        <ul className="flex flex-col gap-1.5">
-          {visible.map((row, idx) => {
-            const expanded = expandedId === row.id;
-            const onToggle = () => setExpandedId(expanded ? null : row.id);
-            return (
-              <li
-                key={`${row.kind}-${row.id}`}
-                className={idx >= MOBILE_CAP ? 'hidden lg:list-item' : undefined}
-              >
-                <TradeListRow
-                  row={row}
-                  onClick={onToggle}
-                  expanded={expanded}
-                  peek={
-                    row.kind === 'proposal' ? (
-                      <TradeExpandPeek
-                        proposalId={row.id}
-                        onOpenDetail={() => onOpenTrade(row.id)}
-                      />
-                    ) : (
-                      <SessionPeek row={row} />
-                    )
-                  }
-                />
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </ModuleSection>
   );
 }
 
@@ -1318,14 +1189,6 @@ function Avatar({ avatarUrl, name }: { avatarUrl: string | null; name: string })
     >
       {initial}
     </span>
-  );
-}
-
-function PlusIcon({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 20 20" className={className} fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
-      <path d="M10 4v12M4 10h12" strokeLinecap="round" />
-    </svg>
   );
 }
 
