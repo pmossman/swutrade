@@ -961,26 +961,31 @@ function App() {
               ≥1 session). Position-fixed at top so every view sees it
               regardless of header structure. Cleared on dismiss. */}
           <MergeReassuranceBanner auth={auth} />
-          {/* min-h-100dvh flex column so the footer sticks to the
-              bottom of the viewport on short pages and naturally
-              follows long-page content. Mirrors the trade-builder
-              layout shape — same AppFooter component. */}
-          <div className="flex flex-col min-h-[100dvh]">
-            {/* Suspense boundary for the lazy non-builder routes. The
-                builder itself isn't lazy, so the home/trade routes
-                never hit this fallback. The centered LoadingState
-                renders for one paint while the route chunk fetches —
-                cached after first load per route. */}
+          {/* The trade-builder owns its own 100dvh layout AND
+              renders AppFooter + MobileLegalDisclaimer inline
+              (see renderTradeBuilder), so wrapping it here would
+              double-render the footer. Every other view renders
+              flat content without a footer — wrap those in a
+              min-h-[100dvh] flex column so AppFooter sticks to the
+              viewport bottom on short pages and naturally follows
+              long-page content. */}
+          {viewMode === 'trade' ? (
             <Suspense fallback={<LoadingState centered />}>
-              <div className="flex-1 min-h-0 flex flex-col">
-                {renderBody()}
-              </div>
+              {renderBody()}
             </Suspense>
-            <AppFooter syncStatus={syncStatus} />
-          </div>
-          {/* Mobile-only legal — same below-the-fold pattern as the
-              trade-builder, deliberately outside the 100dvh container. */}
-          <MobileLegalDisclaimer />
+          ) : (
+            <>
+              <div className="flex flex-col min-h-[100dvh]">
+                <Suspense fallback={<LoadingState centered />}>
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    {renderBody()}
+                  </div>
+                </Suspense>
+                <AppFooter syncStatus={syncStatus} />
+              </div>
+              <MobileLegalDisclaimer />
+            </>
+          )}
           {/* First-run tutorial — only activates for signed-out users
               who haven't already dismissed it. Component handles its
               own gating; rendering unconditionally is safe. */}
