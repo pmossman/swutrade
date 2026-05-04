@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { SETS } from '../types';
 import { CANONICAL_VARIANTS, variantBadgeColor, variantChipLabel, type CanonicalVariant } from '../variants';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
-import { CollapsibleChipFilter, Chip } from './CollapsibleChipFilter';
+import { Chip } from './CollapsibleChipFilter';
+import { FilterPopover } from './FilterPopover';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
 import { MoreFiltersPopover } from './MoreFiltersPopover';
@@ -53,7 +54,7 @@ export function VariantChipGroup({
       )
       : `${selected.length} selected`;
   return (
-    <CollapsibleChipFilter
+    <FilterPopover
       label="Variant"
       summary={summary}
       action={selected.length > 0 ? <ClearAction onClick={onClear} /> : undefined}
@@ -71,7 +72,7 @@ export function VariantChipGroup({
           {variantChipLabel(v)}
         </Chip>
       ))}
-    </CollapsibleChipFilter>
+    </FilterPopover>
   );
 }
 
@@ -102,7 +103,7 @@ export function SetChipGroup({
   onClear,
 }: SetChipGroupProps) {
   return (
-    <CollapsibleChipFilter
+    <FilterPopover
       label="Set"
       summary={summary}
       action={selectedSets.length > 0 ? <ClearAction onClick={onClear} /> : undefined}
@@ -134,7 +135,7 @@ export function SetChipGroup({
           {s.code}
         </Chip>
       ))}
-    </CollapsibleChipFilter>
+    </FilterPopover>
   );
 }
 
