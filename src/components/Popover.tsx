@@ -6,8 +6,13 @@ interface PopoverProps {
   trigger: (args: { open: boolean; toggle: () => void }) => React.ReactNode;
   /** Render the panel contents — receives a close callback. */
   children: (args: { close: () => void }) => React.ReactNode;
-  /** Alignment of the panel relative to the trigger. */
+  /** Alignment of the panel relative to the trigger. Auto-flips when
+   *  the requested side would push the panel off the opposite edge. */
   align?: 'left' | 'right';
+  /** When true the popover opens on mount. Useful when a parent
+   *  pre-seeds state that the user should see without an extra
+   *  click — e.g. shared-link landings with auto-activated chips. */
+  defaultOpen?: boolean;
   /** Extra className applied to the panel container. */
   panelClassName?: string;
 }
@@ -20,8 +25,17 @@ interface PopoverProps {
  * card list on a session page) and gets visibly clipped. Escape closes;
  * click outside (trigger + panel) closes; child can close explicitly.
  */
-export function Popover({ trigger, children, align = 'right', panelClassName = '' }: PopoverProps) {
-  const [open, setOpen] = useState(false);
+export function Popover({ trigger, children, align = 'right', defaultOpen = false, panelClassName = '' }: PopoverProps) {
+  const [open, setOpen] = useState(defaultOpen);
+  // Asymmetric open-on-defaultOpen-flip: a parent flipping the prop
+  // true post-mount opens the popover (matches the shared-link
+  // recipient flow where chip activation happens in an effect AFTER
+  // first render). User-driven close still wins — we don't re-open
+  // a popover the user dismissed just because the prop is still
+  // true. Same shape as the prior CollapsibleChipFilter.
+  useEffect(() => {
+    if (defaultOpen) setOpen(true);
+  }, [defaultOpen]);
   const triggerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
@@ -33,10 +47,38 @@ export function Popover({ trigger, children, align = 'right', panelClassName = '
     const trig = triggerRef.current;
     if (!trig) return;
     const rect = trig.getBoundingClientRect();
+    const top = rect.bottom + 4;
+    // Auto-flip alignment when the requested align would push the
+    // panel off the opposite edge. The panel's intrinsic width comes
+    // from its content, so we approximate using `panelRef` once it's
+    // measured (subsequent reposition runs); on the first paint we
+    // optimistically apply the requested align and trust the resize
+    // observer to correct on the next pass. Without this, a
+    // right-aligned panel on a left-side mobile trigger renders with
+    // its leading edge off-screen — the chips inside would log as
+    // "outside the viewport" to e2e clicks.
+    const panelWidth = panelRef.current?.getBoundingClientRect().width
+      ?? 320; // matches FilterPopover's fixed width — reasonable default before measure
+    const margin = 8;
+
     if (align === 'right') {
-      setPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+      // Anchor right edge to trigger's right edge. If that would put
+      // the left edge < margin, fall back to left-align.
+      const wouldStartAt = rect.right - panelWidth;
+      if (wouldStartAt < margin) {
+        setPos({ top, left: margin });
+      } else {
+        setPos({ top, right: window.innerWidth - rect.right });
+      }
     } else {
-      setPos({ top: rect.bottom + 4, left: rect.left });
+      // Anchor left edge to trigger's left edge. If that would put
+      // the right edge > viewport - margin, fall back to right-align.
+      const wouldEndAt = rect.left + panelWidth;
+      if (wouldEndAt > window.innerWidth - margin) {
+        setPos({ top, right: margin });
+      } else {
+        setPos({ top, left: rect.left });
+      }
     }
   }, [align]);
 
@@ -77,9 +119,20 @@ export function Popover({ trigger, children, align = 'right', panelClassName = '
     };
   }, [open]);
 
+  // Ref-callback so we get a second reposition once the panel
+  // actually mounts and we can measure its real width. The first
+  // reposition runs before mount with a 320px estimate (matches
+  // FilterPopover's fixed width); the post-mount pass corrects when
+  // the actual panel is narrower (e.g. small mobile viewports clamp
+  // the width via calc(100vw-2rem)).
+  const panelRefCb = useCallback((node: HTMLDivElement | null) => {
+    panelRef.current = node;
+    if (node && open) reposition();
+  }, [open, reposition]);
+
   const panel = open && pos && typeof document !== 'undefined' ? createPortal(
     <div
-      ref={panelRef}
+      ref={panelRefCb}
       // pointerEvents: 'auto' is load-bearing when the popover is
       // opened from inside a Radix Dialog. Radix's RemoveScroll +
       // FocusScope set pointer-events: none on body's other

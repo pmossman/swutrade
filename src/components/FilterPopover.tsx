@@ -12,6 +12,11 @@ interface FilterPopoverProps {
   /** Optional trailing action shown inside the popover panel header
    *  (e.g. "Clear"). Only renders when the popover is open. */
   action?: React.ReactNode;
+  /** When true the popover opens on mount. Used by the trade
+   *  overlay's "Show" filter on a shared-link landing where a chip
+   *  is pre-activated — the user lands looking at the active scope
+   *  rather than at a closed pill they'd have to know to expand. */
+  defaultOpen?: boolean;
   /** Chip row content. Rendered inside the popover panel. */
   children: React.ReactNode;
 }
@@ -33,10 +38,11 @@ interface FilterPopoverProps {
  * inside flex-wrap into multiple rows naturally instead of forcing
  * one ultra-wide row that visually drifts away from the trigger.
  */
-export function FilterPopover({ label, summary, action, children }: FilterPopoverProps) {
+export function FilterPopover({ label, summary, action, defaultOpen, children }: FilterPopoverProps) {
   return (
     <Popover
       align="right"
+      defaultOpen={defaultOpen}
       // Fixed-width panel so chip strips wrap into a roughly square
       // panel under the trigger instead of stretching to fit the
       // widest chip row. The viewport ceiling keeps it from clipping

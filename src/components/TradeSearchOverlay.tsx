@@ -334,8 +334,17 @@ function SourceChipFilter({
       Clear
     </button>
   ) : undefined;
+  // Auto-open at mount when any chip is already active — covers the
+  // shared-link flow where the overlay opens with `theirs` pre-seeded
+  // (and historically the recipient.spec.ts assertion that the active
+  // chip is visible without a tap-to-expand step).
   return (
-    <FilterPopover label="Show" summary={summary} action={action}>
+    <FilterPopover
+      label="Show"
+      summary={summary}
+      action={action}
+      defaultOpen={activeChips.length > 0}
+    >
       {visibleChips.map(chip => (
         <SourceChip
           key={chip.id}
