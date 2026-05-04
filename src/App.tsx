@@ -20,7 +20,6 @@ import { adjustPrice, formatPrice, getCardPrice } from './services/priceService'
 import { useTradeIntent } from './hooks/useTradeIntent';
 import { useCommunityCards } from './hooks/useCommunityCards';
 import { ListView } from './components/ListView';
-import { APP_COMMIT, APP_BUILD_TIME, isBetaChannel } from './version';
 import { useSelectionFilters } from './hooks/useSelectionFilters';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { useTradeUrl } from './hooks/useTradeUrl';
@@ -83,7 +82,7 @@ import { TutorialProvider } from './contexts/TutorialContext';
 import { useTutorial } from './hooks/useTutorial';
 import { TutorialOverlay } from './components/TutorialOverlay';
 import { TUTORIAL_STEPS } from './tutorial/steps';
-import { relativeTime } from './utils/relativeTime';
+import { AppFooter, MobileLegalDisclaimer } from './components/AppFooter';
 
 /** Extract the handle from either `?profile=<handle>` or the
  *  `/u/<handle>` pathname — whichever the user navigated via. */
@@ -932,87 +931,9 @@ function App() {
         />
       )}
 
-      {/* Footer */}
-      <div className="shrink-0 pb-2 px-3 text-center text-[10px] text-gray-600 max-w-5xl mx-auto w-full">
-        <div className="flex items-center justify-center gap-2 flex-wrap">
-          <span>
-            Created by{' '}
-            <a
-              href="https://discord.com/users/pmoss"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 hover:text-gold transition-colors underline"
-            >
-              @pmoss
-            </a>
-          </span>
-          <span className="text-space-600" aria-hidden>·</span>
-          <span>
-            Prices from{' '}
-            <a
-              href="https://www.tcgplayer.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gray-500 hover:text-gold transition-colors underline"
-            >
-              TCGPlayer
-            </a>
-          </span>
-          {priceData.isAnyLoading ? (
-            <>
-              <span className="text-space-600" aria-hidden>·</span>
-              <span className="text-gray-500 animate-pulse">Loading prices…</span>
-            </>
-          ) : priceData.priceTimestamp && (
-            <>
-              <span className="text-space-600" aria-hidden>·</span>
-              <span title={`Prices updated ${priceData.priceTimestamp}`}>
-                Prices updated {relativeTime(priceData.priceTimestamp)}
-              </span>
-            </>
-          )}
-          <span className="text-space-600" aria-hidden>·</span>
-          <span
-            title={`Built ${new Date(APP_BUILD_TIME).toLocaleString()}`}
-            className={isBetaChannel() ? 'text-gold/70' : 'text-gray-500'}
-          >
-            {isBetaChannel() ? 'beta' : 'v'}&nbsp;{APP_COMMIT}
-            {isBetaChannel() && (
-              <span className="text-gold/40"> · built {relativeTime(APP_BUILD_TIME)}</span>
-            )}
-          </span>
-          {user && syncStatus !== 'idle' && (
-            <>
-              <span className="text-space-600" aria-hidden>·</span>
-              <span className={
-                syncStatus === 'syncing' ? 'text-gold/70 animate-pulse' :
-                syncStatus === 'error' ? 'text-red-400' :
-                syncStatus === 'offline' ? 'text-gray-600' : 'text-gray-500'
-              }>
-                {syncStatus === 'syncing' ? 'Syncing…' :
-                 syncStatus === 'error' ? 'Sync error' :
-                 syncStatus === 'offline' ? 'Offline' : ''}
-              </span>
-            </>
-          )}
-        </div>
-        {/* Legal/attribution line — visible inline on desktop, but
-            pushed below the fold on mobile so we don't eat the main
-            vertical space. Scroll down on mobile to read it. */}
-        <div className="hidden md:block mt-1.5 text-[9px] text-gray-700 leading-snug px-2">
-          SWUTrade is an unofficial fan site, not produced or endorsed by Fantasy Flight Publishing or Lucasfilm Ltd.
-          Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
-          Card prices are estimates — see stores for final pricing.
-        </div>
-      </div>
+      <AppFooter syncStatus={syncStatus} />
     </div>
-    {/* Mobile-only legal disclaimer pushed BELOW the 100dvh viewport
-        so it doesn't eat main-app vertical space. Scroll down to see. */}
-    <div className="md:hidden bg-space-900 text-gray-700 text-[10px] leading-snug px-4 py-4 text-center">
-      SWUTrade is an unofficial fan site, not produced or endorsed by Fantasy Flight Publishing or Lucasfilm Ltd.
-      Card images and Star Wars: Unlimited game assets © Fantasy Flight Publishing Inc. and Lucasfilm Ltd.
-      Card prices are estimates — see stores for final pricing.
-    </div>
+    <MobileLegalDisclaimer />
     </>
     );
   }
@@ -1040,14 +961,26 @@ function App() {
               ≥1 session). Position-fixed at top so every view sees it
               regardless of header structure. Cleared on dismiss. */}
           <MergeReassuranceBanner auth={auth} />
-          {/* Suspense boundary for the lazy non-builder routes. The
-              builder itself isn't lazy, so the home/trade routes
-              never hit this fallback. The centered LoadingState
-              renders for one paint while the route chunk fetches —
-              cached after first load per route. */}
-          <Suspense fallback={<LoadingState centered />}>
-            {renderBody()}
-          </Suspense>
+          {/* min-h-100dvh flex column so the footer sticks to the
+              bottom of the viewport on short pages and naturally
+              follows long-page content. Mirrors the trade-builder
+              layout shape — same AppFooter component. */}
+          <div className="flex flex-col min-h-[100dvh]">
+            {/* Suspense boundary for the lazy non-builder routes. The
+                builder itself isn't lazy, so the home/trade routes
+                never hit this fallback. The centered LoadingState
+                renders for one paint while the route chunk fetches —
+                cached after first load per route. */}
+            <Suspense fallback={<LoadingState centered />}>
+              <div className="flex-1 min-h-0 flex flex-col">
+                {renderBody()}
+              </div>
+            </Suspense>
+            <AppFooter syncStatus={syncStatus} />
+          </div>
+          {/* Mobile-only legal — same below-the-fold pattern as the
+              trade-builder, deliberately outside the 100dvh container. */}
+          <MobileLegalDisclaimer />
           {/* First-run tutorial — only activates for signed-out users
               who haven't already dismissed it. Component handles its
               own gating; rendering unconditionally is safe. */}
