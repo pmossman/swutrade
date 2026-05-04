@@ -172,40 +172,48 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
             quadrant and buried enrolled servers behind the hamburger
             menu. The reinstated version is a peer module (not a
             sidebar widget) with a tighter member-count focus. */}
-        {/* `items-start` is load-bearing: without it the grid stretches
-            short modules (Communities with 1 server, Binder with 2
-            cards) to match their tall siblings, leaving large empty
-            wells below the actual content. With items-start each cell
-            sizes to its content height. */}
+        {/* Two flex-columns instead of two stacked grid rows. The
+            previous shape (row 1: Trades+Communities, row 2:
+            Wishlist+Binder) left a giant gap between Communities and
+            Binder because grid rows stretch to the tallest cell —
+            Trades is 5 rows tall, Communities is 1 row, so row 1's
+            300+px height pushed Binder down 300+px below
+            Communities even with items-start. Pairing them as
+            columns lets each column pack tight independently:
+            - Left:  Trades  → Wishlist
+            - Right: Communities → Binder
+            Mobile collapses to one column rendering in document
+            order: Trades → Wishlist → Communities → Binder. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
-          <TradesModule
-            status={myTrades.status}
-            counts={tradeCounts}
-            rows={myTrades.rows}
-            onOpenTrade={onOpenTrade}
-            onOpenTradesHistory={onOpenTradesHistory}
-            onBuildTrade={onBuildTrade}
-          />
-          <CommunitiesModule
-            guilds={enrolledGuilds}
-            status={guilds.status}
-            onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
-          />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
-          <WishlistModule
-            wants={wants.items}
-            cardByFamily={byFamily}
-            onEditWishlist={nav.toWishlist}
-            canPostToServer={canPostToServer}
-          />
-          <BinderModule
-            available={available.items}
-            cardByProductId={byProductId}
-            onEditBinder={nav.toBinder}
-            canPostToServer={canPostToServer}
-          />
+          <div className="flex flex-col gap-6 lg:gap-8">
+            <TradesModule
+              status={myTrades.status}
+              counts={tradeCounts}
+              rows={myTrades.rows}
+              onOpenTrade={onOpenTrade}
+              onOpenTradesHistory={onOpenTradesHistory}
+              onBuildTrade={onBuildTrade}
+            />
+            <WishlistModule
+              wants={wants.items}
+              cardByFamily={byFamily}
+              onEditWishlist={nav.toWishlist}
+              canPostToServer={canPostToServer}
+            />
+          </div>
+          <div className="flex flex-col gap-6 lg:gap-8">
+            <CommunitiesModule
+              guilds={enrolledGuilds}
+              status={guilds.status}
+              onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
+            />
+            <BinderModule
+              available={available.items}
+              cardByProductId={byProductId}
+              onEditBinder={nav.toBinder}
+              canPostToServer={canPostToServer}
+            />
+          </div>
         </div>
 
         {/* Trading partners — explicit bookmarks of people you want
