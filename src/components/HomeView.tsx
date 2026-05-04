@@ -1,9 +1,8 @@
 import { useMemo, useState } from 'react';
 import {
-  AlarmClock,
-  ArrowLeftRight,
   BookOpen,
   Handshake,
+  Inbox,
   Megaphone,
   Plus,
   Search,
@@ -46,15 +45,19 @@ interface HomeViewProps {
  * Home v2 — vertical-zone layout. Four zones top-to-bottom, each
  * with a clear purpose:
  *
- *   Zone 1 — ⏰ Active trades (priority strip).
- *            Combines pending proposals + active sessions. Hidden
- *            entirely on a quiet day. Visual weight escalates to
- *            "needs your attention" chrome when any row needs the
- *            viewer's response.
- *   Zone 2 — ⚡ Quick actions row.
- *            Always visible. Three peer tiles today (Browse cards,
- *            New trade, Post a signal). Designed to grow — drop a
- *            new ActionTile in and the responsive grid wraps.
+ *   Zone 1 — ⚡ Quick actions row.
+ *            Always visible, top of page. Three peer tiles today
+ *            (Browse cards, New trade, Post a signal). Designed to
+ *            grow — drop a new ActionTile in and the responsive
+ *            grid wraps.
+ *   Zone 2 — 📥 Inbox.
+ *            In-flight trades + sessions surfaced as ambient
+ *            informational ("here's what's happening") rather than
+ *            an alarm bell. Hidden entirely when empty. Per-row
+ *            state badges (Awaiting / Countered etc.) handle the
+ *            "this needs you" highlight without bumping the whole
+ *            section into urgent chrome. Phase 2 backlog: real
+ *            per-row read/unread state + a dedicated /?inbox=1 page.
  *   Zone 3 — 📦 Your Collection (Wishlist + Binder).
  *            Lighter section heading + two sibling module cards
  *            inside, side-by-side on desktop, stacked on mobile.
@@ -70,8 +73,9 @@ interface HomeViewProps {
  *     non-actionable chrome.
  *   - v2 (this) drops the greeting row entirely (real estate
  *     premium on mobile; the avatar lives in AppHeader's account
- *     menu), collapses the Trades module into the priority strip,
- *     and groups the inventory + community modules under section
+ *     menu), promotes Quick Actions to the top, demotes the trade
+ *     activity into a softer Inbox section beneath actions, and
+ *     groups the inventory + community modules under section
  *     headings rather than as 2×2 cells. Mobile is a clean
  *     single-column flow.
  */
@@ -137,29 +141,32 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
       <AppHeader auth={auth} />
 
       <main className="flex-1 px-3 sm:px-6 pb-12 pt-4 max-w-5xl mx-auto w-full flex flex-col gap-6">
-        {/* === Zone 1: Priority strip — shown only when there's
-            something actionable. Combines pending incoming proposals
-            + active sessions + counter-proposals. Hidden on a quiet
-            day so the dashboard isn't dominated by a "you're all
-            caught up" empty state. */}
-        {activeTrades.length > 0 && (
-          <ActiveTradesStrip
-            rows={activeTrades}
-            onOpenTrade={onOpenTrade}
-            onOpenTradesHistory={onOpenTradesHistory}
-          />
-        )}
-
-        {/* === Zone 2: Quick actions — always visible, designed to
-            grow over time. Three peer tiles today; the responsive
-            grid wraps cleanly as new tiles land. Post-a-signal is
-            real-account-only since signals require an enrolled
-            community. */}
+        {/* === Zone 1: Quick actions — always visible, top of page
+            so the most common workflows (browse a card, start a
+            trade, post a signal) are the first thing in reach.
+            Designed to grow: drop a new ActionTile in and the
+            responsive grid wraps cleanly as more actions land.
+            Post-a-signal is real-account-only since signals require
+            an enrolled community. */}
         <QuickActionsRow
           onBrowseCards={nav.toCardBrowser}
           onNewTrade={onBuildTrade}
           canPostToServer={canPostToServer}
         />
+
+        {/* === Zone 2: Inbox — in-flight trades surfaced as
+            ambient/informational ("here's what's currently
+            happening") rather than an alarm bell. Hidden when
+            empty. Phase 2 will add real per-row read/unread
+            tracking + a dedicated /?inbox=1 page; for now this
+            shows all active trades. */}
+        {activeTrades.length > 0 && (
+          <InboxSection
+            rows={activeTrades}
+            onOpenTrade={onOpenTrade}
+            onOpenTradesHistory={onOpenTradesHistory}
+          />
+        )}
 
         {/* === Zone 3: Your collection — wishlist + binder under a
             single section heading. Lighter grouping (no outer card
@@ -330,13 +337,13 @@ function SectionGroup({
   );
 }
 
-// --- ⏰ Active trades strip ----------------------------------------------
+// --- 📥 Inbox section -----------------------------------------------------
 
-// Trade states that ARE actionable on Home. Anything not in this set
-// (settled, declined, cancelled, expired, promoted) is terminal and
-// belongs in History, not on the dashboard. Promoted is a special
-// case — the underlying session already surfaces under `shared`, so
-// the bookkeeping stub would double-render. Hide it from Home.
+// Trade states that show up in the inbox. Anything not here (settled,
+// declined, cancelled, expired, promoted) is terminal and belongs in
+// History, not on the dashboard. Promoted is a special case — the
+// underlying session already surfaces under `shared`, so the
+// bookkeeping stub would double-render. Hide from inbox.
 const HOME_ACTIVE_STATES: ReadonlySet<TradeRowState> = new Set([
   'shared',
   'shared-waiting',
@@ -345,21 +352,22 @@ const HOME_ACTIVE_STATES: ReadonlySet<TradeRowState> = new Set([
   'countered',
 ]);
 
-const ACTIVE_TRADES_CAP = 5;
+const INBOX_CAP = 5;
 
 /**
- * Zone 1 — the priority strip. Combines pending incoming proposals,
- * active sessions, and counter-proposals into one chronologically
- * sorted list. The whole strip is hidden when empty, matching the
- * Home v2 principle that a quiet day shouldn't be dominated by
- * "you're all caught up" chrome.
+ * Zone 2 — the inbox. In-flight trades + sessions surfaced as
+ * ambient/informational ("here's what's currently in flight") rather
+ * than an alarm-bell. Hidden entirely when empty. Per-row state
+ * badges (Awaiting / Countered etc.) handle the "this needs you"
+ * highlight without bumping the whole section into urgent chrome.
  *
- * Visual weight scales with content: when there's an "awaiting" or
- * "countered" row (something needing the viewer's response) the
- * strip uses gold-attention chrome; otherwise it uses ambient chrome
- * to read as informational rather than urgent.
+ * Phase 2 backlog: real per-row read/unread state (server-side, so
+ * "read on phone → reflected on laptop") + a dedicated /?inbox=1
+ * page that includes resolved items. This Phase 1 version shows all
+ * active trades regardless of read state and links overflow to the
+ * existing history view.
  */
-function ActiveTradesStrip({
+function InboxSection({
   rows,
   onOpenTrade,
   onOpenTradesHistory,
@@ -368,34 +376,20 @@ function ActiveTradesStrip({
   onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
 }) {
-  const visible = rows.slice(0, ACTIVE_TRADES_CAP);
+  const visible = rows.slice(0, INBOX_CAP);
   const overflow = rows.length - visible.length;
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Anything where the BALL IS IN THE VIEWER'S COURT bumps the strip
-  // into "needs attention" chrome. Counter-proposals also count —
-  // they're awaiting the viewer's response on the new terms.
-  const needsAttention = rows.some(
-    r => r.state === 'awaiting' || r.state === 'countered',
-  );
-
   return (
     <section
-      aria-labelledby="active-trades-heading"
-      className={`rounded-xl p-4 border ${
-        needsAttention
-          ? 'border-gold/40 bg-gold/8'
-          : 'border-space-700 bg-space-800/30'
-      }`}
+      aria-labelledby="inbox-heading"
+      className="rounded-xl p-4 border border-space-700 bg-space-800/30"
     >
       <div className="flex items-baseline justify-between gap-3 mb-2">
-        <h2 id="active-trades-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
-          {needsAttention
-            ? <AlarmClock aria-hidden className="w-4 h-4 text-gold" />
-            : <ArrowLeftRight aria-hidden className="w-4 h-4 text-cyan-300" />
-          }
-          <span>{needsAttention ? 'Needs your attention' : 'Active trades'}</span>
-          <span className={`text-xs tabular-nums font-bold ${needsAttention ? 'text-gold' : 'text-gray-400'}`}>
+        <h2 id="inbox-heading" className="flex items-center gap-2 text-sm font-bold text-gray-100">
+          <Inbox aria-hidden className="w-4 h-4 text-gray-400" />
+          <span>Inbox</span>
+          <span className="text-xs tabular-nums font-bold text-gray-400">
             {rows.length}
           </span>
         </h2>
@@ -404,7 +398,7 @@ function ActiveTradesStrip({
           onClick={onOpenTradesHistory}
           className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
         >
-          View history →
+          View all →
         </button>
       </div>
       <ul className="flex flex-col gap-1.5">
