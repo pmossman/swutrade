@@ -172,7 +172,12 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
             quadrant and buried enrolled servers behind the hamburger
             menu. The reinstated version is a peer module (not a
             sidebar widget) with a tighter member-count focus. */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+        {/* `items-start` is load-bearing: without it the grid stretches
+            short modules (Communities with 1 server, Binder with 2
+            cards) to match their tall siblings, leaving large empty
+            wells below the actual content. With items-start each cell
+            sizes to its content height. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
           <TradesModule
             status={myTrades.status}
             counts={tradeCounts}
@@ -188,7 +193,7 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
           />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
           <WishlistModule
             wants={wants.items}
             cardByFamily={byFamily}
@@ -408,6 +413,22 @@ function NeedsResponseCallout({
 
 // --- 💱 My Trades module ---------------------------------------------------
 
+// Trade states that don't belong on Home — they're terminal and
+// non-actionable. The viewer can't do anything with a cancelled or
+// declined proposal, and a `promoted` proposal is just the bookkeeping
+// stub for a proposal that became a session (which surfaces under
+// `shared` separately). Surfacing them on the dashboard turned the
+// module into a wall of grey "you got rejected" rows; settled stays
+// because a recent positive close is useful context for "trade with
+// them again" follow-ups. Resolved counts still appear in the header
+// summary, and the "View history" link routes to the full list.
+const HOME_TERMINAL_STATES: ReadonlySet<TradeRowState> = new Set([
+  'cancelled',
+  'declined',
+  'expired',
+  'promoted',
+]);
+
 function TradesModule({
   status,
   counts,
@@ -423,12 +444,16 @@ function TradesModule({
   onOpenTradesHistory: () => void;
   onBuildTrade: () => void;
 }) {
-  const hasAny = rows.length > 0;
+  const actionableRows = useMemo(
+    () => rows.filter(r => !HOME_TERMINAL_STATES.has(r.state)),
+    [rows],
+  );
+  const hasAny = actionableRows.length > 0;
   // Mobile caps at 3 rows; desktop at 5. Past that, the "View
   // history" link in the header is the overflow.
   const MOBILE_CAP = 3;
   const DESKTOP_CAP = 5;
-  const visible = rows.slice(0, DESKTOP_CAP);
+  const visible = actionableRows.slice(0, DESKTOP_CAP);
   // Single expanded id across the unified list — opening one row
   // collapses any other.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -472,15 +497,39 @@ function TradesModule({
       {status === 'loading' && <LoadingState label="Loading trades…" />}
       {status !== 'loading' && !hasAny && (
         <div className="rounded-lg bg-space-800/30 border border-space-700 px-4 py-3 text-xs text-gray-500 leading-relaxed">
-          No trades yet.{' '}
-          <button
-            type="button"
-            onClick={onBuildTrade}
-            className="text-gold hover:text-gold-bright underline font-semibold"
-          >
-            Start one
-          </button>
-          {' — build alone, invite someone to trade together, or share a QR at the shop.'}
+          {counts.resolved > 0 ? (
+            <>
+              Nothing in flight.{' '}
+              <button
+                type="button"
+                onClick={onBuildTrade}
+                className="text-gold hover:text-gold-bright underline font-semibold"
+              >
+                Start a new one
+              </button>
+              {' — or '}
+              <button
+                type="button"
+                onClick={onOpenTradesHistory}
+                className="text-gold hover:text-gold-bright underline font-semibold"
+              >
+                view history
+              </button>
+              {' for past trades.'}
+            </>
+          ) : (
+            <>
+              No trades yet.{' '}
+              <button
+                type="button"
+                onClick={onBuildTrade}
+                className="text-gold hover:text-gold-bright underline font-semibold"
+              >
+                Start one
+              </button>
+              {' — build alone, invite someone to trade together, or share a QR at the shop.'}
+            </>
+          )}
         </div>
       )}
       {hasAny && (
@@ -664,7 +713,14 @@ function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof type
  * priorities-only preview because these modules are the primary
  * surface for inventory state now, not a drawer-affordance widget.
  */
-const LIST_MODULE_CAP = 5;
+// 3 visible rows on Home with an explicit "+N more" overflow link
+// instead of 5 visible. The dashboard wants a peek at the top of the
+// list, not a thumbnail of the whole list — we used to show 5 desktop
+// / 3 mobile, but that caused tall modules to dominate the dashboard
+// and hide the lower-row Communities/Binder content below the fold.
+// Edit-wishlist / Edit-binder is the destination for "see the full
+// list"; the overflow link makes that affordance one tap away.
+const LIST_MODULE_CAP = 3;
 
 function WishlistModule({
   wants,
@@ -739,16 +795,10 @@ function WishlistModule({
       )}
       {visible.length > 0 && (
         <ul className="flex flex-col gap-1">
-          {visible.map((w, idx) => {
+          {visible.map((w) => {
             const card = cardByFamily.get(w.familyId);
             return (
-              <li
-                key={w.id}
-                // Mobile caps at 3 rows so the module stays compact;
-                // desktop shows the full 5 since the vertical real
-                // estate is there.
-                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
-              >
+              <li key={w.id}>
                 <ListItemRow
                   productId={card?.productId ?? null}
                   name={card?.name ?? 'Card'}
@@ -760,6 +810,15 @@ function WishlistModule({
             );
           })}
         </ul>
+      )}
+      {wants.length > LIST_MODULE_CAP && (
+        <button
+          type="button"
+          onClick={onEditWishlist}
+          className="mt-2 w-full text-[11px] text-gray-500 hover:text-gold font-medium transition-colors text-center py-1"
+        >
+          +{wants.length - LIST_MODULE_CAP} more →
+        </button>
       )}
     </ModuleSection>
   );
@@ -825,13 +884,10 @@ function BinderModule({
       )}
       {visible.length > 0 && (
         <ul className="flex flex-col gap-1">
-          {visible.map((a, idx) => {
+          {visible.map((a) => {
             const card = cardByProductId.get(a.productId);
             return (
-              <li
-                key={a.id}
-                className={idx >= 3 ? 'hidden lg:list-item' : undefined}
-              >
+              <li key={a.id}>
                 <ListItemRow
                   productId={a.productId}
                   name={card?.name ?? 'Card'}
@@ -842,6 +898,15 @@ function BinderModule({
             );
           })}
         </ul>
+      )}
+      {available.length > LIST_MODULE_CAP && (
+        <button
+          type="button"
+          onClick={onEditBinder}
+          className="mt-2 w-full text-[11px] text-gray-500 hover:text-gold font-medium transition-colors text-center py-1"
+        >
+          +{available.length - LIST_MODULE_CAP} more →
+        </button>
       )}
     </ModuleSection>
   );
@@ -957,18 +1022,25 @@ function CommunitiesModule({
         </button>
       }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex flex-wrap gap-x-3 gap-y-1">
-        <span>
-          <span className="text-gray-200 font-semibold">{guilds.length}</span>
-          {guilds.length === 1 ? ' server' : ' servers'}
-        </span>
-        {totalTraders > 0 && (
+      {/* Skip the redundant counts line when there's only one server —
+          the single guild row underneath already says "<name> · N
+          traders", so the "1 server · N traders" line was just
+          duplicating it and adding vertical weight. Multi-server
+          users still see the rollup. */}
+      {guilds.length > 1 && (
+        <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex flex-wrap gap-x-3 gap-y-1">
           <span>
-            <span className="text-gray-200 font-semibold">{totalTraders}</span>
-            {totalTraders === 1 ? ' trader' : ' traders'}
+            <span className="text-gray-200 font-semibold">{guilds.length}</span>
+            {' servers'}
           </span>
-        )}
-      </div>
+          {totalTraders > 0 && (
+            <span>
+              <span className="text-gray-200 font-semibold">{totalTraders}</span>
+              {totalTraders === 1 ? ' trader' : ' traders'}
+            </span>
+          )}
+        </div>
+      )}
 
       {status === 'loading' && guilds.length === 0 && (
         <LoadingState label="Loading communities…" />
