@@ -702,6 +702,15 @@ function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof type
     case 'countered':       return { label: 'Countered', tone: 'purple' };
     case 'promoted':        return { label: 'Promoted', tone: 'cyan' };
   }
+  // Unknown state — render a neutral badge with the raw label rather
+  // than letting an exhaustive-switch fall-through return undefined
+  // and crash the row's destructure. The compiler complains about
+  // unreachable code today (TS narrows `state` to `never` here), but
+  // a future schema status that lands at runtime before the union is
+  // updated should degrade gracefully, not error-boundary the whole
+  // dashboard. This was the failure mode that hid the `accepted` bug.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  return { label: String(state ?? 'Unknown'), tone: 'neutral' };
 }
 
 // --- ⭐ Your wishlist module -----------------------------------------------

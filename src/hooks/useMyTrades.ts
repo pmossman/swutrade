@@ -165,10 +165,18 @@ function proposalToRow(p: TradeListEntry): TradeRow {
   // State mapping from the proposal status + viewer direction. The
   // key one: pending + received = 'awaiting' (UI highlights), pending
   // + sent = 'pitched' (UI just shows as outgoing).
+  // `accepted` is a proposal-only status and isn't in TradeRowState —
+  // we collapse it onto `settled` so Home + history have a single
+  // "terminal positive" tone (emerald) regardless of which surface
+  // the trade closed on (proposal accept vs session settle). Without
+  // this collapse, a viewer with an accepted proposal hit a blank
+  // stateBadgeSpec switch and crashed Home with "Jn(...) is undefined".
   const state: TradeRowState =
     p.status === 'pending'
       ? p.direction === 'received' ? 'awaiting' : 'pitched'
-      : (p.status as TradeRowState);
+      : p.status === 'accepted'
+        ? 'settled'
+        : (p.status as TradeRowState);
 
   return {
     kind: 'proposal',
