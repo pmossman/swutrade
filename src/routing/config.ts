@@ -34,6 +34,7 @@ export type ViewMode =
   | 'session'
   | 'wishlist'
   | 'binder'
+  | 'cards'
   | 'signal-builder';
 
 /** Params that a trade-composer URL carries. Any of them → trade view. */
@@ -175,6 +176,15 @@ export const VIEW_ROUTES: readonly ViewRoute[] = [
   {
     mode: 'binder',
     matches: ({ params }) => params.get('view') === 'binder',
+    paramKeys: ['view'],
+  },
+  {
+    mode: 'cards',
+    // Top-level card browser — search + filter the catalogue without
+    // committing to a destination. Reached from NavMenu's "Browse
+    // cards" entry. Must match BEFORE the generic `view=list` /
+    // `view=trade` rules since they also consult `view`.
+    matches: ({ params }) => params.get('view') === 'cards',
     paramKeys: ['view'],
   },
   {

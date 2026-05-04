@@ -57,6 +57,12 @@ export interface NavigationApi {
    *  the full-page canonical surface. */
   toBinder(): void;
 
+  /** Top-level card browser — search the catalogue without an
+   *  implicit destination. From any tile the user can pivot into
+   *  wishlist/binder/trade flows. Peer to the per-view pickers; this
+   *  is the discovery surface, those are the in-context fast paths. */
+  toCardBrowser(): void;
+
   /** Settings. `tab` drills into a specific section (e.g. `'servers'`
    *  for the guild-management drawer). */
   toSettings(opts?: { tab?: string; guildId?: string; memberHandle?: string }): void;

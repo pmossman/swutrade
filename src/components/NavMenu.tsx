@@ -63,6 +63,12 @@ export function NavMenu({ hasAccount, hasAnySession }: NavMenuProps) {
             onClose={close}
           />
           <NavRow
+            href="/?view=cards"
+            icon={<SearchIcon className="w-3.5 h-3.5 text-gray-400" />}
+            label="Browse cards"
+            onClose={close}
+          />
+          <NavRow
             href="/?view=wishlist"
             icon={<WishlistIcon className="w-3.5 h-3.5 text-gray-400" />}
             label="My Wishlist"
@@ -213,6 +219,15 @@ function MegaphoneIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 6.5h2.5L11 3v10L5.5 9.5H3a1 1 0 0 1-1-1v-1a1 1 0 0 1 1-1Z" />
       <path d="M5.5 9.5v3" />
+    </svg>
+  );
+}
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="7" cy="7" r="4.25" />
+      <path d="M10.25 10.25L13.5 13.5" />
     </svg>
   );
 }

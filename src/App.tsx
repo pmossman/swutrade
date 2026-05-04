@@ -65,6 +65,9 @@ const WishlistView = lazy(() =>
 const BinderView = lazy(() =>
   import('./components/BinderView').then(m => ({ default: m.BinderView })),
 );
+const CardBrowserView = lazy(() =>
+  import('./components/CardBrowserView').then(m => ({ default: m.CardBrowserView })),
+);
 const SignalBuilderView = lazy(() =>
   import('./components/SignalBuilderView').then(m => ({ default: m.SignalBuilderView })),
 );
@@ -396,6 +399,13 @@ function App() {
         pushTo(reset([], { view: 'binder' }));
         intent.clearIntent();
       },
+      toCardBrowser: () => {
+        // Same intent-clear rationale as toWishlist/toBinder: leaving
+        // the trade builder, so any half-baked propose/counter intent
+        // shouldn't resume silently when the user comes back.
+        pushTo(reset([], { view: 'cards' }));
+        intent.clearIntent();
+      },
       toSettings: (opts = {}) => {
         const extras: Record<string, string> = { settings: '1' };
         if (opts.tab) extras.tab = opts.tab;
@@ -494,6 +504,17 @@ function App() {
     setTheirCards([]);
   }, []);
 
+  // Card browser → "Start a trade with this card" flow. Adds the card
+  // to the offering side (using the shared add-with-dedupe helper so a
+  // pre-existing same-key entry just bumps qty) and then routes to the
+  // trade builder. Ordering matters: the state setter must be applied
+  // before nav so the trade builder mounts with the seeded card; nav
+  // re-detects viewMode on the next pushState cycle.
+  const handleStartTradeWithCard = useCallback((card: CardVariant) => {
+    addCard(setYourCards)(card);
+    nav.toBuildTrade();
+  }, [addCard, nav]);
+
   // Each branch below returns the view body only — the global
   // `<ListsDrawer>` (which every view can open via its header or the
   // AccountMenu) renders once below the view switch so navigating
@@ -574,6 +595,19 @@ function App() {
         auth={auth}
         allCards={allLoadedCards}
         wants={wants}
+      />
+    );
+  }
+
+  if (viewMode === 'cards') {
+    return (
+      <CardBrowserView
+        auth={auth}
+        allCards={allLoadedCards}
+        wants={wants}
+        available={available}
+        priceMode={priceMode}
+        onStartTradeWithCard={handleStartTradeWithCard}
       />
     );
   }
