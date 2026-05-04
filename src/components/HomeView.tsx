@@ -141,6 +141,13 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
           onOpenTradesHistory={onOpenTradesHistory}
         />
 
+        {/* Browse-cards entry point — search-bar-shaped affordance so
+            the dominant homepage workflow ("look up a card price")
+            has a one-click destination instead of being buried in the
+            hamburger menu. Tap routes to /?view=cards where
+            ListCardPicker autofocuses its real search input. */}
+        <BrowseCardsButton onClick={nav.toCardBrowser} />
+
         {/* Needs-response callout is full-width above the grid so it
             reads as "everything else waits — deal with this first." */}
         {needsResponse.length > 0 && (
@@ -286,6 +293,43 @@ function GreetingRow({
         </button>
       </div>
     </div>
+  );
+}
+
+// --- 🔍 Browse cards entry ------------------------------------------------
+
+/**
+ * Search-bar-shaped CTA that routes to the card-browser view. Sized
+ * to read as a primary action (full-width, taller than the chip-style
+ * filter buttons) so the "I just want to look up a card price" flow
+ * has a discoverable Home entry point. The actual search input lives
+ * inside CardBrowserView; this button is purely a visual cue and
+ * navigation target.
+ */
+function BrowseCardsButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-3 w-full px-4 h-11 rounded-xl bg-space-800/60 border border-space-700 hover:border-gold/50 hover:bg-space-800 text-left transition-colors group"
+    >
+      <SearchIcon className="w-4 h-4 text-gray-500 group-hover:text-gold transition-colors" />
+      <span className="text-sm text-gray-400 group-hover:text-gray-200 transition-colors">
+        Search any card by name…
+      </span>
+      <span className="ml-auto text-[10px] tracking-[0.18em] uppercase font-bold text-gray-600 group-hover:text-gold transition-colors">
+        Browse
+      </span>
+    </button>
+  );
+}
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="7" cy="7" r="4.25" />
+      <path d="M10.25 10.25L13.5 13.5" />
+    </svg>
   );
 }
 
