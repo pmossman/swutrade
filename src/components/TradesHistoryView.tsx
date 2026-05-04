@@ -5,6 +5,8 @@ import { LoadingState, ErrorState, EmptyState } from './ui/states';
 import { NudgeDialog } from './NudgeDialog';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useTradesList, type TradeListEntry } from '../hooks/useTradesList';
+import { useActiveSessions, type ActiveSessionEntry } from '../hooks/useActiveSessions';
+import { useNavigation } from '../contexts/NavigationContext';
 import { relativeTime } from '../utils/relativeTime';
 import type { UserStub } from '../hooks/useTradeDetail';
 import {
@@ -17,24 +19,31 @@ import {
 } from '../services/tradeActions';
 import { TradeExpandPeek } from './TradeExpandPeek';
 
-type Tab = 'incoming' | 'outgoing' | 'history';
+type Tab = 'incoming' | 'outgoing' | 'shared' | 'history';
 
 /**
- * /?trades=1 — proposals involving the viewer, split into three tabs:
+ * /?trades=1 — every trade-flavored thing involving the viewer,
+ * split into four tabs:
  *
  *   - **Incoming** — pending proposals where the viewer is the recipient.
  *     Row actions: Accept, Counter (deep-link), Decline.
  *   - **Outgoing** — pending proposals where the viewer is the proposer.
  *     Row actions: Edit (deep-link), Nudge, Cancel.
+ *   - **Shared** — active shared trade sessions (the live mutable
+ *     canvas — `/s/<code>`). Row action: Open the canvas. Open-slot
+ *     sessions (creator waiting for a QR scan) get an explicit hint
+ *     so the user knows there's no counterpart yet.
  *   - **History** — everything else (accepted / declined / cancelled /
- *     expired / countered), read-only.
+ *     expired / countered / promoted), read-only.
  *
  * Default tab is chosen based on which bucket has pending activity —
  * we lean toward the surface the user probably came here to handle,
- * not an alphabetical first tab. Empty-state copy is distinct per
- * tab so the user knows *why* it's empty. The full-empty case
- * (no proposals at all) preserves the legacy "No trade proposals
- * yet" text so the existing e2e still matches.
+ * not an alphabetical first tab. Incoming proposals win first
+ * (direct obligation), then outgoing, then shared, else History.
+ * Empty-state copy is distinct per tab so the user knows *why* it's
+ * empty. The full-empty case (no proposals AND no sessions) preserves
+ * the legacy "No trade proposals yet" text so the existing e2e still
+ * matches.
  */
 // Cap enforced on the server too — keep the UI matching so we don't
 // ship a "select all 200" action that gets rejected by the API.
@@ -42,7 +51,14 @@ const BULK_RESOLVE_CAP = 50;
 
 export function TradesHistoryView() {
   const auth = useAuthContext();
+  const nav = useNavigation();
   const { proposals, status, refresh } = useTradesList();
+  // Sessions live alongside proposals on this page — the data path
+  // is parallel because the proposal-side UI is heavily coupled to
+  // TradeListEntry shape (bulk-resolve, accept/decline, status
+  // badges) and switching to useMyTrades's unified shape would be
+  // a much larger refactor. Two cached singleton hooks; v1 cost.
+  const { sessions, status: sessionsStatus } = useActiveSessions();
   const [tab, setTab] = useState<Tab | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
   const [nudgeTarget, setNudgeTarget] = useState<TradeListEntry | null>(null);
@@ -69,24 +85,33 @@ export function TradesHistoryView() {
     return { incoming: inc, outgoing: out, history: hist };
   }, [proposals]);
 
-  // Pick a default tab once data arrives. Heuristic: whichever bucket
-  // has pending work (leaning toward Incoming, since that's the user's
-  // direct obligation) else fall through to History. The user can of
-  // course flip tabs from there.
+  // Pick a default tab once data arrives. Priority order reflects
+  // user obligation: Incoming proposals (direct response needed) →
+  // Outgoing (your pitch is awaiting response) → Shared (a live
+  // canvas you might want to keep building) → History fallback.
+  // Wait for both proposals AND sessions to land before deciding,
+  // so the default doesn't snap to one tab and then re-snap to a
+  // higher-priority tab when the second fetch resolves.
   useEffect(() => {
     if (tab !== null) return;
-    if (status !== 'ready') return;
+    if (status !== 'ready' || sessionsStatus !== 'ready') return;
     if (incoming.length > 0) setTab('incoming');
     else if (outgoing.length > 0) setTab('outgoing');
+    else if (sessions.length > 0) setTab('shared');
     else setTab('history');
-  }, [tab, status, incoming.length, outgoing.length]);
+  }, [tab, status, sessionsStatus, incoming.length, outgoing.length, sessions.length]);
 
   const activeTab: Tab = tab ?? 'incoming';
+  // `activeList` is the proposal-shaped data the existing tab UI
+  // renders. The Shared tab renders sessions instead — for that
+  // tab `activeList` is empty so the proposal-list path bypasses.
   const activeList: TradeListEntry[] = activeTab === 'incoming'
     ? incoming
     : activeTab === 'outgoing'
       ? outgoing
-      : history;
+      : activeTab === 'history'
+        ? history
+        : [];
 
   // Clear selection when switching tabs or when the underlying list
   // changes shape (e.g. a refresh dropped a resolved proposal). Same
@@ -201,6 +226,7 @@ export function TradesHistoryView() {
           counts={{
             incoming: incoming.length,
             outgoing: outgoing.length,
+            shared: sessions.length,
             history: history.length,
           }}
         />
@@ -216,18 +242,39 @@ export function TradesHistoryView() {
           <ErrorState className="mt-6">Couldn't load your trades. Try refreshing.</ErrorState>
         )}
 
-        {status === 'ready' && proposals.length === 0 && (
+        {/* Global empty: NEITHER proposals NOR sessions. Legacy copy
+            preserved so the existing e2e still matches. */}
+        {status === 'ready' && proposals.length === 0 && sessions.length === 0 && (
           <EmptyState className="mt-6" title="No trade proposals yet.">
             Send one from a community member's profile — or when someone proposes a trade to you,
             it'll show up here too.
           </EmptyState>
         )}
 
-        {status === 'ready' && proposals.length > 0 && activeList.length === 0 && (
+        {/* Shared tab: active session list. Different row shape from
+            proposals — no bulk actions, just per-row Open. */}
+        {status === 'ready' && activeTab === 'shared' && (
+          sessions.length === 0
+            ? (proposals.length > 0 || sessions.length > 0) && <EmptyTabState tab="shared" />
+            : (
+              <ul className="flex flex-col gap-2 mt-3">
+                {sessions.map(s => (
+                  <li key={s.id}>
+                    <SessionRow session={s} onOpen={() => nav.toSession(s.id)} />
+                  </li>
+                ))}
+              </ul>
+            )
+        )}
+
+        {/* Proposal tabs: Incoming / Outgoing / History. */}
+        {status === 'ready' && activeTab !== 'shared'
+          && (proposals.length > 0 || sessions.length > 0)
+          && activeList.length === 0 && (
           <EmptyTabState tab={activeTab} />
         )}
 
-        {status === 'ready' && activeList.length > 0 && (
+        {status === 'ready' && activeTab !== 'shared' && activeList.length > 0 && (
           <>
             {bulkable && (
               <SelectAllBar
@@ -304,11 +351,12 @@ function TabBar({
 }: {
   active: Tab;
   onSelect: (tab: Tab) => void;
-  counts: { incoming: number; outgoing: number; history: number };
+  counts: { incoming: number; outgoing: number; shared: number; history: number };
 }) {
   const tabs: Array<{ id: Tab; label: string; count: number }> = [
     { id: 'incoming', label: 'Incoming', count: counts.incoming },
     { id: 'outgoing', label: 'Outgoing', count: counts.outgoing },
+    { id: 'shared', label: 'Shared', count: counts.shared },
     { id: 'history', label: 'History', count: counts.history },
   ];
   return (
@@ -329,6 +377,10 @@ function TabBar({
             <span>{t.label}</span>
             {t.count > 0 && (
               <span className={`text-[10px] tabular-nums px-1.5 rounded-full ${
+                // Highlight the count when a tab is both active AND
+                // represents pending obligations (Incoming/Outgoing/
+                // Shared). History is read-only — its count stays
+                // muted even when active.
                 isActive && t.id !== 'history'
                   ? 'bg-gold/20 text-gold'
                   : 'bg-space-800 text-gray-400'
@@ -360,10 +412,71 @@ function EmptyTabState({ tab }: { tab: Tab }) {
       </EmptyState>
     );
   }
+  if (tab === 'shared') {
+    return (
+      <EmptyState className="mt-6" title="No active shared trades.">
+        A shared trade is a live canvas you and a counterpart edit together — start one from a
+        proposal's <strong>Promote to shared</strong> action, or by opening a fresh session via
+        the QR-share affordance.
+      </EmptyState>
+    );
+  }
   return (
     <EmptyState className="mt-6" title="No resolved trades yet.">
       Accepted, declined, cancelled, and countered trades show up here as an archive.
     </EmptyState>
+  );
+}
+
+/**
+ * Active-session row. Compact: counterpart identity, card counts,
+ * relative-time freshness, Open button. Mirrors the proposal-row
+ * vocabulary (avatar + handle + counts) so the eye doesn't have
+ * to reorient when switching tabs.
+ *
+ * Open-slot sessions (creator's slot B unfilled, no counterpart yet)
+ * surface a distinct "Waiting for someone to join" callout in place
+ * of the counterpart pill — otherwise the row would just say
+ * "with no one" which reads wrong.
+ */
+function SessionRow({
+  session,
+  onOpen,
+}: {
+  session: ActiveSessionEntry;
+  onOpen: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg border border-cyan-500/20 bg-cyan-950/10 hover:border-cyan-400/40 hover:bg-cyan-950/20 transition-colors"
+    >
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div className="flex items-center gap-2 text-sm">
+          {session.openSlot ? (
+            <span className="text-cyan-300 font-semibold">Waiting for someone to join</span>
+          ) : (
+            <span className="text-gray-100 font-semibold truncate">
+              with @{session.counterpart?.handle ?? '?'}
+            </span>
+          )}
+          <span className="text-[10px] tracking-[0.18em] uppercase font-bold px-1.5 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 shrink-0">
+            Shared
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[11px] text-gray-500">
+          <span>You: {session.yourCount}</span>
+          <span aria-hidden>·</span>
+          <span>{session.openSlot ? 'Open slot' : `Them: ${session.theirCount}`}</span>
+          <span aria-hidden>·</span>
+          <span>{relativeTime(session.lastEditedAt)}</span>
+        </div>
+      </div>
+      <span className="shrink-0 text-[11px] font-bold tracking-wide uppercase px-3 py-1.5 rounded-md border border-cyan-400/40 text-cyan-200 hover:border-cyan-300 hover:bg-cyan-500/10 transition-colors">
+        Open
+      </span>
+    </button>
   );
 }
 
