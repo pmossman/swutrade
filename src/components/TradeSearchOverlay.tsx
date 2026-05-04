@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode, TradeCard } from '../types';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
 import { ListCardPicker } from './ListCardPicker';
-import { CollapsibleChipFilter } from './CollapsibleChipFilter';
+import { FilterPopover } from './FilterPopover';
 import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
 
 export type AccentColor = 'emerald' | 'blue';
@@ -301,12 +301,12 @@ export function TradeSearchOverlay({
 }
 
 /**
- * Source-pool filter — wraps the available source chips in the same
- * CollapsibleChipFilter chrome that Variant + Set use, so the picker's
- * filter region reads as one row of expandable affordances instead of
- * a free-floating "Show:" strip on its own line. Summary mirrors the
- * Variant filter's progression: 0 → "All", 1 → that chip's label,
- * 2-3 → comma-joined labels, 4+ → "N selected".
+ * Source-pool filter — wraps the picker's source chips in the same
+ * FilterPopover chrome that Variant + Set + More use, so every
+ * affordance in the row behaves identically (popover overlay, no
+ * inline-expand reflow). Summary mirrors the Variant filter's
+ * progression: 0 → "All", 1 → that chip's label, 2-3 → comma-joined
+ * labels, 4+ → "N selected".
  */
 function SourceChipFilter({
   visibleChips,
@@ -334,17 +334,8 @@ function SourceChipFilter({
       Clear
     </button>
   ) : undefined;
-  // Auto-expand at mount if any chip is already active — covers the
-  // shared-link flow where the overlay opens with `theirs` pre-seeded,
-  // so the user lands on visible scope chips instead of a hidden
-  // "Show" pill they'd have to know to expand.
   return (
-    <CollapsibleChipFilter
-      label="Show"
-      summary={summary}
-      action={action}
-      defaultOpen={activeChips.length > 0}
-    >
+    <FilterPopover label="Show" summary={summary} action={action}>
       {visibleChips.map(chip => (
         <SourceChip
           key={chip.id}
@@ -354,7 +345,7 @@ function SourceChipFilter({
           count={chip.cards.length}
         />
       ))}
-    </CollapsibleChipFilter>
+    </FilterPopover>
   );
 }
 

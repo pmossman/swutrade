@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from 'lucide-react';
 import { Popover } from './Popover';
-import { Chip } from './CollapsibleChipFilter';
+import { Chip } from './ui/Chip';
 import { SELECTABLE_RARITIES, type SelectableRarity } from '../hooks/useSelectionFilters';
 import type { SortBy } from '../persistence';
 

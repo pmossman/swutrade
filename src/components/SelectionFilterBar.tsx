@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { SETS } from '../types';
 import { CANONICAL_VARIANTS, variantBadgeColor, variantChipLabel, type CanonicalVariant } from '../variants';
 import type { SelectionFilters } from '../hooks/useSelectionFilters';
-import { Chip } from './CollapsibleChipFilter';
+import { Chip } from './ui/Chip';
 import { FilterPopover } from './FilterPopover';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../applySelectionFilters';
 import { summarizeSelection, setSummaryLabel } from '../utils/filterSummaries';
@@ -187,6 +187,12 @@ export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: S
     [filters.selectedSets],
   );
 
+  // Row order is load-bearing: dimension filters first (Variant, Set,
+  // any caller-supplied extras like the trade overlay's "Show"
+  // source filter), then MORE pinned at the right end so it's always
+  // the last affordance. Earlier we rendered MORE before extraChips,
+  // which let the trade overlay's Show chip render to its right —
+  // breaking the "MORE is the catch-all at the end" mental model.
   return (
     <div className="flex items-start gap-2 flex-wrap">
       {!hideVariantFilter && (
@@ -203,6 +209,7 @@ export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: S
         onSelectGroup={filters.replaceGroup}
         onClear={filters.clearSets}
       />
+      {extraChips}
       <MoreFiltersPopover
         selectedRarities={filters.selectedRarities}
         sortBy={filters.sortBy}
@@ -211,7 +218,6 @@ export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: S
         onClear={filters.clearMoreFilters}
         activeCount={filters.moreFiltersActiveCount}
       />
-      {extraChips}
     </div>
   );
 }

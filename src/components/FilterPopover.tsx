@@ -17,25 +17,31 @@ interface FilterPopoverProps {
 }
 
 /**
- * Popover-based filter wrapper. Replaces the inline-expand pattern
- * (CollapsibleChipFilter) for the Variant + Set filters in
- * SelectionFilterBar so they behave consistently with the More
- * filters popover — tap the pill, panel overlays, body layout
- * doesn't reflow.
+ * Canonical filter primitive — every filter affordance in the picker
+ * row (Variant, Set, Show, More) MUST go through this component.
+ * Don't introduce a parallel inline-expand or chip-strip wrapper:
+ * one chrome means consistent placement, animation, and click-out
+ * behaviour across the whole UI. The earlier `CollapsibleChipFilter`
+ * inline-expand was deleted exactly to enforce this.
  *
- * Why not just swap CollapsibleChipFilter's internals: the trade
- * overlay's "Show" source chips deliberately expand inline (they
- * benefit from staying visible during scroll-and-pick) and would
- * regress if forced into a popover. Keeping both options as
- * separate components lets each consumer pick.
+ * Behavior: tap the pill, panel overlays via `Popover` (portaled to
+ * body, fixed-positioned, click-outside + Esc close). Body layout
+ * never reflows. Panel anchors to the trigger's right edge so a long
+ * row of filter pills doesn't push panels off-screen on the right.
+ *
+ * Sizing: fixed 320px panel width with a viewport ceiling — chips
+ * inside flex-wrap into multiple rows naturally instead of forcing
+ * one ultra-wide row that visually drifts away from the trigger.
  */
 export function FilterPopover({ label, summary, action, children }: FilterPopoverProps) {
   return (
     <Popover
       align="right"
-      // max-w prevents desktop overflow into far-left margin; the
-      // calc ceiling keeps it under viewport width on mobile.
-      panelClassName="p-3 max-w-[calc(100vw-2rem)]"
+      // Fixed-width panel so chip strips wrap into a roughly square
+      // panel under the trigger instead of stretching to fit the
+      // widest chip row. The viewport ceiling keeps it from clipping
+      // on narrow phones.
+      panelClassName="p-3 w-[min(320px,calc(100vw-2rem))]"
       trigger={({ open, toggle }) => (
         <button
           type="button"
