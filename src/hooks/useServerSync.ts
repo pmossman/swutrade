@@ -185,15 +185,28 @@ export function useServerSync(
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') pull();
     };
-    // Both events: visibilitychange covers tab-switching and most
-    // mobile foreground/background transitions; window.focus is the
-    // belt-and-suspenders for Safari quirks where vischange doesn't
-    // always fire on app resume.
+    // Three triggers, each catching a case the others miss:
+    //   - visibilitychange: tab backgrounding/foregrounding, most
+    //     mobile app-switch transitions, desktop tab switching.
+    //   - window.focus: Safari quirks where vischange doesn't always
+    //     fire on app resume; also alt-tab on desktop.
+    //   - 60s polling while visible: the load-bearing case for cross-
+    //     device sync. A user with the tab continuously in the
+    //     foreground (phone on home screen, second monitor, etc.)
+    //     never fires the other two events, so without polling they
+    //     can sit forever showing stale data after another device
+    //     edits the wishlist server-side. Gated on visibility so
+    //     hidden tabs don't burn requests.
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', pull);
+    const pollInterval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      pull();
+    }, 60_000);
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', pull);
+      window.clearInterval(pollInterval);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
