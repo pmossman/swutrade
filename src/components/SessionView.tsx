@@ -339,11 +339,44 @@ export function SessionView({
         {status === 'error' && !session && (
           <ErrorState>Couldn't load this trade. Try refreshing.</ErrorState>
         )}
-        {status === 'not-found' && (
-          <ErrorState>
-            This shared trade doesn't exist or is no longer available. It may have been cancelled, expired, or already claimed by someone else.
-          </ErrorState>
-        )}
+        {status === 'not-found' && (() => {
+          // Unauthed (or ghost-only) visitor on a not-found session
+          // is overwhelmingly the "Discord-DM'd invite link, but the
+          // recipient hasn't signed in to SWUTrade yet" case. Surface
+          // a sign-in CTA that returns them to this same URL after
+          // OAuth, instead of a generic "doesn't exist" message that
+          // dead-ends them.
+          const isUnauthedOrGhost = !auth.user || auth.user.isAnonymous;
+          if (isUnauthedOrGhost) {
+            const returnTo = encodeURIComponent(
+              window.location.pathname + window.location.search,
+            );
+            return (
+              <section className="rounded-xl border border-gold/40 bg-gold/8 p-5 max-w-md mx-auto text-center">
+                <div className="text-[10px] tracking-[0.25em] text-gold uppercase font-bold mb-2">
+                  Sign in to view this trade
+                </div>
+                <p className="text-sm text-gray-200 leading-relaxed mb-4">
+                  This shared trade was sent to a specific Discord user. Sign in with the same Discord account that received the invite to open it.
+                </p>
+                <a
+                  href={`/api/auth/discord?returnTo=${returnTo}`}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gold text-space-900 font-bold text-sm hover:bg-gold-bright transition-colors"
+                >
+                  Sign in with Discord
+                </a>
+                <p className="text-[11px] text-gray-500 mt-4 leading-relaxed">
+                  If you're already signed in as a different account, you may need to switch accounts.
+                </p>
+              </section>
+            );
+          }
+          return (
+            <ErrorState>
+              This shared trade doesn't exist or is no longer available — or it was sent to a different Discord account. It may have been cancelled, expired, or claimed by someone else.
+            </ErrorState>
+          );
+        })()}
 
         {status === 'preview' && preview && (
           <InvitePrompt

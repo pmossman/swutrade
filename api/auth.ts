@@ -149,6 +149,23 @@ export function getRedirectUri(req: VercelRequest): string {
   return `${protocol}://${host}/api/auth/callback`;
 }
 
+/**
+ * Validate a candidate returnTo path. We only accept SAME-ORIGIN
+ * paths (begins with `/`, doesn't begin with `//`, no protocol).
+ * Anything else gets dropped silently — caller falls back to `/`.
+ * This is the open-redirect guard.
+ */
+function safeReturnTo(raw: string | undefined): string | null {
+  if (!raw) return null;
+  if (typeof raw !== 'string') return null;
+  if (raw.length === 0 || raw.length > 256) return null;
+  if (!raw.startsWith('/')) return null;
+  if (raw.startsWith('//')) return null;
+  // Reject anything that looks like a host or absolute URL.
+  if (/^\/[^/]/.test(raw) === false && raw !== '/') return null;
+  return raw;
+}
+
 export async function handleDiscordStart(req: VercelRequest, res: VercelResponse) {
   const redirectUri = getRedirectUri(req);
   const discord = new Discord(
@@ -164,6 +181,16 @@ export async function handleDiscordStart(req: VercelRequest, res: VercelResponse
   const url = discord.createAuthorizationURL(state, codeVerifier, ['identify', 'guilds']);
   const destination = url.toString();
 
+  // Optional returnTo — caller passes `?returnTo=/s/<id>` so the
+  // user lands back on the page they came from after signing in.
+  // Used by the "sign in to view this trade" prompt that appears
+  // when a Discord-DM'd session-invite link lands on someone who
+  // isn't signed in yet. Same-origin paths only (open-redirect
+  // guard above).
+  const returnTo = safeReturnTo(
+    typeof req.query.returnTo === 'string' ? req.query.returnTo : undefined,
+  );
+
   const cookieOpts = {
     httpOnly: true,
     secure: !redirectUri.startsWith('http://'),
@@ -172,10 +199,14 @@ export async function handleDiscordStart(req: VercelRequest, res: VercelResponse
     path: '/',
   };
 
-  res.setHeader('Set-Cookie', [
+  const cookies: string[] = [
     serialize('swu_oauth_state', state, cookieOpts),
     serialize('swu_oauth_verifier', codeVerifier, cookieOpts),
-  ]);
+  ];
+  if (returnTo) {
+    cookies.push(serialize('swu_oauth_return_to', returnTo, cookieOpts));
+  }
+  res.setHeader('Set-Cookie', cookies);
   res.setHeader('Cache-Control', 'no-store');
 
   // HTML interstitial instead of a bare 302. iOS Safari has a known
@@ -235,6 +266,7 @@ function clearOAuthCookies(res: VercelResponse): void {
     ...((res.getHeader('Set-Cookie') as string[]) ?? []),
     serialize('swu_oauth_state', '', clearOpts),
     serialize('swu_oauth_verifier', '', clearOpts),
+    serialize('swu_oauth_return_to', '', clearOpts),
   ]);
 }
 
@@ -376,6 +408,14 @@ export async function handleCallback(req: VercelRequest, res: VercelResponse) {
     pendingMergeBanner: carriedCount > 0 ? { carriedCount } : undefined,
   });
 
+  // Honor the optional returnTo cookie set at /auth/discord start
+  // so the bot-DM session-invite flow lands the user back on the
+  // session canvas after sign-in instead of dumping them on Home.
+  // Validated again here defensively even though the start handler
+  // ran the same check.
+  const returnToCookie = parse(req.headers.cookie ?? '').swu_oauth_return_to;
+  const returnTo = safeReturnTo(returnToCookie) ?? '/';
+
   clearOAuthCookies(res);
-  res.redirect(302, '/');
+  res.redirect(302, returnTo);
 }

@@ -124,17 +124,31 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const terminal = session.status !== 'active';
 
   // visualViewport tracking — older iOS (< 16.4) ignores the
-  // interactive-widget viewport meta and keeps the layout viewport at
-  // its full height when the keyboard opens. Without an explicit
-  // height stamp the panel ends up taller than the visible area, the
-  // chat input gets auto-scrolled into view, and the rest of the page
-  // peeks through above and below. We mirror visualViewport.height
-  // into a CSS var so the panel always matches the visible region.
-  const [vvHeight, setVvHeight] = useState<number | null>(null);
+  // interactive-widget viewport meta and keeps the layout viewport
+  // at its full height when the keyboard opens. We mirror the
+  // visualViewport's full geometry (top + height + left + width)
+  // into the panel's inline style so the panel always pins to the
+  // visible region rather than the layout viewport. Just pinning
+  // height was insufficient: when iOS scrolls the layout viewport
+  // up to keep the focused input visible, `position: fixed` snaps
+  // to the layout-viewport corner and the panel ends up offset
+  // above the visible region — which is what produced the trade-
+  // canvas-leak-through bug on mobile.
+  const [vvRect, setVvRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     const vv = window.visualViewport;
-    const sync = () => setVvHeight(vv.height);
+    const sync = () => setVvRect({
+      top: vv.offsetTop,
+      left: vv.offsetLeft,
+      width: vv.width,
+      height: vv.height,
+    });
     sync();
     vv.addEventListener('resize', sync);
     vv.addEventListener('scroll', sync);
@@ -144,11 +158,39 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
     };
   }, []);
 
+  // Lock body scroll while the panel is open. iOS otherwise scrolls
+  // the underlying page to keep the focused input visible — and
+  // since the panel is `position: fixed`, that page-scroll exposes
+  // whatever was behind the (now-mispositioned) panel. With body
+  // scroll locked, iOS has nothing to scroll and the panel stays
+  // wherever its inline style says.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  // Inline-style pin: position: fixed + the visualViewport rect.
+  // Falls back to inset:0-style positioning until the first
+  // visualViewport sync resolves (or for browsers without the API,
+  // where the layout viewport already does the right thing).
+  const panelOuterStyle: React.CSSProperties = vvRect
+    ? {
+        position: 'fixed',
+        top: vvRect.top,
+        left: vvRect.left,
+        width: vvRect.width,
+        height: vvRect.height,
+      }
+    : {};
+
   return (
     <div
-      className="fixed inset-0 z-40 flex justify-end bg-black/40"
+      className={vvRect ? 'z-40 flex justify-end bg-black/40' : 'fixed inset-0 z-40 flex justify-end bg-black/40'}
       onClick={onClose}
-      style={vvHeight ? { height: `${vvHeight}px` } : undefined}
+      style={panelOuterStyle}
     >
       <div
         // h-full inherits the parent's pinned visualViewport height.
