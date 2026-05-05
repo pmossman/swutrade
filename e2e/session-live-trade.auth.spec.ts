@@ -47,11 +47,14 @@ test.describe('Invite-someone shared session', () => {
     await expect(page.getByRole('link', { name: /SWUTrade home/i })).toBeVisible({
       timeout: 10_000,
     });
-    // And the "Not found" state surfaces within a reasonable poll
-    // window (SessionView lands here when /api/sessions/<id>
-    // returns 404 for the id).
+    // SessionView lands on its not-found path when /api/sessions/<id>
+    // returns 404. For anonymous visitors that surface is the
+    // "Sign in to view this trade" CTA (assumes the most common
+    // case is an invite-link DM the user hasn't auth'd for yet).
+    // Either copy is acceptable — both prove the SPA mounted the
+    // not-found branch, which is what this test is guarding.
     await expect(
-      page.getByText(/doesn't exist|no longer available|not found/i).first(),
+      page.getByText(/sign in to view this trade|doesn't exist|no longer available|not found/i).first(),
     ).toBeVisible({ timeout: 10_000 });
 
     // Zero unexpected console errors — the fixture's default filter
