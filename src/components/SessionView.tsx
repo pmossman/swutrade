@@ -231,7 +231,18 @@ export function SessionView({
   }, [confirm, confirming, session]);
   const handleCancel = useCallback(async () => {
     if (cancelling || !session || session.status !== 'active') return;
-    if (!window.confirm('Cancel this shared trade? Both sides will lose the in-progress state.')) return;
+    // Only confirm when there's actual work to lose. A pristine
+    // session (no cards on either side, no pending suggestions) is
+    // safe to single-tap-cancel — single tap matches the "I just
+    // opened this and changed my mind" flow. Once there's anything
+    // staged, we prompt because the cancel is irreversible.
+    const hasActivity =
+      session.yourCards.length > 0
+      || session.theirCards.length > 0
+      || session.suggestions.length > 0;
+    if (hasActivity) {
+      if (!window.confirm('Cancel this shared trade? Both sides will lose the in-progress state.')) return;
+    }
     hapticMedium();
     setCancelling(true);
     try {

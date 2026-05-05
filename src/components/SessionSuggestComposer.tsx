@@ -130,6 +130,17 @@ export function SessionSuggestComposer({
     }
   }, [hasContent, draft, removeDraft, submitting, counterpartSide, onSubmit, onClose]);
 
+  // Cancel is hard to undo (staged cards / removals are gone), so
+  // when the user has work in progress we confirm before closing.
+  // Empty composer drops straight through — it's a free single-tap
+  // back-out the way Cancel ought to feel.
+  const handleCancel = useCallback(() => {
+    if (hasContent) {
+      if (!window.confirm("Discard this suggestion? Your staged cards will be lost.")) return;
+    }
+    onClose();
+  }, [hasContent, onClose]);
+
   // Picker's default top-bar (Back chevron + "Done" pill) gets
   // suppressed below by passing a custom `header`. We replaced
   // "Done" with the contextual Cancel + Send-suggestion pair here
@@ -148,7 +159,7 @@ export function SessionSuggestComposer({
       <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleCancel}
           className="px-3 h-8 rounded-md border border-space-700 text-gray-300 hover:border-gray-500 hover:text-gray-100 text-xs font-semibold transition-colors"
         >
           Cancel
