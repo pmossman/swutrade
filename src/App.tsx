@@ -36,9 +36,6 @@ import { useServerSync } from './hooks/useServerSync';
 // Audit 07-performance #4 — only NON-builder routes are lazy.
 import { AutoBalanceBanner } from './components/AutoBalanceBanner';
 import { HomeView } from './components/HomeView';
-import { ProposeBar } from './components/ProposeBar';
-import { CounterBar } from './components/CounterBar';
-import { EditBar } from './components/EditBar';
 import { LoadingState } from './components/ui/states';
 // Lazy: every non-builder route. All 9 are named exports, so the
 // .then(m => ({ default: m.X })) shim adapts them to React.lazy's
@@ -195,7 +192,7 @@ function App() {
   // double-fetching. `sharedLists` (the ?w=/?a= URL-encoded form)
   // remains the fallback for the share-a-list flow — propose mode
   // takes precedence when active.
-  const { profile: recipientProfile, fetchState: recipientFetchState } = useRecipientProfile(proposeHandle);
+  const { profile: recipientProfile } = useRecipientProfile(proposeHandle);
   const effectiveSharedLists = useMemo(() => {
     if (proposeHandle && recipientProfile) {
       return {
@@ -717,56 +714,24 @@ function App() {
           always-visible matchmaker input — "enter a random handle" is
           a thin use case that belongs to Phase 4 (guild-scoped
           discovery), not permanent chrome here. */}
-      {editId ? (
-        <EditBar
-          editingTradeId={editId}
-          yourCards={yourCards}
-          theirCards={theirCards}
-          onApplyMatch={(yours, theirs) => {
-            setYourCards(yours);
-            setTheirCards(theirs);
-          }}
-        />
-      ) : counterId ? (
-        <CounterBar
-          originalTradeId={counterId}
-          yourCards={yourCards}
-          theirCards={theirCards}
-          onApplyMatch={(yours, theirs) => {
-            setYourCards(yours);
-            setTheirCards(theirs);
-          }}
-        />
-      ) : proposeHandle ? (
-        <ProposeBar
-          recipientHandle={proposeHandle}
-          wants={wants}
-          available={available}
-          yourCards={yourCards}
-          theirCards={theirCards}
-          recipientProfile={recipientProfile}
-          recipientFetchState={recipientFetchState}
-          onApplyMatch={(yours, theirs) => {
-            setYourCards(yours);
-            setTheirCards(theirs);
-          }}
-        />
-      ) : (
-        <AutoBalanceBanner
-          senderHandle={senderHandle}
-          autoBalanceRequested={intent.autoBalance}
-          isSignedIn={!!user}
-          hasCards={hasCards}
-          allCards={allLoadedCards}
-          wants={wants}
-          available={available}
-          onApplyMatch={(yours, theirs) => {
-            setYourCards(yours);
-            setTheirCards(theirs);
-          }}
-          onAutoBalanceConsumed={() => intent.setIntent({ autoBalance: false })}
-        />
-      )}
+      {/* Auto-balance banner is now the only context-aware bar in the
+          trade builder — propose/counter/edit URL paths went away
+          with Phase C. The banner still surfaces the matchmaker
+          flow when a signed-in recipient lands via ?from=<handle>. */}
+      <AutoBalanceBanner
+        senderHandle={senderHandle}
+        autoBalanceRequested={intent.autoBalance}
+        isSignedIn={!!user}
+        hasCards={hasCards}
+        allCards={allLoadedCards}
+        wants={wants}
+        available={available}
+        onApplyMatch={(yours: TradeCard[], theirs: TradeCard[]) => {
+          setYourCards(yours);
+          setTheirCards(theirs);
+        }}
+        onAutoBalanceConsumed={() => intent.setIntent({ autoBalance: false })}
+      />
 
       {/* Auto-balance mode was missing a primary action. User arrives
           at `?from=@bob&autoBalance=1` (e.g. from a shared list DM'd

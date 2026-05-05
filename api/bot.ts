@@ -42,7 +42,6 @@ import {
 } from '../lib/prefsRegistry.js';
 import { resolvePref } from '../lib/prefsResolver.js';
 import { reportError } from '../lib/errorReporter.js';
-import { resolveProposal } from '../lib/proposalResolve.js';
 import { recordEvent as recordCommunityEvent } from '../lib/communityEvents.js';
 import { ensureSwutradeCategory, getGuildTradesChannel } from '../lib/tradeGuild.js';
 import { waitUntil } from '@vercel/functions';
@@ -1339,41 +1338,20 @@ export async function handleTradeProposalButton(
   }
   const newStatus: 'accepted' | 'declined' = action === 'accept' ? 'accepted' : 'declined';
 
-  // Shared state transition + event log + proposer notification.
-  // Both the Discord button path (here) and the web endpoint
-  // (`api/trades.ts::handleAcceptDecline`) funnel through this so
-  // the recipient sees the same DM edit, the proposer sees the
-  // same notification, and the activity timeline records the same
-  // event regardless of which surface drove the action.
-  //
-  // `resolveProposal` may return `already-resolved` if a racing
-  // click or web call landed between our status check above and
-  // its optimistic UPDATE. Either way the final body we send is
-  // the resolved banner — idempotent from the clicker's POV.
-  const result = await resolveProposal({
-    proposalId: trade.id,
-    actorUserId: recipient.id,
-    newStatus,
-    deps: { db, bot: deps.bot },
-  });
-
-  if (result.status === 'not-found') {
-    // Defensive — we already confirmed recipient + existence above.
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  // Response protocol: UPDATE_MESSAGE (type 7) swaps the button row
-  // in place so the recipient's DM reflects the outcome immediately,
-  // even though `resolveProposal` also PATCHes the same message via
-  // its DM-edit side effect. The PATCH is idempotent (same body,
-  // empty components) and covers the web-initiated path where we
-  // can't respond with UPDATE_MESSAGE.
-  const resolvedBody = buildResolvedProposalMessage(proposalCtx, newStatus, recipient.handle);
-  res.status(200).json({
-    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-    data: resolvedBody,
-  });
+  // C1b — proposal Accept/Decline button handler stubbed. The
+  // proposal flow was retired in Phase C; sessions are now the only
+  // trade primitive. In-flight DMs from the old flow are no longer
+  // resolvable through this code path — clicking the button returns
+  // a deferred-update so Discord clears the pending state without
+  // tripping the "application did not respond" warning, but the
+  // proposal row is left untouched. Future cleanup will drop the
+  // proposal-button code path entirely once stale DMs age out.
+  void newStatus;
+  void recipient;
+  void trade;
+  void proposalCtx;
+  void deps;
+  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
 }
 
 // --- thread-flow buttons ---------------------------------------------------

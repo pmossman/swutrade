@@ -20,8 +20,30 @@
  * for the actual HTTP work — there's no duplicate status-mapping.
  */
 import type { ZodType } from 'zod';
-import type { ActionResult, ActionFailureReason } from './tradeActions';
-export type { ActionResult, ActionFailureReason } from './tradeActions';
+
+// ActionResult / ActionFailureReason originally lived in
+// `./tradeActions` (the proposal action helpers). When proposals
+// were retired the file went away, but the result-shape these types
+// describe is the canonical "API response" union for every
+// fetch-style helper in the app. They graduated here as a result.
+export type ActionFailureReason =
+  | 'already-resolved'
+  | 'rate-limited'
+  | 'not-found'
+  | 'forbidden'
+  | 'unauthorized'
+  | 'error';
+
+export type ActionResult<T = Record<string, never>> =
+  | { ok: true; data: T }
+  | {
+      ok: false;
+      reason: ActionFailureReason;
+      detail?: string;
+      /** For `rate-limited` — ISO timestamp when the next attempt is
+       *  allowed. */
+      nextAvailableAt?: string;
+    };
 
 function failure(
   status: number,
