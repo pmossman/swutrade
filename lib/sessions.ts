@@ -234,6 +234,11 @@ export interface SessionView {
    *  (no counterpart yet), and on every "we're both still
    *  collaborating" intermediate state. */
   awaitingViewer: boolean;
+  /** B5 — only meaningful on `status='cancelled'` sessions. Distinguishes
+   *  a declined offer from a mutual withdrawal so the terminal banner
+   *  can show distinct copy ("Trade declined" vs "Trade cancelled").
+   *  Null on every other state. */
+  cancelReason: 'declined' | 'withdrawn' | null;
 }
 
 export const SESSION_EVENT_PAGE_SIZE = 50;
@@ -334,6 +339,7 @@ export async function getSessionForViewer(
     lastReadAt: lastReadAt?.toISOString() ?? null,
     suggestions,
     awaitingViewer,
+    cancelReason: row.cancelReason ?? null,
   };
 }
 
@@ -571,6 +577,7 @@ export async function listActiveSessionsForViewer(
       lastReadAt: lastReadAt?.toISOString() ?? null,
       suggestions,
       awaitingViewer,
+      cancelReason: r.cancelReason ?? null,
     };
   });
 }

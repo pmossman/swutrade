@@ -67,6 +67,54 @@ describeWithDb('POST /api/sessions/:id/decline', () => {
     return result.id;
   }
 
+  it('cancelReason flows from DB into SessionView so the terminal banner can branch on it (B7)', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const sessionId = await seedActivePair(alice, bob);
+
+    // Decline the session as Bob.
+    const reqDecline = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: await sealTestCookie(bob.id) },
+      query: { id: sessionId },
+      body: {},
+    });
+    await handleDeclineSession(reqDecline, mockResponse(), { bot: makeFakeBot() });
+
+    // Re-fetch the session view from each side; both should see
+    // cancelReason='declined' so the terminal banner copy lines up
+    // for both participants.
+    const db = getDb();
+    const { getSessionForViewer } = await import('../../lib/sessions.js');
+    const aliceView = await getSessionForViewer(db, sessionId, alice.id);
+    const bobView = await getSessionForViewer(db, sessionId, bob.id);
+    expect(aliceView?.status).toBe('cancelled');
+    expect(aliceView?.cancelReason).toBe('declined');
+    expect(bobView?.cancelReason).toBe('declined');
+  });
+
+  it('cancelReason=null on active sessions and on cancelled-via-withdraw sessions', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+    const sessionId = await seedActivePair(alice, bob);
+
+    // Active session — cancelReason should be null.
+    const db = getDb();
+    const { getSessionForViewer, cancelSession } = await import('../../lib/sessions.js');
+    let view = await getSessionForViewer(db, sessionId, alice.id);
+    expect(view?.cancelReason).toBeNull();
+
+    // Cancel without a reason → cancelReason='withdrawn'.
+    await cancelSession(db, { sessionId, viewerUserId: alice.id });
+    view = await getSessionForViewer(db, sessionId, alice.id);
+    expect(view?.status).toBe('cancelled');
+    expect(view?.cancelReason).toBe('withdrawn');
+  });
+
   it('happy path: viewer declines → session cancelled with reason=declined, DM fires, event logged', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);

@@ -91,6 +91,10 @@ export interface SessionView {
    *  Drives Inbox row prominence on Home; can also feed future
    *  session-banner / re-engagement DM logic. */
   awaitingViewer: boolean;
+  /** B5 — only meaningful when status='cancelled'. Distinguishes a
+   *  declined offer from a mutual withdrawal so the terminal banner
+   *  can render distinct copy. Null otherwise. */
+  cancelReason: 'declined' | 'withdrawn' | null;
 }
 
 /**

@@ -868,13 +868,21 @@ function TerminalBanner({
     );
   }
   if (session.status === 'cancelled') {
+    // B5/B7 — distinguish declined (recipient rejected an offer-shaped
+    // session) from withdrawn (mutual cancel). The verb that lands on
+    // each side's notification differed; the terminal-state copy
+    // should match so the user's mental model on this page tracks
+    // the message they got in DM.
+    const declined = session.cancelReason === 'declined';
     return (
       <section className="rounded-lg border border-space-600 bg-space-800/60 px-4 py-3 flex flex-col gap-2">
         <div className="text-[11px] tracking-[0.18em] uppercase text-gray-400 font-bold">
-          Trade cancelled
+          {declined ? 'Trade declined' : 'Trade cancelled'}
         </div>
         <div className="text-sm text-gray-300">
-          This trade was cancelled{counterpartHandle ? ` — either you or @${counterpartHandle} closed it out` : ''}. No more edits.
+          {declined
+            ? `This trade was declined${counterpartHandle ? ` — you or @${counterpartHandle} rejected the offer` : ''}. No more edits.`
+            : `This trade was cancelled${counterpartHandle ? ` — either you or @${counterpartHandle} closed it out` : ''}. No more edits.`}
         </div>
         {escape}
       </section>
