@@ -16,7 +16,11 @@ import {
   createDiscordBotClient,
   type DiscordBotClient,
 } from './discordBot.js';
-import { buildSessionInviteMessage, buildSessionPingMessage } from './proposalMessages.js';
+import {
+  buildSessionDeclinedMessage,
+  buildSessionInviteMessage,
+  buildSessionPingMessage,
+} from './proposalMessages.js';
 import {
   sessionEvents,
   tradeProposals,
@@ -1215,7 +1219,15 @@ export type CancelSessionResult =
 
 export async function cancelSession(
   db: Db,
-  args: { sessionId: string; viewerUserId: string },
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    /** B5 — distinguish "I declined an offer" (`'declined'`) from
+     *  "we both decided to walk away" (`'withdrawn'`, default).
+     *  Affects the cancellation DM template and the
+     *  counterpart's notification copy. */
+    reason?: 'declined' | 'withdrawn';
+  },
 ): Promise<CancelSessionResult> {
   const [row] = await db
     .select()
@@ -1235,12 +1247,14 @@ export async function cancelSession(
         status: 'cancelled',
         settledAt: now,
         updatedAt: now,
+        cancelReason: args.reason ?? 'withdrawn',
       })
       .where(eq(tradeSessions.id, args.sessionId));
     await recordSessionEvent(db, {
       sessionId: args.sessionId,
       actorUserId: args.viewerUserId,
       type: 'cancelled',
+      payload: args.reason ? { reason: args.reason } : undefined,
     });
   }
 
@@ -1993,6 +2007,125 @@ export async function pingSessionCounterpart(
   });
 
   return { ok: true, pingedUserId: targetUserId };
+}
+
+/**
+ * Hard cap on the optional note carried with a Decline action.
+ * Same shape as ping's note cap (200 chars) — terse explanation
+ * for the sender's notification, not a chat thread. */
+export const SESSION_DECLINE_NOTE_MAX_LENGTH = 200;
+
+/**
+ * B5 — recipient-side "Decline" action on a session. Cancels the
+ * session with reason='declined' and fires a `session-declined` DM
+ * to the OTHER side (subject to their `dmSessionDeclined` pref).
+ *
+ * Distinct from `cancelSession` so the language differentiates: a
+ * cancelled session is "we both walked away," a declined session is
+ * "I rejected your offer." The session row ends up in the same
+ * terminal state (`status='cancelled'`) — the only behavioral
+ * difference is `cancel_reason` + the DM template.
+ *
+ * Returns ok with the post-cancel view, or a reason matching
+ * cancelSession's failure modes plus the same `note-too-long` /
+ * `not-active` guard the ping helper uses.
+ */
+export type DeclineResult =
+  | { ok: true; view: SessionView }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'not-participant'
+        | 'not-active'
+        | 'no-counterpart'
+        | 'note-too-long';
+    };
+
+export async function declineSession(
+  db: Db,
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    note?: string;
+    bot?: DiscordBotClient;
+    appBaseUrl?: string;
+  },
+): Promise<DeclineResult> {
+  if (args.note && args.note.length > SESSION_DECLINE_NOTE_MAX_LENGTH) {
+    return { ok: false, reason: 'note-too-long' };
+  }
+
+  // Pre-check session state so we can return a clean reason without
+  // relying on cancelSession's narrower failure surface. cancelSession
+  // is no-op-on-terminal — for decline we want an explicit signal so
+  // the UI can show "this trade is no longer active" instead of a
+  // silent no-op.
+  const [row] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!row) return { ok: false, reason: 'not-found' };
+  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
+    return { ok: false, reason: 'not-participant' };
+  }
+  if (row.status !== 'active') return { ok: false, reason: 'not-active' };
+
+  // Identify the OTHER side — that's who gets the decline DM.
+  const isA = row.userAId === args.viewerUserId;
+  const targetUserId = isA ? row.userBId : row.userAId;
+  if (!targetUserId) return { ok: false, reason: 'no-counterpart' };
+
+  const cancelResult = await cancelSession(db, {
+    sessionId: args.sessionId,
+    viewerUserId: args.viewerUserId,
+    reason: 'declined',
+  });
+  if (!cancelResult.ok) {
+    return { ok: false, reason: cancelResult.reason as 'not-found' | 'not-participant' };
+  }
+
+  // DM the sender — pref-gated, no-discord-id-tolerated, failures
+  // logged but non-fatal. Same posture as B1's invite DM.
+  if (args.bot) {
+    const [decliner] = await db
+      .select({ handle: users.handle })
+      .from(users)
+      .where(eq(users.id, args.viewerUserId))
+      .limit(1);
+    const [target] = await db
+      .select({ discordId: users.discordId, dmSessionDeclined: users.dmSessionDeclined })
+      .from(users)
+      .where(eq(users.id, targetUserId))
+      .limit(1);
+    if (decliner && target?.discordId && target.dmSessionDeclined) {
+      const baseUrl = args.appBaseUrl ?? 'https://beta.swutrade.com';
+      const sessionUrl = `${baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
+      try {
+        await args.bot.sendDirectMessage(target.discordId, buildSessionDeclinedMessage({
+          declinerHandle: decliner.handle,
+          sessionUrl,
+          note: args.note,
+        }));
+        await recordSessionEvent(db, {
+          sessionId: args.sessionId,
+          actorUserId: args.viewerUserId,
+          type: 'notified',
+          payload: { kind: 'declined', targetUserId },
+        });
+      } catch (err) {
+        console.error(
+          'declineSession: sendDirectMessage failed',
+          args.sessionId,
+          targetUserId,
+          err,
+        );
+      }
+    }
+  }
+
+  return { ok: true, view: cancelResult.view };
 }
 
 /** Soft cap on chat messages per user per minute. Crosses this and

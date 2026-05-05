@@ -1,0 +1,1 @@
+ALTER TABLE "trade_sessions" ADD COLUMN "cancel_reason" text;

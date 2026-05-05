@@ -1127,6 +1127,39 @@ export function buildSessionInviteMessage(opts: {
  * action context, optional note, link out. The recipient acts on the
  * web, not in Discord.
  */
+/**
+ * DM body sent to the SENDER of a session that the recipient
+ * explicitly declined. B5 — the recipient hit the Decline action
+ * (vs the bilateral Cancel), so the language reads as a rejection
+ * of the offer rather than a mutual "let's drop it." Optional
+ * free-form note ("not at this price" / "already traded for these
+ * cards" / etc.) is rendered verbatim if supplied.
+ *
+ * Recipient's `dmSessionDeclined` pref gates whether this fires —
+ * the helper layer handles that, this template is pure formatting.
+ */
+export function buildSessionDeclinedMessage(opts: {
+  declinerHandle: string;
+  sessionUrl: string;
+  note?: string;
+}): DiscordMessageBody {
+  const lines: string[] = [
+    `@${opts.declinerHandle} declined your trade.`,
+  ];
+  if (opts.note && opts.note.trim().length > 0) {
+    lines.push('', `> ${opts.note.trim()}`);
+  }
+  lines.push('', `[View the trade](<${opts.sessionUrl}>)`);
+  return {
+    embeds: [{
+      title: 'Trade declined',
+      description: lines.join('\n'),
+      color: COLORS.gold,
+      footer: { text: 'SWUTrade shared trade' },
+    }],
+  };
+}
+
 export function buildSessionPingMessage(opts: {
   pingerHandle: string;
   sessionUrl: string;

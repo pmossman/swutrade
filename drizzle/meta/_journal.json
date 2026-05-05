@@ -197,6 +197,13 @@
       "when": 1777959128215,
       "tag": "0027_magenta_overlord",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1777963337015,
+      "tag": "0028_round_strong_guy",
+      "breakpoints": true
     }
   ]
 }

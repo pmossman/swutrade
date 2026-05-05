@@ -126,6 +126,15 @@ export interface SessionApi {
   /** Cancel an active session. Terminal from both sides; either
    *  participant can cancel. */
   cancel: () => Promise<void>;
+  /** Decline an active session. Same terminal effect as cancel
+   *  (status → cancelled), but tags `cancel_reason='declined'` so
+   *  the counterpart's notification reads as a rejection of an
+   *  offer rather than mutual withdrawal. Returns ok/error so the
+   *  UI can route on outcome (e.g. clear stale state on success). */
+  decline: (note?: string) => Promise<
+    | { ok: true }
+    | { ok: false; reason: 'not-active' | 'no-counterpart' | 'note-too-long' | 'error' }
+  >;
   /** Claim the open slot. Mints a ghost user if the viewer has no
    *  session cookie; otherwise promotes the signed-in user into
    *  slot B. Re-fetches on success so status flips to 'ready'. */
@@ -420,6 +429,28 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
+  const decline = useCallback(async (note?: string) => {
+    if (!sessionId) return { ok: false as const, reason: 'error' as const };
+    pollPausedRef.current = true;
+    try {
+      const result = await apiPost<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/decline`,
+        note ? { note } : {},
+      );
+      if (!result.ok) {
+        const r = (result.reason ?? '') as string;
+        if (r === 'not-active') return { ok: false as const, reason: 'not-active' as const };
+        if (r === 'no-counterpart') return { ok: false as const, reason: 'no-counterpart' as const };
+        if (r === 'note-too-long') return { ok: false as const, reason: 'note-too-long' as const };
+        return { ok: false as const, reason: 'error' as const };
+      }
+      if (result.data.session) applyServerSession(result.data.session);
+      return { ok: true as const };
+    } finally {
+      pollPausedRef.current = false;
+    }
+  }, [sessionId, applyServerSession]);
+
   const claim = useCallback(async () => {
     if (!sessionId) return;
     pollPausedRef.current = true;
@@ -610,6 +641,7 @@ export function useSession(sessionId: string | null): SessionApi {
     markCounterpartSeen,
     sendChat,
     ping,
+    decline,
     markRead,
     suggest,
     acceptSuggestion,

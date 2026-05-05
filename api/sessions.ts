@@ -17,6 +17,7 @@ import {
   editSessionSide,
   getSessionForViewer,
   getSessionPreview,
+  declineSession,
   inviteHandleToSession,
   listActiveSessionsForViewer,
   markSessionRead,
@@ -27,6 +28,7 @@ import {
   suggestForSession,
   unconfirmSession,
   CHAT_MAX_BODY_LENGTH,
+  SESSION_DECLINE_NOTE_MAX_LENGTH,
   SESSION_PING_NOTE_MAX_LENGTH,
 } from '../lib/sessions.js';
 import { createDiscordBotClient } from '../lib/discordBot.js';
@@ -60,6 +62,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleUnconfirmSession(req, res);
     case 'cancel':
       return handleCancelSession(req, res);
+    case 'decline':
+      return handleDeclineSession(req, res, {});
     case 'create-open':
       return handleCreateOpenSession(req, res);
     case 'claim':
@@ -571,6 +575,76 @@ export async function handleCancelSession(req: VercelRequest, res: VercelRespons
   if (!result.ok) {
     return res.status(404).json({ error: 'Not found' });
   }
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.json({ session: result.view });
+}
+
+// --- decline session (B5) ---------------------------------------------------
+
+const DeclineBodySchema = z.object({
+  note: z.string().max(SESSION_DECLINE_NOTE_MAX_LENGTH).optional(),
+});
+
+/**
+ * Recipient-side "Decline" action — semantically distinct from
+ * cancel. Cancels the session with `cancel_reason='declined'` and
+ * fires a `session-declined` DM to the OTHER side, gated on the
+ * counterpart's `dmSessionDeclined` pref. Test envs without
+ * DISCORD_BOT_TOKEN no-op the DM (same posture as B1's invite).
+ */
+export async function handleDeclineSession(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const parsed = DeclineBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const bot = deps.bot
+    ?? (process.env.DISCORD_BOT_TOKEN ? createDiscordBotClient() : undefined);
+  const appBaseUrl = req.headers.host
+    ? `https://${req.headers.host}`
+    : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+
+  const db = getDb();
+  const result = await declineSession(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    note: parsed.data.note,
+    bot,
+    appBaseUrl,
+  });
+
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+        return res.status(404).json({ error: 'Not found' });
+      case 'not-participant':
+        return res.status(403).json({ error: 'Only session participants can decline' });
+      case 'not-active':
+        return res.status(409).json({ error: 'Session is no longer active' });
+      case 'no-counterpart':
+        return res.status(409).json({ error: 'Nothing to decline — the session has no counterpart yet.' });
+      case 'note-too-long':
+        return res.status(400).json({
+          error: `Note is too long (max ${SESSION_DECLINE_NOTE_MAX_LENGTH} characters).`,
+        });
+    }
+  }
+
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.view });
 }

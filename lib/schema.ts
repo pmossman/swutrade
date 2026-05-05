@@ -706,6 +706,14 @@ export const tradeSessions = pgTable(
     // Optional final-state timestamp — when the session first left
     // `active`. Symmetric with trade_proposals.respondedAt.
     settledAt: timestamp('settled_at', { withTimezone: true }),
+    // Why a `cancelled` session was cancelled. `'declined'` means the
+    // recipient explicitly rejected an offer-shaped session (B5);
+    // `'withdrawn'` is the default cancel-flavor where one side just
+    // walked away. Null for active / settled / expired / never-
+    // cancelled sessions. Drives the cancellation DM template so the
+    // counterpart's notification reads "@alice declined" vs "@alice
+    // cancelled the session" — different verbs for different intent.
+    cancelReason: text('cancel_reason', { enum: ['declined', 'withdrawn'] as const }),
     // Per-user "I've seen the timeline up to here" timestamps. The
     // unread-event count = events with createdAt > lastReadAt for
     // the current viewer. Two columns is enough — sessions are

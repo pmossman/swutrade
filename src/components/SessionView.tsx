@@ -78,7 +78,7 @@ export function SessionView({
   const api = useSession(sessionId);
   const {
     session, preview, status,
-    saveCards, confirm, unconfirm, cancel, claim,
+    saveCards, confirm, unconfirm, cancel, decline, claim,
     hasUnseenCounterpartEdit, markCounterpartSeen,
     sendChat, ping, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
   } = api;
@@ -251,6 +251,25 @@ export function SessionView({
       setUnconfirming(false);
     }
   }, [unconfirm, unconfirming, session]);
+
+  // Decline affordance — recipient-facing rejection of an offer.
+  // Same terminal effect as Cancel but the counterpart's
+  // notification reads as "@you declined" rather than "@you
+  // cancelled the session." Confirm dialog is intentionally
+  // distinct from cancel's so the user knows the verb that lands
+  // on the other side.
+  const [declining, setDeclining] = useState(false);
+  const handleDecline = useCallback(async () => {
+    if (declining || !session || session.status !== 'active') return;
+    if (!window.confirm("Decline this trade? The other side will be notified.")) return;
+    hapticMedium();
+    setDeclining(true);
+    try {
+      await decline();
+    } finally {
+      setDeclining(false);
+    }
+  }, [decline, declining, session]);
 
   // Ping affordance — fires the explicit "@counterpart, take a look"
   // DM. Server rate-limits to one ping per ~15 min per session per
@@ -584,12 +603,15 @@ export function SessionView({
                   onConfirm={handleConfirm}
                   onUnconfirm={handleUnconfirm}
                   onCancel={handleCancel}
+                  onDecline={handleDecline}
                   onPing={handlePing}
                   confirming={confirming}
                   unconfirming={unconfirming}
                   cancelling={cancelling}
+                  declining={declining}
                   pinging={pinging}
                   pingFeedback={pingFeedback}
+                  hasIncomingSuggestions={incomingSuggestions.length > 0}
                 />
               )}
             </>
@@ -897,23 +919,34 @@ function SessionActionBar({
   onConfirm,
   onUnconfirm,
   onCancel,
+  onDecline,
   onPing,
   confirming,
   unconfirming,
   cancelling,
+  declining,
   pinging,
   pingFeedback,
+  hasIncomingSuggestions,
 }: {
   session: SessionData;
   onConfirm: () => void;
   onUnconfirm: () => void;
   onCancel: () => void;
+  onDecline: () => void;
   onPing: () => void;
   confirming: boolean;
   unconfirming: boolean;
   cancelling: boolean;
+  declining: boolean;
   pinging: boolean;
   pingFeedback: string | null;
+  /** True when the viewer has at least one incoming suggestion they
+   *  haven't accepted/dismissed. Drives the Decline button's
+   *  visibility — the offer-shaped session pattern (B4: trade-builder
+   *  Send-to-@user pre-populates the other side as suggestions) is
+   *  the case where Decline is the right verb instead of Cancel. */
+  hasIncomingSuggestions: boolean;
 }) {
   const counterpartHandle = session.counterpart?.handle ?? null;
   const bothEmpty = session.yourCards.length === 0 && session.theirCards.length === 0;
@@ -925,6 +958,12 @@ function SessionActionBar({
   // open-slot session before the second user joins). Otherwise show
   // it whenever active so users can re-engage at any point.
   const canPing = counterpartHandle !== null;
+  // Decline only surfaces when there's a "thing to decline" — i.e.
+  // an open offer-shaped session with incoming suggestions waiting
+  // for the viewer's response. Without that signal, Cancel is the
+  // right verb (mutual withdrawal); pretending Decline applies to
+  // every active session would dilute the language.
+  const canDecline = canPing && hasIncomingSuggestions && !viewerConfirmed;
 
   return (
     <section className="rounded-xl border border-space-700 bg-space-800/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
@@ -955,14 +994,26 @@ function SessionActionBar({
             <span>Ping</span>
           </button>
         )}
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={cancelling}
-          className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
-        >
-          Cancel trade
-        </button>
+        {canDecline ? (
+          <button
+            type="button"
+            onClick={onDecline}
+            disabled={declining}
+            title={`Decline @${counterpartHandle}'s trade — they'll be notified.`}
+            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
+          >
+            Decline
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={cancelling}
+            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
+          >
+            Cancel trade
+          </button>
+        )}
         {viewerConfirmed ? (
           <button
             type="button"
