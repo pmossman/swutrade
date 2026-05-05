@@ -110,11 +110,19 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
     () => guilds.enrollable.filter(g => g.enrolled),
     [guilds.enrollable],
   );
-  // "Post to a server" CTAs are only useful for real accounts in at
-  // least one bot-enabled server they've enrolled in. Ghosts can't
-  // be enrolled and signed-out viewers can't auth — gating here
-  // keeps the affordance from teasing.
-  const canPostToServer = !!user && !user.isAnonymous && enrolledGuilds.length > 0;
+  // "Post to a server" affordances are real-account-only (ghosts
+  // can't post — Discord identity is required). We deliberately
+  // DON'T gate on `enrolledGuilds.length > 0` here, even though a
+  // user with zero enrolled servers can't actually post: that gate
+  // depends on the /api/me/guilds fetch, which resolves later than
+  // auth, and was causing the Post-a-signal tile (and the
+  // Post-to-server links inside Wishlist/Binder) to pop in well
+  // after the rest of Home rendered. SignalBuilderView already
+  // handles the empty-enrolled-server case with a "No enrolled
+  // servers" prompt + Settings link, so the user lands somewhere
+  // useful either way and the home affordance shows up at the same
+  // time as the rest of the page chrome.
+  const canPostToServer = !!user && !user.isAnonymous;
   // Explicit trading-partner bookmarks. Independent of community
   // enrollment — lets users pin Discord friends who aren't in any
   // bot-enabled server. Signed-in only; the server endpoint 401s
