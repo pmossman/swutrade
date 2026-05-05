@@ -135,6 +135,19 @@ const COMMANDS = [
           },
         ],
       },
+      {
+        type: 1, // SUB_COMMAND
+        name: 'trade',
+        description: 'Start a shared trade with someone',
+        options: [
+          {
+            type: 6, // USER
+            name: 'user',
+            description: 'Who you want to trade with',
+            required: true,
+          },
+        ],
+      },
     ],
   },
   {

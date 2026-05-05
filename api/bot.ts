@@ -6,6 +6,10 @@ import { botInstalledGuilds, tradeProposals, userGuildMemberships, userPeerPrefs
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
+  createOrGetActiveSession,
+  sendSessionCreateInviteDm,
+} from '../lib/sessions.js';
+import {
   BUTTON_CUSTOM_ID_PREFIX,
   COMM_PREF_CUSTOM_ID_PREFIX,
   PREF_CUSTOM_ID_PREFIX,
@@ -411,9 +415,24 @@ async function buildApplicationCommandFollowup(
         const resolved = data?.resolved?.users?.[peerDiscordId];
         peerUsername = resolved?.global_name ?? resolved?.username;
       }
+    } else if (subcommand?.name === 'trade') {
+      // /swutrade trade @user — Phase B3 entry point. Creates a
+      // shared trade session between the clicker and the named
+      // target, DMs the target with the session link, and returns
+      // an ephemeral followup with the link for the clicker.
+      const userOpt = subcommand.options?.find(o => o.type === OPTION_TYPE_USER && o.name === 'user');
+      const targetDiscordId = userOpt ? String(userOpt.value) : undefined;
+      const resolvedTarget = targetDiscordId ? data?.resolved?.users?.[targetDiscordId] : undefined;
+      const targetUsername = resolvedTarget?.global_name ?? resolvedTarget?.username;
+      return await handleTradeSlashCommand({
+        payload,
+        targetDiscordId,
+        targetUsername,
+        deps,
+      });
     } else {
       return {
-        content: 'Unknown command. Try `/swutrade settings`.',
+        content: 'Unknown command. Try `/swutrade settings` or `/swutrade trade @user`.',
         flags: MESSAGE_FLAG_EPHEMERAL,
       };
     }
@@ -456,6 +475,112 @@ async function buildApplicationCommandFollowup(
   );
   return {
     ...buildPeerPrefsIndexMessage(peerDefs, peerRow.id, peerRow.handle),
+    flags: MESSAGE_FLAG_EPHEMERAL,
+  };
+}
+
+/**
+ * /swutrade trade @user dispatch. Phase B3 — bot's session-creation
+ * entry point. Both clicker and target must be real SWUTrade users
+ * (have rows in `users` keyed on `discord_id`). On success:
+ *   - Creates a session via `createOrGetActiveSession` (idempotent
+ *     for an existing-active-pair).
+ *   - DMs the target (subject to their `dmSessionInvited` pref via
+ *     `sendSessionCreateInviteDm`).
+ *   - Returns an ephemeral followup to the clicker with the session
+ *     URL so they can land directly on the canvas.
+ *
+ * Self-invite is rejected with a friendly message. Either party
+ * being signed-out of SWUTrade routes them to a sign-up CTA.
+ */
+async function handleTradeSlashCommand(args: {
+  payload: Record<string, unknown>;
+  targetDiscordId: string | undefined;
+  targetUsername: string | undefined;
+  deps: BotDeps;
+}): Promise<Record<string, unknown>> {
+  const { payload, targetDiscordId, targetUsername, deps } = args;
+  if (!targetDiscordId) {
+    return {
+      content: 'Pick someone to trade with: `/swutrade trade @user`.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
+  const maybeUser = payload.user as { id?: string } | undefined;
+  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
+  if (!clickerDiscordId) {
+    return {
+      content: 'Could not identify you. Try the command again.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+  if (clickerDiscordId === targetDiscordId) {
+    return {
+      content: "You can't start a trade with yourself.",
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const db = getDb();
+  // Both participants must already be on SWUTrade (have a real
+  // users row). The slash command isn't the right place to mint a
+  // ghost — the QR / share-link flow is. Surface a sign-up CTA
+  // instead so non-users know what to do.
+  const [clickerRow] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.discordId, clickerDiscordId))
+    .limit(1);
+  if (!clickerRow) {
+    return {
+      content: 'Sign in with Discord at <https://swutrade.com> first, then come back and run the command.',
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const [targetRow] = await db
+    .select({ id: users.id, handle: users.handle })
+    .from(users)
+    .where(eq(users.discordId, targetDiscordId))
+    .limit(1);
+  if (!targetRow) {
+    const targetMention = `<@${targetDiscordId}>${targetUsername ? ` (@${targetUsername})` : ''}`;
+    return {
+      content: `${targetMention} isn't on SWUTrade yet — they'd have to sign in at <https://swutrade.com> before you can start a trade with them.`,
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    };
+  }
+
+  const result = await createOrGetActiveSession(db, {
+    creatorUserId: clickerRow.id,
+    counterpartUserId: targetRow.id,
+  });
+
+  // DM the target — same pref-respecting helper B1 added on the web
+  // create path. Skip silently if there's no bot configured (test
+  // environments without DISCORD_BOT_TOKEN); the slash followup
+  // still gives the clicker a working link.
+  const bot = deps.bot
+    ?? (process.env.DISCORD_BOT_TOKEN ? createDiscordBotClient() : null);
+  if (bot && result.created) {
+    const appBaseUrl = deps.origin ?? process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+    await sendSessionCreateInviteDm(db, {
+      sessionId: result.id,
+      inviterUserId: clickerRow.id,
+      targetUserId: targetRow.id,
+      bot,
+      appBaseUrl,
+    });
+  }
+
+  const baseUrl = deps.origin ?? process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+  const sessionUrl = `${baseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(result.id)}`;
+  return {
+    content: result.created
+      ? `Started a shared trade with @${targetRow.handle}. They've been DM'd. Open it: ${sessionUrl}`
+      : `You already have a shared trade in flight with @${targetRow.handle}. Open it: ${sessionUrl}`,
     flags: MESSAGE_FLAG_EPHEMERAL,
   };
 }

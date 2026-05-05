@@ -1073,6 +1073,168 @@ describeWithDb('/api/bot dispatcher', () => {
 
         await viewer.cleanup();
       });
+
+      // --- /swutrade trade @user (Phase B3) ----------------------------
+      //
+      // Both clicker and target must be SWUTrade users. On success
+      // we create a session via createOrGetActiveSession, DM the
+      // target through the same B1 helper (which respects the
+      // dmSessionInvited pref), and the followup gives the clicker
+      // an ephemeral message with the session URL.
+
+      function tradeSlashPayload(opts: { clickerId: string; targetId: string; targetUsername?: string }) {
+        return {
+          type: 2,
+          application_id: APP_ID,
+          token: TOKEN,
+          data: {
+            type: 1,
+            name: 'swutrade',
+            options: [
+              {
+                type: 1, // SUB_COMMAND
+                name: 'trade',
+                options: [
+                  { type: 6, name: 'user', value: opts.targetId },
+                ],
+              },
+            ],
+            resolved: opts.targetUsername
+              ? { users: { [opts.targetId]: { id: opts.targetId, username: opts.targetUsername } } }
+              : undefined,
+          },
+          user: { id: opts.clickerId },
+        };
+      }
+
+      it('/swutrade trade @user — happy path: creates a session, DMs the target, followup links the URL', async () => {
+        const alice = await createTestUser();
+        const bob = await createTestUser();
+        const bot = makeFakeBot();
+        const res = mockResponse();
+        const { calls, fetchImpl } = captureFollowup();
+
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({ clickerId: alice.id, targetId: bob.id, targetUsername: bob.handle }),
+          res,
+          { bot, fetchImpl, awaitFollowup: true, origin: 'https://beta.swutrade.com' },
+        );
+
+        // Deferred ack first.
+        expect(res._status).toBe(200);
+        expect((res._json as { type: number }).type).toBe(5);
+
+        // Followup carries the session URL.
+        expect(calls).toHaveLength(1);
+        const followup = calls[0].body as { content?: string; flags?: number };
+        expect(followup.flags).toBe(64);
+        expect(followup.content ?? '').toMatch(/Started a shared trade with @[\w-]+/);
+        expect(followup.content ?? '').toMatch(/\/s\/[A-Z0-9]+/);
+
+        // Bob got a DM via the B1 invite helper.
+        expect(bot.sendCalls).toHaveLength(1);
+        expect(bot.sendCalls[0].userId).toBe(bob.id);
+
+        await alice.cleanup();
+        await bob.cleanup();
+      });
+
+      it('/swutrade trade @user — idempotent on an existing active pair: no duplicate session, no second DM', async () => {
+        const alice = await createTestUser();
+        const bob = await createTestUser();
+        const bot = makeFakeBot();
+        const { fetchImpl: fetchImpl1 } = captureFollowup();
+
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({ clickerId: alice.id, targetId: bob.id }),
+          mockResponse(),
+          { bot, fetchImpl: fetchImpl1, awaitFollowup: true },
+        );
+        expect(bot.sendCalls).toHaveLength(1);
+
+        // Second invocation in the same active-pair window should
+        // resolve to the SAME session and skip the DM (B1 only
+        // fires on created:true).
+        const { calls: calls2, fetchImpl: fetchImpl2 } = captureFollowup();
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({ clickerId: alice.id, targetId: bob.id }),
+          mockResponse(),
+          { bot, fetchImpl: fetchImpl2, awaitFollowup: true },
+        );
+
+        // Followup uses the "already in flight" copy.
+        const followup2 = calls2[0].body as { content?: string };
+        expect(followup2.content ?? '').toMatch(/already have a shared trade in flight/i);
+        // Still only one DM total — no duplicate ping for the same session.
+        expect(bot.sendCalls).toHaveLength(1);
+
+        await alice.cleanup();
+        await bob.cleanup();
+      });
+
+      it('/swutrade trade @user — rejects self-trade with a friendly message, no DB write', async () => {
+        const alice = await createTestUser();
+        const bot = makeFakeBot();
+        const { calls, fetchImpl } = captureFollowup();
+
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({ clickerId: alice.id, targetId: alice.id }),
+          mockResponse(),
+          { bot, fetchImpl, awaitFollowup: true },
+        );
+
+        const followup = calls[0].body as { content?: string };
+        expect(followup.content ?? '').toMatch(/can't start a trade with yourself/i);
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await alice.cleanup();
+      });
+
+      it('/swutrade trade @user — target not on SWUTrade: returns sign-up CTA, no DM', async () => {
+        const alice = await createTestUser();
+        const bot = makeFakeBot();
+        const { calls, fetchImpl } = captureFollowup();
+
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({
+            clickerId: alice.id,
+            targetId: 'discord-id-not-on-swutrade',
+            targetUsername: 'somebody',
+          }),
+          mockResponse(),
+          { bot, fetchImpl, awaitFollowup: true },
+        );
+
+        const followup = calls[0].body as { content?: string };
+        expect(followup.content ?? '').toMatch(/isn't on SWUTrade yet/i);
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await alice.cleanup();
+      });
+
+      it('/swutrade trade @user — clicker not on SWUTrade: routes them to sign-in', async () => {
+        const bob = await createTestUser();
+        const bot = makeFakeBot();
+        const { calls, fetchImpl } = captureFollowup();
+
+        await dispatchBotPayload(
+          'interactions',
+          tradeSlashPayload({ clickerId: 'discord-id-not-on-swutrade', targetId: bob.id }),
+          mockResponse(),
+          { bot, fetchImpl, awaitFollowup: true },
+        );
+
+        const followup = calls[0].body as { content?: string };
+        expect(followup.content ?? '').toMatch(/Sign in with Discord/i);
+        expect(bot.sendCalls).toHaveLength(0);
+
+        await bob.cleanup();
+      });
     });
 
     // Legacy `comm-pref:*` custom_ids are retained during the
