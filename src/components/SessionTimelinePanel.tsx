@@ -123,47 +123,10 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // visualViewport tracking — older iOS (< 16.4) ignores the
-  // interactive-widget viewport meta and keeps the layout viewport
-  // at its full height when the keyboard opens. We mirror the
-  // visualViewport's full geometry (top + height + left + width)
-  // into the panel's inline style so the panel always pins to the
-  // visible region rather than the layout viewport. Just pinning
-  // height was insufficient: when iOS scrolls the layout viewport
-  // up to keep the focused input visible, `position: fixed` snaps
-  // to the layout-viewport corner and the panel ends up offset
-  // above the visible region — which is what produced the trade-
-  // canvas-leak-through bug on mobile.
-  const [vvRect, setVvRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    height: number;
-  } | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const sync = () => setVvRect({
-      top: vv.offsetTop,
-      left: vv.offsetLeft,
-      width: vv.width,
-      height: vv.height,
-    });
-    sync();
-    vv.addEventListener('resize', sync);
-    vv.addEventListener('scroll', sync);
-    return () => {
-      vv.removeEventListener('resize', sync);
-      vv.removeEventListener('scroll', sync);
-    };
-  }, []);
-
   // Lock body scroll while the panel is open. iOS otherwise scrolls
   // the underlying page to keep the focused input visible — and
   // since the panel is `position: fixed`, that page-scroll exposes
-  // whatever was behind the (now-mispositioned) panel. With body
-  // scroll locked, iOS has nothing to scroll and the panel stays
-  // wherever its inline style says.
+  // whatever was behind the (now-mispositioned) panel.
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -172,31 +135,32 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
     };
   }, []);
 
-  // Inline-style pin: position: fixed + the visualViewport rect.
-  // Falls back to inset:0-style positioning until the first
-  // visualViewport sync resolves (or for browsers without the API,
-  // where the layout viewport already does the right thing).
-  const panelOuterStyle: React.CSSProperties = vvRect
-    ? {
-        position: 'fixed',
-        top: vvRect.top,
-        left: vvRect.left,
-        width: vvRect.width,
-        height: vvRect.height,
-      }
-    : {};
+  // Pin the panel to `100dvh` (dynamic viewport height) instead of
+  // tracking visualViewport.height. iOS Safari's floating URL-bar
+  // overlay (the small "host" chip that appears above the keyboard
+  // when the user is typing) is EXCLUDED from
+  // visualViewport.height, so pinning to that value left a gap
+  // between the panel's bottom edge and the keyboard top — the
+  // trade canvas peeked through that gap. `100dvh` includes the
+  // URL-bar overlay region (the chrome floats over the panel,
+  // which is the desired behavior — iOS chrome on top of our UI),
+  // so the panel always extends down to the keyboard top with no
+  // visible gap.
+  //
+  // `interactive-widget=resizes-content` in index.html's viewport
+  // meta is what makes `100dvh` shrink-on-keyboard-open on iOS
+  // 16.4+. Older iOS versions fall through to the (still-broken)
+  // pre-16.4 layout-viewport behavior — acceptable since the user
+  // population on those versions is small and shrinking.
 
   return (
     <div
-      className={vvRect ? 'z-40 flex justify-end bg-black/40' : 'fixed inset-0 z-40 flex justify-end bg-black/40'}
+      className="fixed inset-x-0 top-0 z-40 flex justify-end bg-black/40"
+      style={{ height: '100dvh' }}
       onClick={onClose}
-      style={panelOuterStyle}
     >
       <div
-        // h-full inherits the parent's pinned visualViewport height.
-        // Modern browsers also benefit from interactive-widget=resizes-content
-        // in the viewport meta, but the inline height pin works on
-        // older iOS versions that ignore it.
+        // h-full picks up the parent's 100dvh.
         className="w-full max-w-md h-full bg-space-900 border-l border-space-700 flex flex-col shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
