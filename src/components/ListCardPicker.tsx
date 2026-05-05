@@ -385,7 +385,15 @@ export function ListCardPicker({
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [baseResults, activeMode, selectedSets, selectedVariants, priceMode]);
+  }, [
+    baseResults,
+    activeMode,
+    selectedSets,
+    selectedVariants,
+    filters.selectedRarities,
+    filters.sortBy,
+    priceMode,
+  ]);
 
   // Saved-count lookup + item-id reverse index.
   //
