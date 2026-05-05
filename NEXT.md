@@ -225,6 +225,180 @@ Wireframe doc lives in conversation history (2026-04-28) — fold into a `docs/w
 
 ---
 
+### 3. Sessions become the only trade primitive
+
+**Why:** SWUTrade has two parallel trade flows — the older proposal/counter
+machine (build trade → send formal offer → accept/decline/counter) and the
+newer shared-session canvas (real-time bidirectional editing, chat,
+suggestions, revert). Sessions are the strictly richer primitive — almost
+everything proposals do is a subset of session capabilities, and the
+counter-state-machine has visibly confused users on beta. We're at minimal
+scale (no real users on the counter flow), so we can collapse onto sessions
+without preserving proposal history. The win is half the surface area to
+maintain forever, one state machine, one DB table, and a substantially
+clearer mental model. Per design discussion we **build sessions up to
+no-gap-vs-proposals first** (Phase B) and **then delete proposals** (Phase
+C) — flipping the order from a destructive-first plan keeps each slice
+shippable and de-risks the cutover.
+
+**Phase B sub-slices (build sessions up):**
+
+#### B1 — Session DM on invite
+
+When a session is created with a known counterpart (named via `?from=<handle>`
+or via the future "Send to @user" flow in B4), bot DMs the recipient with
+the `/s/<id>` link. Today, sessions only DM via the QR/share-link flow —
+which assumes the counterpart is physically present. New `session-invited`
+DM template; respects the recipient's notification prefs landing in B2.
+
+**Done when:**
+- [ ] Creating a session with a counterpart triggers a DM to that user with the session link.
+- [ ] DM template lives in `lib/discordBot.ts` alongside the proposal-DM templates.
+- [ ] Integration test in `tests/api/sessions-*.test.ts` covers the DM-fired path.
+
+#### B2 — User-triggered "Ping" + notification prefs
+
+Two pieces in one slice — they're tightly coupled because the prefs gate
+the new ping behavior:
+
+**(a) "Ping @counterpart" button on the session canvas.** When the viewer
+clicks it, fires a DM to the counterpart ("@you wants you to take a look at
+the trade") with a sensible rate limit (e.g. once per 15 min per session per
+sender). Optional free-form note. Replaces the implicit "DM on every edit"
+idea — explicit user action only, never automatic, never spammy.
+
+**(b) Per-user notification preferences (Settings → Notifications).**
+Checkboxes for which events earn a DM. Events: `session-invited`,
+`ping-from-counterpart`, `session-settled`, `session-expired`,
+`session-declined`. Default opt-in for all; user can turn off what they
+don't want. Stored on `users` table (or a `user_prefs` extension); read
+inside `lib/discordBot.ts` before sending.
+
+**Done when:**
+- [ ] "Ping @counterpart" button visible on session canvas; rate-limited.
+- [ ] DM fires only for users who haven't opted out.
+- [ ] Settings page surfaces the preference checkboxes; saves persist.
+- [ ] Schema migration for the prefs columns.
+- [ ] Integration tests cover: rate-limit blocks, opt-out blocks DM, opt-in fires DM.
+- [ ] e2e covers the Settings → Notifications surface.
+
+#### B3 — `/trade @user` slash command creates a session
+
+Replace the bot's proposal-creation slash command with session creation. Bot
+DMs both parties (subject to B2 prefs) with the session link. Drop-in
+behavior at the bot layer — the user types the same command and gets a
+better-feeling result (collaborative canvas instead of a frozen offer).
+
+**Done when:**
+- [ ] `/trade @user` creates a session with the inviter + invitee both pre-attached.
+- [ ] Both parties get a DM with the session link (subject to prefs).
+- [ ] Existing slash-command e2e or integration coverage updated.
+
+#### B4 — Trade-builder "Send to @user" → session with suggestions
+
+The proposal-replacement UX, designed cleanly. Build cards solo in the trade
+builder → click **Send to @user** → pick a recipient (handle picker /
+favorites) → backend creates a session where:
+- My-side cards become my actual cards on the session.
+- Cards I added to **their** side become **outgoing suggestions** for that
+  side (sessions already have this primitive — `incomingSuggestions` /
+  `outgoingSuggestions` in `useSession`). The recipient lands and sees:
+  - My side already populated (real cards).
+  - Their side empty, with my suggestions surfaced inline ("@me suggests
+    you add these cards").
+  - Standard accept/dismiss-suggestion controls per row.
+- Neither side is auto-confirmed. The recipient is free to accept/edit
+  suggestions, add their own cards, etc. — sessions stay collaborative,
+  the suggestion primitive is just the on-ramp.
+
+**Done when:**
+- [ ] Trade-builder gains a "Send to @user" CTA alongside "Share as live trade."
+- [ ] Recipient picker (handle search + favorites shortcut) integrated.
+- [ ] Backend creates the session with my-side as real cards + their-side as outgoing suggestions in one shot.
+- [ ] DM fires to recipient via B1's invite flow.
+- [ ] Integration tests cover the create-with-suggestions path.
+- [ ] e2e walks the full proposer → recipient → settle flow.
+
+#### B5 — Decline action on sessions
+
+Recipient-side **Decline** action — semantically distinct from cancel
+(which is bidirectional withdrawal). Maps to cancel-with-decline-flag plus
+a dedicated DM template so the proposer's notification reads "@alice
+declined" instead of "@alice cancelled the session." Important for the
+"Send to @user" flow's UX symmetry — recipients need a clean rejection
+verb that isn't "cancel."
+
+**Done when:**
+- [ ] Session canvas exposes a **Decline** action (visible to the recipient when the session is in a proposer-initiated state).
+- [ ] Sessions schema gains a `cancel_reason: 'declined' | 'withdrawn' | ...` column.
+- [ ] DM template `session-declined` fires (subject to prefs).
+- [ ] Integration tests cover the decline transition + DM.
+
+#### B6 — "Needs your response" semantic on sessions
+
+Sessions today don't have a clean derived flag for "this is waiting on the
+viewer." Inbox treats every active session uniformly. Add `awaitingViewer:
+boolean` to the `SessionView` API output, true when:
+- Counterpart confirmed and viewer has not, OR
+- There's an unread incoming suggestion targeting the viewer, OR
+- There's an unread chat message from the counterpart.
+
+Drives Inbox row prominence (gold tint or icon) and any future
+re-engagement DM logic. Replaces the proposal-era `state === 'awaiting'`
+signal that the home page leaned on.
+
+**Done when:**
+- [ ] `SessionView` exposes `awaitingViewer: boolean`, derived server-side.
+- [ ] Home Inbox gives a subtle highlight to awaiting-viewer rows.
+- [ ] Integration tests cover the boolean across the three trigger conditions.
+
+#### B7 — Mobile session polish
+
+Audit remaining gaps between proposal-mobile (polished) and session-mobile
+(newer). Concrete items I'd target on first inspection: confirm-flow
+visibility at small widths, decline-button discoverability (per B5), copy
+clarity in settled / declined / cancelled terminal states, bottom-sheet
+ergonomics for chat + suggestions on phones. Scope per audit.
+
+**Done when:**
+- [ ] Audit doc (in `docs/wiki/` or comment-only) listing the gaps closed.
+- [ ] Visual + interaction parity with proposal-mobile for all flows the user can hit on a phone.
+- [ ] Mobile-chrome e2e covers the post-fix flows.
+
+**Phase C sub-slices (delete proposals — runs only after Phase B is satisfying):**
+
+#### C1 — Delete proposal code paths
+
+Pure subtraction. By this point sessions cover everything proposals did, so
+the delete is mechanical:
+
+- Drop `tradeProposals` table + `proposalStatuses` enum from `lib/schema.ts` (migration deletes the table).
+- Delete `api/trades.ts` entirely (it's all proposal endpoints) — or trim if any session-supporting code is co-located.
+- Remove `/api/trades/*` rewrites from `vercel.json`.
+- Strip proposal helpers from `lib/tradeGuild.ts`, `lib/discordBot.ts`, `api/bot.ts` (proposal-specific interactions, DM templates, slash-command handlers).
+- Delete `src/components/TradeDetailView.tsx`.
+- Delete `src/hooks/useTradeDetail.ts`, `src/hooks/useTradesList.ts` (or absorb into session hooks).
+- Update `src/hooks/useMyTrades.ts` — drop the proposal-fetching half; collapse `TradeRow.kind` to a single value.
+- Trade builder: remove the "Send as proposal" button; "Share as live trade" + B4's "Send to @user" become the only send paths.
+- `src/components/TradesHistoryView.tsx`: drop tabs that distinguished proposal direction; sessions only.
+- `routing/config.ts`: drop the `'trade-detail'` view mode + `?trade=<id>` matching.
+- Delete `tests/api/trades-*.test.ts`, `e2e/recipient.spec.ts`, proposal-related parts of `e2e/community.auth.spec.ts`.
+- Cancel the queued "Proposal transition pattern extraction" + "Proposal expiry cron" Later items — they go away with this slice.
+
+Net code change: large minus, easily -2k to -3k lines.
+
+**Done when:**
+- [ ] Schema migration drops `tradeProposals` cleanly on staging + prod.
+- [ ] No code references `tradeProposals`, `ProposalStatus`, `TradeListEntry`, or `?trade=<id>` routing.
+- [ ] `TradeRow.kind` is collapsed (or removed entirely if no longer a discriminator).
+- [ ] Existing e2e suite passes; obsolete proposal e2e removed.
+- [ ] Bot has no proposal-specific commands or DM templates left.
+- [ ] Memory note added if any subtle gotcha turns up during the strip.
+
+**Phase total:** ~9-13 days for Phase B (B1-B7, each shippable independently to beta) + 3-4 days for Phase C cleanup. Each B-slice lands behind no flag — it's an additive improvement to the session surface.
+
+---
+
 ## Wishlist / Binder enhancement backlog
 
 Each item is a potential per-slice pickup after the **Wishlist / Binder split (foundational)** queue item lands. Nothing here is committed; they're a menu to choose from as real use warrants. Items are intentionally unsized — scope them when one is promoted to the Queue.
@@ -264,13 +438,13 @@ Each item is a potential per-slice pickup after the **Wishlist / Binder split (f
 
 Server has `lib/errorReporter.ts` posting to `#bot-errors`. Client has no equivalent — view-layer failures silently `console.warn` (e.g., `TradeImageModal`). Add a `src/lib/clientErrorReporter.ts` that POSTs to a `/api/errors/client` endpoint which funnels to the same Discord webhook tagged `client`. Hook to a React `ErrorBoundary` at App root + expose as `reportClientError()` for explicit catches. Low urgency until real users start hitting runtime errors we can't see.
 
-### Proposal transition pattern extraction
+### ~~Proposal transition pattern extraction~~ — moot once Queue #3 (sessions consolidation) ships
 
-`handlePropose`, `handleCounter`, `handleCancel`, `handleEdit`, `handleNudge`, and `resolveProposal` share a pattern: "load proposal → auth check → precondition check → optimistic-concurrency update → edit source DM → send outbound DM." Extract `executeProposalTransition(opts)`. High ROI once a 7th transition shows up (expiry cron counts as one — tackle this alongside).
+~~`handlePropose`, `handleCounter`, `handleCancel`, `handleEdit`, `handleNudge`, and `resolveProposal` share a pattern...~~ Cancelled — these handlers all get deleted in Phase C of the proposal-kill effort (Queue #3).
 
-### Proposal expiry cron
+### ~~Proposal expiry cron~~ — moot once Queue #3 ships
 
-Proposals sit `pending` indefinitely today. A scheduled job (GitHub Actions, following the price-refresh pattern — see `h-cards-pricing.md` and `j-infra.md` on why it's not a Vercel cron) runs daily, transitions rows older than N days (30 to start) to `expired`, edits their DMs to show the expired banner. Needs the shared transition pattern above.
+~~Proposals sit `pending` indefinitely today...~~ Cancelled — proposal table goes away in Phase C of Queue #3. Session-level expiry is a separate concern handled inside the session lifecycle.
 
 ### Tier 2 nightly Discord contract probe
 
