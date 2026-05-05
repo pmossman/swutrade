@@ -130,24 +130,66 @@ export function SessionSuggestComposer({
     }
   }, [hasContent, draft, removeDraft, submitting, counterpartSide, onSubmit, onClose]);
 
-  return (
-    <div className="fixed inset-0 z-40 bg-space-900 flex flex-col">
-      <header className="shrink-0 px-4 py-3 border-b border-space-800 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Suggest changes</div>
-          <div className="text-sm font-semibold text-gray-100 truncate">
-            to @{counterpartHandle ?? 'counterpart'}'s side
-          </div>
+  // Picker's default top-bar (Back chevron + "Done" pill) gets
+  // suppressed below by passing a custom `header`. We replaced
+  // "Done" with the contextual Cancel + Send-suggestion pair here
+  // because users were tapping "Done" expecting the suggestion to
+  // fire and finding nothing happened — the actual send button
+  // lived in a less-discoverable footer slot. With the contextual
+  // header, the verb the user sees matches the action that lands.
+  const composerHeader = (
+    <div className="shrink-0 px-4 py-3 border-b border-space-800 flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Suggest changes</div>
+        <div className="text-sm font-semibold text-gray-100 truncate">
+          to @{counterpartHandle ?? 'counterpart'}'s side
         </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
           onClick={onClose}
-          className="px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
-          aria-label="Close suggest composer"
+          className="px-3 h-8 rounded-md border border-space-700 text-gray-300 hover:border-gray-500 hover:text-gray-100 text-xs font-semibold transition-colors"
         >
-          ×
+          Cancel
         </button>
-      </header>
+        {hasContent && (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="px-3 h-8 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting ? 'Sending…' : 'Send suggestion'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Footer keeps the summary line ("+2 ready to suggest" /
+  // "Tap cards to add them"). The Send button lives in the header
+  // now, so the footer is informational only.
+  const footerStatus = error
+    ? <div className="text-[11px] text-red-400 truncate">{error}</div>
+    : lockedHint
+      ? <div className="text-[11px] text-amber-300 truncate">{lockedHint}</div>
+      : (
+        <div className="text-[11px] text-gray-500">
+          {!hasContent
+            ? 'Tap cards to add them to your suggestion.'
+            : (() => {
+                const parts: string[] = [];
+                if (addCount > 0) parts.push(`+${addCount}`);
+                if (removeCount > 0) parts.push(`-${removeCount}`);
+                return `${parts.join(' · ')} ready to suggest.`;
+              })()}
+        </div>
+      );
+
+  return (
+    <div className="fixed inset-0 z-40 bg-space-900 flex flex-col">
+      {composerHeader}
 
       {removeDraft.length > 0 && (
         <RemovingStrip cards={removeDraft} onRemoveOne={removeRemoval} />
@@ -167,37 +209,14 @@ export function SessionSuggestComposer({
           onPick={handlePick}
           onDecrement={handleDecrement}
           onClose={onClose}
+          // Suppress picker's default top bar — composerHeader
+          // above owns the cancel + send affordances now.
+          header={<></>}
         />
       </div>
 
-      <footer className="shrink-0 px-3 py-2 border-t border-space-800 flex items-center gap-2">
-        {error && (
-          <div className="text-[11px] text-red-400 flex-1 truncate">{error}</div>
-        )}
-        {!error && lockedHint && (
-          <div className="text-[11px] text-amber-300 flex-1 truncate">{lockedHint}</div>
-        )}
-        {!error && !lockedHint && (
-          <div className="text-[11px] text-gray-500 flex-1">
-            {!hasContent
-              ? 'Tap cards to add them to your suggestion.'
-              : (() => {
-                  const parts: string[] = [];
-                  if (addCount > 0) parts.push(`+${addCount}`);
-                  if (removeCount > 0) parts.push(`-${removeCount}`);
-                  const summary = parts.join(' · ');
-                  return `${summary} ready to suggest.`;
-                })()}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={!hasContent || submitting}
-          className="shrink-0 px-3 py-1.5 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {submitting ? 'Sending…' : 'Send suggestion'}
-        </button>
+      <footer className="shrink-0 px-3 py-2 border-t border-space-800">
+        {footerStatus}
       </footer>
     </div>
   );
