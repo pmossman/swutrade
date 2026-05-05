@@ -552,21 +552,19 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
-  // Auto mark-read on visibility→visible so opening the session
-  // tab clears the unread badge (matches the foreground-sync pattern).
-  // Initial open is also covered: the initial fetchOnce gives us
-  // the unreadCount, and the first visibility check fires markRead.
-  useEffect(() => {
-    if (!sessionId) return;
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') markRead();
-    };
-    if (document.visibilityState === 'visible') markRead();
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [sessionId, markRead]);
+  // markRead used to auto-fire on page visibilitychange→visible —
+  // intended to clear the unread badge once the user was actively
+  // looking. In practice it fired on the FIRST visibility check
+  // (page mount), wiping the unread count before the user saw the
+  // glow on the chat button. Beta repro: A sends a chat, B clicks
+  // the invite link, B's session page loads → markRead fires →
+  // unreadCount goes to 0 → B never sees the badge for A's message.
+  //
+  // Read-state is now driven by the timeline-panel's own visibility
+  // (SessionView fires markRead when timelineOpen flips true and
+  // refreshes it on visibilitychange while open). The chat button
+  // is the badge-bearing surface, so the badge clears when the
+  // user looks AT the chat, not just at the session.
 
   const suggest = useCallback(async (args: {
     targetSide: 'a' | 'b';

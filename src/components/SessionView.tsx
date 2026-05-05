@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState } from './ui/states';
@@ -80,10 +80,27 @@ export function SessionView({
     saveCards, confirm, unconfirm, cancel, decline, claim,
     hasUnseenCounterpartEdit, markCounterpartSeen,
     sendChat, ping, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
+    markRead,
   } = api;
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
+  // Mark chat as read whenever the timeline panel is open AND the
+  // tab is visible. Open the panel → markRead fires once. Tab away
+  // and back while panel is still open → markRead refreshes to
+  // catch any new messages that arrived while the tab was hidden.
+  // Closing the panel STOPS the auto-clear, so new chats received
+  // after-close stay visible as a glow on the chat button until
+  // the user opens the panel again.
+  useEffect(() => {
+    if (!timelineOpen) return;
+    if (document.visibilityState === 'visible') markRead();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') markRead();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [timelineOpen, markRead]);
   const [suggestComposerOpen, setSuggestComposerOpen] = useState(false);
   // Pre-filled cardsToRemove for the composer — set by the per-card
   // "Suggest swap" kebab so the composer opens with the card already
@@ -834,9 +851,18 @@ function SessionIdentityStrip({
 }
 
 /**
- * "Activity" pill that opens the timeline panel. Surfaces the unread
- * badge so the counterpart's chat / edits don't go unseen — clears
- * via `markRead` (auto-fired on visibility) once the panel is open.
+ * "Activity" pill that opens the timeline panel. Surfaces the
+ * unread badge so the counterpart's chat doesn't go unseen.
+ * Cleared via `markRead` from SessionView when the timeline panel
+ * is open AND the tab is visible — opening the chat is the read
+ * receipt, not opening the page. (The previous page-visibility
+ * auto-clear was wiping the badge before the user could see it
+ * after a beta-user repro showed.)
+ *
+ * When unread > 0 we layer the same "look at me" treatment the
+ * tutorial help button uses: subtle button-level pulse + an
+ * expanding gold ring (`animate-ping`). Stronger than the prior
+ * box-shadow-only pulse, which beta users were missing.
  */
 function TimelineToggle({ unreadCount, onClick }: { unreadCount: number; onClick: () => void }) {
   const hasUnread = unreadCount > 0;
@@ -847,24 +873,33 @@ function TimelineToggle({ unreadCount, onClick }: { unreadCount: number; onClick
       aria-label={hasUnread ? `Chat & history (${unreadCount} unread)` : 'Chat & history'}
       className={`relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-bold uppercase tracking-wide transition-colors ${
         hasUnread
-          ? 'bg-gold/20 border-gold/60 text-gold-bright hover:bg-gold/30 animate-pulse-unread'
+          ? 'bg-gold/20 border-gold/60 text-gold-bright hover:bg-gold/30 animate-pulse'
           : 'bg-space-800/60 border-space-700 text-gray-300 hover:text-gold hover:border-gold/40'
       }`}
     >
+      {/* Expanding gold ring for the unread state — same pattern as
+          the tutorial help button's "look at me" glow. Pointer-
+          events:none so it never intercepts clicks. */}
+      {hasUnread && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-0 rounded-md ring-2 ring-gold/40 animate-ping"
+        />
+      )}
       {/* Chat-bubble icon — explicit visual cue that this surface
           carries chat, not just system events. The "Activity" label
           alone reads as read-only history; the bubble + the "Chat"
           word in the label clarify it's interactive. */}
-      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+      <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 relative" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
         <path
           d="M2.5 4.5C2.5 3.4 3.4 2.5 4.5 2.5h7c1.1 0 2 .9 2 2v5c0 1.1-.9 2-2 2H7l-3 2.5V11.5c-.83 0-1.5-.67-1.5-1.5z"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
       </svg>
-      <span>Chat</span>
+      <span className="relative">Chat</span>
       {hasUnread && (
-        <span className="inline-flex items-center justify-center min-w-[1.1rem] px-1 h-4 rounded-full bg-gold-bright text-space-900 text-[10px] font-bold tabular-nums shadow-[0_0_8px_rgba(255,215,0,0.5)]">
+        <span className="relative inline-flex items-center justify-center min-w-[1.1rem] px-1 h-4 rounded-full bg-gold-bright text-space-900 text-[10px] font-bold tabular-nums shadow-[0_0_8px_rgba(255,215,0,0.5)]">
           {unreadCount > 99 ? '99+' : unreadCount}
         </span>
       )}
