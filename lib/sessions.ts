@@ -16,7 +16,7 @@ import {
   createDiscordBotClient,
   type DiscordBotClient,
 } from './discordBot.js';
-import { buildSessionInviteMessage } from './proposalMessages.js';
+import { buildSessionInviteMessage, buildSessionPingMessage } from './proposalMessages.js';
 import {
   sessionEvents,
   tradeProposals,
@@ -1783,7 +1783,7 @@ export async function sendSessionCreateInviteDm(
     bot: DiscordBotClient;
     appBaseUrl: string;
   },
-): Promise<{ ok: true } | { ok: false; reason: 'no-discord-id' | 'dm-failed' }> {
+): Promise<{ ok: true } | { ok: false; reason: 'no-discord-id' | 'dm-failed' | 'opted-out' }> {
   const [inviter] = await db
     .select({ handle: users.handle })
     .from(users)
@@ -1791,12 +1791,17 @@ export async function sendSessionCreateInviteDm(
     .limit(1);
   if (!inviter) return { ok: false, reason: 'dm-failed' };
 
+  // Pref gate (B2). Recipient-side opt-out: a user can flip
+  // `dmSessionInvited` off in Settings to silence the new-trade DM.
+  // We respect this before any other lookup so opted-out users get
+  // zero side-effects (no `notified` event either).
   const [target] = await db
-    .select({ discordId: users.discordId })
+    .select({ discordId: users.discordId, dmSessionInvited: users.dmSessionInvited })
     .from(users)
     .where(eq(users.id, args.targetUserId))
     .limit(1);
   if (!target?.discordId) return { ok: false, reason: 'no-discord-id' };
+  if (!target.dmSessionInvited) return { ok: false, reason: 'opted-out' };
 
   const sessionUrl = `${args.appBaseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
   const body = buildSessionInviteMessage({
@@ -1827,6 +1832,167 @@ export async function sendSessionCreateInviteDm(
   });
 
   return { ok: true };
+}
+
+/**
+ * Ping rate-limit window. Sender can fire at most one ping DM per
+ * window per session. Generous enough that "I made a meaningful edit
+ * and want them to look" works, tight enough that a frustrated user
+ * mashing the button doesn't cascade into Discord rate-limit
+ * territory. Persisted via session_events so the limit survives
+ * across the bot's request boundary.
+ */
+export const SESSION_PING_RATE_LIMIT_MS = 15 * 60 * 1000;
+
+/**
+ * Optional free-form note carried with the ping DM. Hard-capped
+ * server-side so a malicious / fat-fingered sender can't inflate
+ * the recipient's DM to message-cap territory.
+ */
+export const SESSION_PING_NOTE_MAX_LENGTH = 200;
+
+/**
+ * Fire a "your counterpart wants you to look at this trade" DM.
+ * User-triggered (button on the session canvas), never automatic —
+ * the design call from the user was that auto-DMs on every edit
+ * would feel like spam, so this is the explicit re-engagement lever.
+ *
+ * Invariants:
+ *   - Viewer must be a participant of the session.
+ *   - Session must be non-terminal (no point pinging a settled or
+ *     cancelled session — that's just noise).
+ *   - The OTHER side is the recipient (deduced from session
+ *     participants). Self-ping is not a real case (the viewer is one
+ *     of the two participants by definition); we still guard against
+ *     it returning `not-participant`.
+ *   - Rate limit: one ping per `SESSION_PING_RATE_LIMIT_MS` per
+ *     session per sender. Subsequent pings inside the window collapse
+ *     to `rate-limited` — caller can show "you can ping again in N
+ *     minutes" but no DM is sent.
+ *   - Recipient's `dmSessionPing` pref is honored. Opt-out collapses
+ *     to `opted-out` — caller can surface this as "they've turned off
+ *     ping notifications" if desired, but the session itself isn't
+ *     affected.
+ *   - DM failures (bot throws, recipient has DMs disabled) collapse
+ *     to `dm-failed`. Event log + session state stay untouched so
+ *     the sender can retry.
+ *   - On success a `notified` event records `{ kind: 'ping',
+ *     senderUserId, targetUserId }`. The rate-limit check looks for
+ *     these.
+ */
+export type PingResult =
+  | { ok: true; pingedUserId: string }
+  | {
+      ok: false;
+      reason:
+        | 'not-found'
+        | 'not-participant'
+        | 'terminal'
+        | 'no-counterpart'
+        | 'rate-limited'
+        | 'no-discord-id'
+        | 'opted-out'
+        | 'dm-failed'
+        | 'note-too-long';
+    };
+
+export async function pingSessionCounterpart(
+  db: Db,
+  args: {
+    sessionId: string;
+    viewerUserId: string;
+    note?: string;
+    bot: DiscordBotClient;
+    appBaseUrl: string;
+  },
+): Promise<PingResult> {
+  if (args.note && args.note.length > SESSION_PING_NOTE_MAX_LENGTH) {
+    return { ok: false, reason: 'note-too-long' };
+  }
+
+  const [sessionRow] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!sessionRow) return { ok: false, reason: 'not-found' };
+  if (sessionRow.status !== 'active') return { ok: false, reason: 'terminal' };
+
+  // Resolve participant identity. The viewer must be one of A/B; the
+  // OTHER one is the ping target. An open-slot session (B === null)
+  // has no counterpart to ping.
+  const isA = sessionRow.userAId === args.viewerUserId;
+  const isB = sessionRow.userBId === args.viewerUserId;
+  if (!isA && !isB) return { ok: false, reason: 'not-participant' };
+  const targetUserId = isA ? sessionRow.userBId : sessionRow.userAId;
+  if (!targetUserId) return { ok: false, reason: 'no-counterpart' };
+
+  // Rate-limit lookup. Scan recent `notified` events from this
+  // sender on this session; bail if any kind=ping is within the
+  // window.
+  const cutoff = new Date(Date.now() - SESSION_PING_RATE_LIMIT_MS);
+  const recentEvents = await db
+    .select({ payload: sessionEvents.payload })
+    .from(sessionEvents)
+    .where(and(
+      eq(sessionEvents.sessionId, args.sessionId),
+      eq(sessionEvents.type, 'notified'),
+      eq(sessionEvents.actorUserId, args.viewerUserId),
+      gt(sessionEvents.createdAt, cutoff),
+    ));
+  const recentPing = recentEvents.some(e => {
+    const p = e.payload as { kind?: string } | null;
+    return p?.kind === 'ping';
+  });
+  if (recentPing) return { ok: false, reason: 'rate-limited' };
+
+  // Resolve sender handle + recipient discord_id + recipient pref.
+  const [sender] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, args.viewerUserId))
+    .limit(1);
+  if (!sender) return { ok: false, reason: 'not-participant' };
+
+  const [target] = await db
+    .select({ discordId: users.discordId, dmSessionPing: users.dmSessionPing })
+    .from(users)
+    .where(eq(users.id, targetUserId))
+    .limit(1);
+  if (!target?.discordId) return { ok: false, reason: 'no-discord-id' };
+  if (!target.dmSessionPing) return { ok: false, reason: 'opted-out' };
+
+  const sessionUrl = `${args.appBaseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
+  const body = buildSessionPingMessage({
+    pingerHandle: sender.handle,
+    sessionUrl,
+    note: args.note,
+  });
+
+  try {
+    await args.bot.sendDirectMessage(target.discordId, body);
+  } catch (err) {
+    console.error(
+      'pingSessionCounterpart: sendDirectMessage failed',
+      args.sessionId,
+      targetUserId,
+      err,
+    );
+    return { ok: false, reason: 'dm-failed' };
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.viewerUserId,
+    type: 'notified',
+    payload: {
+      kind: 'ping',
+      senderUserId: args.viewerUserId,
+      targetUserId,
+    },
+  });
+
+  return { ok: true, pingedUserId: targetUserId };
 }
 
 /** Soft cap on chat messages per user per minute. Crosses this and

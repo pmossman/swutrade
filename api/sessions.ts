@@ -20,12 +20,14 @@ import {
   inviteHandleToSession,
   listActiveSessionsForViewer,
   markSessionRead,
+  pingSessionCounterpart,
   proposeRevertForSession,
   sendChatMessage,
   sendSessionCreateInviteDm,
   suggestForSession,
   unconfirmSession,
   CHAT_MAX_BODY_LENGTH,
+  SESSION_PING_NOTE_MAX_LENGTH,
 } from '../lib/sessions.js';
 import { createDiscordBotClient } from '../lib/discordBot.js';
 
@@ -64,6 +66,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleClaimSession(req, res);
     case 'invite-handle':
       return handleInviteHandle(req, res);
+    case 'ping':
+      return handlePingSession(req, res, {});
     case 'chat':
       return handleChatSession(req, res);
     case 'mark-read':
@@ -531,6 +535,102 @@ export async function handleCancelSession(req: VercelRequest, res: VercelRespons
   }
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.view });
+}
+
+// --- ping counterpart -------------------------------------------------------
+
+const PingBodySchema = z.object({
+  // Optional free-form note up to SESSION_PING_NOTE_MAX_LENGTH chars.
+  // Empty / whitespace-only collapses to undefined inside the helper.
+  note: z.string().max(SESSION_PING_NOTE_MAX_LENGTH).optional(),
+});
+
+/**
+ * User-triggered "Ping @counterpart" — fires a DM to the OTHER side
+ * of the session. Rate-limited at the lib layer
+ * (SESSION_PING_RATE_LIMIT_MS) so a frustrated user can't carpet-bomb
+ * their counterpart's DMs. Recipient's `dmSessionPing` pref is
+ * honored by the helper.
+ *
+ * `deps.bot` is injectable for tests; falls back to the real bot
+ * client when DISCORD_BOT_TOKEN is set, otherwise no-op (tests
+ * without a fake bot land on the no-op path the same way B1 does).
+ */
+export async function handlePingSession(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const id = typeof req.query.id === 'string' ? req.query.id : '';
+  if (!id) return res.status(400).json({ error: 'id is required' });
+
+  const parsed = PingBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: 'Invalid body', detail: parsed.error.message });
+  }
+
+  const bot = deps.bot
+    ?? (process.env.DISCORD_BOT_TOKEN ? createDiscordBotClient() : null);
+  if (!bot) {
+    return res.status(503).json({
+      error: 'Discord bot is not configured. Pinging is disabled in this environment.',
+    });
+  }
+
+  const appBaseUrl = req.headers.host
+    ? `https://${req.headers.host}`
+    : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+
+  const db = getDb();
+  const result = await pingSessionCounterpart(db, {
+    sessionId: id,
+    viewerUserId: session.userId,
+    note: parsed.data.note,
+    bot,
+    appBaseUrl,
+  });
+
+  if (!result.ok) {
+    switch (result.reason) {
+      case 'not-found':
+        return res.status(404).json({ error: 'Not found' });
+      case 'not-participant':
+        return res.status(403).json({ error: 'Only session participants can ping' });
+      case 'no-counterpart':
+        return res.status(409).json({
+          error: 'Nobody to ping yet — the session is still waiting on a second participant.',
+        });
+      case 'terminal':
+        return res.status(409).json({ error: 'Session is no longer active' });
+      case 'rate-limited':
+        return res.status(429).json({
+          error: 'You just pinged them. Wait a few minutes before pinging again.',
+        });
+      case 'no-discord-id':
+        return res.status(409).json({ error: "Counterpart can't receive Discord DMs." });
+      case 'opted-out':
+        return res.status(409).json({
+          error: "Counterpart has turned off counterpart-ping DMs in their notification preferences.",
+        });
+      case 'note-too-long':
+        return res.status(400).json({
+          error: `Note is too long (max ${SESSION_PING_NOTE_MAX_LENGTH} characters).`,
+        });
+      case 'dm-failed':
+        return res.status(502).json({ error: 'Could not send the Discord DM. They may have DMs disabled.' });
+    }
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.status(200).json({ pinged: { userId: result.pingedUserId } });
 }
 
 // --- invite-by-handle -------------------------------------------------------

@@ -80,7 +80,7 @@ export function SessionView({
     session, preview, status,
     saveCards, confirm, unconfirm, cancel, claim,
     hasUnseenCounterpartEdit, markCounterpartSeen,
-    sendChat, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
+    sendChat, ping, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
   } = api;
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
@@ -251,6 +251,48 @@ export function SessionView({
       setUnconfirming(false);
     }
   }, [unconfirm, unconfirming, session]);
+
+  // Ping affordance — fires the explicit "@counterpart, take a look"
+  // DM. Server rate-limits to one ping per ~15 min per session per
+  // sender; we surface the various reason codes as transient feedback
+  // ("Pinged", "Wait a few minutes", "They've turned off pings", etc.)
+  // that auto-clears so the action bar doesn't stay sticky on a
+  // status message.
+  const [pinging, setPinging] = useState(false);
+  const [pingFeedback, setPingFeedback] = useState<string | null>(null);
+  const handlePing = useCallback(async () => {
+    if (pinging || !session || session.status !== 'active') return;
+    setPinging(true);
+    setPingFeedback(null);
+    try {
+      const result = await ping();
+      if (result.ok) {
+        setPingFeedback('Pinged ✓');
+        hapticSoft();
+      } else {
+        // Map reason codes to user-facing copy. The DM didn't
+        // necessarily fail — `opted-out` and `no-discord-id` are
+        // recipient-side states the sender should know about so they
+        // pick a different channel.
+        const msg =
+          result.reason === 'rate-limited'
+            ? 'Wait a few minutes before pinging again.'
+            : result.reason === 'opted-out'
+              ? "They've turned off ping DMs in their settings."
+              : result.reason === 'no-counterpart'
+                ? 'No counterpart yet.'
+                : result.reason === 'no-discord-id'
+                  ? "They can't receive Discord DMs."
+                  : 'Could not send ping. Try again later.';
+        setPingFeedback(msg);
+      }
+    } finally {
+      setPinging(false);
+      // Auto-clear the feedback after a beat so the bar returns to
+      // its normal layout.
+      setTimeout(() => setPingFeedback(null), 4000);
+    }
+  }, [ping, pinging, session]);
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
@@ -542,9 +584,12 @@ export function SessionView({
                   onConfirm={handleConfirm}
                   onUnconfirm={handleUnconfirm}
                   onCancel={handleCancel}
+                  onPing={handlePing}
                   confirming={confirming}
                   unconfirming={unconfirming}
                   cancelling={cancelling}
+                  pinging={pinging}
+                  pingFeedback={pingFeedback}
                 />
               )}
             </>
@@ -852,17 +897,23 @@ function SessionActionBar({
   onConfirm,
   onUnconfirm,
   onCancel,
+  onPing,
   confirming,
   unconfirming,
   cancelling,
+  pinging,
+  pingFeedback,
 }: {
   session: SessionData;
   onConfirm: () => void;
   onUnconfirm: () => void;
   onCancel: () => void;
+  onPing: () => void;
   confirming: boolean;
   unconfirming: boolean;
   cancelling: boolean;
+  pinging: boolean;
+  pingFeedback: string | null;
 }) {
   const counterpartHandle = session.counterpart?.handle ?? null;
   const bothEmpty = session.yourCards.length === 0 && session.theirCards.length === 0;
@@ -870,11 +921,17 @@ function SessionActionBar({
   // Disable Confirm with an inline hint when the canvas is empty —
   // settling a trade with no cards isn't a real transaction.
   const confirmDisabled = confirming || bothEmpty;
+  // Hide Ping when there's no counterpart in the session yet (an
+  // open-slot session before the second user joins). Otherwise show
+  // it whenever active so users can re-engage at any point.
+  const canPing = counterpartHandle !== null;
 
   return (
     <section className="rounded-xl border border-space-700 bg-space-800/40 p-3 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex-1 text-[11px] text-gray-400 leading-relaxed">
-        {bothEmpty ? (
+        {pingFeedback ? (
+          <span className="text-gold font-semibold">{pingFeedback}</span>
+        ) : bothEmpty ? (
           <>Add cards on at least one side before confirming.</>
         ) : viewerConfirmed ? (
           <>You've confirmed. Tap Unconfirm to edit your side again, or wait for @{counterpartHandle ?? 'your counterpart'} to confirm and settle this trade.</>
@@ -885,6 +942,19 @@ function SessionActionBar({
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {canPing && (
+          <button
+            type="button"
+            onClick={onPing}
+            disabled={pinging}
+            title={`Ping @${counterpartHandle} via Discord DM to take a look at this trade`}
+            aria-label={`Ping @${counterpartHandle}`}
+            className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-space-600 text-gray-300 hover:border-gold/50 hover:text-gold disabled:opacity-60 text-xs font-medium"
+          >
+            <BellIcon className="w-3.5 h-3.5" />
+            <span>Ping</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={onCancel}
@@ -965,6 +1035,15 @@ function LockIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <rect x="3" y="7" width="10" height="7" rx="1.5" />
       <path d="M5 7V5a3 3 0 0 1 6 0v2" />
+    </svg>
+  );
+}
+
+function BellIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3.5 11.5h9l-.8-1a3 3 0 0 1-.7-1.9V7a3 3 0 0 0-6 0v1.6a3 3 0 0 1-.7 1.9l-.8 1Z" />
+      <path d="M6.5 13a1.5 1.5 0 0 0 3 0" />
     </svg>
   );
 }

@@ -1115,3 +1115,36 @@ export function buildSessionInviteMessage(opts: {
     }],
   };
 }
+
+/**
+ * DM body sent to the counterpart of a shared trade when the viewer
+ * explicitly clicks the "Ping @counterpart" button in the session
+ * canvas. Phase B2 — explicit user-triggered nudge, not an automatic
+ * edit notification. Optional free-form note included verbatim if
+ * the user supplied one.
+ *
+ * Same minimal embed shape as the invite DM — title, one-line who +
+ * action context, optional note, link out. The recipient acts on the
+ * web, not in Discord.
+ */
+export function buildSessionPingMessage(opts: {
+  pingerHandle: string;
+  sessionUrl: string;
+  note?: string;
+}): DiscordMessageBody {
+  const lines: string[] = [
+    `@${opts.pingerHandle} wants you to take a look at your shared trade.`,
+  ];
+  if (opts.note && opts.note.trim().length > 0) {
+    lines.push('', `> ${opts.note.trim()}`);
+  }
+  lines.push('', `[Open shared trade](<${opts.sessionUrl}>)`);
+  return {
+    embeds: [{
+      title: 'Ping from a counterpart',
+      description: lines.join('\n'),
+      color: COLORS.gold,
+      footer: { text: 'SWUTrade shared trade' },
+    }],
+  };
+}

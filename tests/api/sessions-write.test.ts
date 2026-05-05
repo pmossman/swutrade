@@ -224,6 +224,33 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('B1: gracefully skips the DM when the counterpart has opted out via dmSessionInvited=false', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    // Bob has opted out of trade-invite DMs (B2 pref). The session
+    // still creates fine, but no DM is sent and no `notified` event
+    // is recorded.
+    const db = getDb();
+    await db.update(users).set({ dmSessionInvited: false }).where(eq(users.id, bob.id));
+
+    const { status, bot, body } = await createSession(alice, bob.handle);
+    expect(status).toBe(201);
+    expect(body.created).toBe(true);
+    expect(bot.sendCalls).toHaveLength(0);
+
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, body.id!),
+        eq(sessionEvents.type, 'notified'),
+      ));
+    expect(events).toHaveLength(0);
+  });
+
   it('B1: still 201s the create even if the DM bot throws', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);

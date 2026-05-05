@@ -48,6 +48,18 @@ export const users = pgTable('users', {
   dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
   dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),
   dmMeetupReminders: boolean('dm_meetup_reminders').default(false).notNull(),
+  // Phase B (sessions consolidation) — five flags gating session-
+  // lifecycle DMs. All default ON because sessions are the primary
+  // trade primitive and silence is a worse UX than mild over-
+  // notification. Users opt out per-event via Settings →
+  // Notifications. The corresponding DM-send sites (B1 invite, B2
+  // ping, B5 decline, future settled/expired) check the recipient's
+  // flag before firing.
+  dmSessionInvited: boolean('dm_session_invited').default(true).notNull(),
+  dmSessionPing: boolean('dm_session_ping').default(true).notNull(),
+  dmSessionSettled: boolean('dm_session_settled').default(true).notNull(),
+  dmSessionExpired: boolean('dm_session_expired').default(true).notNull(),
+  dmSessionDeclined: boolean('dm_session_declined').default(true).notNull(),
   // Fires once per APPLICATION_AUTHORIZED event for an existing user
   // already in that guild. Opt-out surface for "SWUTrade just landed
   // in your server, want to join?" DMs. Default on — this is how we
