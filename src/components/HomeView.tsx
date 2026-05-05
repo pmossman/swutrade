@@ -58,11 +58,16 @@ interface HomeViewProps {
  *            "this needs you" highlight without bumping the whole
  *            section into urgent chrome. Phase 2 backlog: real
  *            per-row read/unread state + a dedicated /?inbox=1 page.
- *   Zone 3 — 📦 Your Collection (Wishlist + Binder).
- *            Lighter section heading + two sibling module cards
- *            inside, side-by-side on desktop, stacked on mobile.
- *   Zone 4 — 👥 Community (Communities + Partners).
- *            Same lighter grouping pattern as zone 3.
+ *   Zone 3 — Wishlist + Binder.
+ *            Two sibling module cards in a 2-col grid, side-by-side
+ *            on desktop, stacked on mobile. No outer section title —
+ *            each module's own heading ("Your wishlist", "Your trade
+ *            binder") already says what it is, and an outer "Your
+ *            Collection" wrapper just duplicated chrome.
+ *   Zone 4 — Communities + Partners.
+ *            Same shape — modules already say "My Communities" /
+ *            "Trading partners" in their own headings, no outer
+ *            wrapper needed.
  *
  * Layout history:
  *   - v1 was a 2×2 module grid (Trades / Communities / Wishlist /
@@ -168,53 +173,43 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
           />
         )}
 
-        {/* === Zone 3: Your collection — wishlist + binder under a
-            single section heading. Lighter grouping (no outer card
-            frame) so the existing module cards inside read as
-            siblings, not as nested chrome. */}
-        <SectionGroup
-          icon={<Star aria-hidden className="w-3.5 h-3.5" />}
-          label="Your Collection"
-        >
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            <WishlistModule
-              wants={wants.items}
-              cardByFamily={byFamily}
-              onEditWishlist={nav.toWishlist}
-              canPostToServer={canPostToServer}
-            />
-            <BinderModule
-              available={available.items}
-              cardByProductId={byProductId}
-              onEditBinder={nav.toBinder}
-              canPostToServer={canPostToServer}
-            />
-          </div>
-        </SectionGroup>
+        {/* === Zone 3: Wishlist + Binder. Each module owns its own
+            heading + chrome ("Your wishlist", "Your trade binder"),
+            so an outer "Your Collection" section title would just
+            duplicate it; visual grouping comes from the side-by-side
+            grid alone. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <WishlistModule
+            wants={wants.items}
+            cardByFamily={byFamily}
+            onEditWishlist={nav.toWishlist}
+            canPostToServer={canPostToServer}
+          />
+          <BinderModule
+            available={available.items}
+            cardByProductId={byProductId}
+            onEditBinder={nav.toBinder}
+            canPostToServer={canPostToServer}
+          />
+        </div>
 
-        {/* === Zone 4: Community — communities + trading partners.
-            Same lighter grouping. Both modules render their own
-            empty states so the section header still anchors the area
-            even when the user is in zero servers / has no
-            partners. */}
-        <SectionGroup
-          icon={<Users aria-hidden className="w-3.5 h-3.5" />}
-          label="Community"
-        >
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            <CommunitiesModule
-              guilds={enrolledGuilds}
-              status={guilds.status}
-              onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
-            />
-            <PartnersModule
-              favorites={favorites.favorites}
-              status={favorites.status}
-              onStartTradeWith={(handle) => nav.toStartTradeFrom(handle)}
-              onOpenProfile={onOpenProfile}
-            />
-          </div>
-        </SectionGroup>
+        {/* === Zone 4: Communities + Partners. Same shape — modules
+            already say "My Communities" / "Trading partners" in
+            their own headings, so the outer section title was
+            redundant. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <CommunitiesModule
+            guilds={enrolledGuilds}
+            status={guilds.status}
+            onOpenCommunity={(guildId) => nav.toCommunity(guildId ? { guildId } : undefined)}
+          />
+          <PartnersModule
+            favorites={favorites.favorites}
+            status={favorites.status}
+            onStartTradeWith={(handle) => nav.toStartTradeFrom(handle)}
+            onOpenProfile={onOpenProfile}
+          />
+        </div>
       </main>
     </div>
   );
@@ -249,20 +244,20 @@ function QuickActionsRow({
       <ActionTile
         icon={<Search aria-hidden className="w-4 h-4" />}
         label="Browse cards"
-        hint="Search any card and check prices"
+        hint="Look up cards and check prices"
         onClick={onBrowseCards}
       />
       <ActionTile
         icon={<Plus aria-hidden className="w-4 h-4" />}
         label="New trade"
-        hint="Build a trade — solo or with a partner"
+        hint="Build a trade solo or with a partner"
         onClick={onNewTrade}
       />
       {canPostToServer && (
         <ActionTile
           icon={<Megaphone aria-hidden className="w-4 h-4" />}
           label="Post a signal"
-          hint="Broadcast a wishlist to a community"
+          hint="Ask for or offer specific cards"
           href="/?signals=new"
         />
       )}
@@ -305,36 +300,6 @@ function ActionTile({
     return <a href={href} className={cls}>{inner}</a>;
   }
   return <button type="button" onClick={onClick} className={cls}>{inner}</button>;
-}
-
-// --- 📦 Section group helper ----------------------------------------------
-
-/**
- * Lightweight section heading + container. Used to group sibling
- * modules ("Your Collection" wraps Wishlist + Binder, "Community"
- * wraps Communities + Partners). Heavier-handed alternatives (outer
- * card frame around a heading + nested cards) duplicated chrome and
- * stole vertical space; the section heading alone provides enough
- * grouping cue when paired with consistent inter-module gap.
- */
-function SectionGroup({
-  icon,
-  label,
-  children,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-[11px] tracking-[0.18em] uppercase text-gray-500 font-bold px-1">
-        {icon}
-        <span>{label}</span>
-      </h2>
-      {children}
-    </section>
-  );
 }
 
 // --- 📥 Inbox section -----------------------------------------------------
