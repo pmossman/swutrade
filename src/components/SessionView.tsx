@@ -20,8 +20,7 @@ import { SessionSuggestComposer } from './SessionSuggestComposer';
 import { useIsMobile } from '../hooks/useMediaQuery';
 import { PERSIST_KEYS } from '../persistence';
 import { tradeCardKey, type TradeCard, type CardVariant } from '../types';
-import type { CardSnapshot } from '../hooks/useTradeDetail';
-type TradeCardSnapshot = CardSnapshot;
+import type { TradeCardSnapshot } from '../../lib/schema';
 import { extractVariantLabel } from '../variants';
 import { hapticMedium, hapticSoft, hapticSuccess } from '../utils/haptics';
 
@@ -1468,7 +1467,7 @@ function snapshotFromCardVariant(card: CardVariant, qty: number): TradeCardSnaps
 }
 
 function snapshotsToTradeCards(
-  snaps: CardSnapshot[],
+  snaps: TradeCardSnapshot[],
   byProductId: Map<string, CardVariant>,
 ): TradeCard[] {
   return snaps.map(snap => ({

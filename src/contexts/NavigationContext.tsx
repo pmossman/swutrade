@@ -39,9 +39,6 @@ export interface NavigationApi {
    *  `?from=` and optionally fires the auto-balance one-shot. */
   toStartTradeFrom(handle?: string, autoBalance?: boolean): void;
 
-  /** Trade detail page (read-only + actions). */
-  toTradeDetail(tradeId: string): void;
-
   /** History of the viewer's trades (incoming / outgoing / history). */
   toTradesHistory(): void;
 

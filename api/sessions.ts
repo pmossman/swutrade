@@ -157,9 +157,17 @@ export async function handleListSessions(req: VercelRequest, res: VercelResponse
 
   const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
   const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
+  // ?include=terminal pulls settled / cancelled / expired rows
+  // alongside active ones — used by the new sessions-only history
+  // view. Default behavior (active-only) is unchanged so existing
+  // callers (Home Inbox) don't suddenly see terminal rows.
+  const includeTerminal = req.query.include === 'terminal';
 
   const db = getDb();
-  const sessions = await listActiveSessionsForViewer(db, session.userId, { limit });
+  const sessions = await listActiveSessionsForViewer(db, session.userId, {
+    limit,
+    includeTerminal,
+  });
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ sessions });

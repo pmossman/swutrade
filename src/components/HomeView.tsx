@@ -14,7 +14,6 @@ import { AppHeader } from './ui/AppHeader';
 import { LoadingState } from './ui/states';
 import { relativeTime } from '../utils/relativeTime';
 import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
-import { TradeExpandPeek } from './TradeExpandPeek';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
@@ -91,15 +90,9 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
   // into the method-per-action shape the view body already expects.
   // The underlying `nav.toX()` calls handle pushState + intent sync +
   // viewMode flip in one place.
-  const onOpenTrade = nav.toTradeDetail;
   const onOpenTradesHistory = nav.toTradesHistory;
   const onBuildTrade = nav.toBuildTrade;
   const onOpenProfile = nav.toProfile;
-  // `useMyTrades` is the unified view layer — merges proposals +
-  // sessions into one TradeRow stream. The older `useTradesList` is
-  // still consulted for the `needsResponse` callout (which already
-  // had overflow/highlight chrome tuned to the proposal shape) but
-  // everything inside the My Trades module reads from `myTrades`.
   const myTrades = useMyTrades();
   const guilds = useGuildMemberships();
   // Only surface guilds the viewer is actually enrolled in. `enrollable`
@@ -176,7 +169,6 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
         {activeTrades.length > 0 && (
           <InboxSection
             rows={activeTrades}
-            onOpenTrade={onOpenTrade}
             onOpenTradesHistory={onOpenTradesHistory}
           />
         )}
@@ -332,9 +324,6 @@ function ActionTile({
 const HOME_ACTIVE_STATES: ReadonlySet<TradeRowState> = new Set([
   'shared',
   'shared-waiting',
-  'awaiting',
-  'pitched',
-  'countered',
 ]);
 
 const INBOX_CAP = 5;
@@ -354,11 +343,9 @@ const INBOX_CAP = 5;
  */
 function InboxSection({
   rows,
-  onOpenTrade,
   onOpenTradesHistory,
 }: {
   rows: TradeRow[];
-  onOpenTrade: (tradeId: string) => void;
   onOpenTradesHistory: () => void;
 }) {
   const visible = rows.slice(0, INBOX_CAP);
@@ -395,16 +382,7 @@ function InboxSection({
                 row={row}
                 onClick={() => setExpandedId(expanded ? null : row.id)}
                 expanded={expanded}
-                peek={
-                  row.kind === 'proposal' ? (
-                    <TradeExpandPeek
-                      proposalId={row.id}
-                      onOpenDetail={() => onOpenTrade(row.id)}
-                    />
-                  ) : (
-                    <SessionPeek row={row} />
-                  )
-                }
+                peek={<SessionPeek row={row} />}
               />
             </li>
           );
@@ -476,12 +454,10 @@ function TradeListRow({
     ? `@${row.counterpart.handle}${row.counterpart.isAnonymous ? ' (guest)' : ''}`
     : row.openSlot ? 'Waiting for counterpart' : 'Unknown trader';
   const when = relativeTime(row.lastActivityAt);
-  // Highlight the row when SOMETHING is waiting on the viewer:
-  //   - proposal-side: legacy `awaiting` state (incoming pending)
-  //   - session-side: B6 server-derived `awaitingViewer` flag
-  // Same gold-attention chrome either way; the InboxSection's
-  // ambient frame stays neutral.
-  const highlight = row.state === 'awaiting' || row.awaitingViewer === true;
+  // Highlight the row when the session is waiting on the viewer
+  // (B6's server-derived awaitingViewer flag). Gold-attention
+  // chrome; the InboxSection's ambient frame stays neutral.
+  const highlight = row.awaitingViewer === true;
   const containerClass = expanded
     ? (highlight ? 'bg-gold/12 border-gold/50' : 'bg-space-800/70 border-gold/40')
     : highlight
@@ -511,7 +487,6 @@ function TradeListRow({
           </div>
           <div className="text-[11px] text-gray-500 mt-0.5 truncate">
             {row.yourCount} offered · {row.theirCount} received · {when}
-            {row.kind === 'proposal' && row.topCard && ` · ${row.topCard.name}`}
           </div>
         </div>
         <ChevronIcon
@@ -553,24 +528,16 @@ const BADGE_TONES: Record<string, string> = {
 
 function stateBadgeSpec(state: TradeRowState): { label: string; tone: keyof typeof BADGE_TONES } {
   switch (state) {
-    case 'shared':          return { label: 'Shared',   tone: 'cyan' };
-    case 'shared-waiting':  return { label: 'Invite',   tone: 'cyan' };
-    case 'awaiting':        return { label: 'Awaiting', tone: 'gold' };
-    case 'pitched':         return { label: 'Pitched',  tone: 'gold' };
-    case 'settled':         return { label: 'Settled',  tone: 'emerald' };
-    case 'declined':        return { label: 'Declined', tone: 'red' };
+    case 'shared':          return { label: 'Shared',    tone: 'cyan' };
+    case 'shared-waiting':  return { label: 'Invite',    tone: 'cyan' };
+    case 'settled':         return { label: 'Settled',   tone: 'emerald' };
     case 'cancelled':       return { label: 'Cancelled', tone: 'neutral' };
-    case 'expired':         return { label: 'Expired',  tone: 'neutral' };
-    case 'countered':       return { label: 'Countered', tone: 'purple' };
-    case 'promoted':        return { label: 'Promoted', tone: 'cyan' };
+    case 'expired':         return { label: 'Expired',   tone: 'neutral' };
   }
-  // Unknown state — render a neutral badge with the raw label rather
-  // than letting an exhaustive-switch fall-through return undefined
-  // and crash the row's destructure. The compiler complains about
-  // unreachable code today (TS narrows `state` to `never` here), but
-  // a future schema status that lands at runtime before the union is
-  // updated should degrade gracefully, not error-boundary the whole
-  // dashboard. This was the failure mode that hid the `accepted` bug.
+  // Defensive fallback — exhaustive switch is `never` here today, but
+  // a future schema status that lands at runtime before the client
+  // union is updated should degrade gracefully rather than
+  // error-boundary the dashboard.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   return { label: String(state ?? 'Unknown'), tone: 'neutral' };
 }

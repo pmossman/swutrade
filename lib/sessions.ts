@@ -473,9 +473,11 @@ export async function getSessionPreview(
 }
 
 /**
- * List active sessions involving the viewer, most-recently-edited
- * first. Expired/cancelled/settled rows are excluded — the Home
- * "active sessions" surface cares about what's still open.
+ * List sessions involving the viewer, most-recently-edited first.
+ * Defaults to active-only — the Home "active sessions" surface
+ * cares about what's still open. With `includeTerminal: true` the
+ * settled / cancelled / expired rows are also returned, for the
+ * dedicated trade-history view.
  *
  * Each row is rehydrated viewer-centric like `getSessionForViewer`
  * so the UI never has to know about the a/b canonical ordering.
@@ -483,7 +485,7 @@ export async function getSessionPreview(
 export async function listActiveSessionsForViewer(
   db: Db,
   viewerUserId: string,
-  opts: { limit?: number } = {},
+  opts: { limit?: number; includeTerminal?: boolean } = {},
 ): Promise<SessionView[]> {
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
 
@@ -495,7 +497,8 @@ export async function listActiveSessionsForViewer(
         eq(tradeSessions.userAId, viewerUserId),
         eq(tradeSessions.userBId, viewerUserId),
       ),
-      eq(tradeSessions.status, 'active'),
+      // Active by default; opt in to terminal rows for history views.
+      opts.includeTerminal ? sql`1=1` : eq(tradeSessions.status, 'active'),
     ))
     .orderBy(desc(tradeSessions.lastEditedAt))
     .limit(limit);

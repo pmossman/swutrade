@@ -29,7 +29,6 @@ export type ViewMode =
   | 'profile'
   | 'settings'
   | 'community'
-  | 'trade-detail'
   | 'trades-history'
   | 'session'
   | 'wishlist'
@@ -152,11 +151,6 @@ export const VIEW_ROUTES: readonly ViewRoute[] = [
     paramKeys: ['trades'],
   },
   {
-    mode: 'trade-detail',
-    matches: ({ params }) => params.has('trade'),
-    paramKeys: ['trade'],
-  },
-  {
     mode: 'profile',
     // `?profile=<handle>` query form — matched AFTER the settings /
     // community / trades / trade-detail rules so hand-crafted combos
@@ -277,7 +271,6 @@ export function isStandaloneView(parts: RouteParts): boolean {
     'profile',
     'settings',
     'community',
-    'trade-detail',
     'trades-history',
     'session',
     'wishlist',

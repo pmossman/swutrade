@@ -53,9 +53,6 @@ const SettingsView = lazy(() =>
 const CommunityView = lazy(() =>
   import('./components/CommunityView').then(m => ({ default: m.CommunityView })),
 );
-const TradeDetailView = lazy(() =>
-  import('./components/TradeDetailView').then(m => ({ default: m.TradeDetailView })),
-);
 const TradesHistoryView = lazy(() =>
   import('./components/TradesHistoryView').then(m => ({ default: m.TradesHistoryView })),
 );
@@ -382,9 +379,6 @@ function App() {
       toStartTradeFrom: (fromHandle, autoBalance) => {
         handleStartTrade(fromHandle, autoBalance);
       },
-      toTradeDetail: tradeId => {
-        pushTo(reset([], { trade: tradeId }));
-      },
       toTradesHistory: () => {
         pushTo(reset([], { trades: '1' }));
       },
@@ -610,14 +604,6 @@ function App() {
         onStartTradeWithCard={handleStartTradeWithCard}
       />
     );
-  }
-
-  if (viewMode === 'trade-detail') {
-    const tradeId = new URLSearchParams(window.location.search).get('trade') ?? '';
-    // AppHeader's breadcrumb ("Home › My trades › @counterpart") owns
-    // the return path — deep-linked users get "/?trades=1", in-SPA
-    // users get the native back via the header's Home link.
-    return <TradeDetailView tradeId={tradeId} />;
   }
 
   if (viewMode === 'session') {

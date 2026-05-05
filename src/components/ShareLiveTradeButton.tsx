@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { apiPost } from '../services/apiClient';
 import { useNavigation } from '../contexts/NavigationContext';
 import type { TradeCard } from '../types';
-import type { CardSnapshot } from '../hooks/useTradeDetail';
+import type { TradeCardSnapshot as CardSnapshot } from '../../lib/schema';
 import { extractVariantLabel as extractVariant } from '../variants';
 
 /**
