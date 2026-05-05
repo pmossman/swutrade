@@ -246,26 +246,34 @@ export async function handleCreateSession(
 
   // B1 — fire an invite DM when a brand-new session is created with a
   // named counterpart. Skip on idempotent re-create (the user was
-  // already invited the first time around). Don't await — actually we
-  // do await because we want the test to be able to assert on the
-  // DM, but failures collapse to log-only so a flaky bot doesn't
-  // 5xx the create. Ghost counterparts (no discord_id) silently skip.
+  // already invited the first time around). We await the helper so
+  // tests can assert on the DM, but failures collapse to log-only so
+  // a flaky bot doesn't 5xx the create. Ghost counterparts
+  // (no discord_id) silently skip.
+  //
+  // Bot fallback is gated on DISCORD_BOT_TOKEN being set. Test
+  // environments without the token (and without a passed-in fake bot)
+  // skip the DM silently rather than throwing — the create itself is
+  // the contract, the DM is a best-effort side effect.
   if (result.created) {
-    const appBaseUrl = req.headers.host
-      ? `https://${req.headers.host}`
-      : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
-    const bot = deps.bot ?? createDiscordBotClient();
-    const dmResult = await sendSessionCreateInviteDm(db, {
-      sessionId: result.id,
-      inviterUserId: session.userId,
-      targetUserId: counterpart.id,
-      bot,
-      appBaseUrl,
-    });
-    if (!dmResult.ok && dmResult.reason === 'dm-failed') {
-      // Already logged inside the helper; nothing else to do at the
-      // boundary. Session is live; user can re-share via QR/link if
-      // needed.
+    const bot = deps.bot
+      ?? (process.env.DISCORD_BOT_TOKEN ? createDiscordBotClient() : null);
+    if (bot) {
+      const appBaseUrl = req.headers.host
+        ? `https://${req.headers.host}`
+        : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+      const dmResult = await sendSessionCreateInviteDm(db, {
+        sessionId: result.id,
+        inviterUserId: session.userId,
+        targetUserId: counterpart.id,
+        bot,
+        appBaseUrl,
+      });
+      if (!dmResult.ok && dmResult.reason === 'dm-failed') {
+        // Already logged inside the helper; nothing else to do at the
+        // boundary. Session is live; user can re-share via QR/link if
+        // needed.
+      }
     }
   }
 
