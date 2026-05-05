@@ -1,6 +1,6 @@
 import { describeWithDb } from './helpers.js';
 import { it, expect, afterEach } from 'vitest';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
   handleCancelSession,
   handleConfirmSession,
@@ -15,8 +15,10 @@ import {
   sealTestCookie,
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
-import { tradeSessions, type TradeCardSnapshot } from '../../lib/schema.js';
+import { sessionEvents, tradeSessions, type TradeCardSnapshot, users } from '../../lib/schema.js';
 import { createOpenSession, getSessionForViewer } from '../../lib/sessions.js';
+import type { DiscordBotClient } from '../../lib/discordBot.js';
+import { createBaseFakeBot, type SendCall } from './discordFakes.js';
 
 function snap(productId: string, qty = 1): TradeCardSnapshot {
   return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1 };
@@ -45,8 +47,29 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     fixtures.length = 0;
   });
 
+  // Fake DM client — records every sendDirectMessage call so tests
+  // can assert on the B1 "session-invited" DM. Mirrors the pattern
+  // in sessions-invite.test.ts.
+  function makeFakeBot(): DiscordBotClient & { sendCalls: SendCall[] } {
+    const sendCalls: SendCall[] = [];
+    return Object.assign(
+      createBaseFakeBot({
+        async sendDirectMessage(userId, body) {
+          sendCalls.push({ userId, body });
+          return { id: 'msg-create-invite', channel_id: 'dm-create' };
+        },
+      }),
+      { sendCalls },
+    );
+  }
+
   // Helper: create a session via the API; captures id for cleanup.
-  async function createSession(viewer: { id: string; handle: string }, counterpartHandle: string, initialCards: TradeCardSnapshot[] = []) {
+  // Returns the fake bot so callers can inspect its sendCalls.
+  async function createSession(
+    viewer: { id: string; handle: string },
+    counterpartHandle: string,
+    initialCards: TradeCardSnapshot[] = [],
+  ) {
     const cookie = await sealTestCookie(viewer.id);
     const req = mockRequest({
       method: 'POST',
@@ -54,10 +77,11 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
       body: { counterpartHandle, initialCards },
     });
     const res = mockResponse();
-    await handleCreateSession(req, res);
+    const bot = makeFakeBot();
+    await handleCreateSession(req, res, { bot });
     const body = res._json as { id?: string; created?: boolean; error?: string };
     if (body.id) createdIds.push(body.id);
-    return { status: res._status, body };
+    return { status: res._status, body, bot };
   }
 
   it('creates a session, seeds cards on creator side, 201', async () => {
@@ -108,6 +132,126 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     fixtures.push(alice);
     const { status } = await createSession(alice, 'nonexistenthandle999');
     expect(status).toBe(404);
+  });
+
+  // --- B1: session-invite DM on create -------------------------------------
+
+  it('B1: fires a session-invite DM to the counterpart on a fresh create', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    const { status, bot, body } = await createSession(alice, bob.handle);
+    expect(status).toBe(201);
+    expect(bot.sendCalls).toHaveLength(1);
+    expect(bot.sendCalls[0].userId).toBe(bob.id); // discordId = id in test fixture
+    // DM body should reference the inviter and embed the session URL.
+    const embed = bot.sendCalls[0].body.embeds?.[0];
+    expect(embed?.description).toContain(`@${alice.handle}`);
+    expect(embed?.description).toContain(`/s/${body.id}`);
+
+    // A `notified` event with kind=invite is recorded so future
+    // re-engagement logic can see this user has already been pinged.
+    const db = getDb();
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, body.id!),
+        eq(sessionEvents.type, 'notified'),
+      ));
+    expect(events).toHaveLength(1);
+    const payload = events[0].payload as { kind: string; targetUserId: string };
+    expect(payload.kind).toBe('invite');
+    expect(payload.targetUserId).toBe(bob.id);
+  });
+
+  it('B1: does NOT re-fire the DM when an existing active session is returned', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    const first = await createSession(alice, bob.handle);
+    expect(first.status).toBe(201);
+    expect(first.bot.sendCalls).toHaveLength(1);
+
+    // Second create with the same pair → idempotent redirect (200,
+    // created:false). Since we're not creating a new session, no DM.
+    const second = await createSession(alice, bob.handle);
+    expect(second.status).toBe(200);
+    expect(second.body.created).toBe(false);
+    expect(second.bot.sendCalls).toHaveLength(0);
+  });
+
+  it('B1: gracefully skips the DM when the counterpart has no discord_id (ghost)', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+
+    // Create a ghost-shaped user manually — has a handle but no
+    // discord_id, mirroring the createGhostUser path.
+    const db = getDb();
+    const ghostId = `ghost-${crypto.randomUUID().slice(0, 12)}`;
+    const ghostHandle = `guest-${crypto.randomUUID().slice(0, 8)}`;
+    await db.insert(users).values({
+      id: ghostId,
+      discordId: null,
+      username: 'Ghost',
+      handle: ghostHandle,
+      avatarUrl: null,
+    });
+    fixtures.push({ id: ghostId, handle: ghostHandle, cleanup: async () => {
+      await db.delete(users).where(eq(users.id, ghostId)).catch(() => {});
+    } });
+
+    const { status, bot, body } = await createSession(alice, ghostHandle);
+    // Session creates fine; DM silently skipped because the target has
+    // no discord_id to address.
+    expect(status).toBe(201);
+    expect(body.id).toBeDefined();
+    expect(bot.sendCalls).toHaveLength(0);
+
+    // No `notified` event recorded — we only record on a successful
+    // DM send so future re-engagement doesn't see a phantom ping.
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, body.id!),
+        eq(sessionEvents.type, 'notified'),
+      ));
+    expect(events).toHaveLength(0);
+  });
+
+  it('B1: still 201s the create even if the DM bot throws', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    // Bot whose sendDirectMessage always throws — simulates DM
+    // disabled, network blip, etc. Session creation must not 5xx.
+    const throwingBot = createBaseFakeBot({
+      async sendDirectMessage() {
+        throw new Error('DMs disabled');
+      },
+    });
+
+    const cookie = await sealTestCookie(alice.id);
+    const req = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: cookie },
+      body: { counterpartHandle: bob.handle, initialCards: [] },
+    });
+    const res = mockResponse();
+    await handleCreateSession(req, res, { bot: throwingBot });
+
+    const body = res._json as { id?: string; created?: boolean };
+    if (body.id) createdIds.push(body.id);
+    expect(res._status).toBe(201);
+    expect(body.created).toBe(true);
+    expect(body.id).toBeDefined();
   });
 
   it('edit replaces the viewer\'s half; counterpart half untouched; confirmations cleared', async () => {

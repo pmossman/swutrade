@@ -22,10 +22,12 @@ import {
   markSessionRead,
   proposeRevertForSession,
   sendChatMessage,
+  sendSessionCreateInviteDm,
   suggestForSession,
   unconfirmSession,
   CHAT_MAX_BODY_LENGTH,
 } from '../lib/sessions.js';
+import { createDiscordBotClient } from '../lib/discordBot.js';
 
 /**
  * Phase 5b dispatcher for `/api/sessions/*`. Follows the same
@@ -47,7 +49,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'list':
       return handleListSessions(req, res);
     case 'create':
-      return handleCreateSession(req, res);
+      return handleCreateSession(req, res, {});
     case 'edit':
       return handleEditSession(req, res);
     case 'confirm':
@@ -202,7 +204,11 @@ const ProposeRevertBodySchema = z.object({
  * the same code path; the `created` flag is just for telemetry /
  * copy tweaks ("you already had a session with @X").
  */
-export async function handleCreateSession(req: VercelRequest, res: VercelResponse) {
+export async function handleCreateSession(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: { bot?: DiscordBotClient } = {},
+) {
   const session = await requireSession(req, res);
   if (!session) return;
 
@@ -237,6 +243,31 @@ export async function handleCreateSession(req: VercelRequest, res: VercelRespons
     counterpartUserId: counterpart.id,
     creatorCards: parsed.data.initialCards,
   });
+
+  // B1 — fire an invite DM when a brand-new session is created with a
+  // named counterpart. Skip on idempotent re-create (the user was
+  // already invited the first time around). Don't await — actually we
+  // do await because we want the test to be able to assert on the
+  // DM, but failures collapse to log-only so a flaky bot doesn't
+  // 5xx the create. Ghost counterparts (no discord_id) silently skip.
+  if (result.created) {
+    const appBaseUrl = req.headers.host
+      ? `https://${req.headers.host}`
+      : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
+    const bot = deps.bot ?? createDiscordBotClient();
+    const dmResult = await sendSessionCreateInviteDm(db, {
+      sessionId: result.id,
+      inviterUserId: session.userId,
+      targetUserId: counterpart.id,
+      bot,
+      appBaseUrl,
+    });
+    if (!dmResult.ok && dmResult.reason === 'dm-failed') {
+      // Already logged inside the helper; nothing else to do at the
+      // boundary. Session is live; user can re-share via QR/link if
+      // needed.
+    }
+  }
 
   res.status(result.created ? 201 : 200).json({
     id: result.id,

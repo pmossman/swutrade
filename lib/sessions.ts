@@ -1748,6 +1748,87 @@ export async function inviteHandleToSession(
 
 // --- PR 1: chat + read state -----------------------------------------------
 
+/**
+ * Fire a "you've been invited to a shared trade" DM to a counterpart
+ * when a session is freshly created with them named (i.e. via the
+ * trade-builder "Send to @user" flow or `/api/sessions ?action=create`,
+ * not the QR / open-slot path where the recipient discovers the link
+ * themselves).
+ *
+ * Behaves like a stripped-down `inviteHandleToSession` — the caller
+ * already knows both userIds (creator + target) so we skip the
+ * session/role validation, debounce, and pair lookup. Just resolves
+ * inviter handle + target discord_id, sends the DM, and records a
+ * `notified` event.
+ *
+ * Returns ok-or-reason rather than throwing because the caller (the
+ * create handler) shouldn't fail the request when the DM can't land:
+ * the session itself was created successfully, the user just didn't
+ * get a notification. Reasons:
+ *   - `no-discord-id` — target is a ghost / OAuth-less user. No DM is
+ *     possible; caller can ignore silently.
+ *   - `dm-failed` — bot threw (DMs disabled, server outage, etc.).
+ *     Caller logs but proceeds.
+ *
+ * The `notified` event is only recorded on a successful DM send so
+ * future Phase B re-engagement logic can see "this user has already
+ * been pinged about this session."
+ */
+export async function sendSessionCreateInviteDm(
+  db: Db,
+  args: {
+    sessionId: string;
+    inviterUserId: string;
+    targetUserId: string;
+    bot: DiscordBotClient;
+    appBaseUrl: string;
+  },
+): Promise<{ ok: true } | { ok: false; reason: 'no-discord-id' | 'dm-failed' }> {
+  const [inviter] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, args.inviterUserId))
+    .limit(1);
+  if (!inviter) return { ok: false, reason: 'dm-failed' };
+
+  const [target] = await db
+    .select({ discordId: users.discordId })
+    .from(users)
+    .where(eq(users.id, args.targetUserId))
+    .limit(1);
+  if (!target?.discordId) return { ok: false, reason: 'no-discord-id' };
+
+  const sessionUrl = `${args.appBaseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
+  const body = buildSessionInviteMessage({
+    inviterHandle: inviter.handle,
+    sessionUrl,
+  });
+
+  try {
+    await args.bot.sendDirectMessage(target.discordId, body);
+  } catch (err) {
+    console.error(
+      'sendSessionCreateInviteDm: sendDirectMessage failed',
+      args.sessionId,
+      args.targetUserId,
+      err,
+    );
+    return { ok: false, reason: 'dm-failed' };
+  }
+
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.inviterUserId,
+    type: 'notified',
+    payload: {
+      kind: 'invite',
+      targetUserId: args.targetUserId,
+    },
+  });
+
+  return { ok: true };
+}
+
 /** Soft cap on chat messages per user per minute. Crosses this and
  *  the chat endpoint returns 'rate-limited'. Cap is generous — it's
  *  meant to deter accidental floods, not legitimate negotiation. */
