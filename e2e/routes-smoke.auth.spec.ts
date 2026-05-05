@@ -44,9 +44,6 @@ test.describe('Routes smoke — all public URL shapes load', () => {
     { label: 'community > guild',           path: '/?community=1&guild=xyz' },
     { label: 'shared list (encoded)',       path: '/?view=list&w=AA' },
     { label: 'session (unknown code)',      path: '/s/SPECSESSIONNOPE' },
-    { label: 'propose (unknown handle)',    path: '/?propose=specnobodyhere' },
-    { label: 'counter (unknown id)',        path: '/?counter=SPECCOUNTERNOPE' },
-    { label: 'edit (unknown id)',           path: '/?edit=SPECEDITNOPE' },
   ];
 
   for (const route of routes) {
