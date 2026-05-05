@@ -303,6 +303,10 @@ Tapping the star toggles `isPriority`. Sort order in the drawer is priority-firs
 
 Matchmaker ranks: priority wants weight higher when the subset-sum composer picks what to offer/request. See `c-trade-builder.md`'s matchmaker section for the scoring details; the important fact for this area is that `isPriority` is a first-class column on wants (both client and server) and flows through `WantEntry.isPriority` into `src/utils/matchmaker.ts` ranking.
 
+### Confirm-tap removal
+
+The per-row × button (`ListRows.tsx`'s `RemoveButton`) is a two-tap confirmation, not a one-tap fire. First tap arms the button — it widens, turns crimson, swaps the × icon for a warning glyph + "Confirm?" label, and flips `aria-pressed=true` plus `aria-label` to "Tap again to confirm removal". A second tap inside the 3s window calls `onRemove`. Auto-revert on timeout, on `onBlur` (focus moves to another action), and on unmount (timer cleared). Mirrors the `ClearAllButton` pattern at the trade-builder root — keeps both the dedicated wishlist/binder views and the in-trade-builder drawer's quick-edit ergonomics snappy while gating accidental data loss. The drawer's e2e flow (`drawer.spec.ts`) exercises both taps; one-tap-then-walk-away is implicitly covered by not re-tapping inside the window.
+
 ### Restriction editor
 
 The segmented toggle + variant chip group (`ListRows.tsx:144`) has a few intentional edges:
