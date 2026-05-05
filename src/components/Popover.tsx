@@ -6,9 +6,13 @@ interface PopoverProps {
   trigger: (args: { open: boolean; toggle: () => void }) => React.ReactNode;
   /** Render the panel contents — receives a close callback. */
   children: (args: { close: () => void }) => React.ReactNode;
-  /** Alignment of the panel relative to the trigger. Auto-flips when
-   *  the requested side would push the panel off the opposite edge. */
-  align?: 'left' | 'right';
+  /** Alignment of the panel relative to the trigger. `center` is the
+   *  default — panel center anchored to trigger center, the most
+   *  visually balanced for triggers anywhere in the viewport.
+   *  `left` / `right` exist for explicit anchor cases. All variants
+   *  clamp to a viewport margin if the chosen anchor would overflow,
+   *  and fall back to the opposite edge when one side would clip. */
+  align?: 'left' | 'right' | 'center';
   /** When true the popover opens on mount. Useful when a parent
    *  pre-seeds state that the user should see without an extra
    *  click — e.g. shared-link landings with auto-activated chips. */
@@ -25,7 +29,7 @@ interface PopoverProps {
  * card list on a session page) and gets visibly clipped. Escape closes;
  * click outside (trigger + panel) closes; child can close explicitly.
  */
-export function Popover({ trigger, children, align = 'right', defaultOpen = false, panelClassName = '' }: PopoverProps) {
+export function Popover({ trigger, children, align = 'center', defaultOpen = false, panelClassName = '' }: PopoverProps) {
   const [open, setOpen] = useState(defaultOpen);
   // Asymmetric open-on-defaultOpen-flip: a parent flipping the prop
   // true post-mount opens the popover (matches the shared-link
@@ -61,7 +65,23 @@ export function Popover({ trigger, children, align = 'right', defaultOpen = fals
       ?? 320; // matches FilterPopover's fixed width — reasonable default before measure
     const margin = 8;
 
-    if (align === 'right') {
+    if (align === 'center') {
+      // Anchor panel center to trigger center. Most visually balanced
+      // because the panel feels like it "comes from" the trigger
+      // regardless of where the trigger sits in the viewport. Clamp
+      // both edges to margin if the centered position would overflow
+      // either side (long panel + tight viewport).
+      const triggerCenter = rect.left + rect.width / 2;
+      const wantedLeft = triggerCenter - panelWidth / 2;
+      const wantedRight = wantedLeft + panelWidth;
+      if (wantedLeft < margin) {
+        setPos({ top, left: margin });
+      } else if (wantedRight > window.innerWidth - margin) {
+        setPos({ top, right: margin });
+      } else {
+        setPos({ top, left: wantedLeft });
+      }
+    } else if (align === 'right') {
       // Anchor right edge to trigger's right edge. If that would put
       // the left edge < margin, fall back to left-align.
       const wouldStartAt = rect.right - panelWidth;
@@ -71,8 +91,9 @@ export function Popover({ trigger, children, align = 'right', defaultOpen = fals
         setPos({ top, right: window.innerWidth - rect.right });
       }
     } else {
-      // Anchor left edge to trigger's left edge. If that would put
-      // the right edge > viewport - margin, fall back to right-align.
+      // align === 'left'. Anchor left edge to trigger's left edge.
+      // If that would put the right edge > viewport - margin, fall
+      // back to right-align.
       const wouldEndAt = rect.left + panelWidth;
       if (wouldEndAt > window.innerWidth - margin) {
         setPos({ top, right: margin });

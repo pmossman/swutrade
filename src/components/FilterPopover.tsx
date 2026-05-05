@@ -41,7 +41,6 @@ interface FilterPopoverProps {
 export function FilterPopover({ label, summary, action, defaultOpen, children }: FilterPopoverProps) {
   return (
     <Popover
-      align="right"
       defaultOpen={defaultOpen}
       // Fixed-width panel so chip strips wrap into a roughly square
       // panel under the trigger instead of stretching to fit the

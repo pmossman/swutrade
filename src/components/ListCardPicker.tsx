@@ -515,10 +515,17 @@ export function ListCardPicker({
           they drive which restriction a click saves. In specific
           tile mode each tile IS its own variant; chips would just
           duplicate that signal. */}
+      {/* Variant filter is shown in BOTH modes now. Specific-mode
+          tiles each represent one variant, so the original reasoning
+          was "chips duplicate the signal" — but the filter narrows
+          the visible grid ("show me only Hyperspace printings"),
+          which is genuinely useful for scanning. The save-semantics
+          unaffected: a tap in specific mode still commits the
+          tile's own variant, regardless of what the filter is set
+          to. */}
       <div className="px-3 pt-2 shrink-0">
         <SelectionFilterBar
           filters={filters}
-          hideVariantFilter={activeMode === 'specific'}
           extraChips={chips}
         />
       </div>

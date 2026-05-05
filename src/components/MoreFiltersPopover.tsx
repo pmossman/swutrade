@@ -40,7 +40,6 @@ export function MoreFiltersPopover({
 }: MoreFiltersPopoverProps) {
   return (
     <Popover
-      align="right"
       panelClassName="p-3 w-[260px]"
       trigger={({ open, toggle }) => (
         <button
