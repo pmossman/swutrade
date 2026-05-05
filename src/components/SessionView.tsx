@@ -112,7 +112,14 @@ export function SessionView({
   //     would land).
   //   - reverts: targetSide === 'both'. Rendered as a global banner
   //     above the canvas — they don't belong to one side.
-  const allSuggestions = session?.suggestions ?? [];
+  // Memoize so the `?? []` fallback doesn't ship a fresh empty array
+  // each render — downstream useMemos (lockedProductIds) depend on
+  // the reference identity of allSuggestions for invalidation
+  // correctness.
+  const allSuggestions = useMemo(
+    () => session?.suggestions ?? [],
+    [session?.suggestions],
+  );
   const incomingSuggestions = allSuggestions.filter(s =>
     (s.targetSide === 'a' || s.targetSide === 'b') && s.targetIsViewer);
   const outgoingSuggestions = allSuggestions.filter(s =>

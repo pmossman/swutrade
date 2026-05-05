@@ -284,7 +284,7 @@ export function ListCardPicker({
 
   const hasQuery = query.length >= 2;
 
-  const { selectedVariants, selectedSets } = filters;
+  const { selectedVariants } = filters;
 
   // Browse mode: when the user hasn't typed, render the whole catalog
   // (respecting filters) so they can pick cards without having to
@@ -353,47 +353,46 @@ export function ListCardPicker({
   // cross-printing entity, so showing every variant would be
   // confusing.
   // Specific tile mode: show every variant as its own tile.
+  // Depend on the filters.snapshot (single memoized object covering
+  // all four dimensions) so adding a new filter axis to
+  // useSelectionFilters automatically invalidates this memo.
+  // Mistakenly listing each axis individually was the root cause of
+  // the rarity-not-filtering bug.
+  const filterSnapshot = filters.snapshot;
   const viewResults = useMemo<SetSearchGroup[]>(() => {
     const setScoped = applySelectionFilters(baseResults, {
-      selectedSets,
+      selectedSets: filterSnapshot.selectedSets,
       // Variant filter applies in family tile mode but is handled
       // explicitly below (the rep-picking step depends on it). Pass
       // empty here so applySelectionFilters doesn't pre-filter
       // variants out of the group BEFORE we collapse to a rep.
       selectedVariants: [],
-      selectedRarities: filters.selectedRarities,
-      sortBy: filters.sortBy,
+      selectedRarities: filterSnapshot.selectedRarities,
+      sortBy: filterSnapshot.sortBy,
       priceMode,
     });
 
     if (activeMode !== 'family') return setScoped;
 
+    const variantFilter = filterSnapshot.selectedVariants;
     return setScoped.map(sg => ({
       ...sg,
       groups: sg.groups
         .map(g => {
-          if (selectedVariants.length === 0) {
+          if (variantFilter.length === 0) {
             return g.variants.length > 0
               ? { ...g, variants: [representativeVariant(g.variants)] }
               : null;
           }
           const matching = g.variants.filter(c =>
-            (selectedVariants as readonly string[]).includes(extractVariantLabel(c.name)),
+            (variantFilter as readonly string[]).includes(extractVariantLabel(c.name)),
           );
           if (matching.length === 0) return null;
           return { ...g, variants: [cheapestVariant(matching, priceMode)] };
         })
         .filter((g): g is NonNullable<typeof g> => g !== null),
     }));
-  }, [
-    baseResults,
-    activeMode,
-    selectedSets,
-    selectedVariants,
-    filters.selectedRarities,
-    filters.sortBy,
-    priceMode,
-  ]);
+  }, [baseResults, activeMode, filterSnapshot, priceMode]);
 
   // Saved-count lookup + item-id reverse index.
   //

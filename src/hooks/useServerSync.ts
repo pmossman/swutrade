@@ -3,6 +3,7 @@ import { apiGet, apiPut } from '../services/apiClient';
 import type { User } from './useAuth';
 import { normalizeRestriction, type WantsApi } from './useWants';
 import type { AvailableApi } from './useAvailable';
+import type { WantsItem, AvailableItem } from '../persistence/schemas';
 
 /**
  * Apply `normalizeRestriction` to every server-pulled wants row so a
@@ -68,12 +69,17 @@ export function useServerSync(
   // Once initial sync completes, debounced mutations are allowed.
   const initialSyncDoneRef = useRef(false);
 
-  const pushWants = useCallback(async (items: typeof wants.items) => {
-    return syncPut<typeof wants.items>('/api/sync/wants', items);
+  // Use the canonical persistence types here rather than `typeof
+  // wants.items` / `typeof available.items` — the typeof references
+  // tripped exhaustive-deps lint into thinking `wants` / `available`
+  // were runtime deps when in fact only the parameter values are
+  // used at runtime.
+  const pushWants = useCallback(async (items: WantsItem[]) => {
+    return syncPut<WantsItem[]>('/api/sync/wants', items);
   }, []);
 
-  const pushAvailable = useCallback(async (items: typeof available.items) => {
-    return syncPut<typeof available.items>('/api/sync/available', items);
+  const pushAvailable = useCallback(async (items: AvailableItem[]) => {
+    return syncPut<AvailableItem[]>('/api/sync/available', items);
   }, []);
 
   // Initial sync on sign-in or mount. Server is always the source

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   StringArraySchema,
   SortBySchema,
@@ -53,11 +53,35 @@ export function replaceGroupReducer(group: string | null): string[] {
   return group ? [group] : [];
 }
 
+/**
+ * Snapshot of all four filter dimensions in a single memoized
+ * object. Consumers that need to recompute when ANY filter changes
+ * should depend on this object alone instead of listing each axis
+ * individually — that pattern caused a missed-dep bug where adding
+ * `selectedRarities` and `sortBy` to the user-facing UI without
+ * updating every consumer's useMemo deps left rarity toggles silently
+ * not re-filtering the grid.
+ *
+ * Reference identity is stable as long as none of the four axes
+ * change, so `useMemo(..., [filters.snapshot])` gets full
+ * invalidation coverage in one slot.
+ */
+export interface SelectionFiltersSnapshot {
+  selectedVariants: readonly CanonicalVariant[];
+  selectedSets: readonly string[];
+  selectedRarities: readonly SelectableRarity[];
+  sortBy: SortBy;
+}
+
 export interface SelectionFilters {
   selectedVariants: CanonicalVariant[];
   selectedSets: string[];
   selectedRarities: SelectableRarity[];
   sortBy: SortBy;
+  /** Single-object view of the four state values above. Stable
+   *  reference until any of them changes; depend on this in
+   *  consumer memos to bake-in invalidation correctness. */
+  snapshot: SelectionFiltersSnapshot;
   toggleVariant: (v: CanonicalVariant) => void;
   toggleSet: (slug: string) => void;
   /** Swap the active set-group pseudo-slug, ensuring the two known
@@ -214,11 +238,23 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     (selectedRarities.length > 0 ? 1 : 0)
     + (sortBy !== 'relevance' ? 1 : 0);
 
+  // Memoized snapshot of all four filter dimensions. Consumers that
+  // recompute when ANY filter changes (e.g. ListCardPicker's
+  // viewResults memo) should depend on this single object instead
+  // of enumerating each axis — eliminates the missed-dep bug class
+  // when new filter dimensions get added (the prior rarity + sort
+  // additions silently failed to invalidate consumers' memos).
+  const snapshot: SelectionFiltersSnapshot = useMemo(
+    () => ({ selectedVariants, selectedSets, selectedRarities, sortBy }),
+    [selectedVariants, selectedSets, selectedRarities, sortBy],
+  );
+
   return {
     selectedVariants,
     selectedSets,
     selectedRarities,
     sortBy,
+    snapshot,
     toggleVariant,
     toggleSet,
     replaceGroup,

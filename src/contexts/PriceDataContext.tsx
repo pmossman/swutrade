@@ -17,9 +17,14 @@ const PriceDataContext = createContext<PriceDataContextValue | null>(null);
 
 export function PriceDataProvider({ children }: { children: React.ReactNode }) {
   const priceData = usePriceData();
+  // Pull loadAllSets out into a local so the dep array is just
+  // `[loadAllSets]`. Depending on `priceData.loadAllSets` indirectly
+  // tripped exhaustive-deps because the accessor read implies a
+  // dep on the whole `priceData` object.
+  const { loadAllSets } = priceData;
   useEffect(() => {
-    priceData.loadAllSets();
-  }, [priceData.loadAllSets]);
+    loadAllSets();
+  }, [loadAllSets]);
   // Memoize so the provider doesn't ship a fresh object literal each
   // render — every `usePriceDataContext()` consumer would otherwise
   // re-render on every parent re-render (60s minute-tick, useSession

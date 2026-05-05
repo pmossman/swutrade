@@ -278,7 +278,7 @@ export function TradeSide({
       return out;
     }
     // Receiving side: my wants ∩ their available (qty-aware).
-    const myWantByFamily = new Map<string, typeof wants.items[number]>();
+    const myWantByFamily = new Map<string, WantsItem>();
     for (const w of wants.items) myWantByFamily.set(w.familyId, w);
     const out: CardVariant[] = [];
     for (const a of sharedLists.available) {
@@ -323,7 +323,7 @@ export function TradeSide({
     }
     // Receiving side: pick up community-available cards matching my wants.
     if (!communityAvailableProductIds || communityAvailableProductIds.length === 0) return [];
-    const myWantFamilies = new Map<string, typeof wants.items[number]>();
+    const myWantFamilies = new Map<string, WantsItem>();
     for (const w of wants.items) myWantFamilies.set(w.familyId, w);
     const out: CardVariant[] = [];
     for (const productId of communityAvailableProductIds) {
