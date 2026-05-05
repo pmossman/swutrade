@@ -11,9 +11,10 @@ import { extractVariantLabel, extractBaseName } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { computeBalance, balanceChrome } from '../utils/forceBalance';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useNavigation } from '../contexts/NavigationContext';
 import { usePricing } from '../contexts/PricingContext';
 import { HandlePickerDialog } from './HandlePickerDialog';
-import { buildTradeSearch } from '../urlCodec';
+import { apiPost } from '../services/apiClient';
 
 interface TradeSummaryProps {
   yourCards: TradeCard[];
@@ -138,24 +139,62 @@ function SidePanel({ cards, percentage, priceMode, label, accentColor }: {
 
 export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryProps) {
   const { user } = useAuthContext();
+  const nav = useNavigation();
   const { percentage, setPercentage, priceMode, setPriceMode } = usePricing();
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const hasAnyCards = yourCards.length > 0 || theirCards.length > 0;
 
   /**
-   * Navigate into the proposal composer carrying the current cards via
-   * the URL's trade codec. ProposeBar's one-shot auto-apply effect only
-   * fires when both sides are empty at mount (see ProposeBar.tsx
-   * autoAppliedRef), so cards already in the URL survive unchanged and
-   * the recipient just sees what the sender composed locally.
+   * B4 — "Send to @user" flow. Replaces the legacy proposal-composer
+   * navigation. Builds a session via /api/sessions/create with the
+   * viewer's current cards as the creator side and the staged
+   * counterpart-side cards as outgoing suggestions on the new
+   * session. The recipient lands on the session canvas with the
+   * sender's offering already populated and a suggestion-row asking
+   * them to add the requested cards to their side.
+   *
+   * Idempotent at the server: an existing-active-pair returns the
+   * same session id; we navigate into it either way.
    */
-  const handleProposeTo = useCallback((handle: string) => {
-    const search = buildTradeSearch({ yourCards, theirCards, percentage, priceMode });
-    const params = new URLSearchParams(search);
-    params.set('propose', handle);
-    window.location.href = `/?${params.toString()}`;
-  }, [yourCards, theirCards, percentage, priceMode]);
+  const handleSendToUser = useCallback(async (handle: string) => {
+    if (sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      const initialCards = yourCards.map(tc => ({
+        productId: tc.card.productId || tc.card.name,
+        name: tc.card.name,
+        variant: tc.card.name.includes('(') ? extractVariantLabel(tc.card.name) : 'Standard',
+        qty: tc.qty,
+        unitPrice: tc.card.marketPrice ?? null,
+      }));
+      const counterpartSuggestions = theirCards.map(tc => ({
+        productId: tc.card.productId || tc.card.name,
+        name: tc.card.name,
+        variant: tc.card.name.includes('(') ? extractVariantLabel(tc.card.name) : 'Standard',
+        qty: tc.qty,
+        unitPrice: tc.card.marketPrice ?? null,
+      }));
+      const result = await apiPost<{ id: string; created: boolean }>(
+        '/api/sessions/create',
+        {
+          counterpartHandle: handle,
+          initialCards,
+          counterpartSuggestions,
+        },
+      );
+      if (!result.ok) {
+        setSendError("Couldn't start the trade. Try again in a moment.");
+        return;
+      }
+      nav.toSession(result.data.id);
+    } finally {
+      setSending(false);
+    }
+  }, [yourCards, theirCards, sending, nav]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -318,12 +357,14 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
               <button
                 type="button"
                 onClick={() => setPickerOpen(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60 transition-colors"
+                disabled={sending}
+                title="Start a shared trade — they'll get a Discord DM with the link"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60 transition-colors disabled:opacity-60"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
                 </svg>
-                Send as proposal
+                {sending ? 'Sending…' : 'Send to @user'}
               </button>
             </div>
           )}
@@ -354,9 +395,14 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
         onClose={() => setPickerOpen(false)}
         onPick={handle => {
           setPickerOpen(false);
-          handleProposeTo(handle);
+          handleSendToUser(handle);
         }}
       />
+      {sendError && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-red-950/80 border border-red-500/60 text-xs text-red-200">
+          {sendError}
+        </div>
+      )}
     </div>
   );
 }

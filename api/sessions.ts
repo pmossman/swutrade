@@ -177,6 +177,13 @@ const CreateBodySchema = z.object({
   // wants to be able to create a blank shared trade and build it
   // together from scratch.
   initialCards: z.array(TradeCardSnapshotSchema).max(200).default([]),
+  // B4 — Trade-builder "Send to @user" path. Cards the creator
+  // pre-staged for the OTHER side become outgoing suggestions on
+  // the new session. The recipient lands on a session with the
+  // creator's cards + a suggestion-row asking them to add the
+  // staged cards to their side. Empty array (default) preserves
+  // the original "create a blank session" behavior.
+  counterpartSuggestions: z.array(TradeCardSnapshotSchema).max(50).default([]),
 });
 
 const EditBodySchema = z.object({
@@ -247,6 +254,37 @@ export async function handleCreateSession(
     counterpartUserId: counterpart.id,
     creatorCards: parsed.data.initialCards,
   });
+
+  // B4 — when the creator pre-staged cards for the OTHER side in
+  // the trade builder, file them as outgoing suggestions on the new
+  // session. Skipped on idempotent re-create (the user re-sent into
+  // an already-active pair; we don't want to add duplicate
+  // suggestions to a session they've been editing live). The
+  // counterpart-side resolution mirrors createOrGetActiveSession's
+  // normalizeParticipants — slot A is the lower userId by string
+  // sort; the counterpart lives on whichever slot the creator
+  // doesn't.
+  if (result.created && parsed.data.counterpartSuggestions.length > 0) {
+    const counterpartSide: 'a' | 'b' =
+      session.userId < counterpart.id ? 'b' : 'a';
+    const suggestResult = await suggestForSession(db, {
+      sessionId: result.id,
+      viewerUserId: session.userId,
+      targetSide: counterpartSide,
+      cardsToAdd: parsed.data.counterpartSuggestions,
+      cardsToRemove: [],
+    });
+    if (!suggestResult.ok) {
+      // Suggestion failed (probably card-locked or terminal — neither
+      // applies to a freshly-created session, but defensive log).
+      // The session itself is fine; just log and proceed.
+      console.error(
+        'handleCreateSession: counterpart-suggestion seed failed',
+        result.id,
+        suggestResult.reason,
+      );
+    }
+  }
 
   // B1 — fire an invite DM when a brand-new session is created with a
   // named counterpart. Skip on idempotent re-create (the user was

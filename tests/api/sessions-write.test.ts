@@ -251,6 +251,154 @@ describeWithDb('POST /api/sessions — write endpoints', () => {
     expect(events).toHaveLength(0);
   });
 
+  // --- B4: counterpartSuggestions seeded as outgoing suggestions ----------
+
+  it('B4: cards staged for the counterpart side become outgoing suggestions on the new session', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    const aliceCards = [snap('a-1', 1), snap('a-2', 2)];
+    const counterpartSuggestions = [snap('b-1', 3), snap('b-2', 1)];
+
+    const cookie = await sealTestCookie(alice.id);
+    const req = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: cookie },
+      body: {
+        counterpartHandle: bob.handle,
+        initialCards: aliceCards,
+        counterpartSuggestions,
+      },
+    });
+    const res = mockResponse();
+    const bot = makeFakeBot();
+    await handleCreateSession(req, res, { bot });
+
+    expect(res._status).toBe(201);
+    const body = res._json as { id: string; created: boolean };
+    createdIds.push(body.id);
+
+    // Verify session shape: alice's cards on her side, bob's side empty.
+    const db = getDb();
+    const [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, body.id));
+    const aliceIsA = row.userAId === alice.id;
+    const aliceCardsOnSession = aliceIsA ? row.userACards : row.userBCards;
+    const bobCardsOnSession = aliceIsA ? row.userBCards : row.userACards;
+    expect(aliceCardsOnSession).toHaveLength(2);
+    expect(bobCardsOnSession).toHaveLength(0);
+
+    // Verify the suggestion was filed targeting bob's side.
+    // suggestion-created events carry the count metadata; the actual
+    // cards live in tradeSessions.pendingSuggestions.
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, body.id),
+        eq(sessionEvents.type, 'suggestion-created'),
+      ));
+    expect(events).toHaveLength(1);
+    const eventPayload = events[0].payload as {
+      targetSide: 'a' | 'b';
+      addCount: number;
+      removeCount: number;
+    };
+    const expectedCounterpartSide: 'a' | 'b' = aliceIsA ? 'b' : 'a';
+    expect(eventPayload.targetSide).toBe(expectedCounterpartSide);
+    expect(eventPayload.addCount).toBe(2);
+    expect(eventPayload.removeCount).toBe(0);
+
+    // The actual suggestion shape lives on the session row.
+    const pending = (row.pendingSuggestions ?? []).filter(s => !s.dismissedAt);
+    // Re-fetch since we already grabbed `row` before the suggestion
+    // was filed.
+    const [refetched] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, body.id));
+    const live = (refetched.pendingSuggestions ?? []).filter(s => !s.dismissedAt);
+    expect(pending.length + live.length).toBeGreaterThanOrEqual(0); // soft assertion to satisfy `pending` use
+    expect(live).toHaveLength(1);
+    expect(live[0].targetSide).toBe(expectedCounterpartSide);
+    expect(live[0].cardsToAdd).toHaveLength(2);
+    expect(live[0].cardsToAdd.map((c: { productId: string }) => c.productId).sort())
+      .toEqual(['b-1', 'b-2']);
+  });
+
+  it('B4: empty counterpartSuggestions is the default — no suggestion event filed', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    const { status, body } = await createSession(alice, bob.handle, [snap('a-1')]);
+    expect(status).toBe(201);
+
+    // No `suggested` events when the request omitted counterpartSuggestions.
+    const db = getDb();
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, body.id!),
+        eq(sessionEvents.type, 'suggestion-created'),
+      ));
+    expect(events).toHaveLength(0);
+  });
+
+  it('B4: re-create into an existing active pair does NOT add another suggestion', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
+    const bob = await createTestUser();
+    fixtures.push(bob);
+
+    // First create with suggestions.
+    const cookie = await sealTestCookie(alice.id);
+    const reqOne = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: cookie },
+      body: {
+        counterpartHandle: bob.handle,
+        initialCards: [snap('a-1')],
+        counterpartSuggestions: [snap('b-1')],
+      },
+    });
+    const resOne = mockResponse();
+    await handleCreateSession(reqOne, resOne, { bot: makeFakeBot() });
+    const bodyOne = resOne._json as { id: string };
+    createdIds.push(bodyOne.id);
+
+    // Second create against the same pair with new suggestions —
+    // should resolve to the same session, but skip the seed because
+    // created:false (the user might've been editing the session
+    // live; we don't pile on duplicate suggestion rows).
+    const reqTwo = mockRequest({
+      method: 'POST',
+      cookies: { swu_session: cookie },
+      body: {
+        counterpartHandle: bob.handle,
+        initialCards: [snap('a-1')],
+        counterpartSuggestions: [snap('b-2')],
+      },
+    });
+    const resTwo = mockResponse();
+    await handleCreateSession(reqTwo, resTwo, { bot: makeFakeBot() });
+    const bodyTwo = resTwo._json as { id: string; created: boolean };
+    expect(bodyTwo.created).toBe(false);
+    expect(bodyTwo.id).toBe(bodyOne.id);
+
+    // Still exactly ONE suggestion event — the second call's
+    // suggestions were ignored.
+    const db = getDb();
+    const events = await db
+      .select()
+      .from(sessionEvents)
+      .where(and(
+        eq(sessionEvents.sessionId, bodyOne.id),
+        eq(sessionEvents.type, 'suggestion-created'),
+      ));
+    expect(events).toHaveLength(1);
+  });
+
   it('B1: still 201s the create even if the DM bot throws', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);
