@@ -135,27 +135,26 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
     };
   }, []);
 
-  // Pin the panel to `100dvh` (dynamic viewport height) instead of
-  // tracking visualViewport.height. iOS Safari's floating URL-bar
-  // overlay (the small "host" chip that appears above the keyboard
-  // when the user is typing) is EXCLUDED from
-  // visualViewport.height, so pinning to that value left a gap
-  // between the panel's bottom edge and the keyboard top — the
-  // trade canvas peeked through that gap. `100dvh` includes the
-  // URL-bar overlay region (the chrome floats over the panel,
-  // which is the desired behavior — iOS chrome on top of our UI),
-  // so the panel always extends down to the keyboard top with no
-  // visible gap.
+  // Bottom-anchor the panel: `position: fixed; bottom: 0` is more
+  // reliable on iOS than `top: 0` for keyboard-aware overlays.
+  // When the soft keyboard opens, iOS often displaces `top: 0`
+  // fixed elements (treating "top" as the layout viewport's top,
+  // which can sit above the visible region after iOS auto-scrolls
+  // to keep the focused input visible). Anchoring to `bottom: 0`
+  // pins the panel's BOTTOM edge to the keyboard top — the visible
+  // bottom — and the height grows upward from there. With
+  // `height: 100dvh` (which shrinks on keyboard open via the
+  // `interactive-widget=resizes-content` viewport meta), the
+  // panel's top edge lands at the proper visible-area top.
   //
-  // `interactive-widget=resizes-content` in index.html's viewport
-  // meta is what makes `100dvh` shrink-on-keyboard-open on iOS
-  // 16.4+. Older iOS versions fall through to the (still-broken)
-  // pre-16.4 layout-viewport behavior — acceptable since the user
-  // population on those versions is small and shrinking.
+  // Earlier attempts pinned `top: 0` + tracked
+  // visualViewport.height; both produced a gap between the panel
+  // bottom and the keyboard top through which the trade canvas
+  // peeked. Bottom-anchoring eliminates that gap by construction.
 
   return (
     <div
-      className="fixed inset-x-0 top-0 z-40 flex justify-end bg-black/40"
+      className="fixed inset-x-0 bottom-0 z-40 flex justify-end bg-black/40"
       style={{ height: '100dvh' }}
       onClick={onClose}
     >
