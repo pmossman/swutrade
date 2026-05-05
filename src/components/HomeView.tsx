@@ -181,25 +181,37 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
           />
         )}
 
-        {/* === Zone 3: Wishlist + Binder. Each module owns its own
-            heading + chrome ("Your wishlist", "Your trade binder"),
-            so an outer "Your Collection" section title would just
-            duplicate it; visual grouping comes from the side-by-side
-            grid alone. */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          <WishlistModule
-            wants={wants.items}
-            cardByFamily={byFamily}
-            onEditWishlist={nav.toWishlist}
-            canPostToServer={canPostToServer}
-          />
-          <BinderModule
-            available={available.items}
-            cardByProductId={byProductId}
-            onEditBinder={nav.toBinder}
-            canPostToServer={canPostToServer}
-          />
-        </div>
+        {/* === Zone 3: Wishlist + Binder packed into one unified
+            card. Conceptually the pair "what I want / what I have"
+            — sharing one outer frame reads as a single "your
+            inventory" surface rather than two unrelated cards. The
+            two halves still render side-by-side on desktop with a
+            soft divider; mobile stacks them with a horizontal rule
+            between. Each child uses ModuleSection's `flush` mode so
+            the existing module headings + content render without
+            their own outer chrome. */}
+        <section className="rounded-xl border border-space-700 bg-space-800/20 p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 lg:divide-x lg:divide-space-700 divide-y lg:divide-y-0 divide-space-700">
+            <div className="lg:pr-6 pb-4 lg:pb-0">
+              <WishlistModule
+                wants={wants.items}
+                cardByFamily={byFamily}
+                onEditWishlist={nav.toWishlist}
+                canPostToServer={canPostToServer}
+                flush
+              />
+            </div>
+            <div className="lg:pl-6 pt-4 lg:pt-0">
+              <BinderModule
+                available={available.items}
+                cardByProductId={byProductId}
+                onEditBinder={nav.toBinder}
+                canPostToServer={canPostToServer}
+                flush
+              />
+            </div>
+          </div>
+        </section>
 
         {/* === Zone 4: Communities + Partners. Same shape — modules
             already say "My Communities" / "Trading partners" in
@@ -581,6 +593,7 @@ function WishlistModule({
   cardByFamily,
   onEditWishlist,
   canPostToServer,
+  flush = false,
 }: {
   wants: WantsItem[];
   cardByFamily: Map<string, CardVariant>;
@@ -588,6 +601,8 @@ function WishlistModule({
   /** True when the viewer is signed in (real account) and could
    *  reach the Signal Builder. Gates the "Post to a server" CTA. */
   canPostToServer: boolean;
+  /** Render without the outer card chrome — the parent owns it. */
+  flush?: boolean;
 }) {
   const priorityCount = useMemo(() => wants.filter(w => w.isPriority).length, [wants]);
   // Priorities pinned first, then everything else by newest-added.
@@ -608,6 +623,7 @@ function WishlistModule({
       icon={<Star aria-hidden className="w-4 h-4" />}
       label="Your wishlist"
       headingId="your-wishlist-heading"
+      flush={flush}
       action={
         <button
           type="button"
@@ -685,11 +701,14 @@ function BinderModule({
   cardByProductId,
   onEditBinder,
   canPostToServer,
+  flush = false,
 }: {
   available: AvailableItem[];
   cardByProductId: Map<string, CardVariant>;
   onEditBinder: () => void;
   canPostToServer: boolean;
+  /** Render without the outer card chrome — the parent owns it. */
+  flush?: boolean;
 }) {
   // Binder has no priority concept — newest additions float to the top
   // (most likely to be what the viewer is actively thinking about;
@@ -704,6 +723,7 @@ function BinderModule({
       icon={<BookOpen aria-hidden className="w-4 h-4" />}
       label="Your trade binder"
       headingId="your-binder-heading"
+      flush={flush}
       action={
         <button
           type="button"
@@ -1110,21 +1130,30 @@ function ModuleSection({
   headingId,
   action,
   children,
+  flush = false,
 }: {
   icon: React.ReactNode;
   label: string;
   headingId: string;
   action?: React.ReactNode;
   children: React.ReactNode;
+  /** Drop the outer card chrome (border / bg / padding). Used when
+   *  the module is rendered inside a parent that already provides a
+   *  unified card frame (e.g. Wishlist + Binder packed into one
+   *  shared "Collection" card on Home). The header + action layout
+   *  stays unchanged so the module still reads as itself within the
+   *  parent's frame. */
+  flush?: boolean;
 }) {
   return (
     <section
       aria-labelledby={headingId}
       // Each module sits in its own subtle panel. Gives the dashboard
-      // a consistent "these are four parallel things" visual rhythm
-      // without heavy chrome — the space-800/20 wash is darker than
-      // the page ground but lighter than the interactive rows within.
-      className="rounded-xl border border-space-700 bg-space-800/20 p-4"
+      // a consistent "these are parallel things" visual rhythm without
+      // heavy chrome — the space-800/20 wash is darker than the page
+      // ground but lighter than the interactive rows within. Flush
+      // mode skips this when the parent owns the chrome.
+      className={flush ? '' : 'rounded-xl border border-space-700 bg-space-800/20 p-4'}
     >
       <div className="flex items-baseline justify-between gap-3 mb-1">
         <h2
