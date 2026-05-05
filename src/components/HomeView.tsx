@@ -476,7 +476,12 @@ function TradeListRow({
     ? `@${row.counterpart.handle}${row.counterpart.isAnonymous ? ' (guest)' : ''}`
     : row.openSlot ? 'Waiting for counterpart' : 'Unknown trader';
   const when = relativeTime(row.lastActivityAt);
-  const highlight = row.state === 'awaiting';
+  // Highlight the row when SOMETHING is waiting on the viewer:
+  //   - proposal-side: legacy `awaiting` state (incoming pending)
+  //   - session-side: B6 server-derived `awaitingViewer` flag
+  // Same gold-attention chrome either way; the InboxSection's
+  // ambient frame stays neutral.
+  const highlight = row.state === 'awaiting' || row.awaitingViewer === true;
   const containerClass = expanded
     ? (highlight ? 'bg-gold/12 border-gold/50' : 'bg-space-800/70 border-gold/40')
     : highlight

@@ -85,6 +85,12 @@ export interface SessionView {
   lastReadAt: string | null;
   /** Active cross-side suggestions (viewer-centric). */
   suggestions: PendingSuggestionView[];
+  /** B6 — server-derived flag set when the session is waiting on
+   *  the viewer's response (counterpart confirmed and viewer
+   *  hasn't, or there's an unresolved suggestion targeting them).
+   *  Drives Inbox row prominence on Home; can also feed future
+   *  session-banner / re-engagement DM logic. */
+  awaitingViewer: boolean;
 }
 
 /**

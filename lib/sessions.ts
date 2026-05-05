@@ -224,6 +224,16 @@ export interface SessionView {
    *  dismissed ones. Each carries computed residual delta so the UI
    *  renders only what's still actionable. */
   suggestions: PendingSuggestionView[];
+  /** B6 — derived "this session is waiting on YOU" signal. True when
+   *  any of:
+   *    - The counterpart has confirmed and the viewer hasn't.
+   *    - There's an active suggestion targeting the viewer that
+   *      they haven't accepted/dismissed.
+   *  Drives Inbox row prominence on Home + future re-engagement
+   *  DM logic. False on terminal sessions, on open-slot sessions
+   *  (no counterpart yet), and on every "we're both still
+   *  collaborating" intermediate state. */
+  awaitingViewer: boolean;
 }
 
 export const SESSION_EVENT_PAGE_SIZE = 50;
@@ -287,6 +297,14 @@ export async function getSessionForViewer(
     row.userBCards,
   );
 
+  const confirmedByViewer = row.confirmedByUserIds.includes(viewerUserId);
+  const confirmedByCounterpart = counterpartId !== null && row.confirmedByUserIds.includes(counterpartId);
+  const isActive = row.status === 'active' && counterpartId !== null;
+  const awaitingViewer = isActive && (
+    (confirmedByCounterpart && !confirmedByViewer)
+    || suggestions.some(s => s.targetIsViewer)
+  );
+
   return {
     id: row.id,
     status: row.status,
@@ -303,8 +321,8 @@ export async function getSessionForViewer(
     openSlot: counterpartId === null && row.status === 'active',
     yourCards,
     theirCards,
-    confirmedByViewer: row.confirmedByUserIds.includes(viewerUserId),
-    confirmedByCounterpart: counterpartId !== null && row.confirmedByUserIds.includes(counterpartId),
+    confirmedByViewer,
+    confirmedByCounterpart,
     lastEditedByViewer: row.lastEditedByUserId === viewerUserId,
     lastEditedAt: row.lastEditedAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -315,6 +333,7 @@ export async function getSessionForViewer(
     unreadCount,
     lastReadAt: lastReadAt?.toISOString() ?? null,
     suggestions,
+    awaitingViewer,
   };
 }
 
@@ -504,6 +523,20 @@ export async function listActiveSessionsForViewer(
     const counterpartId = viewerIsA ? r.userBId : r.userAId;
     const counterpart = counterpartId ? byId.get(counterpartId) : null;
     const lastReadAt = viewerIsA ? r.userALastReadAt : r.userBLastReadAt;
+    const suggestions = projectSuggestionsForViewer(
+      r.pendingSuggestions ?? [],
+      viewerUserId,
+      viewerIsA,
+      r.userACards,
+      r.userBCards,
+    );
+    const confirmedByViewer = r.confirmedByUserIds.includes(viewerUserId);
+    const confirmedByCounterpart = counterpartId !== null && r.confirmedByUserIds.includes(counterpartId);
+    const isActive = r.status === 'active' && counterpartId !== null;
+    const awaitingViewer = isActive && (
+      (confirmedByCounterpart && !confirmedByViewer)
+      || suggestions.some(s => s.targetIsViewer)
+    );
     return {
       id: r.id,
       status: r.status,
@@ -520,8 +553,8 @@ export async function listActiveSessionsForViewer(
       openSlot: counterpartId === null && r.status === 'active',
       yourCards: viewerIsA ? r.userACards : r.userBCards,
       theirCards: viewerIsA ? r.userBCards : r.userACards,
-      confirmedByViewer: r.confirmedByUserIds.includes(viewerUserId),
-      confirmedByCounterpart: counterpartId !== null && r.confirmedByUserIds.includes(counterpartId),
+      confirmedByViewer,
+      confirmedByCounterpart,
       lastEditedByViewer: r.lastEditedByUserId === viewerUserId,
       lastEditedAt: r.lastEditedAt.toISOString(),
       createdAt: r.createdAt.toISOString(),
@@ -536,13 +569,8 @@ export async function listActiveSessionsForViewer(
       events: [],
       unreadCount: 0,
       lastReadAt: lastReadAt?.toISOString() ?? null,
-      suggestions: projectSuggestionsForViewer(
-        r.pendingSuggestions ?? [],
-        viewerUserId,
-        viewerIsA,
-        r.userACards,
-        r.userBCards,
-      ),
+      suggestions,
+      awaitingViewer,
     };
   });
 }

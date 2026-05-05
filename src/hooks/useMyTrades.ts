@@ -64,6 +64,11 @@ export interface TradeRow {
   /** True when this is a session whose slot B is still open (QR-only
    *  sharing, no claim yet). */
   openSlot?: boolean;
+  /** B6 — true when the session is waiting on the viewer (counterpart
+   *  confirmed and viewer hasn't, or there's an unresolved
+   *  suggestion targeting the viewer). Drives Inbox row prominence
+   *  on Home. Only set on session-kind rows. */
+  awaitingViewer?: boolean;
   // proposal-only —————
   direction?: 'sent' | 'received';
   topCard?: { name: string; variant: string } | null;
@@ -211,6 +216,7 @@ function sessionToRow(s: SessionView): TradeRow {
     theirCount: s.theirCards.reduce((n, c) => n + c.qty, 0),
     lastActivityAt: s.lastEditedAt,
     openSlot: s.openSlot,
+    awaitingViewer: s.awaitingViewer,
   };
 }
 
