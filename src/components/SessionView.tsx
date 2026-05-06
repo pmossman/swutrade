@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState } from './ui/states';
+import { useConfirm } from './ui/ConfirmDialog';
 import { TradeSide } from './TradeSide';
 import { TradeBalance } from './TradeBalance';
 import { ListsDrawer } from './ListsDrawer';
@@ -82,6 +83,9 @@ export function SessionView({
     sendChat, ping, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
     markRead,
   } = api;
+  // Distinct from `confirm` above (which is the session-confirm API);
+  // this is the "ask the user before destructive action" dialog hook.
+  const askConfirm = useConfirm();
   const [claiming, setClaiming] = useState(false);
   const [unconfirming, setUnconfirming] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
@@ -282,7 +286,14 @@ export function SessionView({
       || session.theirCards.length > 0
       || session.suggestions.length > 0;
     if (hasActivity) {
-      if (!window.confirm('Cancel this shared trade? Both sides will lose the in-progress state.')) return;
+      const ok = await askConfirm({
+        title: 'Cancel this shared trade?',
+        message: 'Both sides will lose the in-progress state.',
+        confirmLabel: 'Cancel trade',
+        cancelLabel: 'Keep trading',
+        destructive: true,
+      });
+      if (!ok) return;
     }
     hapticMedium();
     setCancelling(true);
@@ -291,7 +302,7 @@ export function SessionView({
     } finally {
       setCancelling(false);
     }
-  }, [cancel, cancelling, session]);
+  }, [cancel, cancelling, session, askConfirm]);
   const handleUnconfirm = useCallback(async () => {
     if (unconfirming || !session || session.status !== 'active') return;
     hapticSoft();
@@ -312,7 +323,13 @@ export function SessionView({
   const [declining, setDeclining] = useState(false);
   const handleDecline = useCallback(async () => {
     if (declining || !session || session.status !== 'active') return;
-    if (!window.confirm("Decline this trade? The other side will be notified.")) return;
+    const ok = await askConfirm({
+      title: 'Decline this trade?',
+      message: 'The other side will be notified.',
+      confirmLabel: 'Decline',
+      destructive: true,
+    });
+    if (!ok) return;
     hapticMedium();
     setDeclining(true);
     try {
@@ -320,7 +337,7 @@ export function SessionView({
     } finally {
       setDeclining(false);
     }
-  }, [decline, declining, session]);
+  }, [decline, declining, session, askConfirm]);
 
   // Ping affordance — fires the explicit "@counterpart, take a look"
   // DM. Server rate-limits to one ping per ~15 min per session per

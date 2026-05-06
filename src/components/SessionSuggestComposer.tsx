@@ -3,6 +3,7 @@ import type { CardVariant } from '../types';
 import { ListCardPicker } from './ListCardPicker';
 import type { TradeCardSnapshot } from '../hooks/useSession';
 import { extractVariantLabel } from '../variants';
+import { useConfirm } from './ui/ConfirmDialog';
 
 /**
  * Fullscreen overlay that lets the viewer pick cards to suggest the
@@ -57,6 +58,7 @@ export function SessionSuggestComposer({
   initialCardsToRemove,
   lockedProductIds,
 }: SessionSuggestComposerProps) {
+  const confirm = useConfirm();
   const [draft, setDraft] = useState<TradeCardSnapshot[]>([]);
   const [removeDraft, setRemoveDraft] = useState<TradeCardSnapshot[]>(() => initialCardsToRemove ?? []);
   const [submitting, setSubmitting] = useState(false);
@@ -134,12 +136,18 @@ export function SessionSuggestComposer({
   // when the user has work in progress we confirm before closing.
   // Empty composer drops straight through — it's a free single-tap
   // back-out the way Cancel ought to feel.
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
     if (hasContent) {
-      if (!window.confirm("Discard this suggestion? Your staged cards will be lost.")) return;
+      const ok = await confirm({
+        title: 'Discard this suggestion?',
+        message: 'Your staged cards will be lost.',
+        confirmLabel: 'Discard',
+        destructive: true,
+      });
+      if (!ok) return;
     }
     onClose();
-  }, [hasContent, onClose]);
+  }, [hasContent, onClose, confirm]);
 
   // Picker's default top-bar (Back chevron + "Done" pill) gets
   // suppressed below by passing a custom `header`. We replaced

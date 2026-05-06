@@ -3,6 +3,7 @@ import { KebabMenu } from './KebabMenu';
 import type { KebabMenuItem } from './KebabMenu';
 import { TradeImageModal } from './TradeImageModal';
 import { useAuthContext } from '../contexts/AuthContext';
+import { useConfirm } from './ui/ConfirmDialog';
 
 interface MobileActionsKebabProps {
   /** Clear-all callback. Omit in contexts where the destructive
@@ -17,6 +18,7 @@ interface MobileActionsKebabProps {
  */
 export function MobileActionsKebab({ onClear }: MobileActionsKebabProps) {
   const { user } = useAuthContext();
+  const confirm = useConfirm();
   const [showImage, setShowImage] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -43,14 +45,18 @@ export function MobileActionsKebab({ onClear }: MobileActionsKebabProps) {
     setTimeout(() => setLinkCopied(false), 2000);
   }, [user]);
 
-  const handleClear = useCallback(() => {
+  const handleClear = useCallback(async () => {
     if (!onClear) return;
     // Destructive; confirm so an accidental tap in the menu doesn't
     // wipe a trade in progress.
-    if (window.confirm('Clear all cards from both sides?')) {
-      onClear();
-    }
-  }, [onClear]);
+    const ok = await confirm({
+      title: 'Clear all cards?',
+      message: 'Both sides will be wiped from this trade.',
+      confirmLabel: 'Clear all',
+      destructive: true,
+    });
+    if (ok) onClear();
+  }, [onClear, confirm]);
 
   const imageUrl = `/api/og${typeof window !== 'undefined' ? (window.location.search || '?y=&t=') : ''}`;
 

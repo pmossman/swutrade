@@ -8,6 +8,7 @@ import { CardIndexProvider } from './contexts/CardIndexContext.tsx'
 import { DrawerProvider } from './contexts/DrawerContext.tsx'
 import { PricingProvider } from './contexts/PricingContext.tsx'
 import { PrimaryActionProvider } from './contexts/PrimaryActionContext.tsx'
+import { ConfirmProvider } from './components/ui/ConfirmDialog.tsx'
 import { ErrorBoundary } from './components/ui/ErrorBoundary.tsx'
 
 // Root-level error boundary sits OUTSIDE the providers so a throw in
@@ -24,7 +25,9 @@ createRoot(document.getElementById('root')!).render(
             <DrawerProvider>
               <PricingProvider>
                 <PrimaryActionProvider>
-                  <App />
+                  <ConfirmProvider>
+                    <App />
+                  </ConfirmProvider>
                 </PrimaryActionProvider>
               </PricingProvider>
             </DrawerProvider>

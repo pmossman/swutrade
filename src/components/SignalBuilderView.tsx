@@ -5,6 +5,7 @@ import type { AuthApi } from '../hooks/useAuth';
 import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
 import { useNavigation } from '../contexts/NavigationContext';
+import { useConfirm } from './ui/ConfirmDialog';
 import { AppHeader } from './ui/AppHeader';
 import { NumberStepper } from './ui/NumberStepper';
 import { ListCardPicker } from './ListCardPicker';
@@ -146,13 +147,22 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
 
   const familyMap = useMemo(() => buildFamilyMap(allCards), [allCards]);
   const nav = useNavigation();
+  const confirm = useConfirm();
 
   // Cancel: bail back to Home. If the user has typed anything into
   // the draft, give them a quick confirm so an accidental tap
   // doesn't blow away a multi-card signal mid-compose.
-  function cancelDraft() {
+  async function cancelDraft() {
     const dirty = cards.length > 0 || note.length > 0;
-    if (dirty && !window.confirm('Discard this draft and return home?')) return;
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Discard this draft?',
+        message: 'Your in-progress signal will be lost.',
+        confirmLabel: 'Discard',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
     nav.toHome();
   }
 
