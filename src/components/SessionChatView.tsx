@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState } from './ui/states';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -32,6 +32,21 @@ export function SessionChatView({ sessionId }: { sessionId: string }) {
   const auth = useAuthContext();
   const api = useSession(sessionId);
   const { session, status, sendChat, proposeRevert } = api;
+
+  // Lock body scroll while the chat page is mounted. iOS Safari
+  // otherwise scrolls the document upward when the textarea gains
+  // focus (to "bring it into view"), and after the keyboard closes
+  // the scroll doesn't always reset — leaving the AppHeader hidden
+  // behind the iPhone notch/status bar. Locking body.overflow keeps
+  // the page anchored to the viewport top no matter what iOS does
+  // during the keyboard transition.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
 
   const counterpartHandle = session?.counterpart?.handle ?? null;
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
