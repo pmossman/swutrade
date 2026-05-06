@@ -125,33 +125,40 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // Drive panel size off `visualViewport` rather than CSS `dvh` /
-  // `inset-y-0`. Both of those are cached at first paint on iOS
-  // Safari 16.x — when the user opens the panel and immediately
-  // taps the chat input, the keyboard pushes up but the cached
-  // viewport height stays at the pre-keyboard value, so the panel
-  // ends up taller than the visible area and the page peeks through
-  // the gap between the panel's bottom and the keyboard top.
-  // Re-tapping after the keyboard has been opened-then-closed once
-  // works because by then iOS has re-flowed and the cached value
-  // matches reality.
+  // Drive the panel's full positioning off `visualViewport`.
   //
-  // `visualViewport` is the only viewport API that's authoritative
-  // about the visible-above-keyboard area on iOS, and it fires
-  // reliably on every keyboard open/close. Listening to its
-  // `resize` + `scroll` events and applying the height as inline
-  // style sidesteps the cache.
+  // Why not `100dvh` / `inset-y-0`: cached at first paint on iOS
+  // Safari 16.x. The first time the user opens the panel and taps
+  // the input, the keyboard pushes up but the cached values don't
+  // update — panel ends up taller than the visible area and the
+  // page peeks through.
   //
-  // Falls back to `100dvh` via Tailwind class when the API is
-  // unavailable (older browsers, SSR — which we don't actually do
-  // but keeping the path safe). Combined with Radix Dialog (focus
-  // trap, ESC, scroll lock, restore-focus), this is the durable
-  // shape for keyboard-aware overlays in the app.
-  const [vvHeight, setVvHeight] = useState<number | null>(null);
+  // Why not just height: vv.height + top: 0: when iOS auto-scrolls
+  // the layout viewport to bring a focused input "into view",
+  // `vv.offsetTop` becomes positive (often by 100-200px). A
+  // `position: fixed; top: 0` element is anchored to the LAYOUT
+  // viewport top, not the visual viewport — so it slides up off the
+  // top of the screen by `vv.offsetTop` pixels. The user sees only
+  // the panel's bottom (the input) poking in at the top of the
+  // visible area, with the underlying page revealed below.
+  //
+  // The fix: anchor `top` to `vv.offsetTop` and `height` to
+  // `vv.height`. This explicitly positions the panel inside the
+  // visual viewport, no matter how iOS has scrolled the layout
+  // viewport. visualViewport's `resize` + `scroll` events fire on
+  // every keyboard open/close AND on iOS's auto-scroll, so the
+  // listener catches both classes of motion.
+  //
+  // Combined with Radix Dialog (focus trap, ESC, scroll lock,
+  // restore-focus), this is the durable shape for keyboard-aware
+  // overlays. Same pattern can be lifted to a `useVisualViewport`
+  // hook when SessionSuggestComposer / TradeSearchOverlay get the
+  // same treatment.
+  const [vv, setVv] = useState<{ top: number; height: number } | null>(null);
   useEffect(() => {
     const v = window.visualViewport;
     if (!v) return;
-    const update = () => setVvHeight(v.height);
+    const update = () => setVv({ top: v.offsetTop, height: v.height });
     update();
     v.addEventListener('resize', update);
     v.addEventListener('scroll', update);
@@ -167,13 +174,10 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
         <Dialog.Content
           aria-describedby={undefined}
-          // `top: 0` + explicit `height` (no `bottom`) so the panel's
-          // top is pinned to the layout-viewport top and its bottom
-          // is determined by the explicit visualViewport height —
-          // never by iOS Safari's interpretation of `bottom: 0`.
-          // h-[100dvh] is the fallback when visualViewport isn't
-          // available; it gets overridden by the inline `height`.
-          style={vvHeight != null ? { height: `${vvHeight}px` } : undefined}
+          // Inline style overrides the CSS class's `top` and `h-[100dvh]`
+          // when visualViewport is available. The CSS classes act
+          // as a fallback for browsers without the API.
+          style={vv != null ? { top: `${vv.top}px`, height: `${vv.height}px` } : undefined}
           className="fixed top-0 right-0 z-50 w-full max-w-md h-[100dvh] bg-space-900 border-l border-space-700 flex flex-col shadow-2xl outline-none"
         >
           <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
