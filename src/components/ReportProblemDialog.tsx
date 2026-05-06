@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { apiPost } from '../services/apiClient';
 import { formatPrice } from '../services/priceService';
-import { ErrorState } from './ui/states';
+import { ErrorState, SuccessState } from './ui/states';
 
 /**
  * Reusable feedback / problem-report dialog. Two flavors:
@@ -150,12 +150,9 @@ export function ReportProblemDialog(props: ReportProblemDialogProps) {
           )}
 
           {submitted && (
-            <div
-              role="status"
-              className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200"
-            >
+            <SuccessState variant="line" className="mt-3">
               Thanks — your report was sent.
-            </div>
+            </SuccessState>
           )}
 
           <div className="mt-4 flex justify-end gap-2">

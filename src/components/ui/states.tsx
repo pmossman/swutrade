@@ -108,3 +108,43 @@ export function ErrorState({
     </div>
   );
 }
+
+/**
+ * Emerald-tinted success rendering. Mirrors `ErrorState`'s variant
+ * ladder (card / line / banner) so the visual rhythm of "this just
+ * happened" feedback is symmetric with "this just failed." Replaces
+ * a hand-rolled emerald success card in `ReportProblemDialog` and
+ * is the convergence target for any future "transient success"
+ * surface.
+ *
+ * `role` defaults to `'status'` (announced as a polite update by
+ * screen readers) — success messages should never preempt the user
+ * with `role="alert"`.
+ */
+export function SuccessState({
+  children,
+  variant = 'card',
+  role = 'status',
+  className = '',
+}: {
+  children: ReactNode;
+  variant?: 'card' | 'line' | 'banner';
+  role?: 'status' | 'alert';
+  className?: string;
+}) {
+  if (variant === 'banner') {
+    return <div role={role} className={`text-xs text-emerald-300 ${className}`}>{children}</div>;
+  }
+  if (variant === 'line') {
+    return (
+      <div role={role} className={`rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-[11px] text-emerald-200 ${className}`}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <div role={role} className={`rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-3 text-sm text-emerald-200 ${className}`}>
+      {children}
+    </div>
+  );
+}
