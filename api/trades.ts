@@ -13,9 +13,10 @@ import { trades, type TradeCardSnapshot } from '../lib/schema.js';
  * decline / nudge / bulk-resolve / promote-to-shared / etc.) was
  * deleted with C1b — sessions are the only trade primitive now.
  *
- * The `trades` table is distinct from `tradeProposals`; it stores
- * the personal save-this-trade snapshots a viewer makes from the
- * trade-summary surface, independent of any counterparty.
+ * The `trades` table holds the personal save-this-trade snapshots
+ * a viewer makes from the trade-summary surface, independent of any
+ * counterparty. It is not related to the (now-deleted) trade_proposals
+ * table — different shape, different mutation cadence, different role.
  */
 interface SaveTradeBody {
   yourCards: TradeCardSnapshot[];

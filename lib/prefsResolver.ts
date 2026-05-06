@@ -25,9 +25,9 @@ import {
  * validate key names at the API boundary, not rely on this for
  * fallback behavior.
  *
- * This keeps downstream consumers — threadConsent.ts's decision
- * matrix, notification gating, etc. — pure: they receive a single
- * resolved value and never touch storage.
+ * This keeps downstream consumers — notification gating, settings UI,
+ * etc. — pure: they receive a single resolved value and never touch
+ * storage.
  */
 export async function resolvePref(opts: {
   key: string;

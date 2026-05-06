@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { and, count, desc, eq, inArray, ne, or } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeProposals } from '../lib/schema.js';
+import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeSessions } from '../lib/schema.js';
 import { getSession, requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { reportFeedback, type FeedbackKind } from '../lib/feedbackReporter.js';
 import { resolveLivePrices } from '../lib/livePriceCache.js';
@@ -60,8 +60,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return handleFavorites(req, res);
     case 'favorite-delete':
       return handleFavoriteDelete(req, res);
-    case 'mutual-bot-guilds':
-      return handleMutualBotGuilds(req, res);
     case 'feedback':
       return handleFeedback(req, res);
     case 'prices':
@@ -898,19 +896,22 @@ export async function handleCommunityActivity(req: VercelRequest, res: VercelRes
 // --- recent trade partners -------------------------------------------------
 
 /**
- * Up to 5 distinct counterparties the viewer has recently interacted
- * with through a trade proposal — whether they proposed it or received
- * it. Powers the "Recent" chips row in HandlePickerDialog.
+ * Up to 5 distinct counterparties the viewer has recently shared a
+ * trade session with. Powers the "Recent" chips row in HandlePickerDialog.
  *
- * Ordering: most-recent proposal interaction first (by `updated_at`).
- * Status is ignored — we surface partners from cancelled/declined
- * proposals too, since the intent ("you've traded through this
- * person's inbox before") is what the chip row signals.
+ * Ordering: most-recent session interaction first (by `updated_at`).
+ * Status is ignored — we surface partners from cancelled/expired
+ * sessions too, since the intent ("you've traded with this person
+ * before") is what the chip row signals.
+ *
+ * Open-slot sessions (userBId NULL) are skipped — they're not yet
+ * partnered with anyone. Self-sessions (only possible by data corruption)
+ * are also filtered out defensively.
  *
  * Shape: `{ partners: [{ userId, handle, username, avatarUrl, lastInteractionAt }] }`.
  * Private-profile users are included — the dialog just needs a handle
  * to navigate to; the profile gate applies when they try to load the
- * profile page, not when sending them a proposal.
+ * profile page.
  */
 export async function handleRecentPartners(req: VercelRequest, res: VercelResponse) {
   const session = await requireSession(req, res);
@@ -923,30 +924,35 @@ export async function handleRecentPartners(req: VercelRequest, res: VercelRespon
 
   const db = getDb();
 
-  // Pull each proposal where the viewer is either side, sorted most
+  // Pull each session where the viewer is either side, sorted most
   // recent first. Over-fetch (50) so that after dedupe-by-counterpart
   // we still have enough rows to hit the 5-partner target even when
-  // the same pair has several recent proposals.
+  // the same pair has several recent sessions.
   const rows = await db
     .select({
-      proposerUserId: tradeProposals.proposerUserId,
-      recipientUserId: tradeProposals.recipientUserId,
-      updatedAt: tradeProposals.updatedAt,
+      userAId: tradeSessions.userAId,
+      userBId: tradeSessions.userBId,
+      updatedAt: tradeSessions.updatedAt,
     })
-    .from(tradeProposals)
-    .where(or(
-      eq(tradeProposals.proposerUserId, session.userId),
-      eq(tradeProposals.recipientUserId, session.userId),
+    .from(tradeSessions)
+    .where(and(
+      or(
+        eq(tradeSessions.userAId, session.userId),
+        eq(tradeSessions.userBId, session.userId),
+      ),
+      // Skip open-slot sessions — userBId NULL means no counterpart yet.
+      sql`${tradeSessions.userBId} IS NOT NULL`,
     ))
-    .orderBy(desc(tradeProposals.updatedAt))
+    .orderBy(desc(tradeSessions.updatedAt))
     .limit(50);
 
   const partnerOrder: string[] = [];
   const lastSeen = new Map<string, Date>();
   for (const r of rows) {
-    const counterpartId = r.proposerUserId === session.userId
-      ? r.recipientUserId
-      : r.proposerUserId;
+    const counterpartId = r.userAId === session.userId
+      ? r.userBId
+      : r.userAId;
+    if (!counterpartId) continue;
     if (counterpartId === session.userId) continue;
     if (!lastSeen.has(counterpartId)) {
       partnerOrder.push(counterpartId);
@@ -1167,71 +1173,6 @@ export async function handleFavoriteDelete(req: VercelRequest, res: VercelRespon
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.status(204).end();
-}
-
-// --- mutual bot-installed guilds -------------------------------------------
-
-/**
- * Mutual bot-installed guilds for the (signed-in viewer, target user)
- * pair. Powers the ProposeBar's guild picker — the proposer needs to
- * see which guilds are eligible to host a trade thread BEFORE they
- * click Send so they can override the default if they want.
- *
- * Lookup target by `?with=<handle>`. Returns:
- *   `[{ guildId, guildName, guildIcon, isDefault }, ...]`
- *
- * Empty array = no qualifying guild (proposer + recipient share zero
- * bot-installed guilds with a trades channel) → caller renders no
- * picker and the trade is delivered via DM only.
- */
-export async function handleMutualBotGuilds(req: VercelRequest, res: VercelResponse) {
-  const session = await requireSession(req, res);
-  if (!session) return;
-
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const handle = (req.query.with as string | undefined)?.trim();
-  if (!handle) {
-    return res.status(400).json({ error: 'Missing `with` query param (target handle)' });
-  }
-
-  const db = getDb();
-  const [target] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.handle, handle))
-    .limit(1);
-  if (!target) {
-    // Same surface as ProposeBar's existing recipient lookup —
-    // empty array, not 404. The picker fades out gracefully if the
-    // user mistypes a handle; the actual handle-validity check
-    // happens at propose time.
-    res.setHeader('Cache-Control', 'private, no-store');
-    return res.status(200).json([]);
-  }
-  if (target.id === session.userId) {
-    // Self-trade is blocked at propose time anyway. Return empty so
-    // the picker doesn't render with a confusing "trade with myself
-    // in guild X" entry.
-    res.setHeader('Cache-Control', 'private, no-store');
-    return res.status(200).json([]);
-  }
-
-  const { listMutualBotGuilds } = await import('../lib/tradeGuild.js');
-  const guilds = await listMutualBotGuilds(db, session.userId, target.id);
-
-  res.setHeader('Cache-Control', 'private, no-store');
-  return res.status(200).json(
-    guilds.map(g => ({
-      guildId: g.guildId,
-      guildName: g.guildName,
-      guildIcon: g.guildIcon,
-      isDefault: g.isDefault,
-    })),
-  );
 }
 
 // --- feedback ---------------------------------------------------------------

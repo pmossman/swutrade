@@ -73,9 +73,9 @@ One sentence: this area owns "who is the caller, and do they have a real Discord
 | `profile_visibility` | enum `public` / `discord` / `private`, default `discord` | Gates profile discoverability. **Overridden on new-user insert to `public`** (`api/auth.ts:271`, 2026-04-17). |
 | `wants_public` | boolean, default true | Whether wants list appears in community queries. |
 | `available_public` | boolean, default false | Overridden on new-user insert to `true`. |
-| `dm_trade_proposals` / `dm_match_alerts` / `dm_meetup_reminders` / `dm_server_new_install` | booleans | Per-channel DM consent. See [`f-community-profile.md`](./f-community-profile.md) for the three-axis consent model these feed into. |
+| `dm_trade_proposals` / `dm_match_alerts` / `dm_meetup_reminders` / `dm_server_new_install` | booleans | Per-channel DM consent. See [`f-community-profile.md`](./f-community-profile.md) for the three-axis consent model these feed into. The proposal flow these prefs gated was retired in Phase C; columns left in place for migration history. |
 | `auto_enroll_on_bot_install` | boolean, default false | If true, `guildSync` flips `enrolled` / `includeInRollups` / `appearInQueries` on *existing* memberships when the bot lands in that guild. Aggressive — default off. |
-| `communication_pref` | enum, default `allow` | Trade-thread consent (`prefer` / `auto-accept` / `allow` / `dm-only`). Belongs to proposals lifecycle; see [`b-proposals.md`](./b-proposals.md). |
+| `communication_pref` | enum, default `allow` | Trade-thread consent (`prefer` / `auto-accept` / `allow` / `dm-only`). The proposal flow these prefs gated was retired in Phase C; column left in place for migration history. |
 | `created_at` / `updated_at` | timestamptz | `updated_at` bumped on every Discord-profile refresh at callback. |
 
 #### Ghost invariants
@@ -301,6 +301,5 @@ The hint is intentionally weak:
 - [`a-sessions.md`](./a-sessions.md) — the session primitive itself: `createOpenSession`, `claimOpenSlot`, `createOrGetActiveSession`, the `trade_sessions_active_pair_idx` partial unique index. This page owns how the auth/cookie/ghost angles plug into those flows.
 - [`e-home-nav.md`](./e-home-nav.md) — view-router's home-vs-trade fallback; the two-state user collapse that routes ghosts to the trade builder.
 - [`f-community-profile.md`](./f-community-profile.md) — profile visibility / three-axis consent / guild-membership consent flags. Sign-in initialises all of these; this page documents the init, that page documents the lifecycle.
-- [`b-proposals.md`](./b-proposals.md) — `communication_pref` (trade-thread consent) lives on `users` but belongs to the proposals lifecycle.
 - [`i-discord-bot.md`](./i-discord-bot.md) — bot-side signature verification for interaction webhooks (distinct from human OAuth). Shares zero code with this page.
 - [`j-infra.md`](./j-infra.md) — why `/api/auth/*` is four rewrites into one file (function ceiling), why `*.auth.spec.ts` is excluded from local e2e.

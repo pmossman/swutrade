@@ -16,7 +16,6 @@
     { "source": "/api/me/recent-partners", "destination": "/api/me?action=recent-partners" },
     { "source": "/api/me/favorites/:handle", "destination": "/api/me?action=favorite-delete&handle=:handle" },
     { "source": "/api/me/favorites", "destination": "/api/me?action=favorites" },
-    { "source": "/api/me/mutual-bot-guilds", "destination": "/api/me?action=mutual-bot-guilds" },
     { "source": "/api/me/feedback", "destination": "/api/me?action=feedback" },
     { "source": "/api/prices", "destination": "/api/me?action=prices" },
     { "source": "/api/sync/wants", "destination": "/api/sync?kind=wants" },

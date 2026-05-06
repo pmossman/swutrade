@@ -204,6 +204,13 @@
       "when": 1777963337015,
       "tag": "0028_round_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1778044786094,
+      "tag": "0029_drop_proposals",
+      "breakpoints": true
     }
   ]
 }

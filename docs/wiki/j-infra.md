@@ -339,7 +339,6 @@ A schema change + its migration SQL + the snapshot + journal bump all ship in on
 ## Cross-references
 
 - [`a-sessions.md`](./a-sessions.md) — for the `api/sessions.ts` dispatcher's action semantics.
-- [`b-proposals.md`](./b-proposals.md) — for what `api/trades.ts` does with each action.
 - [`g-auth.md`](./g-auth.md) — for `api/auth.ts` dispatch and the iron-session cookie format that `e2e/helpers/auth.ts` seals.
 - [`h-cards-pricing.md`](./h-cards-pricing.md) — for `scripts/fetch-prices.ts` / `scripts/enrich-cards.ts` logic and the price data contract. The cron *schedule* is here; the cron *content* is there.
 - [`i-discord-bot.md`](./i-discord-bot.md) — for `api/bot.ts` dispatch, signature verification, and the `#releases` webhook semantics beyond the CI-notifier layer.

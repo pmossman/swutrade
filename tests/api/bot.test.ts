@@ -9,7 +9,7 @@ import {
 } from './helpers.js';
 import handler, { dispatchBotPayload, resolveTestPublicKey } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
-import { botInstalledGuilds, tradeProposals, userGuildMemberships, users, type TradeCardSnapshot } from '../../lib/schema.js';
+import { botInstalledGuilds, userGuildMemberships, users } from '../../lib/schema.js';
 import type { DiscordBotClient } from '../../lib/discordBot.js';
 import { createBaseFakeBot, type SendCall } from './discordFakes.js';
 
@@ -49,10 +49,9 @@ function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
   const getGuildBotMemberCalls: GetGuildBotMemberCall[] = [];
   return Object.assign(
     createBaseFakeBot({
-      // handleTradeProposalButton uses the type-7 UPDATE_MESSAGE path
-      // so editChannelMessage never fires — leave it as a no-op rather
-      // than the throwing default so any incidental call doesn't fail.
-      async editChannelMessage() { /* unused in type-7 path */ },
+      // editChannelMessage stays a no-op so any incidental call doesn't
+      // fail. The fakes are shared across the whole bot test suite.
+      async editChannelMessage() { /* unused in current handlers */ },
       async createDmChannel() { return { id: 'dm-fake' }; },
       async sendDirectMessage(userId, body) {
         sendCalls.push({ userId, body });
@@ -75,10 +74,6 @@ function makeFakeBot(options: FakeBotOptions = {}): DiscordBotClient & {
       getGuildBotMemberCalls,
     },
   );
-}
-
-function cardSnapshot(productId: string, qty = 1): TradeCardSnapshot {
-  return { productId, name: `Card ${productId}`, variant: 'Standard', qty, unitPrice: 1.0 };
 }
 
 describe('resolveTestPublicKey', () => {

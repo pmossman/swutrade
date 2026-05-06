@@ -38,19 +38,18 @@ All three reuse `pending_suggestions` JSONB on the session row + the existing `s
 - **Mutation mutex** — `src/hooks/useSession.ts:134` — `mutationInFlightRef`. A boolean ref flipped true at the top of every save/confirm/cancel/claim; the 2.5-second poll early-returns while it's held. Without this, a poll landing between an optimistic local update and the server response would visibly revert the edit.
 - **Terminal state** — any `status !== 'active'`. The poll stops firing (`useSession.ts:189`), `TradeSide` flips to `readOnly` on both halves, `SessionActionBar` hides entirely, and a `TerminalBanner` names the state.
 - **Counterpart-edit banner** — `SessionView.tsx:214` via `hasUnseenCounterpartEdit` — "Alice made changes. Tap to dismiss." Seeded as "already seen" on first render so the banner doesn't fire on page load; any later counterpart edit flips it on.
-- **Promote to session** — `lib/sessions.ts:988` (`promoteProposalToSession`). The recipient of a pending proposal converts it into a shared session. The proposal transitions to `countered` and a new session row holds both sides' cards. See `b-proposals.md` for the proposal-side view.
 
 ## File map
 
 ### Server
 
-**`lib/sessions.ts`** — Domain module. Every session state transition lives here: `createOrGetActiveSession`, `createOpenSession`, `claimOpenSlot`, `editSessionSide`, `confirmSession`, `cancelSession`, `inviteHandleToSession`, `promoteProposalToSession`, `mergeGhostIntoRealUser`. Also owns `generateSessionCode`, `normalizeParticipants`, `getSessionForViewer`, `getSessionPreview`, `listActiveSessionsForViewer`, `recordSessionEvent`, and the `SESSION_TTL_MS` + `SESSION_INVITE_DEBOUNCE_MS` constants.
+**`lib/sessions.ts`** — Domain module. Every session state transition lives here: `createOrGetActiveSession`, `createOpenSession`, `claimOpenSlot`, `editSessionSide`, `confirmSession`, `cancelSession`, `inviteHandleToSession`, `mergeGhostIntoRealUser`. Also owns `generateSessionCode`, `normalizeParticipants`, `getSessionForViewer`, `getSessionPreview`, `listActiveSessionsForViewer`, `recordSessionEvent`, and the `SESSION_TTL_MS` + `SESSION_INVITE_DEBOUNCE_MS` constants.
 
 **`api/sessions.ts`** — HTTP dispatcher. `default export` routes on `?action=` to the nine sub-handlers (`get` / `list` / `create` / `edit` / `confirm` / `cancel` / `create-open` / `claim` / `invite-handle`). Consolidated into one file to stay under the Vercel function ceiling (see `j-infra.md`). Sub-handlers are exported for direct-call integration tests.
 
 **`lib/schema.ts`** (lines 496–622) — `tradeSessions` table + `sessionEvents` append-only log. Partial unique index, jsonb `last_notified_at`, FK policies (cascade on session, set-null on event actor) all defined here.
 
-**`lib/proposalMessages.ts`** `buildSessionInviteMessage` (line 1064) — the DM body rendered by `inviteHandleToSession`. Uses a link in the embed description rather than a LINK button for client compatibility.
+**`lib/discordMessages.ts`** `buildSessionInviteMessage` — the DM body rendered by `inviteHandleToSession`. Uses a link in the embed description rather than a LINK button for client compatibility. (File was renamed from `lib/proposalMessages.ts` in Phase C.)
 
 ### Client
 
@@ -102,7 +101,7 @@ Lives at `lib/schema.ts:499-573`. Canonical row:
 | `last_notified_at` | `jsonb DEFAULT {}` | `Record<userId, ISOTimestamp>` — last DM fired to each user |
 | `expires_at` | `timestamptz NOT NULL` | rolling; bumped on edit + claim |
 | `created_at` / `updated_at` | `timestamptz` | standard |
-| `settled_at` | `timestamptz NULL` | captured on first transition out of `active` (symmetric with `trade_proposals.respondedAt`) |
+| `settled_at` | `timestamptz NULL` | captured on first transition out of `active` |
 | `user_a_last_read_at` / `user_b_last_read_at` | `timestamptz NULL` | per-user "I've seen the timeline up to here" stamp; null = never opened. Drives `unreadCount` derivation. |
 | `pending_suggestions` | `jsonb DEFAULT []` | `PendingSuggestion[]` — cross-side proposed edits awaiting accept/dismiss + revert proposals. See subsection below. |
 
@@ -131,7 +130,7 @@ Event types: `created | edited | edit-snapshot | confirmed | unconfirmed | settl
 
 - `created { openSlot: true }` on `createOpenSession`.
 - `created { claimed: true }` on `claimOpenSlot` filling slot B.
-- `created { promotedFromProposalId }` on `promoteProposalToSession`.
+- `created { promotedFromProposalId }` — historical event payload from the retired promote-to-session path; no longer emitted, but old rows may carry the field.
 - `notified { kind: 'invite', targetHandle, targetUserId }` on successful `invite-handle` DM.
 - `notified { kind: 'invite-debounced', targetHandle, targetUserId }` on a suppressed duplicate within `SESSION_INVITE_DEBOUNCE_MS`.
 - `edited { side: 'a' | 'b' | 'both', count, viaSuggestion?: string }` — recorded on every `editSessionSide` AND on suggestion acceptance. `side: 'both'` flags an applied revert; `viaSuggestion` carries the suggestion id for traceability.
@@ -178,7 +177,7 @@ Persisted as a JSONB array on `trade_sessions.pending_suggestions`. Capped at `M
 
 ### `TradeCardSnapshot`
 
-Shared with proposals (see `b-proposals.md`). `{ productId, name, variant, qty, unitPrice }`. Stored verbatim in the jsonb columns — snapshots deliberately don't track card index revisions, so a card that changes sets after the session freezes still renders with its stored name and unit price.
+`{ productId, name, variant, qty, unitPrice }`. Stored verbatim in the jsonb columns — snapshots deliberately don't track card index revisions, so a card that changes sets after the session freezes still renders with its stored name and unit price.
 
 ### `SessionView` (viewer-centric)
 
@@ -207,7 +206,7 @@ Limited payload: `{ id, creator: {…}, creatorCardCount, createdAt, expiresAt }
 - `normalizeParticipants(a, b) → { userAId, userBId }` — canonical sort. Call before every session insert.
 - `nextExpiresAt(from?) → Date` — `SESSION_TTL_MS` = 14 days (`lib/sessions.ts:436`) from `from`.
 - `createGhostUser(db) → GhostUser` — mints an anonymous user row. Caller is responsible for installing the iron-session cookie.
-- `getSessionForViewer(db, sessionId, viewerUserId) → SessionView | null` — 404-on-wrong-viewer is a policy choice: same as `trade_proposals` detail, session ids aren't probeable by non-participants.
+- `getSessionForViewer(db, sessionId, viewerUserId) → SessionView | null` — 404-on-wrong-viewer is a policy choice: session ids aren't probeable by non-participants.
 - `getSessionPreview(db, sessionId) → SessionPreview | null` — null for unknown id, terminal session, OR both-slots-filled.
 - `listActiveSessionsForViewer(db, viewerUserId, opts) → SessionView[]` — active only, most-recently-edited first, limit clamped `[1, 100]`.
 - `findActiveSessionForPair(db, a, b) → string | null` — belt-and-suspenders companion to the partial unique index.
@@ -218,9 +217,8 @@ Limited payload: `{ id, creator: {…}, creatorCardCount, createdAt, expiresAt }
 - `confirmSession(db, args) → ConfirmSessionResult` — `{ ok, view, settled }` or reason. `settled` flips to true only if the counterpart had already confirmed.
 - `cancelSession(db, args) → CancelSessionResult` — idempotent against terminal states.
 - `inviteHandleToSession(db, args)` — DMs the session URL to a handle; debounced per `SESSION_INVITE_DEBOUNCE_MS` (10 min, `lib/sessions.ts:1148`).
-- `promoteProposalToSession(db, args) → PromoteProposalResult` — recipient-only, re-uses `countered` proposal status, returns `already-active-session` with the winning id on pair conflict.
 - `mergeGhostIntoRealUser(db, ghostId, realUserId) → void` — called from `api/auth.ts:291` in the OAuth callback. See `g-auth.md`.
-- `recordSessionEvent(db, opts) → void` — fire-and-forget; logged failures, never throws (same as `proposalEvents`).
+- `recordSessionEvent(db, opts) → void` — fire-and-forget; logged failures, never throws.
 - `listEventsForSession(db, sessionId, opts) → SessionEvent[]` — most-recent N events newest-first; includes `edit-snapshot` rows so the timeline UI can surface revert affordances.
 - `sendChatMessage(db, args) → SendChatResult` — append `chat` event with rate limit (`CHAT_RATE_LIMIT_PER_MINUTE = 10`) + length cap (`CHAT_MAX_BODY_LENGTH = 500`).
 - `markSessionRead(db, args) → MarkReadResult` — stamps the viewer's `*_last_read_at` column. Idempotent.
@@ -275,7 +273,7 @@ Useful when debugging production logs. Library `reason` strings get mapped to HT
 | `invite-handle` | `no-such-handle` | `404` | |
 | `invite-handle` | `dm-failed` | `502` | bot threw, or target has no `discord_id` |
 
-Note the **participant-vs-non-participant collapse** on read endpoints. Returning `403 not-participant` would leak "this session id exists but isn't yours," letting an attacker enumerate valid codes. Collapsing to `404` keeps session ids unprobeable (same policy as `trade_proposals` detail).
+Note the **participant-vs-non-participant collapse** on read endpoints. Returning `403 not-participant` would leak "this session id exists but isn't yours," letting an attacker enumerate valid codes. Collapsing to `404` keeps session ids unprobeable.
 
 ### Hooks / components (frontend)
 
@@ -294,44 +292,46 @@ Note the **participant-vs-non-participant collapse** on read endpoints. Returnin
                  │                                     │
                  └──────────────┬──────────────────────┘
                                 │
-    ┌───────────────────────────┼───────────────────────────┐
-    │                           │                           │
-    ▼                           ▼                           ▼
-POST /create           POST /create-open         POST /trades/promote-
-(known handle)         (QR handoff)              to-shared (recipient)
-    │                           │                           │
-    │                           │                           │
-    ▼                           ▼                           ▼
-┌─────────────┐       ┌──────────────────┐       ┌─────────────┐
-│   active    │       │ active+openSlot  │       │   active    │
-│ pair: A,B   │       │ A in slotA, B=∅  │       │ pair: P,R   │
-└──────┬──────┘       └────────┬─────────┘       └──────┬──────┘
-       │                       │                        │
-       │               POST /:id/claim                  │
-       │               (another user)                   │
-       │                       │                        │
-       │                       ▼                        │
-       │               ┌──────────────┐                 │
-       │               │   active     │                 │
-       │               │ pair: A, X   │                 │
-       │               └──────┬───────┘                 │
-       │                      │                         │
-       └───────────┬──────────┴─────────────────────────┘
-                   │
-             (edit / confirm)
-                   │
-    ┌──────────────┼──────────────┐
-    │              │              │
-    ▼              ▼              ▼
- both         /cancel         TTL cron
- confirm     (either           (not yet
-    │        party)            shipped)
-    ▼              ▼              ▼
-┌────────┐   ┌─────────────┐  ┌─────────┐
-│settled │   │  cancelled  │  │ expired │
-└────────┘   └─────────────┘  └─────────┘
-     (all terminal; readOnly canvas on load, no further transitions)
+                ┌───────────────┴───────────────┐
+                │                               │
+                ▼                               ▼
+        POST /create                  POST /create-open
+        (known handle)                (QR handoff)
+                │                               │
+                │                               │
+                ▼                               ▼
+        ┌─────────────┐               ┌──────────────────┐
+        │   active    │               │ active+openSlot  │
+        │ pair: A,B   │               │ A in slotA, B=∅  │
+        └──────┬──────┘               └────────┬─────────┘
+               │                                │
+               │                       POST /:id/claim
+               │                       (another user)
+               │                                │
+               │                                ▼
+               │                       ┌──────────────┐
+               │                       │   active     │
+               │                       │ pair: A, X   │
+               │                       └──────┬───────┘
+               │                              │
+               └───────────────┬──────────────┘
+                               │
+                         (edit / confirm)
+                               │
+                ┌──────────────┼──────────────┐
+                │              │              │
+                ▼              ▼              ▼
+             both         /cancel         TTL cron
+             confirm     (either           (not yet
+                │        party)            shipped)
+                ▼              ▼              ▼
+        ┌────────┐   ┌─────────────┐  ┌─────────┐
+        │settled │   │  cancelled  │  │ expired │
+        └────────┘   └─────────────┘  └─────────┘
+             (all terminal; readOnly canvas on load, no further transitions)
 ```
+
+(Phase C retired the third entry point — `POST /trades/promote-to-shared` from a recipient — alongside the proposal primitive itself.)
 
 Each transition writes a row to `session_events` (best-effort; failures log but don't roll back the parent write).
 
@@ -434,18 +434,6 @@ Happens in the OAuth callback (`api/auth.ts:291`) when a user hits `/api/auth/di
 4. Only `DELETE FROM users WHERE id = ghost` if NO session still references the ghost — otherwise the cascade-delete FK would wipe those sessions. This is the "leave the ghost alive if migration was incomplete" branch; covered by `tests/api/sessions-merge.test.ts:131`.
 
 Full OAuth merge flow lives in `g-auth.md`; this page only documents the session-row rewriting half.
-
-### Promote proposal → session
-
-`promoteProposalToSession` (`lib/sessions.ts:988`). Happens when the **recipient** of a pending proposal clicks "Edit together" in the proposal DM/view. The proposal-side wiring is in `b-proposals.md`; the session-side semantics:
-
-1. Gate: must be the `recipientUserId` (proposers can't promote their own proposals — they already have `trades/counter`), proposal must be `pending`.
-2. `findActiveSessionForPair` — if a session already exists for this pair, return `already-active-session` with the existing id so the caller redirects in rather than colliding on the partial unique index.
-3. Insert the new session row: cards travel with the proposer vs recipient identity. `offeringCards` are the proposer's, `receivingCards` are the recipient's starting half (what the proposer wanted them to contribute; the recipient can edit freely). `lastEditedByUserId = viewerUserId` — the recipient just pressed Edit-Together; the debounce-DM job should target the PROPOSER next.
-4. **Write ordering is deliberate**: session insert first, proposal transition second. If the session insert fails mid-flight the proposal stays `pending` (retry-friendly).
-5. Proposal transition: `status = 'countered'` with `respondedAt = now`. We re-use `countered` rather than adding a `promoted` terminal status — a promoted proposal has been effectively replaced by the session, which is the same semantic as a counter-offer superseding the original.
-6. **Orphan cleanup**: if the proposal UPDATE fails after the session was inserted, `DELETE FROM trade_sessions WHERE id = sessionId` and rethrow the original error. If the cleanup itself fails, log but surface the original transition error (debugging the primary failure matters more than the cleanup trace).
-7. Event bookkeeping: `sessionEvents.created { promotedFromProposalId }` and `proposalEvents.countered { promotedToSessionId }` — cross-referenceable from both timelines.
 
 ### Chat + timeline
 
@@ -563,7 +551,7 @@ Both panels collapse to a single column below `md` breakpoint (`SessionView.tsx:
 
 ## Decisions worth remembering
 
-- **Session primitive is separate from proposals, not a proposal state**. Early sketches modeled "shared mode" as a proposal sub-state; the `trade_sessions` table exists because mutation cadence (both sides editing freely, confirmations clearing on each edit) fits badly on `trade_proposals`' ping-pong-immutable shape. Proposals are async one-shots with a single respondedAt; sessions are collaborative canvases with rolling edits. Different primitives, different tables. Promote-to-session bridges the two directions.
+- **Session primitive originally coexisted with the proposal primitive** (different table, different mutation cadence). Early sketches modeled "shared mode" as a proposal sub-state; the `trade_sessions` table existed because the both-sides-editing / confirmations-clearing-on-edit cadence fit badly on `trade_proposals`' ping-pong-immutable shape. Phase C deleted proposals — sessions are now the only trade primitive.
 - **Canonical `user_a_id < user_b_id` over composite "pair key"**. Alternative was a synthesized `pair_key = sorted(a,b).join('|')` column for uniqueness. Chose the sort-on-insert approach because (a) lexicographic sort is cheap and readable, (b) a separate column would need its own synchronization invariant, (c) partial unique indexes are a native Postgres feature. `normalizeParticipants` is the single chokepoint.
 - **Partial unique index over app-layer locking**. The "one active session per pair" guarantee is enforced in the DB via the partial unique index rather than by a Redis-style mutex or an app-layer check-then-insert. The `findActiveSessionForPair` lookup IS there (belt), but the index (suspenders) is what protects against races. Both `createOrGetActiveSession` and `claimOpenSlot` try/catch the index violation and re-lookup to fall back gracefully.
 - **Open slot exempt from the unique index**. `WHERE status = 'active' AND user_b_id IS NOT NULL`. A user can host multiple concurrent open-slot invites (two tables at the same LGS, two different prospective trade partners walking up). The pair-uniqueness concept only makes sense once both slots are filled — trying to enforce it on open sessions would force a "close this invite before starting another" constraint that breaks the in-person flow.
@@ -579,7 +567,7 @@ Both panels collapse to a single column below `md` breakpoint (`SessionView.tsx:
 
 ### How to debug a "session disappeared" report
 
-1. User gives you the session code (the 8-char string in the URL). Query `tradeSessions WHERE id = '<code>'` directly — if no row, the session was either never created or was cleaned up by an orphan-cleanup branch (`promoteProposalToSession` failure mid-flight, `lib/sessions.ts:1085`).
+1. User gives you the session code (the 8-char string in the URL). Query `tradeSessions WHERE id = '<code>'` directly — if no row, the session was never created.
 2. Check `session_events` for the session id ordered by `createdAt DESC`. The last event tells you the terminal transition (`cancelled`, `settled`, `expired`).
 3. If the session exists but the user can't see it: check `user_a_id` / `user_b_id` against the user's id. If the user signed in via Discord recently, they might have been merged — check for their old ghost id in `session_events.actor_user_id` (merge rewrites these, but partially-failed merges leave breadcrumbs).
 4. If the user is a ghost and complains sessions vanished: check if they recently signed in. The OAuth callback's `mergeGhostIntoRealUser` rewrites sessions to the real user; if they were looking for sessions under their ghost id, the sessions are now under their Discord user id.
@@ -602,7 +590,6 @@ No event row is written for manual updates; that's a debug feature, not a bug. I
 
 ## Cross-references
 
-- [`b-proposals.md`](./b-proposals.md) — the async proposal primitive sessions compete with. Documents the promote-to-session call site (proposal-side).
 - [`g-auth.md`](./g-auth.md) — ghost user merge (OAuth callback), iron-session cookies, `requireSession` middleware, ghost-cookie setup during `create-open` + `claim`.
 - [`c-trade-builder.md`](./c-trade-builder.md) — the builder's action strip that hosts `ShareLiveTradeButton`, the TradeSide component, TradeBalance.
 - [`h-cards-pricing.md`](./h-cards-pricing.md) — `CardIndexContext` that `SessionView` uses to rehydrate `TradeCardSnapshot[]` into renderable `TradeCard[]`. `stubCard` fallback lives in this page's tech debt.

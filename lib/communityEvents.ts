@@ -14,7 +14,6 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import type { getDb } from './db.js';
 import {
   communityEvents,
-  userGuildMemberships,
   users,
   type CommunityEventType,
 } from './schema.js';
@@ -51,67 +50,6 @@ export async function recordEvent(
       opts.guildId,
       err,
     );
-  }
-}
-
-/**
- * Record one `trade_accepted` event PER guild where both parties are
- * enrolled + appear in queries. That's the Community 2.0 visibility
- * gate: if a user has queries off for a guild, their trade isn't part
- * of that guild's public story, so it shouldn't show in that feed.
- *
- * The accepter is the actor (they just completed the transition).
- * Payload carries the proposal id + counterpart for deep-link chrome.
- */
-export async function recordTradeAcceptedAcrossGuilds(
-  db: Db,
-  args: {
-    proposalId: string;
-    accepterUserId: string;
-    proposerUserId: string;
-  },
-): Promise<void> {
-  const { proposalId, accepterUserId, proposerUserId } = args;
-
-  // Guilds where both parties are enrolled + queryable. A single
-  // self-join expresses the overlap constraint in one round-trip.
-  const me = userGuildMemberships;
-  const them = userGuildMemberships;
-
-  let rows: Array<{ guildId: string }> = [];
-  try {
-    rows = await db
-      .select({ guildId: me.guildId })
-      .from(me)
-      .innerJoin(
-        them,
-        and(
-          eq(them.guildId, me.guildId),
-          eq(them.userId, proposerUserId),
-          eq(them.enrolled, true),
-          eq(them.appearInQueries, true),
-        ),
-      )
-      .where(and(
-        eq(me.userId, accepterUserId),
-        eq(me.enrolled, true),
-        eq(me.appearInQueries, true),
-      ));
-  } catch (err) {
-    console.error(
-      'communityEvents.recordTradeAcceptedAcrossGuilds: overlap query failed',
-      err,
-    );
-    return;
-  }
-
-  for (const r of rows) {
-    await recordEvent(db, {
-      guildId: r.guildId,
-      actorUserId: accepterUserId,
-      type: 'trade_accepted',
-      payload: { proposalId, counterpartUserId: proposerUserId },
-    });
   }
 }
 

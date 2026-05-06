@@ -69,7 +69,7 @@ The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business r
 
 **`lib/prefsRegistry.ts`** — registry owner. Documented in [`i-discord-bot.md`](./i-discord-bot.md); this page consumes its exports.
 
-**`lib/communityEvents.ts`** — activity feed writer/reader. Documented below under Data model; `recordTradeAcceptedAcrossGuilds` is the only non-trivial writer and lives next to proposal-accept in `lib/proposalResolve.ts`.
+**`lib/communityEvents.ts`** — activity feed writer/reader. Documented below under Data model. The non-trivial writer `recordTradeAcceptedAcrossGuilds` was retired alongside `lib/proposalResolve.ts` in Phase C; until a session-settled equivalent ships, the `trade_accepted` event is no longer emitted.
 
 **`lib/guildSync.ts`** — shared by the OAuth sign-in path (`api/auth.ts`) and the manual-refresh endpoint. Owned by [`g-auth.md`](./g-auth.md) and [`i-discord-bot.md`](./i-discord-bot.md) respectively; this page just documents the read shape.
 
@@ -105,7 +105,7 @@ One row per (user, guild). Schema: `lib/schema.ts:172-200`. The four fields that
 Owned by `lib/communityEvents.ts`. Two event types today:
 
 - `member_joined` — one row per first-time enrollment (not re-enroll). Fired inside `handleGuildPut` when `patch.enrolled === true && membership.enrolled === false` (`api/me.ts:457-463`). The condition is important: toggling enrollment off and back on does NOT re-fire the event. The first enroll is treated as the definitive "joined the community" moment.
-- `trade_accepted` — one row per guild where BOTH parties are `enrolled=true + appearInQueries=true`. Fired by `recordTradeAcceptedAcrossGuilds` (`lib/communityEvents.ts:66-116`) inside `lib/proposalResolve.ts` (the shared accept-path). The accepter is the `actorUserId`; the payload carries `{ proposalId, counterpartUserId }` for deep-link chrome.
+- `trade_accepted` — historical event type from the retired proposal-accept path (`lib/proposalResolve.ts` + `recordTradeAcceptedAcrossGuilds`, both deleted in Phase C). Old rows may still exist; no new rows are emitted until a session-settled equivalent ships.
 
 **Read-time privacy filter** — `listEvents` (`lib/communityEvents.ts:141-186`) joins to `users.shareActivityPublicly` and the WHERE clause is `(users.id IS NULL OR users.shareActivityPublicly = true)`. Turning the pref off hides the actor's past events from the feed but keeps them in the table. Flipping the pref back on restores the trail. System events (null actor) always pass through.
 
@@ -149,7 +149,7 @@ Owned by `lib/communityEvents.ts`. Two event types today:
 - `GET /api/me/community` — rollup. `{ wantFamilyIds, availableProductIds }` across all users in the viewer's enrolled+rollup guilds. Only consumed by the builder's picker today (not this area).
 - `GET /api/me/community-members` — directory. Gating documented in `handleCommunityMembers`'s docstring (`api/me.ts:561-591`).
 - `GET /api/me/community-activity?guildId=X&limit=N` — guild feed. 403 when the viewer isn't enrolled+queryable in that guild — distinct from 200-with-empty-events, so the client can render a wall-hit state rather than silently showing nothing.
-- `GET /api/me/recent-partners` — up to five distinct counterparts from `trade_proposals`, newest-first, both-sides. Private profiles are included — the dialog just needs a handle to navigate to.
+- `GET /api/me/recent-partners` — up to five distinct counterparts from `trade_sessions`, newest-first, both-sides. Private profiles are included — the dialog just needs a handle to navigate to.
 - `GET /api/user/:handle` — public profile. Cached `s-maxage=60, stale-while-revalidate=300`. 404 on unknown handle (consumed by HandlePickerDialog's validation path).
 
 ### Hooks
@@ -317,7 +317,6 @@ Events are read newest-first but there's no per-user "last seen" watermark, so t
 ## Cross-references
 
 - [`a-sessions.md`](./a-sessions.md) — `POST /api/sessions/create` is called by HandlePickerDialog's "Start shared trade" path. The pair-uniqueness redirect behavior matters to that button's UX.
-- [`b-proposals.md`](./b-proposals.md) — `POST /api/trades/propose` is downstream of `onPick(handle)` → `/?propose=<handle>`. ProfileView's "Trade with @X" CTA lands in the same composer.
 - [`c-trade-builder.md`](./c-trade-builder.md) — the Community-wants chip in the trade builder's picker reads from `/api/me/community`. That chip's behavior is documented there, not here.
 - [`d-lists.md`](./d-lists.md) — ProfileView's tabbed wants/available use the same list rendering primitives as the main app. Row chrome, variant restriction display, and priority stars are inherited.
 - [`e-home-nav.md`](./e-home-nav.md) — the view router maps `?community=1`, `?settings=1`, and `/u/<handle>` onto this area's components. The Home `CommunitiesModule` (UX-A4 walk-back) and the AppHeader breadcrumbs primitive live there.

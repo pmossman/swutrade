@@ -340,7 +340,7 @@ Build metadata flows in via Vite's `define` plugin at `vite.config.ts:21` — `_
 
 ## Tech debt + known gaps
 
-- **~~4-bar mutex on trade-builder~~ — shipped UX-A2 (2026-04-20)**. `EditBar`, `CounterBar`, `ProposeBar`, and `AutoBalanceBanner` still render via a ternary chain, but each composer bar's primary action (Send/Save) now registers via `usePrimaryAction` and lands in a shared `<PrimaryActionBar>` below TradeBalance. The four-mutex bars themselves are now informational-only.
+- **~~4-bar mutex on trade-builder~~ — collapsed in Phase C (2026-05-05)**. With the proposal primitive retired, `EditBar`/`CounterBar`/`ProposeBar` no longer render. Only `AutoBalanceBanner` remains in the mutex slot. The earlier UX-A2 shared `<PrimaryActionBar>` work is moot here — keep the pattern in mind if a new composer bar ever returns.
 - **~~Communities module competes with trading loop~~ — shipped UX-A4 then walked back (2026-04-21)**. `CommunitiesModule` was removed from HomeView and then reinstated within hours. Removal over-corrected: the theory was that Communities competed with the trading loop on Home, but deleting it left a blank quadrant in the grid and buried enrolled servers behind a hamburger menu. The walk-back promoted Communities into the top-right quadrant as a peer module next to Trades and simultaneously deleted the `StoresModule` Phase-4 placeholder (reserving real estate for an unshipped feature wasn't worth the visual noise). The new 2×2 grid is: row 1 = Trades / Communities (active surfaces), row 2 = Wishlist / Binder (inventory).
 - **~~Ghost → real-user merge banner~~ — shipped UX-A5 (2026-04-21)**. OAuth callback flags `pendingMergeBanner: { carriedCount }` on the new session cookie when ghost→real merge moved ≥1 session; `<MergeReassuranceBanner>` renders a one-shot toast + clears on dismiss via `/api/auth/dismiss-merge-banner`.
 - **Profile-nav inconsistencies (UX-A6)** — two forms (`?profile=` + `/u/`) is deliberate but uneven UX in practice: the AccountMenu's "Public profile" link uses `/u/`, while the NavMenu and in-view CTAs use `?profile=` or `/u/` inconsistently. Not broken; could be tidier.
@@ -367,9 +367,8 @@ Build metadata flows in via Vite's `define` plugin at `vite.config.ts:21` — `_
 
 ## Cross-references
 
-- [`a-sessions.md`](./a-sessions.md) — session view, `/s/:id` canvas, QR handoff; consumes this area's `nav.toSession`.
-- [`b-proposals.md`](./b-proposals.md) — proposal lifecycle; `useMyTrades` (consumed by HomeView) merges proposal rows into the unified TradeRow stream.
-- [`c-trade-builder.md`](./c-trade-builder.md) — trade composer body, URL codec, the four-bar chain. Shares `src/App.tsx` with this area.
+- [`a-sessions.md`](./a-sessions.md) — session view, `/s/:id` canvas, QR handoff; consumes this area's `nav.toSession`. `useMyTrades` (consumed by HomeView) reads sessions as the only source of TradeRow stream rows after Phase C retired the proposal primitive.
+- [`c-trade-builder.md`](./c-trade-builder.md) — trade composer body, URL codec. Shares `src/App.tsx` with this area.
 - [`d-lists.md`](./d-lists.md) — wants + available shapes that WishlistModule / BinderModule render, and the ListsDrawer that `DrawerContext` controls.
 - [`f-community-profile.md`](./f-community-profile.md) — the content of `CommunityView`, `ProfileView`, and `SettingsView`. This page documents the *routes* into those views; that page documents what they render.
 - [`g-auth.md`](./g-auth.md) — `useAuth`, Discord OAuth, ghost → real user merge. `AuthContext` is a thin wrapper around that hook.

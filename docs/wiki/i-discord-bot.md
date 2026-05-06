@@ -11,13 +11,12 @@
 > - `lib/guildSync.ts` — `syncGuildMemberships` reconciles `user_guild_memberships` on sign-in; auto-enrolls members of bot-installed guilds.
 > - `lib/prefsRegistry.ts` — typed registry of user prefs (scope × type × surface). Single source of truth.
 > - `lib/prefsResolver.ts` — cascade `resolvePref({key, viewerUserId, peerUserId})` → peer override → self → default.
-> - `lib/threadConsent.ts` — `deliveryForPair` + `handleThreadRequest` decision matrix over `CommunicationPref`.
 > - `scripts/discord-admin.mjs` — dev-ops wrapper that talks to Discord via a SEPARATE admin bot token (not the product bot).
 > - `scripts/register-discord-commands.mjs` — one-off slash-command registration against the product bot.
 > - Tests: `tests/api/discord-signature.test.ts`, `tests/lib/discordErrors.test.ts`, `tests/api/guild-sync.test.ts`.
 > - CI notifier: `.github/workflows/ci.yml` `notify-start` / `notify-live` / `notify-finish` jobs posting to `#releases`.
 >
-> Everything slash-command / button / preference / webhook-facing is here. The web Settings UI that renders from this registry belongs to [`f-community-profile.md`](./f-community-profile.md); the proposal lifecycle that buttons drive is [`b-proposals.md`](./b-proposals.md).
+> Everything slash-command / button / preference / webhook-facing is here. The web Settings UI that renders from this registry belongs to [`f-community-profile.md`](./f-community-profile.md). The proposal lifecycle that some buttons used to drive was retired in Phase C; the trade-proposal button dispatcher is gone (see "Button custom_id grammar" below).
 
 ## Overview
 
@@ -37,9 +36,9 @@ Three things keep this area honest: (1) signature verification happens before an
 - **`errorReporter` `#bot-errors` webhook** — `lib/errorReporter.ts:52`. Fire-and-forget out-of-band alert. `shouldSkip` filters out transient noise (429, 10003/10008/10013 not-found churn, 50007 DMs-disabled); `isTestTraffic` filters out synthetic e2e IDs so real signals stay loud.
 - **Prefs registry** — `lib/prefsRegistry.ts:120` (`PREF_DEFINITIONS`). Each def has `scope` (self/peer/guild), `type` (boolean/enum), `surfaces` (web/discord), `section` (privacy/notifications/communication/membership), `column` (on the scope's backing table). Adding a pref is DB migration + one `definePref()` entry; every consumer iterates the registry.
 - **Resolver cascade** — `lib/prefsResolver.ts:31`. For `(key, viewer, peer?)`: peer override on `user_peer_prefs` → viewer's self column on `users` → self-scope def's `default`. Unknown keys throw — no silent fallback at the resolver layer.
-- **`CommunicationPref`** — `lib/threadConsent.ts:19`. The 4-state enum driving thread-vs-DM routing: `prefer` / `auto-accept` / `allow` (default) / `dm-only`. Resolved independently for each side of a proposal, then combined via `deliveryForPair`.
-- **Per-guild trade channel** — each `bot_installed_guilds` row carries `trades_channel_id` for that guild's `#swutrade-threads` channel, auto-created on install (`api/bot.ts::handleApplicationAuthorized`). The propose flow resolves which guild hosts a given (proposer, recipient) trade via `lib/tradeGuild.ts::resolveTradeGuild` (cascade: most-recent prior trade with this pair → most-recent install → lex). When no qualifying guild exists the proposal is delivered as per-user DMs. Each `trade_proposals` row caches the chosen guild on its `guild_id` column so counters / button-flows can re-resolve the channel without re-running the cascade.
-- **`BUTTON_CUSTOM_ID_PREFIX` / `PREF_CUSTOM_ID_PREFIX` / `COMM_PREF_CUSTOM_ID_PREFIX` / `SERVER_INVITE_CUSTOM_ID_PREFIX`** — declared in `lib/proposalMessages.ts`, consumed in `api/bot.ts:224`. The handler dispatches on these prefixes to split trade-proposal buttons from pref selectors from enrollment buttons.
+- **`CommunicationPref`** — historical: a 4-state enum on `users.communication_pref` (`prefer` / `auto-accept` / `allow` / `dm-only`) that drove thread-vs-DM routing for the proposal flow. Phase C retired the consumer (`lib/threadConsent.ts` + the proposal-button thread-flow) but the column + registry def are still wired through `lib/prefsRegistry.ts` for migration history.
+- **Per-guild trade channel** — each `bot_installed_guilds` row carries `trades_channel_id` for that guild's `#swutrade-threads` channel, auto-created on install (`api/bot.ts::handleApplicationAuthorized`). The channel exists for category/install bookkeeping; sessions don't post into it. After Phase C retired the proposal primitive, there's no longer a "host guild for a (proposer, recipient) pair" routing concept — `lib/tradeGuild.ts` keeps `ensureSwutradeCategory` + `ensureTradesChannel` only.
+- **`PREF_CUSTOM_ID_PREFIX` / `COMM_PREF_CUSTOM_ID_PREFIX` / `SERVER_INVITE_CUSTOM_ID_PREFIX`** — declared in `lib/discordMessages.ts`, consumed in `api/bot.ts:224`. The handler dispatches on these prefixes to split pref selectors from enrollment buttons. The legacy `BUTTON_CUSTOM_ID_PREFIX` (= `'trade-proposal:'`) was removed in Phase C; stale clicks fall through to the unknown-button silent-ack branch.
 
 ## File map
 
@@ -84,10 +83,6 @@ Three things keep this area honest: (1) signature verification happens before an
 
 **`lib/prefsResolver.ts`** — Pure cascade: `resolvePref({ key, viewerUserId, peerUserId? })`. Always routes through the self-scoped def even when only `peer` is registered — a peer-only pref with no baseline has no meaningful inherit target.
 
-**`lib/threadConsent.ts`** — Two exports:
-- `deliveryForPair(proposer, recipient) → 'thread-immediately' | 'dm-with-request' | 'dm-only'` — the matrix governing initial routing.
-- `handleThreadRequest(counterpart) → 'auto-approve' | 'manual-decide' | 'auto-decline'` — what to do when one side clicks `Request thread`.
-
 ### Scripts / ops
 
 **`scripts/discord-admin.mjs`** — Dev-ops CLI. Uses a SEPARATE admin-ops bot token (`DISCORD_ADMIN_BOT_TOKEN`, `.env.local` only). Commands: `list-guilds`, `list-channels`, `create-channel`, `create-webhook`, `delete-channel`, `describe-member`. MUST NOT be pushed to Vercel; the product bot's token stays minimal-permission and the admin bot exists precisely so broad-permission dev operations don't need to elevate the product bot.
@@ -102,7 +97,7 @@ Three things keep this area honest: (1) signature verification happens before an
 
 ## Data model
 
-This area reads from and writes to several schemas; most are OWNED elsewhere (users by [`g-auth.md`](./g-auth.md), trade rows by [`b-proposals.md`](./b-proposals.md)), with the exceptions listed below.
+This area reads from and writes to several schemas; most are OWNED elsewhere (users by [`g-auth.md`](./g-auth.md), trade rows by [`a-sessions.md`](./a-sessions.md)), with the exceptions listed below.
 
 ### Owned: `bot_installed_guilds`
 
@@ -159,7 +154,7 @@ All calls inject `Authorization: Bot {token}` + `Content-Type: application/json`
 
 ### Inbound HTTP
 
-- `POST /api/bot/interactions` — rewritten to `POST /api/bot?action=interactions`. Handshake (type 1) → PONG. Slash/context (type 2) → `handleApplicationCommand`. Button/select (type 3) → `handleTradeProposalButton` / `handlePrefsButton` / `handleServerInviteButton` based on `custom_id` prefix.
+- `POST /api/bot/interactions` — rewritten to `POST /api/bot?action=interactions`. Handshake (type 1) → PONG. Slash/context (type 2) → `handleApplicationCommand`. Button/select (type 3) → `handlePrefsButton` / `handleServerInviteButton` / `handleSignalButton` based on `custom_id` prefix. Stale `trade-proposal:*` button clicks (from in-flight DMs sent before Phase C) fall through to the unknown-button branch — silent ack via `INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE`.
 - `POST /api/bot/events` — rewritten to `POST /api/bot?action=events`. Type 0 → 204. `APPLICATION_AUTHORIZED` → `handleApplicationAuthorized` (upsert install row, maybe auto-create channel, DM installer, outreach to existing members).
 
 Both paths share the same Ed25519 verification, same `DISCORD_APP_PUBLIC_KEY`, same `maxSkewSeconds`. Both respond 401 on signature failure, 400 on invalid JSON, 405 on non-POST.
@@ -183,14 +178,15 @@ Both route through `handleApplicationCommand` (`api/bot.ts:257`). The slash comm
 
 ### Button custom_id grammar
 
-Every button carries a `custom_id` the handler pattern-matches on. Prefixes (defined in `lib/proposalMessages.ts`):
+Every button carries a `custom_id` the handler pattern-matches on. Prefixes (defined in `lib/discordMessages.ts`):
 
 | prefix | grammar | dispatched to |
 |---|---|---|
-| `proposal:` (BUTTON) | `proposal:{tradeId}:{accept\|decline\|counter\|request-thread\|approve-thread\|decline-thread}` | `handleTradeProposalButton` |
 | `pref:` | `pref:{key}:{open\|set}[:value]` (self) or `pref:peer:{peerUserId}:{key}:{open\|set}[:value]` or `pref:combo:{peerUserId}:open` | `handlePrefsButton` → self / peer / combined forks |
 | `comm-pref:` (legacy) | `comm-pref:{open\|set}[:value]` | `handlePrefsButton` → pinned to `communicationPref` for DMs that shipped before the registry existed |
 | `server-invite:` | `server-invite:{guildId}:enroll` | `handleServerInviteButton` |
+
+The legacy `trade-proposal:` (= `BUTTON_CUSTOM_ID_PREFIX`) dispatcher was removed in Phase C alongside the proposal primitive. Stale clicks from in-flight DMs fall through to the unknown-button branch (silent `DEFERRED_UPDATE` ack).
 
 Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a known prefix: also silent defer — better than "interaction failed" toast for the user.
 
@@ -204,11 +200,6 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 
 - `resolvePref({ key, viewerUserId, peerUserId? }) → Promise<PrefValue>` — `lib/prefsResolver.ts:31`. Throws on unknown key (catch at the API boundary, not here).
 
-### Thread consent
-
-- `deliveryForPair(proposerPref, recipientPref) → ProposalDelivery` — `lib/threadConsent.ts:48`. Rules: `dm-only` on either side wins; both "thread-positive" (`prefer`|`auto-accept`) → immediate thread; otherwise DM with the Request button.
-- `handleThreadRequest(counterpart) → ThreadRequestOutcome` — `lib/threadConsent.ts:77`. `prefer`/`auto-accept` → `auto-approve`; `allow` → `manual-decide`; `dm-only` → `auto-decline` (defensive — button shouldn't have been offered, but pref may have changed mid-flight).
-
 ### Error reporter
 
 - `reportError({ source, tags?, force? }, err) → Promise<void>` — fire-and-forget. `force: true` bypasses `shouldSkip` + `isTestTraffic` for the "normally-noise but actually load-bearing here" case.
@@ -217,18 +208,13 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 
 ## State + data flow
 
-### Happy path: user clicks Accept on a proposal DM
+### Happy path: signed-button interaction (e.g. prefs, server-invite)
 
-1. User clicks the green `proposal:{id}:accept` button.
+1. User clicks a button on a bot-sent DM or message.
 2. Discord POSTs `/api/bot/interactions` with `type: 3` and signs with its private key.
 3. `api/bot.ts:118` reads `DISCORD_APP_PUBLIC_KEY`, extracts headers, `verifyDiscordSignature` returns true (body round-trip via `canonicalRequestBody`).
-4. `handleInteraction` inspects `custom_id` prefix → routes to `handleTradeProposalButton`.
-5. Handler resolves the trade row + proposer + recipient from DB. Authorization: `recipient.discordId === clickerDiscordId`, else ephemeral "not yours" reply.
-6. Status guard: `pending` only — already-resolved falls through to an idempotent `UPDATE_MESSAGE` with the resolved banner (no DB write, no proposer DM).
-7. `resolveProposal` (shared with the web path, `lib/proposalResolve.ts`) does the optimistic UPDATE, logs the event, PATCHes the recipient's DM, sends the proposer notification DM.
-8. Handler replies `type: 7 UPDATE_MESSAGE` with the resolved body. Discord swaps the button row in place — no flicker, no re-click possible. (`resolveProposal` also PATCHes the same message for the web path; the PATCH is idempotent.)
-
-The shared-module cut (`proposalResolve.ts`) is why the web endpoint and the button endpoint can never drift: both funnel through the same state transition, the same event log, the same Discord side effects.
+4. `handleInteraction` inspects `custom_id` prefix → routes to `handlePrefsButton` / `handleServerInviteButton` / `handleSignalButton`. Stale `trade-proposal:*` clicks (in-flight DMs from before Phase C retired the proposal primitive) fall through to the unknown-button branch and silent-ack via `INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE`.
+5. The chosen handler validates authorization, performs its DB write (or no-op), and replies with `type: 7 UPDATE_MESSAGE` (in-place swap) or `type: 4 CHANNEL_MESSAGE` + `EPHEMERAL` (private follow-up).
 
 ### Happy path: bot-install arrives
 
@@ -274,7 +260,7 @@ A user reshares their DM thread with a friend who clicks the Accept button. `cli
 - **Channel/webhook id sprawl.** `DISCORD_ERROR_WEBHOOK_URL` and `DISCORD_RELEASE_WEBHOOK_URL` still live in Vercel env. Trade-thread routing now reads exclusively from `bot_installed_guilds.trades_channel_id` per-guild — the legacy global `TRADES_CHANNEL_ID` env was removed when the picker shipped.
 - **`getGuildBotMember` 403 fix.** Discord rejects `/members/@me` for bots with 403. The handler passes `botUserId` explicitly (`api/bot.ts:1603`). Worth auditing any future endpoint that supports `/@me` to confirm no latent case treats bot tokens like user tokens.
 - **Prefs registry migrations** — the 8-step migration from hand-coded columns to the registry is complete; `profileVisibility` is still `surfaces: ['web']` only because a 3-option enum with long descriptions overflows Discord's 5-button action row. Fix when we have a Discord string-select renderer.
-- **Thread request vs proposal status race.** `handleThreadFlowButton` checks `trade.status !== 'pending'` but reads the row once at the top — a concurrent accept + request-thread could theoretically both see `pending` and both proceed. Low-probability (two humans clicking sub-second), but worth an optimistic `.where(status, 'pending')` guard on the thread-id UPDATE.
+- **~~Thread request vs proposal status race~~** — moot in Phase C. `handleThreadFlowButton` and the proposal-thread-request flow it gated were removed alongside the proposal primitive.
 - **Dynamic column access via `as Record<string, AnyPgColumn>`.** Repeated in `api/bot.ts:1152`, `1281`, `1398` and `lib/prefsResolver.ts:46`. Works because the registry test asserts every `def.column` exists on the Drizzle schema. A small `getPrefColumn(def)` helper would dedupe and make the invariant locally explicit.
 - **`ErrorReporter.isTestTraffic` prefix list** — hardcoded at `lib/errorReporter.ts:85`. Any new test-id convention has to be added here; grep-wide audit needed when we add new e2e patterns.
 
@@ -284,7 +270,7 @@ A user reshares their DM thread with a friend who clicks the Accept button. `cli
 - **One consolidated handler, two virtual URLs.** `vercel.json` rewrites `/api/bot/interactions` + `/api/bot/events` to a single `api/bot.ts` with `?action=`. Plan memory: the Hobby serverless function ceiling means per-route files aren't free. Discord sees two distinct webhook URLs; we spend one function slot. Same pattern as `api/sessions.ts`.
 - **Typed error hierarchy over opaque `Error`.** Before `lib/discordErrors.ts`, every Discord failure looked identical to callers: `new Error(status + path)`. That conflation turned real incidents into silent `delivery_status=failed` rows with no actionable signal. The hierarchy lets the 429 retry loop, the `#bot-errors` noise filter, and the UI fallback copy all branch on meaningful categories without re-parsing strings.
 - **Retry once on 429, never on 5xx.** Bot writes aren't idempotent (POST message, PATCH members). A blind retry on 5xx can dupe a proposal DM. 429 is safe because Discord hasn't processed the request yet — `Retry-After` is a "try the same request again" signal. Everything else should surface to the caller.
-- **Shared `proposalResolve` module over duplicated logic.** The button handler and the web endpoint both need to transition pending → accepted/declined, log an event, PATCH the DM, notify the proposer. Duplication drifts — one path drops an event row, the other doesn't send the notification. One shared module, two native response shapes (type-7 vs JSON).
+- **~~Shared `proposalResolve` module over duplicated logic~~** — retired in Phase C alongside the proposal primitive. The pattern (one shared transition module, two native response shapes) remains worth remembering if a future flow ends up surfaced via both web + Discord buttons.
 - **`reportError` filters noise aggressively.** 429s, expected 10003/10008/10013 not-founds, 50007 DMs-disabled all skipped. Without the filter, `#bot-errors` would fill with user-choice signal and real bugs would drown. Callers pass `force: true` for the rare case where "normally-noise" is meaningful — don't sprinkle it.
 - **Test-key fallback hard-gated on env.** `resolveTestPublicKey(env)` returns `undefined` on production regardless of whether `DISCORD_APP_PUBLIC_KEY_TEST` is set. A leaked test private key cannot become a path to forging real interactions. The gate is at the point-of-resolution, not at env-load, so even a misconfigured env doesn't weaken prod.
 - **Admin bot separate from product bot.** `scripts/discord-admin.mjs` uses `DISCORD_ADMIN_BOT_TOKEN` (broader permissions, dev-only). The product bot (`DISCORD_BOT_TOKEN`) runs minimal. Keeping them split means a leaked production bot token can't create arbitrary channels or invite webhooks in personal dev servers.
@@ -295,8 +281,7 @@ A user reshares their DM thread with a friend who clicks the Accept button. `cli
 
 ## Cross-references
 
-- [`b-proposals.md`](./b-proposals.md) — what Accept/Decline actually do after the button click (state machine, events, DM side effects). This page documents the button plumbing; that page documents the lifecycle.
 - [`f-community-profile.md`](./f-community-profile.md) — the web Settings page that renders from `PREF_DEFINITIONS`. This page owns the registry + cascade; that page owns the `SettingsView` component.
 - [`g-auth.md`](./g-auth.md) — Discord OAuth, iron-session cookies, ghost merge. `syncGuildMemberships` is called by the OAuth callback there; signature verification for interactions is owned here.
 - [`j-infra.md`](./j-infra.md) — Vercel function topology, `vercel.json` rewrites, CI pipeline. The `/api/bot/*` rewrites + `notify-start/live/finish` jobs live there; the bodies of those jobs and their channel usage live here.
-- [`h-cards-pricing.md`](./h-cards-pricing.md) — no direct overlap. Card data flows into the proposal embed via `lib/proposalMessages.ts`; that module isn't owned here (it's part of the proposals area).
+- [`h-cards-pricing.md`](./h-cards-pricing.md) — no direct overlap. Card data flows into bot-emitted DMs via `lib/discordMessages.ts` (formerly `lib/proposalMessages.ts`).

@@ -18,7 +18,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 
 ## Key concepts / glossary
 
-- **Offering side** — `yourCards`, emerald accent. "What you give up." The left panel (desktop) / top panel (mobile). **Load-bearing invariant** — see the [SWU design invariants](../../.claude/projects/-Users-parker-code-swutrade/memory/project_swutrade_invariants.md) memo; emerald = you-giving is hardcoded across the app (ProposeBar, CounterBar, session views, summary tiles, OG image). Do not change.
+- **Offering side** — `yourCards`, emerald accent. "What you give up." The left panel (desktop) / top panel (mobile). **Load-bearing invariant** — see the [SWU design invariants](../../.claude/projects/-Users-parker-code-swutrade/memory/project_swutrade_invariants.md) memo; emerald = you-giving is hardcoded across the app (session views, summary tiles, OG image). Do not change.
 - **Receiving side** — `theirCards`, blue accent. "What you get." The right / bottom panel. Same invariant: blue = you-getting, everywhere.
 - **Balance tone** — gold (neutral / balanced), amber (disturbance), crimson (chaos). Reserved for the balance strip and nothing else; see `src/utils/forceBalance.ts:124` (`balanceChrome`).
 - **Favored direction** — `BalanceFavored` = `'you' | 'them' | 'none'`. Computed in `src/utils/forceBalance.ts:57` — `'them'` means **the trade tilts toward the counterpart** (you're offering more than receiving). Inverted from the raw diff sign because "your total" is what you're giving up.
@@ -41,7 +41,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 
 **`src/components/TradeBalance.tsx`** — The running-balance strip. Reads totals via `calcTotal` (`TradeBalance.tsx:19-24`), derives tier+chrome from `computeBalance` + `balanceChrome`, shows inline PriceModeToggle + PriceSlider, surfaces the "Ask for $X" / "Offer $X" action line and the "View full summary" CTA that opens `TradeSummary`.
 
-**`src/components/TradeSummary.tsx`** — Modal receipt overlay. Re-uses the Offering/Receiving split as tile grids with card art, pricing pill + Share pills in the header, and a "Save this trade" + "Send as proposal" action row. Send-as-proposal hands off via the URL codec + `?propose=<handle>` (no server call, full-page nav, see `handleProposeTo` at `TradeSummary.tsx:159-164`).
+**`src/components/TradeSummary.tsx`** — Modal receipt overlay. Re-uses the Offering/Receiving split as tile grids with card art, pricing pill + Share pills in the header, and a "Save this trade" action row. (The earlier "Send as proposal" affordance was retired in Phase C alongside the proposal primitive; live hand-off goes through `ShareLiveTradeButton` → session instead.)
 
 **`src/components/TradeSearchOverlay.tsx`** — Full-screen card picker. Owns its own `useCardSearch`, chip state, filter-drawer open/close state, and seed consumption (pre-fill query or activate chips from the parent). Mounts `SearchResults` (the tile grid).
 
@@ -95,7 +95,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 
 **`src/utils/filterSummaries.ts`** — `summarizeSelection(array, noneLabel, format?)` — shared "N selected" / "a, b, c" / full-label formatter used by both the picker's compact filter summary and the persistent filter bar.
 
-**`src/services/tradeActions.ts`** — Stateless POST helpers (`cancelProposal`, `acceptProposal`, `declineProposal`, `nudgeProposal`, `promoteProposalToShared`, `bulkResolveProposals`). The builder calls NONE of these directly — TradeSummary sends proposals via a full-page navigation to `/?propose=<handle>&y=...` which the receiving load mounts ProposeBar, which calls through `useComposerBar`. The send path that *does* use `/api/trades` directly is TradeSummary's "Save this trade" (see `TradeSummary.tsx:182-210`), which is a personal save, not a proposal. Proposal send + lifecycle lives in b-proposals.
+**`src/services/tradeActions.ts`** — Stateless POST helpers for personal "save this trade" snapshots. The builder calls NONE of these directly — TradeSummary's "Save this trade" (see `TradeSummary.tsx:182-210`) is the only consumer. Live-trade hand-offs go through `ShareLiveTradeButton` → `/api/sessions/create-open` → `/s/<id>` (see [`a-sessions.md`](./a-sessions.md)).
 
 ## Data model
 
@@ -158,9 +158,9 @@ Other areas import these three of ours directly:
 
 ### Exports (pure functions)
 
-- `buildTradeSearch(state) / parseTradeUrl(search)` — the top-level encode/decode. Called by `useTradeUrl`, and by `TradeSummary` for the send-as-proposal hand-off.
+- `buildTradeSearch(state) / parseTradeUrl(search)` — the top-level encode/decode. Called by `useTradeUrl`.
 - `computeBalance / balanceChrome` — used by TradeBalance + TradeSummary (+ SessionView for the session canvas).
-- `computeMatch` — the matchmaker. Called by AutoBalanceBanner, ProposeBar (b-proposals area). Two-mode `MatchMode` flag.
+- `computeMatch` — the matchmaker. Called by AutoBalanceBanner. Two-mode `MatchMode` flag.
 - `applySelectionFilters` — called by TradeSearchOverlay and by ListView (d-lists).
 
 ## State + data flow
@@ -185,16 +185,17 @@ Other areas import these three of ours directly:
 
 `useTradeIntent` is completely separate from `useTradeUrl`. On mount it parses the **same** URL search independently for the five intent params, re-syncs on `popstate`, and exposes an imperative `setIntent` for in-app pushState navigation to mirror URL writes into state. The two hooks' responsibilities don't overlap — trade codec vs trade intent — but they both consume the same URL, and both write back to it. `useTradeUrl` **only owns** `TRADE_CODEC_KEYS` and passes every other param through untouched; that's the fix from `a1baace` (2026-04-17).
 
-### Propose mode (from the builder's perspective)
+### Counterpart-context mode (from the builder's perspective)
 
-1. User navigates to `/?propose=alice` — either by typing the URL, landing from Home's HandlePicker, or via the Summary's "Send as proposal" button.
-2. `App` mounts. `useTradeIntent` seeds `intent.propose = 'alice'`. The mutex-bar switch (`App.tsx:575-624`) renders `<ProposeBar>` instead of `<AutoBalanceBanner>`.
-3. `useRecipientProfile('alice')` fetches Alice's public lists once (`App.tsx:140`). Both `ProposeBar` (for Suggest + status hint) and `TradeSide` (for the source chips' `theirs` + `overlap` pools) read the same snapshot via `effectiveSharedLists` — no double fetch.
-4. In this mode `autoScopeToTheirs = true` (`App.tsx:668`). When the user opens the picker, `openOverlay` auto-activates the `overlap` chip if it has cards, falling back to `theirs` — so the first thing a proposer sees is the intersection pool, not the full catalog (`TradeSide.tsx:369-375`).
-5. User clicks cards → adds via the usual onAdd path → cards land in `yourCards` / `theirCards` → URL carries `y=...&t=...&propose=alice`.
-6. User clicks Send in ProposeBar (b-proposals territory). ProposeBar POSTs `/api/trades` with the snapshot; on success, navigates away from the builder.
+The propose-via-handle flow was retired in Phase C (the proposal primitive is gone). The remaining counterpart-context entry point is `?from=<handle>` (with optional `?autoBalance=1`), which surfaces the AutoBalanceBanner. The natural live hand-off is now "Invite someone" → `ShareLiveTradeButton` → session (see [`a-sessions.md`](./a-sessions.md)).
 
-ProposeBar is a b-proposals component; the builder only knows it's there because `App.tsx:595-608` mounts it in the mutex slot when `proposeHandle` is non-null.
+When `?from=alice` is set:
+
+1. `App` mounts. `useTradeIntent` seeds `intent.from = 'alice'`. The mutex-bar switch renders `<AutoBalanceBanner>`.
+2. `useRecipientProfile('alice')` fetches Alice's public lists once (`App.tsx:140`). `TradeSide`'s source chips (`theirs` + `overlap` pools) read the same snapshot via `effectiveSharedLists` — no double fetch.
+3. In this mode `autoScopeToTheirs = true` (`App.tsx:668`). When the user opens the picker, `openOverlay` auto-activates the `overlap` chip if it has cards, falling back to `theirs` — so the first thing the user sees is the intersection pool, not the full catalog (`TradeSide.tsx:369-375`).
+4. User clicks cards → adds via the usual onAdd path → cards land in `yourCards` / `theirCards` → URL carries `y=...&t=...&from=alice`.
+5. To take the trade live, the user clicks "Invite someone" (`ShareLiveTradeButton`), which seeds both halves into a new session.
 
 ### AutoBalanceBanner flow
 
@@ -270,33 +271,22 @@ PriceModeToggle (Market/Low) + PriceSlider (50/60/70/80/90/100%). The slider is 
 
 ### Balance strip chrome
 
-- **Empty** — quiet "Trade balance" label in muted gray, no glow. Deliberately recessive; the ProposeBar or AutoBalanceBanner above is the primary CTA in that state, and two gold-tinted display-font bars fighting for attention made the page feel unfocused (`TradeBalance.tsx:141-143`, `forceBalance.ts:34-48`).
+- **Empty** — quiet "Trade balance" label in muted gray, no glow. Deliberately recessive; the AutoBalanceBanner above is the primary CTA in that state, and two gold-tinted display-font bars fighting for attention made the page feel unfocused (`TradeBalance.tsx:141-143`, `forceBalance.ts:34-48`).
 - **Populated** — full swu-display drama: headline ("A disturbance in the Force"), action line ("Ask for $12.50 more — cards or cash"), totals pill (emerald / blue), pricing controls, missing-price warning if any, "View full summary" CTA.
 - **Chaos tier** adds `animate-pulse-crimson` — a slow, low-intensity pulse to make lopsided trades visible at a glance without being alarmist.
 - **Favored direction → verb**: if the trade tilts toward **them** (you're offering more), the action line reads "Ask for $X more"; if it tilts toward **you**, "Offer $X more". The "or settle in cash" framing existed in earlier copy and was kept in the propose path — users didn't realize cash was a valid balancing tool without it.
 
-## The four-bar mutex
+## The mutex bar
 
-One horizontal strip between the action row and the trade panels. Exactly one of the following renders at a time:
+One horizontal strip between the action row and the trade panels. After Phase C retired the proposal primitive, the propose/counter/edit composer bars no longer render — only the AutoBalanceBanner remains in this slot:
 
 | Condition | Component | Role |
 |-----------|-----------|------|
-| `editId` | `<EditBar editingTradeId={editId} …>` | Amend a pending outbound proposal |
-| `counterId` | `<CounterBar originalTradeId={counterId} …>` | Counter an inbound proposal |
-| `proposeHandle` | `<ProposeBar recipientHandle={proposeHandle} …>` | Compose a new outbound proposal |
-| *(else)* | `<AutoBalanceBanner senderHandle={from} autoBalanceRequested={autoBalance} …>` | "Trade with @X" suggestion / auto-balance |
+| `?from=<handle>` | `<AutoBalanceBanner senderHandle={from} autoBalanceRequested={autoBalance} …>` | "Trade with @X" suggestion / auto-balance |
 
-See `App.tsx:575-624`. The first three are b-proposals components; the fourth is ours.
-
-### Tech debt — UX-A2
-
-The audit flagged this as **UX-A2: collapse into one TradeContextStrip**. Each bar currently has its own card, its own copy, its own layout rules, and its own mount/unmount lifecycle. Users who navigate Propose → Counter → Edit see three different-sized strips with slightly different affordances. Planned consolidation: one strip that reads the current intent and renders the appropriate controls + copy inline. Queued in `NEXT.md`; no ETA.
+See `App.tsx:575-624`.
 
 ## Tech debt + known gaps
-
-### Four-bar mutex (UX-A2)
-
-Described above. The mutex logic itself is clean (the conditional in `App.tsx:575-624` is explicit), but the four distinct components produce visual and interaction churn.
 
 ### Pending-cards URL flicker edge case
 
@@ -309,10 +299,6 @@ When a shared URL references productIds that the current pricing feed hasn't loa
 ### Single `readOnly` escape hatch
 
 `TradeSide.readOnly` was added for Phase 5b (SessionView). It hides the picker, qty stepper, kebab, and Add footer. That's four separate collapse rules expressed as one prop — fine today, but if a future mode needs "read-only except the kebab still shows View on TCGPlayer", this prop will need to split. `readOnly` is referenced in `TradeSide.tsx:156-158`, `TradeRow.tsx:114-116`, `TradeRow.tsx:250-283`.
-
-### Textarea cramping — resolved
-
-The ProposeBar send-confirm textarea was cramped in an earlier iteration; now 5 rows with `resize-y` and a 100px min-height (`ProposeBar.tsx:535-537`). Called out in the composer-UX audit as CU4; fix shipped. Keep the 5-row minimum when refactoring the composer.
 
 ### AutoBalanceBanner fetch-start ref
 
@@ -373,7 +359,6 @@ Whatever the matchmaker returns as `imbalance` is the implied cash settlement. W
 ## Cross-references
 
 - [`a-sessions.md`](./a-sessions.md) — the `/s/:id` shared canvas that `ShareLiveTradeButton` hands off to, and that reuses `<TradeSide readOnly>` / `<TradeBalance>`.
-- [`b-proposals.md`](./b-proposals.md) — the ProposeBar / CounterBar / EditBar composer bars that mount in our mutex slot, and the `/api/trades` proposal lifecycle. We call `tradeActions.ts`'s helpers from the Summary send path; full handler side lives there.
 - [`d-lists.md`](./d-lists.md) — wants + available + shared lists. We consume them via `effectiveSharedLists`, `useWants`, `useAvailable`, `sharedLists.wants|available`; we don't document the list storage model.
 - [`e-home-nav.md`](./e-home-nav.md) — HomeView / view-mode detection / `nav` helper construction — the set of callers that hand off into the builder with various intent signals.
 - [`f-community-profile.md`](./f-community-profile.md) — ProfileView's "Balanced trade with @X" CTA that sets `?from=` + `?autoBalance=1` and hands off here.

@@ -13,8 +13,7 @@ Shared code used by `api/` handlers, cron jobs, and (via `.js` imports — see b
 | `discordBot.ts`          | **Bot-scoped** Discord REST client (uses bot token). For DMs, thread create, message edit.          |
 | `discordSignature.ts`    | Ed25519 verification for Discord webhook signatures.                                                |
 | `guildSync.ts`           | Reconciles `user_guild_memberships` from a Discord `/guilds` response.                              |
-| `proposalMessages.ts`    | Builders for every DM/thread message shape a trade proposal emits (embed + action rows).            |
-| `threadConsent.ts`       | 4-state `communicationPref` decision matrix (`deliveryForPair`, `handleThreadRequest`).             |
+| `discordMessages.ts`     | Builders for the Discord messages the bot sends — pref selectors, server-invite outreach, session-lifecycle DMs. |
 | `shared.ts`              | Isomorphic helpers used by both server + frontend (`restrictionKey`, price math, etc).              |
 
 ## Invariants
@@ -24,7 +23,7 @@ Shared code used by `api/` handlers, cron jobs, and (via `.js` imports — see b
 - Every column lives in `schema.ts` first; types flow out via `users.$inferSelect` / `$inferInsert`.
 - Adding a column = `drizzle-kit generate` → commit the generated `drizzle/NNNN_*.sql` alongside the schema change. The `_journal.json` version bump is the part that fails loudly if you forget.
 - Enum columns use `text('col', { enum: [...] }).default(...)`. Drizzle narrows the TS type from the enum tuple — no separate `as const` needed.
-- Defaults in schema **must** match defaults wherever the column is read (e.g., `communicationPref ?? 'allow'` in button handler). The mismatch is silent; the test suite's best proxy is a seeded-user integration test.
+- Defaults in schema **must** match defaults wherever the column is read. The mismatch is silent; the test suite's best proxy is a seeded-user integration test.
 
 ### Two Discord clients, not one
 
@@ -37,18 +36,14 @@ Mixing these is a common mistake. Bot endpoints that need user data must proxy t
 
 Server code imports from sibling modules with explicit `.js` extensions (`from './schema.js'`) because the server is ESM. TypeScript's module resolution handles the `.ts` → `.js` mapping at build time. If you see a `TS2307: Cannot find module './foo'` after adding a file, check for the missing `.js` extension.
 
-### `proposalMessages.ts` is the visual contract
+### `discordMessages.ts` is the visual contract
 
-Every message shape a trade proposal takes (initial DM, thread post, edit-on-accept, edit-on-counter, thread-requested variant, thread-moved variant, thread-declined variant, proposer notification) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module.
+Every Discord message shape the bot sends (pref selectors, server-invite outreach, session-lifecycle DMs — invite, decline, ping) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module. The file was named `proposalMessages.ts` until Phase C retired the proposal flow; the proposal-only builders went with it.
 
-Button `custom_id` prefixes live here as exported constants (`BUTTON_CUSTOM_ID_PREFIX` for trade-proposal actions; `PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `COMM_PREF_CUSTOM_ID_PREFIX` retained as a transitional alias for DMs that predate the registry migration) so the dispatcher in `api/bot.ts` stays in sync.
-
-### `threadConsent.ts` is pure
-
-No DB, no Discord. Just the decision matrix — takes two `CommunicationPref` values, returns the routing outcome. That purity is load-bearing for the 16-cell matrix test in `tests/api/trades-propose.test.ts`. Don't let this module grow side effects.
+Button `custom_id` prefixes live here as exported constants (`PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `COMM_PREF_CUSTOM_ID_PREFIX` retained as a transitional alias for DMs that predate the registry migration; `SERVER_INVITE_CUSTOM_ID_PREFIX` for the bot-install outreach DM) so the dispatcher in `api/bot.ts` stays in sync.
 
 ## Testing
 
 - Everything here is exercised by integration tests under `tests/api/` (via the handlers that use them).
-- Units that are especially load-bearing get their own test file too: `discordSignature.test.ts`, any future `threadConsent.test.ts`.
+- Units that are especially load-bearing get their own test file too: `discordSignature.test.ts`.
 - The integration-test harness uses a real Postgres. Drop/recreate rows in test fixtures rather than mocking the DB — per project memory, mocks diverge from prod.

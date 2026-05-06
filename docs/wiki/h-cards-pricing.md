@@ -21,7 +21,7 @@
 > - `.github/workflows/refresh-prices.yml` — the "cron" (a GitHub Actions scheduled deploy-hook trigger, not a Vercel cron — see Tech debt)
 > - `api/og.ts` — OG image renderer (it consumes this subsystem; documented here for the `/tmp` + ESM-JSON gotchas)
 >
-> Not owned (cross-links at the bottom): how cards get **into** a trade (`c-trade-builder.md`), how they're stored in wants/available (`d-lists.md`), how they're frozen into a proposal snapshot (`b-proposals.md`).
+> Not owned (cross-links at the bottom): how cards get **into** a trade (`c-trade-builder.md`), how they're stored in wants/available (`d-lists.md`), how they're frozen into a session snapshot (`a-sessions.md`).
 
 ## Overview
 
@@ -363,6 +363,6 @@ Legacy cached data from before productId was captured could deserialize without 
 
 - [`c-trade-builder.md`](./c-trade-builder.md) — how cards are added to trades (TradeSide + picker), URL codec, TradeRow/TradeSummary/TradeBalance rendering. Those components *consume* this subsystem.
 - [`d-lists.md`](./d-lists.md) — wants + available lists, which store cards by `familyId` (wants) and `productId` (available). The cross-printing split documented here is load-bearing for list matching.
-- [`a-sessions.md`](./a-sessions.md) + [`b-proposals.md`](./b-proposals.md) — trade_sessions and trade_proposals snapshot the `CardVariant` shape at the moment of creation. The snapshot fields they store (`productId`, `name`, `marketPrice`, `lowPrice`, `variant`, `set`, `setName`) come from here; the freeze semantics are theirs.
+- [`a-sessions.md`](./a-sessions.md) — `trade_sessions` snapshots the `CardVariant` shape at the moment of creation. The snapshot fields it stores (`productId`, `name`, `marketPrice`, `lowPrice`, `variant`, `set`, `setName`) come from here; the freeze semantics are theirs.
 - [`e-home-nav.md`](./e-home-nav.md) — where `PriceDataProvider`, `CardIndexProvider`, and `PricingProvider` mount in the provider stack.
 - [`j-infra.md`](./j-infra.md) — the build pipeline that runs `fetch-prices` + `enrich-cards` as part of `npm run build`, and the GitHub Actions workflow that triggers the 2h refresh.

@@ -70,7 +70,6 @@ Why X not Y. These are the judgment calls that aren't in the code. Cite commits 
 Adjacent areas this one touches. Link by wiki path.
 
 - [`g-auth.md`](./g-auth.md) — for the ghost-user merge we depend on.
-- [`b-proposals.md`](./b-proposals.md) — for the promote-to-session surface.
 
 ---
 

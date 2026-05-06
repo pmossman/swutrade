@@ -54,10 +54,6 @@ Real users have a `discordId`; ghost users have `isAnonymous=true` and `discord_
 → `src/persistence/schemas.ts` — full model in [`d-lists.md`](./d-lists.md).
 A **WantsItem** is keyed by `familyId` (cross-printing) + optional `VariantRestriction` + `isPriority` star. An **AvailableItem** is keyed by `productId` (specific printing). Stored in localStorage; synced to server when signed in.
 
-**Proposal** (async Discord-DM trade)
-→ `lib/schema.ts` trade_proposals — full model in [`b-proposals.md`](./b-proposals.md).
-One-shot commit-first pattern: proposer composes cards + message, server delivers via Discord DM or private thread, recipient clicks Accept / Decline / Counter / Edit Together. Lifecycle is `pending → accepted | declined | cancelled | expired | countered`. An append-only `proposal_events` log records every transition.
-
 **Session** (mutable shared canvas)
 → `lib/schema.ts` trade_sessions — full model in [`a-sessions.md`](./a-sessions.md).
 Two-participant collaborative canvas at `/s/<code>`. Both sides edit their half live, poll every 2.5s, and both must Confirm to settle. An **open slot** session (`user_b_id IS NULL`) renders a QR for hand-off.
@@ -65,22 +61,22 @@ Two-participant collaborative canvas at `/s/<code>`. Both sides edit their half 
 ### How primitives relate
 
 ```
-   Card  ─────reads────▶  Cards appear in wants / available / sessions / proposals
+   Card  ─────reads────▶  Cards appear in wants / available / sessions
     │
     ▼ (productId / familyId)
  Wants + Available  ─powers─▶ picker source chips, matchmaking, shared-list URLs
     │
     ▼ (cards selected in builder)
- Trade Builder  ─send-as─▶  Proposal  ◀──promote──▶ Session
-                             │                         │
-                             │ Accept/Decline          │ Settle/Cancel
-                             ▼                         ▼
-                          Terminal                  Terminal
-                          + community_events        + session_events
-                          + Discord notification
+ Trade Builder  ─share-as─▶ Session
+                              │
+                              │ Settle/Cancel
+                              ▼
+                           Terminal
+                           + session_events
+                           + Discord notification
 ```
 
-Proposal ↔ session is bidirectional: a recipient can **promote** a pending proposal into a session ("Edit together"); the proposal goes to `countered`, a new session row carries both sides' cards. See [`b-proposals.md`](./b-proposals.md) for the transition + [`a-sessions.md`](./a-sessions.md) for the session side.
+Sessions are now the only trade primitive. The earlier proposal flow (async Discord-DM accept/decline/counter) was retired in Phase C — sessions cover every use case the proposal flow did, with strictly richer collaboration (live edit, chat, suggestions, revert).
 
 ## State model — where does state live?
 
@@ -92,7 +88,7 @@ Five layers, from outermost to innermost:
 | **localStorage** | wants / available, `swu.signedInHint`, pricing prefs, filter prefs | across reloads | [`d-lists.md`](./d-lists.md), [`g-auth.md`](./g-auth.md) |
 | **React context** | Auth, CardIndex, PriceData, Pricing, Drawer, Navigation | component tree | [`e-home-nav.md`](./e-home-nav.md) |
 | **Hook module cache** | `useTradeDetail`, `useTradesList`, `useSession`, `useMyTrades` | tab lifetime | respective area pages |
-| **Server (Postgres)** | users, trade_sessions, trade_proposals, guild_memberships, \*_events | durable | [`j-infra.md`](./j-infra.md) |
+| **Server (Postgres)** | users, trade_sessions, guild_memberships, \*_events | durable | [`j-infra.md`](./j-infra.md) |
 
 ### URL is authoritative for navigation + intent
 
@@ -108,7 +104,7 @@ No mutation goes through a context. Hooks wrap fetch + mutation logic and *expos
 
 ### Hook caches use SWR-style patterns
 
-Every list hook (`useTradeDetail`, `useTradesList`, `useMyTrades`, `useSession`) uses a module-scoped cache keyed by id (`createKeyedCache`) or a singleton (`createSingletonCache`). Initial render reads from cache; background re-fetches on mount; mutations invalidate the affected key. The pattern kills loading flashes on return-navigation and is documented in [`b-proposals.md`](./b-proposals.md) (`useTradeDetail`) and [`a-sessions.md`](./a-sessions.md) (`useSession`).
+Every list hook (`useMyTrades`, `useSession`) uses a module-scoped cache keyed by id (`createKeyedCache`) or a singleton (`createSingletonCache`). Initial render reads from cache; background re-fetches on mount; mutations invalidate the affected key. The pattern kills loading flashes on return-navigation and is documented in [`a-sessions.md`](./a-sessions.md) (`useSession`).
 
 ## Data-flow patterns
 
@@ -131,19 +127,19 @@ The **mutex** matters because polling / background re-fetches would otherwise la
 
 ### Optimistic concurrency via `updated_at`
 
-Every server-side state transition on `trade_proposals` / `trade_sessions` uses the same shape:
+Every server-side state transition on `trade_sessions` uses the same shape:
 
 ```sql
-UPDATE trade_proposals
-SET status = 'accepted', updated_at = now()
-WHERE id = $1 AND status = 'pending' AND updated_at = $loaded_updated_at
+UPDATE trade_sessions
+SET status = 'settled', updated_at = now()
+WHERE id = $1 AND status = 'active' AND updated_at = $loaded_updated_at
 ```
 
-If the WHERE loses, the caller handles it (return `already-resolved` or similar). See [`b-proposals.md`](./b-proposals.md) for the canonical pattern.
+If the WHERE loses, the caller handles it (return `already-resolved` or similar). See [`a-sessions.md`](./a-sessions.md) for the canonical pattern.
 
 ### Append-only event log
 
-Both primitives keep a separate `*_events` table: `proposal_events`, `session_events`, `community_events`. Events are never deleted or mutated. Reused event types carry a `kind` discriminant in the JSON payload rather than adding enum values — this avoids schema migrations for UI-level distinctions (see `notified` / `created` reuse in [`a-sessions.md`](./a-sessions.md)).
+Sessions keep an event log in `session_events`; the guild-scoped activity feed uses `community_events`. Events are never deleted or mutated. Reused event types carry a `kind` discriminant in the JSON payload rather than adding enum values — this avoids schema migrations for UI-level distinctions (see `notified` / `created` reuse in [`a-sessions.md`](./a-sessions.md)).
 
 ### Dispatcher pattern for API routes
 
@@ -229,9 +225,8 @@ Session events: `created`, `edited`, `confirmed`, `cancelled`, `settled`, `expir
 
 These are decisions that affected more than one subsystem. Listed newest-first; each has its own area-page entry with more context.
 
-- **Unified `TradeRow` view layer** (Phase 5b) — Home's "My Trades" merges proposals + sessions into one stream via `useMyTrades`. State badge palette + row chrome identical regardless of underlying primitive. See [`b-proposals.md`](./b-proposals.md).
+- **Sessions as the only trade primitive** (Phase C, 2026-05-05) — the proposal lifecycle (async Discord-DM accept/decline/counter) was deleted. Sessions are strictly richer: live edit, chat, suggestions, revert. The `trade_proposals` + `proposal_events` tables were dropped; `b-proposals.md` was retired. See [`a-sessions.md`](./a-sessions.md).
 - **Ghost users as first-class** (Phase 5b) — `is_anonymous=true` rows with null `discord_id`, auto-generated `guest-XXXXX` handles. Enable anonymous QR flow without forking the session primitive. See [`g-auth.md`](./g-auth.md) + [`a-sessions.md`](./a-sessions.md).
-- **Promote-to-session** (Phase 5b) — proposals and sessions are different storage shapes but one UX. Recipient can convert pending proposal → active session, inheriting both sides' cards. See [`b-proposals.md`](./b-proposals.md).
 - **Lists promoted out of the drawer** (UX-A1, 2026-04-19) — `Your wishlist` + `Your binder` are now first-class Home modules, not drawer contents. Drawer stays for in-trade quick-edit. See [`d-lists.md`](./d-lists.md) + [`e-home-nav.md`](./e-home-nav.md).
 - **Single NavigationApi** — every in-app navigation atomic through `nav.toX()`. Closed a class of URL/intent/view-mode drift bugs. See [`e-home-nav.md`](./e-home-nav.md).
 - **Foundation contexts** (R1) — PriceData + CardIndex + Drawer contexts replaced per-view state + prop drilling. See [`e-home-nav.md`](./e-home-nav.md) + [`h-cards-pricing.md`](./h-cards-pricing.md).
@@ -239,13 +234,12 @@ These are decisions that affected more than one subsystem. Listed newest-first; 
 - **Iron-session cookies** — not JWT. Server owns session state; cookie is an opaque session id. See [`g-auth.md`](./g-auth.md).
 - **Function ceiling workaround** — dispatcher-per-domain + vercel.json rewrites. See [`j-infra.md`](./j-infra.md).
 - **Public defaults + auto-enroll** (beta feedback, 2026-04-17) — new accounts default public; auto-enroll into bot-installed guilds. See [`f-community-profile.md`](./f-community-profile.md).
-- **Private-thread-first proposal delivery** — when proposer + recipient share a bot-installed guild, proposals land in a private thread inside that guild's `#swutrade-threads` channel; otherwise they fall back to per-user DMs. Consent-gated; the proposer can override the default guild via the ProposeBar picker. See [`i-discord-bot.md`](./i-discord-bot.md) + [`b-proposals.md`](./b-proposals.md).
 
 ## Where to start by question
 
 | I want to … | Read first |
 |-------------|------------|
-| …understand how a trade gets made end-to-end | [`c-trade-builder.md`](./c-trade-builder.md) → [`b-proposals.md`](./b-proposals.md) → [`a-sessions.md`](./a-sessions.md) |
+| …understand how a trade gets made end-to-end | [`c-trade-builder.md`](./c-trade-builder.md) → [`a-sessions.md`](./a-sessions.md) |
 | …add a new API endpoint | [`j-infra.md`](./j-infra.md) (dispatcher pattern) then area page |
 | …work on the Discord bot | [`i-discord-bot.md`](./i-discord-bot.md) |
 | …change a React context | [`e-home-nav.md`](./e-home-nav.md) |
