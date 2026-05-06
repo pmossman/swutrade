@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { usePersistedState } from '../hooks/usePersistedState';
 import {
   PERSIST_KEYS,
@@ -48,17 +48,24 @@ export function PricingProvider({ children }: { children: ReactNode }) {
     DEFAULTS.priceMode,
   );
 
+  // Memoise the value object so consumers (TradeBalance, TradeSummary,
+  // AutoBalanceBanner) only re-render when one of the actual fields
+  // changes — not on every parent render that happens to re-call this
+  // provider. Setters are stable refs from `usePersistedState`.
+  const value = useMemo<PricingContextValue>(
+    () => ({
+      percentage,
+      setPercentage,
+      setPercentageRaw,
+      priceMode,
+      setPriceMode,
+      setPriceModeRaw,
+    }),
+    [percentage, setPercentage, setPercentageRaw, priceMode, setPriceMode, setPriceModeRaw],
+  );
+
   return (
-    <PricingContext.Provider
-      value={{
-        percentage,
-        setPercentage,
-        setPercentageRaw,
-        priceMode,
-        setPriceMode,
-        setPriceModeRaw,
-      }}
-    >
+    <PricingContext.Provider value={value}>
       {children}
     </PricingContext.Provider>
   );

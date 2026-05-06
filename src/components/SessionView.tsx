@@ -137,11 +137,24 @@ export function SessionView({
     () => session?.suggestions ?? [],
     [session?.suggestions],
   );
-  const incomingSuggestions = allSuggestions.filter(s =>
-    (s.targetSide === 'a' || s.targetSide === 'b') && s.targetIsViewer);
-  const outgoingSuggestions = allSuggestions.filter(s =>
-    (s.targetSide === 'a' || s.targetSide === 'b') && s.suggestedByViewer);
-  const revertSuggestions = allSuggestions.filter(s => s.targetSide === 'both');
+  // Memoise the three projections — each `.filter()` allocates a
+  // fresh array per render, which forces downstream `React.memo`
+  // children (suggestion panels) to invalidate every parent render.
+  // Stable references keep them quiet until the source actually changes.
+  const incomingSuggestions = useMemo(
+    () => allSuggestions.filter(s =>
+      (s.targetSide === 'a' || s.targetSide === 'b') && s.targetIsViewer),
+    [allSuggestions],
+  );
+  const outgoingSuggestions = useMemo(
+    () => allSuggestions.filter(s =>
+      (s.targetSide === 'a' || s.targetSide === 'b') && s.suggestedByViewer),
+    [allSuggestions],
+  );
+  const revertSuggestions = useMemo(
+    () => allSuggestions.filter(s => s.targetSide === 'both'),
+    [allSuggestions],
+  );
 
   // Cards already referenced by a pending non-revert suggestion. The
   // server enforces the same rule (returns 'card-locked'); this is
@@ -158,11 +171,15 @@ export function SessionView({
     return set;
   }, [allSuggestions]);
 
+  // Narrow dep to the only field actually read so the memo doesn't
+  // invalidate every poll re-fetch (which produces a fresh `session`
+  // reference but leaves the counterpart handle unchanged).
+  const counterpartHandle = session?.counterpart?.handle ?? null;
   const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
     { label: 'Home', href: '/' },
     { label: 'My trades', href: '/?trades=1' },
-    { label: session?.counterpart ? `Trade with @${session.counterpart.handle}` : 'Shared trade' },
-  ], [session]);
+    { label: counterpartHandle ? `Trade with @${counterpartHandle}` : 'Shared trade' },
+  ], [counterpartHandle]);
 
   const { byProductId } = cardIndex;
 
