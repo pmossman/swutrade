@@ -14,6 +14,14 @@
 
 ## Changes
 
+### `ed5cb62` — All disabled buttons now render at exactly 50% opacity
+**Surface(s):** Every button in the app that has a `disabled:` Tailwind state. Visible across NumberStepper +/− buttons, dialog Cancel/Confirm, suggest-composer Send, session Confirm/Decline/Cancel, share-live-trade button, etc.
+**What changed (before → after):** 31 sites had three different opacity values when disabled: 40% (4 sites — looked dim), 50% (16 sites — the most common), 60% (11 sites — looked brighter). Now everything is 50%. Each individual button shifts very slightly toward 50%; the visible app-wide effect is that every disabled button looks equally "off."
+**Why:** Audit F-A11, F-D5, F-D9 — three different "I can't be clicked right now" treatments was visible to anyone scanning across surfaces.
+**Files touched:** `src/components/SessionSuggestComposer.tsx`, `src/components/ShareLiveTradeButton.tsx`, `src/components/TradeSummary.tsx`, `src/components/SessionView.tsx`, `src/components/ReportProblemDialog.tsx`, `src/components/SessionTimelinePanel.tsx`, `src/components/ui/NumberStepper.tsx`.
+**Screenshots / how to see it:** Easiest test: open the suggest composer with no cards, look at the disabled "Send suggestion" button. Then open the report-problem dialog, click Send and watch the button transition. They should now look equivalently dim. If you preferred 40 or 60 in some specific spot, hand-edit the file rather than reverting wholesale.
+**To revert:** `git revert ed5cb62`. Or for a partial revert, hand-edit specific files to restore opacity-40 / opacity-60.
+
 ### `70f8bab` — ShareLiveTradeButton now shows an error when create-open fails
 **Surface(s):** Trade-builder action strip "Invite someone" button.
 **What changed (before → after):** When `/api/sessions/create-open` fails (network down, server 5xx, etc.) the button used to silently reset to its idle state, leaving the user wondering whether anything happened. Now it shows a small red one-line error hint below the button ("Couldn't create the shared trade. Try again." or the server's message) for 4 seconds, then auto-clears so the next click is fresh.

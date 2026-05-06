@@ -38,9 +38,17 @@ export function PrimaryActionBar() {
   // checkmark, not interactive. Triggered by e.g. EditBar's "Saved"
   // sticky state. Propose uses this briefly between submit and the
   // confirm modal closing.
+  // Bottom padding stretches to clear the iOS home indicator + any
+  // notched-bottom hardware. Without this, the button can sit under
+  // the indicator on devices like the iPhone 14, making it look
+  // half-occluded. `max(0.75rem, env(...))` keeps the desktop padding
+  // identical (envenviron-inset is 0 there) while pushing the bar up
+  // on devices that need it.
+  const bottomPadding = 'pb-[max(0.75rem,env(safe-area-inset-bottom))]';
+
   if (sent) {
     return (
-      <div className="shrink-0 px-3 pt-2 pb-3 max-w-5xl mx-auto w-full">
+      <div className={`shrink-0 px-3 pt-2 ${bottomPadding} max-w-5xl mx-auto w-full`}>
         <div
           className="w-full h-12 rounded-lg flex items-center justify-center gap-2 bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 font-bold text-sm"
           data-testid={testId}
@@ -61,7 +69,7 @@ export function PrimaryActionBar() {
   }
 
   return (
-    <div className="shrink-0 px-3 pt-2 pb-3 max-w-5xl mx-auto w-full">
+    <div className={`shrink-0 px-3 pt-2 ${bottomPadding} max-w-5xl mx-auto w-full`}>
       <button
         type="button"
         onClick={() => {
