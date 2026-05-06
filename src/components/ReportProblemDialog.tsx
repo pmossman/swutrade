@@ -169,7 +169,7 @@ export function ReportProblemDialog(props: ReportProblemDialogProps) {
               type="button"
               onClick={handleSubmit}
               disabled={submitting || submitted || message.trim().length === 0}
-              className="px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors disabled:opacity-60 disabled:cursor-wait"
+              className="px-4 h-9 rounded-lg bg-gold text-space-900 font-bold text-xs hover:bg-gold-bright transition-colors disabled:opacity-50 disabled:cursor-wait"
             >
               {submitting ? 'Sending…' : submitted ? 'Sent' : 'Send'}
             </button>

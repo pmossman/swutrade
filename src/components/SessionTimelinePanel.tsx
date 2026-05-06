@@ -232,7 +232,7 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
                 type="button"
                 onClick={handleSend}
                 disabled={sending || draft.trim().length === 0}
-                className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Send
               </button>

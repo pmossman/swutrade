@@ -1116,7 +1116,7 @@ function SessionActionBar({
             disabled={pinging}
             title={`Ping @${counterpartHandle} via Discord DM to take a look at this trade`}
             aria-label={`Ping @${counterpartHandle}`}
-            className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-space-600 text-gray-300 hover:border-gold/50 hover:text-gold disabled:opacity-60 text-xs font-medium"
+            className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-space-600 text-gray-300 hover:border-gold/50 hover:text-gold disabled:opacity-50 text-xs font-medium"
           >
             <BellIcon className="w-3.5 h-3.5" />
             <span>Ping</span>
@@ -1128,7 +1128,7 @@ function SessionActionBar({
             onClick={onDecline}
             disabled={declining}
             title={`Decline @${counterpartHandle}'s trade — they'll be notified.`}
-            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
+            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-50 text-xs font-medium"
           >
             Decline
           </button>
@@ -1137,7 +1137,7 @@ function SessionActionBar({
             type="button"
             onClick={onCancel}
             disabled={cancelling}
-            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-60 text-xs font-medium"
+            className="px-3 h-10 rounded-lg border border-red-700/60 text-red-300 hover:bg-red-950/40 disabled:opacity-50 text-xs font-medium"
           >
             Cancel trade
           </button>
@@ -1147,7 +1147,7 @@ function SessionActionBar({
             type="button"
             onClick={onUnconfirm}
             disabled={unconfirming}
-            className="px-4 h-10 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 disabled:opacity-60 text-xs font-bold"
+            className="px-4 h-10 rounded-lg border border-gold/50 text-gold hover:bg-gold/10 disabled:opacity-50 text-xs font-bold"
           >
             Unconfirm to edit
           </button>
@@ -1156,7 +1156,7 @@ function SessionActionBar({
             type="button"
             onClick={onConfirm}
             disabled={confirmDisabled}
-            className="px-4 h-10 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-60 text-xs"
+            className="px-4 h-10 rounded-lg bg-emerald-500 text-space-900 font-bold hover:bg-emerald-400 disabled:opacity-50 text-xs"
           >
             Confirm trade
           </button>
@@ -1369,7 +1369,7 @@ function InvitePrompt({
         type="button"
         onClick={() => void onClaim()}
         disabled={claiming}
-        className="px-6 h-10 rounded-lg bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-60 text-sm"
+        className="px-6 h-10 rounded-lg bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-50 text-sm"
       >
         {claiming ? 'Joining…' : 'Join this trade'}
       </button>
@@ -1529,12 +1529,12 @@ function InviteByHandleForm({ sessionId }: { sessionId: string }) {
           disabled={submitting}
           autoComplete="off"
           spellCheck={false}
-          className="flex-1 min-w-0 bg-space-800 border border-space-700 rounded-md px-3 h-9 text-[13px] text-gray-200 disabled:opacity-60"
+          className="flex-1 min-w-0 bg-space-800 border border-space-700 rounded-md px-3 h-9 text-[13px] text-gray-200 disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={submitting || handle.trim().length === 0}
-          className="px-3 h-9 rounded-md bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-60 text-xs"
+          className="px-3 h-9 rounded-md bg-cyan-500 text-space-900 font-bold hover:bg-cyan-400 disabled:opacity-50 text-xs"
         >
           {submitting ? 'Inviting…' : 'Invite'}
         </button>

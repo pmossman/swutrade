@@ -178,7 +178,7 @@ export function SessionSuggestComposer({
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="px-3 h-8 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-3 h-8 rounded-md bg-amber-500/30 border border-amber-400/60 hover:bg-amber-500/40 text-amber-50 text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? 'Sending…' : 'Send suggestion'}
           </button>

@@ -72,7 +72,7 @@ export function ShareLiveTradeButton({
         onClick={handleClick}
         disabled={starting}
         title="Invite someone to edit this trade together — generates a QR + link you can share in person or remotely"
-        className="shrink-0 inline-flex items-center gap-1 px-2.5 h-8 rounded-md border border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 text-xs font-semibold transition-colors disabled:opacity-60"
+        className="shrink-0 inline-flex items-center gap-1 px-2.5 h-8 rounded-md border border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 text-xs font-semibold transition-colors disabled:opacity-50"
       >
         <QRGlyph className="w-3.5 h-3.5" />
         {starting ? 'Starting…' : 'Invite someone'}

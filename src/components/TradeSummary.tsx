@@ -351,7 +351,7 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
                 onClick={() => setPickerOpen(true)}
                 disabled={sending}
                 title="Start a shared trade — they'll get a Discord DM with the link"
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60 transition-colors disabled:opacity-60"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wide bg-gold/15 border border-gold/40 text-gold hover:bg-gold/25 hover:border-gold/60 transition-colors disabled:opacity-50"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M13 6l6 6-6 6" />
