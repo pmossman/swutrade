@@ -7,11 +7,6 @@ import type { PrefDefinition, PrefValue } from './prefsRegistry.js';
  * DMs. Centralised here so every surface that emits a DM stays
  * visually cohesive: tune the color scheme or copy in one place.
  *
- * Originally `proposalMessages.ts` — the proposal-flow builders were
- * retired in Phase C when sessions became the only trade primitive.
- * The file kept its non-proposal builders (prefs, server-invite,
- * session DMs) and was renamed to match its current contents.
- *
  * Colors mirror SWUTrade's web palette (see project_swutrade_palette):
  *   - gold: primary chrome / informational
  *   - emerald: success / accepted

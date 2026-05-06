@@ -38,7 +38,7 @@ Server code imports from sibling modules with explicit `.js` extensions (`from '
 
 ### `discordMessages.ts` is the visual contract
 
-Every Discord message shape the bot sends (pref selectors, server-invite outreach, session-lifecycle DMs — invite, decline, ping) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module. The file was named `proposalMessages.ts` until Phase C retired the proposal flow; the proposal-only builders went with it.
+Every Discord message shape the bot sends (pref selectors, server-invite outreach, session-lifecycle DMs — invite, decline, ping) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module.
 
 Button `custom_id` prefixes live here as exported constants (`PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `COMM_PREF_CUSTOM_ID_PREFIX` retained as a transitional alias for DMs that predate the registry migration; `SERVER_INVITE_CUSTOM_ID_PREFIX` for the bot-install outreach DM) so the dispatcher in `api/bot.ts` stays in sync.
 

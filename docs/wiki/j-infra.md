@@ -28,7 +28,7 @@ The load-bearing decision in the whole subsystem is **function consolidation**: 
 - **Auth e2e vs anonymous e2e** — two Playwright configs. `*.spec.ts` runs locally + in CI against `vercel dev` / dev server (anonymous — no DB required). `*.auth.spec.ts` runs CI-only against the Vercel **preview URL** with a bypass header, and locally against `vercel dev`. Memory `feedback_auth_e2e_gap`: `npm run e2e` **excludes** the auth specs, which is a footgun for UI changes.
 - **Between-slice ritual** — the `gh run list --branch beta --limit 1` check codified in `NEXT.md:16-28`. Don't start slice N+1 on top of a red CI for slice N.
 - **Preview protection bypass** — Vercel's Deployment Protection SSO-walls preview URLs by default. CI and third-party webhooks get past via an `x-vercel-protection-bypass` header. Disabled entirely on beta as of 2026-04-16 (memory `project_swutrade_vercel_protection`).
-- **Drizzle journal** — `drizzle/meta/_journal.json` is the ordered migration manifest. Version 7, PostgreSQL dialect, 19 entries as of 0018 (see `drizzle/meta/_journal.json:1`).
+- **Drizzle journal** — `drizzle/meta/_journal.json` is the ordered migration manifest. Version 7, PostgreSQL dialect, 30 entries as of `0029_drop_proposals` (see `drizzle/meta/_journal.json:1`).
 - **`isBetaChannel()`** — `src/version.ts:11`, runtime host-based predicate that decides whether to render the Beta pill. Treats localhost as beta so dev builds visually match preview.
 - **`APP_COMMIT` / `APP_BUILD_TIME`** — Vite `define` constants baked at build time. Populated by `vite.config.ts:6-17` — prefers `VERCEL_GIT_COMMIT_SHA` (short-form), falls back to `git rev-parse HEAD`, falls back to `"dev"`.
 - **`#releases` CI notifier** — three-step GitHub Actions job set (`notify-start`, `notify-live`, `notify-finish`) that posts a single Discord message and PATCHes it in place as CI progresses. Unicode emojis (not shortcodes — `:white_check_mark:` renders wrong because Discord's markdown parser reads the underscores as italic markers; see `ci.yml:346-349`).
@@ -37,7 +37,7 @@ The load-bearing decision in the whole subsystem is **function consolidation**: 
 
 ### Vercel config
 
-**`vercel.json`** — The whole file is rewrites. No `crons` field (despite `api/context.md:69-70` claiming otherwise — that paragraph is stale; today's cron lives in GitHub Actions). Rewrites are ordered: pretty-URLs first, catch-all `"^/api/(.*)"` last, so a single-purpose endpoint (`api/search.ts`, `api/og.ts`, `api/popular-wants.ts`, `api/trending.ts`) stays reachable without an explicit rewrite.
+**`vercel.json`** — Rewrites + a `crons` block (one daily cron at `/api/cron/signals` at 08:00 UTC, see `vercel.json:54-59`). Rewrites are ordered: pretty-URLs first, catch-all `"^/api/(.*)"` last, so a single-purpose endpoint (`api/search.ts`, `api/og.ts`, `api/popular-wants.ts`, `api/trending.ts`) stays reachable without an explicit rewrite. The price-refresh job is a separate GitHub Actions workflow (not in `vercel.json`).
 
 **`middleware.ts`** — Edge middleware that only activates for bot user-agents on `/` and `/u/:handle`. Emits OG-tagged HTML so link previews in Discord/Twitter/etc. get cards instead of "Redirecting…". Lives at the repo root (Vercel auto-detects). Not part of any function — counts against the middleware budget, not the function ceiling.
 

@@ -14,7 +14,7 @@ Reference documentation for the SWUTrade codebase — one page per subsystem. Wr
 | # | Page | What it covers |
 |---|------|------|
 | A | [Trade sessions (live/shared)](./a-sessions.md) | `/s/:id` canvas, QR handoff, session primitives, session ↔ open-slot invite, ghost users as session participants |
-| B | _retired_ | The proposal lifecycle (async Discord-DM accept/decline/counter) was deleted in Phase C. Sessions ([A](./a-sessions.md)) are the only trade primitive now. |
+| B | _retired_ | The proposal lifecycle (async Discord-DM accept/decline/counter) was deleted in Phase C 2026-05-05. Sessions ([A](./a-sessions.md)) are the only trade primitive now. See [ROADMAP.md](../../ROADMAP.md) Phase 5b for the consolidation rationale. |
 | C | [Trade builder + balance](./c-trade-builder.md) | Two-panel calculator, URL codec, auto-balance, matchmaking composer bars, forceBalance |
 | D | [Lists / inventory / matching](./d-lists.md) | Wants + available, drawer, priority stars, popular-wants, shared-list URLs, match math, filters |
 | E | [Home, navigation, routing, contexts](./e-home-nav.md) | HomeView, AppHeader/Breadcrumbs/NavMenu/AccountMenu, view router, global contexts |

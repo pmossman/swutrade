@@ -6,17 +6,9 @@ import { trades, type TradeCardSnapshot } from '../lib/schema.js';
 
 /**
  * `/api/trades` — personal "save this trade" history endpoint.
- *
- * Phase C reduced this file to its original purpose: GET to list
- * the signed-in viewer's saved trades, POST to save a new one.
- * The big proposal dispatcher (propose / counter / accept /
- * decline / nudge / bulk-resolve / promote-to-shared / etc.) was
- * deleted with C1b — sessions are the only trade primitive now.
- *
- * The `trades` table holds the personal save-this-trade snapshots
- * a viewer makes from the trade-summary surface, independent of any
- * counterparty. It is not related to the (now-deleted) trade_proposals
- * table — different shape, different mutation cadence, different role.
+ * GET lists the signed-in viewer's saved trades, POST saves a new
+ * snapshot from the trade-summary surface. Independent of any
+ * counterparty (sessions handle bilateral trades).
  */
 interface SaveTradeBody {
   yourCards: TradeCardSnapshot[];

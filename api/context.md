@@ -8,10 +8,11 @@ Serverless HTTP handlers. Each `.ts` file becomes one Vercel function at deploy 
 
 The Hobby plan caps deployments at **12 serverless functions**. When we exceed it, Vercel fails the build at "Deploying outputs…" with no useful error in the UI — just a generic deploy failure. That's why several surfaces are **consolidated** behind one file:
 
-- `api/me.ts` handles `/api/me/prefs`, `/api/me/guilds`, `/api/me/guilds-refresh`, `/api/me/guild`, `/api/me/community`, `/api/me/community-members` via a `?action=` query dispatched in the default export. `vercel.json` rewrites preserve the pretty URLs externally. `/api/me/settings` is a transitional alias for `/api/me/prefs` during the registry migration — both route to `handlePrefs`.
+- `api/me.ts` handles `/api/me/prefs`, `/api/me/guilds`, `/api/me/guilds-refresh`, `/api/me/guild`, `/api/me/community`, `/api/me/community-members`, `/api/me/community-activity`, `/api/me/recent-partners`, `/api/me/favorites`, `/api/me/feedback`, `/api/me/prices` via a `?action=` query dispatched in the default export. `vercel.json` rewrites preserve the pretty URLs externally. `/api/me/settings` is a deprecated alias for `/api/me/prefs` retained so cached older clients keep working — both route to `handlePrefs`.
 - `api/bot.ts` handles both Discord interaction webhooks and Discord event webhooks (`?action=interactions` vs `?action=events`).
+- `api/sessions.ts` handles every shared-session lifecycle action (`get`, `list`, `create`, `edit`, `confirm`, `cancel`, `create-open`, `claim`, `invite-handle`, `decline`, `ping`, `mark-read`, `chat`, `suggest`, `accept-suggestion`, `dismiss-suggestion`, `unconfirm`).
 - `api/auth.ts` bundles OAuth start/callback + sign-in/out + session refresh.
-- `api/trades.ts` handles propose/respond/cancel/counter.
+- `api/trades.ts` handles personal "save this trade" snapshots only (no counterparty flow — sessions own that).
 
 When adding a new endpoint, **first look for an existing dispatcher** that fits. Creating a new `api/*.ts` file is a last resort — not because of code aesthetics, because of the plan ceiling.
 
@@ -66,4 +67,4 @@ Integration tests under `tests/api/` hit handlers with `mockRequest / mockRespon
 
 ## Cron jobs
 
-`vercel.json` declares crons; each points at an `api/cron/*.ts` file. Those **do** count toward the function ceiling. The refresh-prices cron is the only active one today.
+`vercel.json` declares crons; each points at an `api/cron/*.ts` file. Those **do** count toward the function ceiling. Today's active vercel cron is `/api/cron/signals` (daily at 08:00 UTC, expires past-due `card_signals` posts). The price-refresh job runs as a GitHub Actions workflow, not as a vercel cron.

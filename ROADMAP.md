@@ -74,7 +74,7 @@ Phase 4 exists to serve the actual texture of local in-person trading as it alre
 **Three-axis consent model for signed-in users:**
 - **Discoverability** *(default on)*
 - **Location & schedule presence** *(default off — Phase 4 v2)*
-- **Bot DMs to me** *(default off, except direct transactional pings like trade proposals)*
+- **Bot DMs to me** *(default off, except direct transactional pings — session invites, pings, lifecycle DMs)*
 
 Enrollment is per-guild. Signing in does not auto-join any server's trading community.
 
@@ -113,51 +113,39 @@ The drop-into-a-server demo: compose + send + receive + respond to trade proposa
 
 ### Phase 5a — Trading network lifecycle *(partially pulled forward; rest in flight)*
 
-Previously called just "Phase 5" — now explicitly "5a" to pair with the sibling sessions modality below. The full **Discover → Match → Propose → Negotiate → Complete → Remember** lifecycle on top of the Phase 4 primitives. Proposal, counter, cancel, and history shipped in Phase 4 v1 (ahead of schedule because they were load-bearing for dogfooding).
+> **Phase C update (2026-05-05)** — the original Phase 4 v1 proposal flow (compose → DM → accept/decline/counter via buttons) was retired. Sessions absorbed every job proposals did and several jobs they didn't (live editing, suggestions, revert). The lifecycle below is now described in session terms.
+
+Previously called just "Phase 5" — now explicitly "5a" to pair with the sibling sessions modality below. The full **Discover → Match → Send → Negotiate → Complete → Remember** lifecycle on top of the Phase 4 primitives.
 
 **Still to ship:**
 
-- [ ] **Trade expiry cron** — proposals `pending` past N days (30?) auto-transition to `expired`. Recipient's DM is edited with a gray "expired" banner. Needs a cron entry in `vercel.json` + an endpoint at `/api/jobs/expire-proposals` (or similar).
+- [ ] **Session expiry cron** — sessions `active` past N days auto-transition to `expired`. Both sides' DM is updated. Needs a cron entry + handler.
 - [ ] **Trader reputation / preferred traders** — `trader_connections` table (`user_a, user_b, trade_count, last_trade_at, is_preferred`). Feeds matchmaker scoring so familiar traders rank higher.
-- [ ] **Auto-update of wants/available on trade completion** — on Accept + confirmation, offer to prune the traded cards from both parties' lists.
+- [ ] **Auto-update of wants/available on trade completion** — on settle, offer to prune the traded cards from both parties' lists.
 - [ ] **Notifications table** — in-app inbox for users who opted out of bot DMs but want a record. `(id, user_id, type, payload JSONB, read, created_at)`.
-- [ ] **Trade completion flow** — currently Accept is terminal but doesn't model the "we actually met up and exchanged cards" step. Needs a distinct confirmed/cancelled-IRL state.
-- [ ] **Chain visualization in the detail view** — currently the detail view shows one-hop stubs (↑ counter to / ↓ countered by). Long chains deserve a timeline.
 
-### Phase 5b — Unified trade primitive *(in progress — biggest slice)*
+### Phase 5b — Unified trade primitive *(landed; sessions absorbed proposals in Phase C 2026-05-05)*
 
-**Reframed 2026-04-19** — originally planned as a sibling "sessions" modality alongside proposals. New direction: collapse calculator, session, and proposal into a single user-facing object, **the trade**, with state-driven UI.
+> **Phase C update (2026-05-05)** — the originally-planned "merge calculator + session + proposal into one storage shape" landed by a different route: Phase B (`B1-B7`) brought sessions to feature parity with proposals; Phase C deleted the proposal flow + tables outright. The user-facing primitive is now just **session**, with the calculator-as-pre-session behaviour preserved at `/?propose=<handle>` style URLs that pre-seed a session draft. Storage: `trade_sessions` only; `trade_proposals` + `proposal_events` dropped via `drizzle/0029_drop_proposals.sql`.
 
-**One first-class object. Three states.**
-- **Solo** — one person, private canvas. What today's "calculator" is.
-- **Shared** — two people editing together (live polling or async with Discord pings).
-- **Pitched** — one person committed a snapshot, counterpart hasn't joined. What today's "proposal" is.
+**Two states (live):**
+- **Solo** — one person, private canvas. What today's "trade builder" is. Stored client-side until shared.
+- **Shared** — two people on a session canvas at `/s/<id>`. Live editing, chat, suggestions, revert.
 
-Plus terminal states: Settled, Cancelled, Expired, Declined (carried over from proposals).
+Plus terminal states: Settled, Cancelled, Expired, Declined.
 
-**State transitions are actions users take ON a trade, not separate flows:**
-- Solo → Shared: `Invite @handle`, `Share QR`
-- Solo → Pitched: `Send as proposal`
+**State transitions:**
+- Solo → Shared: `Invite someone` (open-slot QR/share), `Send to @user` (named recipient via handle picker), `/trade @user` (Discord slash command)
 - Shared → Settled: both confirm
-- Shared → Pitched: one side can "lock this as a proposal" when the other's gone quiet
-- Pitched → Shared: recipient clicks "Edit together" in-app
+- Shared → Cancelled / Declined: either side withdraws or recipient declines an offer-shaped session
 
-**Why one primitive, not three:**
-- Users don't pre-pick modality. They just start a trade with someone; how it proceeds emerges from what both parties do.
-- Modality collision (session vs proposal choice before cards are even in) disappears.
-- Proposals stop being a dead-end — recipients who want to iterate can promote into Shared.
-- In-person QR handoff reads as "share this trade," not as a separate product.
+**Why this shape (not the original "three states" plan):**
+- "Pitched" (proposal-style ping-pong) turned out not to add value over Shared with a starting offer. Suggestion + chat covered the negotiation cases proposals were meant for.
+- Half the surface area to maintain forever; one state machine; one DB table.
 
-**Vocabulary:**
-- User-facing: **trade**, **invite**, **pitch** (or **propose**), **confirm**, **settled**.
-- Internal state names: `solo` / `shared` / `pitched` / `settled` / etc.
-- Retire "calculator" and "session" from copy. "Balance a trade" → "+ New trade."
-
-**Storage:** keep `trade_sessions` + `trade_proposals` as-is (both shipped). A new `lib/trades.ts` view layer unifies them into a single `TradeView` stream for lists + dashboards. Physical merge into one table is a later migration if the separation proves unnecessary.
-
-**Why distinct from proposals:**
-- Proposals are **ping-pong, convergent via counter chain**, record-of-what-each-party-said. Right for remote formal offers.
-- Sessions are **collaborative, convergent via a single mutable object**, confirm-at-the-end. Right for messy, iterative negotiations — whether you're at the same table or emailing back and forth.
+**Vocabulary in copy:**
+- User-facing: **trade**, **invite**, **send**, **confirm**, **settled**. "Balance a trade" → "+ New trade."
+- Internal: `active` / `settled` / `cancelled` / `expired`. `cancel_reason: 'declined' | 'withdrawn'` distinguishes the recipient-decline case.
 
 **Modalities (one primitive, different consumption):**
 - **Live** — both parties actively viewing. Client polls every 2–3 s so the counterpart's edits land within a heartbeat. "Live trade at the LGS" use case.
