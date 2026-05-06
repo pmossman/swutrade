@@ -20,6 +20,7 @@ import { SessionTimelinePanel } from './SessionTimelinePanel';
 import { InlineSuggestionList, RevertSuggestionBanner } from './SessionSuggestions';
 import { SessionSuggestComposer } from './SessionSuggestComposer';
 import { useIsMobile } from '../hooks/useMediaQuery';
+import { useNavigation } from '../contexts/NavigationContext';
 import { PERSIST_KEYS } from '../persistence';
 import { tradeCardKey, type TradeCard, type CardVariant } from '../types';
 import type { TradeCardSnapshot } from '../../lib/schema';
@@ -118,8 +119,23 @@ export function SessionView({
   // one side may be collapsed at a time so the canvas never
   // disappears entirely.
   const isMobile = useIsMobile();
+  const nav = useNavigation();
   const [yourSideCollapsed, setYourSideCollapsed] = useState(false);
   const [theirSideCollapsed, setTheirSideCollapsed] = useState(false);
+
+  // Activity / chat affordance routes differently per breakpoint:
+  // - Mobile: navigate to `/s/<id>/chat` (full-page route). Overlay
+  //   was fighting iOS Safari's keyboard layout for too many
+  //   iterations; routing to a regular page sidesteps the fight.
+  // - Desktop: open the inline side-drawer overlay (no keyboard
+  //   issues there).
+  const openTimeline = useCallback(() => {
+    if (isMobile) {
+      nav.toSessionChat(sessionId ?? '');
+    } else {
+      setTimelineOpen(true);
+    }
+  }, [isMobile, nav, sessionId]);
 
   // Counterpart side from the viewer's POV. The server tells us
   // viewer.side ('a' | 'b'); the counterpart is the other.
@@ -474,7 +490,7 @@ export function SessionView({
             <>
               <SessionIdentityStrip
                 session={session}
-                onOpenTimeline={() => setTimelineOpen(true)}
+                onOpenTimeline={openTimeline}
               />
 
               {terminal ? (

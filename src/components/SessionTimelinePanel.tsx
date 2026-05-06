@@ -4,11 +4,23 @@ import { cardImageUrl } from '../services/priceService';
 import { ErrorState } from './ui/states';
 
 /**
- * Timeline + chat panel for an active trade session. Renders a unified
+ * Timeline + chat for an active trade session. Renders a unified
  * stream of timeline events (chat messages, edits, confirmations, …)
- * with a chat input pinned at the bottom. Mounted as a slide-in overlay
- * so it doesn't compete with the two-side trade canvas for vertical
- * real estate; toggled open/closed by the parent.
+ * with a chat input pinned at the bottom.
+ *
+ * Two surfaces share this content:
+ *   - `SessionTimelinePanel` (desktop): right-side overlay drawer.
+ *     Mounted only at sm: breakpoint and up. On mobile it rendered
+ *     as a full-screen takeover but kept fighting iOS Safari's
+ *     keyboard layout, so we routed mobile to a dedicated page.
+ *   - `SessionChatView` (mobile): dedicated route at `/s/<id>/chat`.
+ *     Regular page (AppHeader + body), no overlay positioning,
+ *     iOS handles the keyboard like any other page with a text
+ *     input — which is the well-trodden path.
+ *
+ * Both wrappers embed `SessionTimelineBody` (defined below) for the
+ * actual chrome. The body has NO positioning concerns — its parent
+ * decides whether it's an overlay column or a full-page main.
  *
  * Event-rendering policy:
  *   chat         → message bubble with author + time
@@ -23,6 +35,15 @@ import { ErrorState } from './ui/states';
  *   notified     → skipped (system telemetry, not user-visible)
  */
 
+interface SessionTimelineBodyProps {
+  session: SessionView;
+  /** When set, a Close button (×) renders in the header. The chat-page
+   *  route omits this — the AppHeader breadcrumb handles back nav. */
+  onClose?: () => void;
+  sendChat: (body: string) => Promise<{ ok: true } | { ok: false; reason: 'rate-limited' | 'invalid' | 'error' }>;
+  proposeRevert: (snapshotEventId: string) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
+}
+
 interface SessionTimelinePanelProps {
   session: SessionView;
   /** Closes the panel. Caller decides whether to also clear focus. */
@@ -34,7 +55,17 @@ interface SessionTimelinePanelProps {
   proposeRevert: (snapshotEventId: string) => Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }>;
 }
 
-export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert }: SessionTimelinePanelProps) {
+/**
+ * Inner content shared by the desktop overlay panel + the mobile
+ * chat-page route. Caller wraps in the appropriate positioning
+ * container. This component provides:
+ *   - Header with title + optional close button
+ *   - Scrollable events list
+ *   - Footer with chat input (when session is non-terminal)
+ *
+ * Pure flex-col, height: 100% of parent. No fixed positioning.
+ */
+export function SessionTimelineBody({ session, onClose, sendChat, proposeRevert }: SessionTimelineBodyProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,55 +155,114 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // Body scroll lock — iOS otherwise scrolls the underlying page to
-  // keep the focused input visible, which exposes the trade canvas.
-  // We previously had this via Radix's RemoveScroll; rolling our
-  // own again here because the simpler `fixed inset-0` layout
-  // (matching SessionSuggestComposer) is more reliable on iOS than
-  // Radix Dialog's portal + RemoveScroll combo for keyboard-aware
-  // overlays. Trade-off: we lose Radix's free focus-trap +
-  // ESC-handler + restore-focus-on-close. Rebuild those manually:
+  return (
+    <div className="h-full flex flex-col">
+      <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
+        <div className="min-w-0">
+          <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Activity</div>
+          <h2 className="text-sm font-semibold text-gray-100 truncate">
+            with @{counterpartHandle}
+          </h2>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close activity"
+            className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
+          >
+            ×
+          </button>
+        )}
+      </header>
+
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
+        {revertError && (
+          <ErrorState variant="line" role="alert">
+            {revertError}
+          </ErrorState>
+        )}
+        {visibleEvents.length === 0 ? (
+          <EmptyState />
+        ) : (
+          visibleEvents.map(event => {
+            // Edited events carry their paired snapshot id in payload —
+            // hand the revert callback bound to that id so the kebab
+            // menu can fire propose-revert without searching for the
+            // snapshot row.
+            const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
+              ? event.payload.snapshotEventId
+              : null;
+            const revertable = snapshotId && event.id !== latestEditedId;
+            return (
+              <EventRow
+                key={event.id}
+                event={event}
+                counterpartHandle={counterpartHandle}
+                onRevert={revertable ? () => handleRevert(snapshotId!) : undefined}
+                reverting={revertable ? revertingId === snapshotId : false}
+              />
+            );
+          })
+        )}
+        <div ref={scrollAnchorRef} />
+      </div>
+
+      {!terminal && (
+        <footer className="shrink-0 border-t border-space-800 px-3 py-2">
+          {error && (
+            <ErrorState variant="banner" role="alert" className="mb-1">{error}</ErrorState>
+          )}
+          <div className="flex items-end gap-2">
+            <textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Send a message…"
+              rows={1}
+              maxLength={500}
+              className="flex-1 resize-none rounded-md border border-space-700 bg-space-800/60 px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gold/50 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={sending || draft.trim().length === 0}
+              className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+          </div>
+          <div className="text-[10px] text-gray-600 mt-1">
+            Enter to send, Shift+Enter for new line.
+          </div>
+        </footer>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Desktop-only side-drawer overlay around `SessionTimelineBody`.
+ * SessionView gates rendering of this on the desktop breakpoint;
+ * mobile uses the dedicated `/s/<id>/chat` route via SessionChatView.
+ *
+ * The keyboard-fight that broke this on mobile (six iterations
+ * documented in git history) is sidestepped here because: (1) desktop
+ * doesn't have a soft keyboard, and (2) mobile no longer mounts this
+ * component at all.
+ */
+export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert }: SessionTimelinePanelProps) {
+  // ESC closes the drawer (matches Radix Dialog convention).
   useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener('keydown', onKeyDown);
-    };
+    return () => document.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  // Layout strategy (matching SessionSuggestComposer, which works
-  // reliably on iOS Safari with text inputs):
-  //
-  // - `fixed inset-0` on mobile: full-screen takeover, opaque
-  //   background. The trade canvas is COMPLETELY hidden — there's
-  //   no gap or seam where it could peek through, regardless of
-  //   how iOS Safari handles the keyboard transition.
-  // - `sm:inset-y-0 sm:left-auto sm:right-0 sm:max-w-md` on
-  //   desktop: side drawer, max 28rem wide, right-aligned.
-  // - `flex flex-col` inside, with header (shrink-0) + scrollable
-  //   events list (flex-1) + footer with input (shrink-0). When
-  //   the layout viewport shrinks (with `interactive-widget=
-  //   resizes-content`), the events list shrinks naturally and
-  //   the footer stays at the bottom.
-  //
-  // We deliberately use `inset-0` (top: 0 + bottom: 0 implicitly
-  // sized by both anchors) rather than explicit `100dvh`. The
-  // anchored top + bottom mean the panel always covers the layout
-  // viewport edge-to-edge — even if iOS Safari has a transient
-  // dvh-cache mismatch, there's never a GAP for the trade canvas
-  // to peek through. (Worst case: input briefly behind keyboard
-  // until layout settles. That's a separate-and-much-smaller bug
-  // than "trade canvas visible during chat.")
   return (
     <>
-      {/* Click-outside backdrop. Rendered separately so the panel
-          doesn't have to nest inside it (which complicates
-          stacking on mobile full-screen takeover). */}
       <div
         aria-hidden
         className="fixed inset-0 z-40 bg-black/40"
@@ -181,98 +271,14 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="session-timeline-panel-title"
-        // Mobile: explicit `top-0 left-0 right-0 h-screen` (NOT
-        // `inset-0`). h-screen = 100vh = full screen height, NOT the
-        // shrunken-by-keyboard layout viewport that `inset-0` resolves
-        // to on iOS Safari. Trade-off: when the keyboard opens, the
-        // bottom of the panel sits BEHIND the keyboard. The input
-        // (in the footer) is briefly occluded — but the trade canvas
-        // is GUARANTEED hidden regardless of any iOS Safari viewport
-        // weirdness, which was the worse bug.
-        //
-        // Desktop (sm:): right-side drawer at max-w-md, height
-        // implicit from `top-0 bottom-0`.
-        className="fixed top-0 left-0 right-0 h-screen z-50 sm:left-auto sm:bottom-0 sm:h-auto sm:max-w-md bg-space-900 sm:border-l sm:border-space-700 flex flex-col sm:shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-space-900 border-l border-space-700 shadow-2xl"
       >
-          <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
-            <div className="min-w-0">
-              <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Activity</div>
-              <h2 id="session-timeline-panel-title" className="text-sm font-semibold text-gray-100 truncate">
-                with @{counterpartHandle}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close activity"
-              className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
-            >
-              ×
-            </button>
-          </header>
-
-          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
-            {revertError && (
-              <ErrorState variant="line" role="alert">
-                {revertError}
-              </ErrorState>
-            )}
-            {visibleEvents.length === 0 ? (
-              <EmptyState />
-            ) : (
-              visibleEvents.map(event => {
-                // Edited events carry their paired snapshot id in payload —
-                // hand the revert callback bound to that id so the kebab
-                // menu can fire propose-revert without searching for the
-                // snapshot row.
-                const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
-                  ? event.payload.snapshotEventId
-                  : null;
-                const revertable = snapshotId && event.id !== latestEditedId;
-                return (
-                  <EventRow
-                    key={event.id}
-                    event={event}
-                    counterpartHandle={counterpartHandle}
-                    onRevert={revertable ? () => handleRevert(snapshotId!) : undefined}
-                    reverting={revertable ? revertingId === snapshotId : false}
-                  />
-                );
-              })
-            )}
-            <div ref={scrollAnchorRef} />
-          </div>
-
-          {!terminal && (
-            <footer className="shrink-0 border-t border-space-800 px-3 py-2">
-              {error && (
-                <ErrorState variant="banner" role="alert" className="mb-1">{error}</ErrorState>
-              )}
-              <div className="flex items-end gap-2">
-                <textarea
-                  value={draft}
-                  onChange={e => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Send a message…"
-                  rows={1}
-                  maxLength={500}
-                  className="flex-1 resize-none rounded-md border border-space-700 bg-space-800/60 px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gold/50 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={handleSend}
-                  disabled={sending || draft.trim().length === 0}
-                  className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Send
-                </button>
-              </div>
-              <div className="text-[10px] text-gray-600 mt-1">
-                Enter to send, Shift+Enter for new line.
-              </div>
-            </footer>
-          )}
+        <SessionTimelineBody
+          session={session}
+          onClose={onClose}
+          sendChat={sendChat}
+          proposeRevert={proposeRevert}
+        />
       </div>
     </>
   );

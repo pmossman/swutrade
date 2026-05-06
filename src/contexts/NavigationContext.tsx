@@ -74,6 +74,12 @@ export interface NavigationApi {
    *  window.location so the App remounts — session state lives on
    *  the server, so there's no SPA state to preserve. */
   toSession(sessionId: string): void;
+
+  /** Mobile chat-page route at `/s/<id>/chat`. The chat overlay
+   *  fights iOS Safari on mobile (keyboard layout regressions); a
+   *  dedicated route is iOS's native happy path for "page with a
+   *  text input." Desktop continues to use the inline overlay. */
+  toSessionChat(sessionId: string): void;
 }
 
 const NavigationContext = createContext<NavigationApi | null>(null);

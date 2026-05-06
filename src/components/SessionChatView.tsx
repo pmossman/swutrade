@@ -1,0 +1,74 @@
+import { useMemo } from 'react';
+import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
+import { LoadingState, ErrorState } from './ui/states';
+import { useAuthContext } from '../contexts/AuthContext';
+import { useSession } from '../hooks/useSession';
+import { SessionTimelineBody } from './SessionTimelinePanel';
+
+/**
+ * Dedicated chat-page route at `/s/<id>/chat`. Used on mobile —
+ * desktop continues to render the chat as a side-drawer overlay
+ * inside SessionView.
+ *
+ * Why a separate page on mobile: the overlay was fighting iOS
+ * Safari's soft-keyboard layout. After six iterations of CSS
+ * positioning + visualViewport tracking, none reliably handled the
+ * "input gets focused → keyboard opens → trade canvas peeks through
+ * a gap" failure mode. A regular page with a regular text input is
+ * iOS Safari's well-trodden happy path; the keyboard layout works
+ * because that's what the browser is built for.
+ *
+ * The page renders `SessionTimelineBody` (the same chrome the
+ * desktop overlay uses) inside a normal `min-h-[100dvh]` layout
+ * with `AppHeader` at the top. The breadcrumb's "Trade" entry
+ * navigates back to `/s/<id>`.
+ *
+ * This component is mounted directly by `App.tsx` when the route
+ * matcher hits `viewMode === 'session-chat'`. It owns its own
+ * useSession hook — there's no parent SessionView to pass props
+ * down from.
+ */
+export function SessionChatView({ sessionId }: { sessionId: string }) {
+  const auth = useAuthContext();
+  const api = useSession(sessionId);
+  const { session, status, sendChat, proposeRevert } = api;
+
+  const counterpartHandle = session?.counterpart?.handle ?? null;
+  const breadcrumbs: BreadcrumbSegment[] = useMemo(() => [
+    { label: 'Home', href: '/' },
+    { label: 'My trades', href: '/?trades=1' },
+    {
+      label: counterpartHandle ? `Trade with @${counterpartHandle}` : 'Shared trade',
+      href: `/s/${encodeURIComponent(sessionId)}`,
+    },
+    { label: 'Chat' },
+  ], [counterpartHandle, sessionId]);
+
+  return (
+    <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
+      <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
+      <main className="flex-1 min-h-0 flex flex-col">
+        {status === 'loading' && !session && (
+          <LoadingState centered label="Loading shared trade…" />
+        )}
+        {status === 'error' && !session && (
+          <div className="px-4 py-6">
+            <ErrorState>Couldn't load this trade. Try refreshing.</ErrorState>
+          </div>
+        )}
+        {status === 'not-found' && (
+          <div className="px-4 py-6">
+            <ErrorState>This shared trade doesn't exist or is no longer available.</ErrorState>
+          </div>
+        )}
+        {session && (
+          <SessionTimelineBody
+            session={session}
+            sendChat={sendChat}
+            proposeRevert={proposeRevert}
+          />
+        )}
+      </main>
+    </div>
+  );
+}

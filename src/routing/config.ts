@@ -31,6 +31,7 @@ export type ViewMode =
   | 'community'
   | 'trades-history'
   | 'session'
+  | 'session-chat'
   | 'wishlist'
   | 'binder'
   | 'cards'
@@ -115,6 +116,15 @@ export interface ViewRoute {
  *  13. fallback                   → home (signed-in) | trade (signed-out)
  */
 export const VIEW_ROUTES: readonly ViewRoute[] = [
+  {
+    mode: 'session-chat',
+    // `/s/<code>/chat` — dedicated chat-page route, used on mobile
+    // where the chat overlay was fighting iOS Safari's keyboard.
+    // Must be declared BEFORE the bare `session` matcher because
+    // `/^\/s\//` also matches the chat URL; first-match-wins.
+    matches: ({ pathname }) => /^\/s\/[^/]+\/chat\/?$/.test(pathname),
+    paramKeys: [],
+  },
   {
     mode: 'session',
     // `/s/<code>` pathname — highest-priority session signal. The

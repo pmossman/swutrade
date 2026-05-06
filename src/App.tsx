@@ -68,6 +68,9 @@ const SignalBuilderView = lazy(() =>
 const SessionView = lazy(() =>
   import('./components/SessionView').then(m => ({ default: m.SessionView })),
 );
+const SessionChatView = lazy(() =>
+  import('./components/SessionChatView').then(m => ({ default: m.SessionChatView })),
+);
 import { PrimaryActionBar } from './components/PrimaryActionBar';
 import { MergeReassuranceBanner } from './components/MergeReassuranceBanner';
 import { usePrimaryAction } from './hooks/usePrimaryAction';
@@ -420,6 +423,13 @@ function App() {
         // server-authoritative.
         window.location.href = `/s/${encodeURIComponent(sessionId)}`;
       },
+      toSessionChat: sessionId => {
+        // Mobile-only chat page. Same full-navigation pattern as
+        // toSession — the chat view reads from the pathname directly
+        // and re-mounts cleanly so iOS Safari treats it as a regular
+        // text-input page (no overlay positioning fights).
+        window.location.href = `/s/${encodeURIComponent(sessionId)}/chat`;
+      },
     };
   }, [routingSignedIn, intent, handleStartTrade]);
 
@@ -611,6 +621,16 @@ function App() {
     const match = window.location.pathname.match(/^\/s\/([^/]+)/);
     const sessionId = match ? decodeURIComponent(match[1]) : '';
     return <SessionView sessionId={sessionId} wants={wants} available={available} />;
+  }
+
+  if (viewMode === 'session-chat') {
+    // `/s/<code>/chat` — dedicated mobile chat page. The desktop
+    // overlay path lives in SessionView; mobile routes here so the
+    // soft keyboard hits a regular page layout instead of a fixed
+    // overlay (six-iteration history of iOS Safari fights).
+    const match = window.location.pathname.match(/^\/s\/([^/]+)\/chat/);
+    const sessionId = match ? decodeURIComponent(match[1]) : '';
+    return <SessionChatView sessionId={sessionId} />;
   }
 
   // Profile view — /u/<handle> shows a user's public lists.
