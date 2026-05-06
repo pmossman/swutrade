@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
-import { LoadingState, ErrorState } from './ui/states';
+import { LoadingState, ErrorState, SuccessState } from './ui/states';
 import { useConfirm } from './ui/ConfirmDialog';
 import { TradeSide } from './TradeSide';
 import { TradeBalance } from './TradeBalance';
@@ -1551,10 +1551,10 @@ function InviteByHandleForm({ sessionId }: { sessionId: string }) {
         </button>
       </form>
       {successMessage && (
-        <div className="text-[11px] text-emerald-300">{successMessage}</div>
+        <SuccessState variant="banner">{successMessage}</SuccessState>
       )}
       {errorMessage && (
-        <div className="text-[11px] text-red-400">{errorMessage}</div>
+        <ErrorState variant="banner" role="alert">{errorMessage}</ErrorState>
       )}
     </div>
   );

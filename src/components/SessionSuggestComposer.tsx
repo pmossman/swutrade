@@ -4,6 +4,7 @@ import { ListCardPicker } from './ListCardPicker';
 import type { TradeCardSnapshot } from '../hooks/useSession';
 import { extractVariantLabel } from '../variants';
 import { useConfirm } from './ui/ConfirmDialog';
+import { ErrorState } from './ui/states';
 
 /**
  * Fullscreen overlay that lets the viewer pick cards to suggest the
@@ -190,7 +191,7 @@ export function SessionSuggestComposer({
   // "Tap cards to add them"). The Send button lives in the header
   // now, so the footer is informational only.
   const footerStatus = error
-    ? <div className="text-[11px] text-red-400 truncate">{error}</div>
+    ? <ErrorState variant="banner" role="alert" className="truncate">{error}</ErrorState>
     : lockedHint
       ? <div className="text-[11px] text-amber-300 truncate">{lockedHint}</div>
       : (

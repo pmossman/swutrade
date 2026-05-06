@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionEvent, SessionView, TradeCardSnapshot } from '../hooks/useSession';
 import { cardImageUrl } from '../services/priceService';
+import { ErrorState } from './ui/states';
 
 /**
  * Timeline + chat panel for an active trade session. Renders a unified
@@ -182,9 +183,9 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
 
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
           {revertError && (
-            <div className="text-[11px] text-red-400 px-2 py-1 rounded border border-red-500/30 bg-red-950/20">
+            <ErrorState variant="line" role="alert">
               {revertError}
-            </div>
+            </ErrorState>
           )}
           {visibleEvents.length === 0 ? (
             <EmptyState />
@@ -215,7 +216,7 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
         {!terminal && (
           <footer className="shrink-0 border-t border-space-800 px-3 py-2">
             {error && (
-              <div className="text-[11px] text-red-400 mb-1">{error}</div>
+              <ErrorState variant="banner" role="alert" className="mb-1">{error}</ErrorState>
             )}
             <div className="flex items-end gap-2">
               <textarea

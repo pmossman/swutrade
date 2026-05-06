@@ -6,6 +6,7 @@ import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { apiGet, apiPost } from '../services/apiClient';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { ErrorState, LoadingState } from './ui/states';
 
 interface HandlePickerDialogProps {
   open: boolean;
@@ -289,11 +290,13 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
         </div>
 
         {validation.kind === 'error' && (
-          <p id="handle-picker-error" className="mt-2 text-[11px] text-red-300">
-            {validation.reason === 'not-found'
-              ? <>No SWUTrade user with the handle <span className="font-semibold">@{validation.handle}</span>. Double-check the spelling.</>
-              : <>Couldn't verify the handle. Try again in a moment.</>}
-          </p>
+          <div id="handle-picker-error" className="mt-2">
+            <ErrorState variant="banner" role="alert">
+              {validation.reason === 'not-found'
+                ? <>No SWUTrade user with the handle <span className="font-semibold">@{validation.handle}</span>. Double-check the spelling.</>
+                : <>Couldn't verify the handle. Try again in a moment.</>}
+            </ErrorState>
+          </div>
         )}
 
         {/* Suggestions: three visual states — loading, empty (viewer has
@@ -302,13 +305,13 @@ export function HandlePickerDialog({ open, onClose, onPick }: HandlePickerDialog
             collapsing/jumping as the user types. */}
         <div className="mt-3">
           {status === 'loading' && (
-            <div className="text-[11px] text-gray-500 px-1 py-2">
-              Loading your community…
-            </div>
+            <LoadingState label="Loading your community…" className="px-1 py-2" />
           )}
           {status === 'error' && (
-            <div className="text-[11px] text-red-300 px-1 py-2">
-              Couldn't load your community directory. You can still type a handle above.
+            <div className="px-1 py-2">
+              <ErrorState variant="banner">
+                Couldn't load your community directory. You can still type a handle above.
+              </ErrorState>
             </div>
           )}
           {status === 'ready' && members.length === 0 && (

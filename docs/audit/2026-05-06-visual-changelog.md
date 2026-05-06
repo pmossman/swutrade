@@ -14,6 +14,14 @@
 
 ## Changes
 
+### `94a55af` — Inline loading text now uses canonical LoadingState
+**Surface(s):** Signal-builder guild dropdown ("Loading…" while guild list loads); app footer ("Loading prices…" while price data is fetching).
+**What changed (before → after):** Same text, same animate-pulse, same gray color. SignalBuilder loses the `italic` style. AppFooter loses italic too (it wasn't italicised before; this just routes through the canonical primitive).
+**Why:** Audit F-C1, F-C2 — convergence onto canonical `<LoadingState inline>` so future tweaks to the loading-hint style happen in one place.
+**Files touched:** `src/components/SignalBuilderView.tsx`, `src/components/AppFooter.tsx`.
+**Screenshots / how to see it:** Open the signal builder when guilds are still loading → "Loading…" text in the guild picker. Open any page during initial price fetch → "Loading prices…" in the footer.
+**To revert:** `git revert 94a55af`
+
 ### `f5150db` — In-app `<ConfirmDialog>` replaces 5 `window.confirm` calls
 **Surface(s):**
 - Suggest composer (Cancel with staged cards): "Discard this suggestion?"
