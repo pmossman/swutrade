@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
 import type { SessionEvent, SessionView, TradeCardSnapshot } from '../hooks/useSession';
 import { cardImageUrl } from '../services/priceService';
 import { ErrorState } from './ui/states';
@@ -124,126 +125,112 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // Lock body scroll while the panel is open. iOS otherwise scrolls
-  // the underlying page to keep the focused input visible — and
-  // since the panel is `position: fixed`, that page-scroll exposes
-  // whatever was behind the (now-mispositioned) panel.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
-
-  // Bottom-anchor the panel: `position: fixed; bottom: 0` is more
-  // reliable on iOS than `top: 0` for keyboard-aware overlays.
-  // When the soft keyboard opens, iOS often displaces `top: 0`
-  // fixed elements (treating "top" as the layout viewport's top,
-  // which can sit above the visible region after iOS auto-scrolls
-  // to keep the focused input visible). Anchoring to `bottom: 0`
-  // pins the panel's BOTTOM edge to the keyboard top — the visible
-  // bottom — and the height grows upward from there. With
-  // `height: 100dvh` (which shrinks on keyboard open via the
-  // `interactive-widget=resizes-content` viewport meta), the
-  // panel's top edge lands at the proper visible-area top.
+  // Render via Radix Dialog. Caller controls open via mount/unmount;
+  // Radix handles focus trap, ESC dismissal, restore-focus on close,
+  // body-scroll lock (via RemoveScroll), and overlay click-outside —
+  // all of which the previous hand-rolled implementation either did
+  // manually or didn't do at all. Critically, Radix's Content sits
+  // in a portal at body root with `position: fixed; inset: 0` (in
+  // our class config), which dodges the iOS Safari quirk where
+  // bottom-anchored fixed elements + `100dvh` could disagree about
+  // the containing block (visual vs layout viewport) and produce a
+  // gap between the panel and the keyboard.
   //
-  // Earlier attempts pinned `top: 0` + tracked
-  // visualViewport.height; both produced a gap between the panel
-  // bottom and the keyboard top through which the trade canvas
-  // peeked. Bottom-anchoring eliminates that gap by construction.
+  // `Dialog.Root` open is bound to `true` because the parent only
+  // mounts this component when the panel should be open; `onOpenChange(false)`
+  // routes back to the parent's `onClose` so ESC + click-outside
+  // close cleanly through the same path as the explicit Close button.
 
   return (
-    <div
-      className="fixed inset-x-0 bottom-0 z-40 flex justify-end bg-black/40"
-      style={{ height: '100dvh' }}
-      onClick={onClose}
-    >
-      <div
-        // h-full picks up the parent's 100dvh.
-        className="w-full max-w-md h-full bg-space-900 border-l border-space-700 flex flex-col shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
-          <div className="min-w-0">
-            <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Activity</div>
-            <div className="text-sm font-semibold text-gray-100 truncate">
-              with @{counterpartHandle}
+    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-space-900 border-l border-space-700 flex flex-col shadow-2xl outline-none"
+        >
+          <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
+            <div className="min-w-0">
+              <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Activity</div>
+              <Dialog.Title className="text-sm font-semibold text-gray-100 truncate">
+                with @{counterpartHandle}
+              </Dialog.Title>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close activity"
-            className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
-          >
-            ×
-          </button>
-        </header>
-
-        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
-          {revertError && (
-            <ErrorState variant="line" role="alert">
-              {revertError}
-            </ErrorState>
-          )}
-          {visibleEvents.length === 0 ? (
-            <EmptyState />
-          ) : (
-            visibleEvents.map(event => {
-              // Edited events carry their paired snapshot id in payload —
-              // hand the revert callback bound to that id so the kebab
-              // menu can fire propose-revert without searching for the
-              // snapshot row.
-              const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
-                ? event.payload.snapshotEventId
-                : null;
-              const revertable = snapshotId && event.id !== latestEditedId;
-              return (
-                <EventRow
-                  key={event.id}
-                  event={event}
-                  counterpartHandle={counterpartHandle}
-                  onRevert={revertable ? () => handleRevert(snapshotId!) : undefined}
-                  reverting={revertable ? revertingId === snapshotId : false}
-                />
-              );
-            })
-          )}
-          <div ref={scrollAnchorRef} />
-        </div>
-
-        {!terminal && (
-          <footer className="shrink-0 border-t border-space-800 px-3 py-2">
-            {error && (
-              <ErrorState variant="banner" role="alert" className="mb-1">{error}</ErrorState>
-            )}
-            <div className="flex items-end gap-2">
-              <textarea
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Send a message…"
-                rows={1}
-                maxLength={500}
-                className="flex-1 resize-none rounded-md border border-space-700 bg-space-800/60 px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gold/50 focus:outline-none"
-              />
+            <Dialog.Close asChild>
               <button
                 type="button"
-                onClick={handleSend}
-                disabled={sending || draft.trim().length === 0}
-                className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Close activity"
+                className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
               >
-                Send
+                ×
               </button>
-            </div>
-            <div className="text-[10px] text-gray-600 mt-1">
-              Enter to send, Shift+Enter for new line.
-            </div>
-          </footer>
-        )}
-      </div>
-    </div>
+            </Dialog.Close>
+          </header>
+
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
+            {revertError && (
+              <ErrorState variant="line" role="alert">
+                {revertError}
+              </ErrorState>
+            )}
+            {visibleEvents.length === 0 ? (
+              <EmptyState />
+            ) : (
+              visibleEvents.map(event => {
+                // Edited events carry their paired snapshot id in payload —
+                // hand the revert callback bound to that id so the kebab
+                // menu can fire propose-revert without searching for the
+                // snapshot row.
+                const snapshotId = event.type === 'edited' && typeof event.payload?.snapshotEventId === 'string'
+                  ? event.payload.snapshotEventId
+                  : null;
+                const revertable = snapshotId && event.id !== latestEditedId;
+                return (
+                  <EventRow
+                    key={event.id}
+                    event={event}
+                    counterpartHandle={counterpartHandle}
+                    onRevert={revertable ? () => handleRevert(snapshotId!) : undefined}
+                    reverting={revertable ? revertingId === snapshotId : false}
+                  />
+                );
+              })
+            )}
+            <div ref={scrollAnchorRef} />
+          </div>
+
+          {!terminal && (
+            <footer className="shrink-0 border-t border-space-800 px-3 py-2">
+              {error && (
+                <ErrorState variant="banner" role="alert" className="mb-1">{error}</ErrorState>
+              )}
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={draft}
+                  onChange={e => setDraft(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Send a message…"
+                  rows={1}
+                  maxLength={500}
+                  className="flex-1 resize-none rounded-md border border-space-700 bg-space-800/60 px-2 py-1.5 text-sm text-gray-100 placeholder:text-gray-600 focus:border-gold/50 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={sending || draft.trim().length === 0}
+                  className="shrink-0 px-3 py-1.5 rounded-md bg-gold/20 border border-gold/40 hover:bg-gold/30 hover:border-gold/60 text-gold text-xs font-bold tracking-wide uppercase transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Send
+                </button>
+              </div>
+              <div className="text-[10px] text-gray-600 mt-1">
+                Enter to send, Shift+Enter for new line.
+              </div>
+            </footer>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
