@@ -125,21 +125,41 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // Render via Radix Dialog. Caller controls open via mount/unmount;
-  // Radix handles focus trap, ESC dismissal, restore-focus on close,
-  // body-scroll lock (via RemoveScroll), and overlay click-outside —
-  // all of which the previous hand-rolled implementation either did
-  // manually or didn't do at all. Critically, Radix's Content sits
-  // in a portal at body root with `position: fixed; inset: 0` (in
-  // our class config), which dodges the iOS Safari quirk where
-  // bottom-anchored fixed elements + `100dvh` could disagree about
-  // the containing block (visual vs layout viewport) and produce a
-  // gap between the panel and the keyboard.
+  // Drive panel size off `visualViewport` rather than CSS `dvh` /
+  // `inset-y-0`. Both of those are cached at first paint on iOS
+  // Safari 16.x — when the user opens the panel and immediately
+  // taps the chat input, the keyboard pushes up but the cached
+  // viewport height stays at the pre-keyboard value, so the panel
+  // ends up taller than the visible area and the page peeks through
+  // the gap between the panel's bottom and the keyboard top.
+  // Re-tapping after the keyboard has been opened-then-closed once
+  // works because by then iOS has re-flowed and the cached value
+  // matches reality.
   //
-  // `Dialog.Root` open is bound to `true` because the parent only
-  // mounts this component when the panel should be open; `onOpenChange(false)`
-  // routes back to the parent's `onClose` so ESC + click-outside
-  // close cleanly through the same path as the explicit Close button.
+  // `visualViewport` is the only viewport API that's authoritative
+  // about the visible-above-keyboard area on iOS, and it fires
+  // reliably on every keyboard open/close. Listening to its
+  // `resize` + `scroll` events and applying the height as inline
+  // style sidesteps the cache.
+  //
+  // Falls back to `100dvh` via Tailwind class when the API is
+  // unavailable (older browsers, SSR — which we don't actually do
+  // but keeping the path safe). Combined with Radix Dialog (focus
+  // trap, ESC, scroll lock, restore-focus), this is the durable
+  // shape for keyboard-aware overlays in the app.
+  const [vvHeight, setVvHeight] = useState<number | null>(null);
+  useEffect(() => {
+    const v = window.visualViewport;
+    if (!v) return;
+    const update = () => setVvHeight(v.height);
+    update();
+    v.addEventListener('resize', update);
+    v.addEventListener('scroll', update);
+    return () => {
+      v.removeEventListener('resize', update);
+      v.removeEventListener('scroll', update);
+    };
+  }, []);
 
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -147,7 +167,14 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-space-900 border-l border-space-700 flex flex-col shadow-2xl outline-none"
+          // `top: 0` + explicit `height` (no `bottom`) so the panel's
+          // top is pinned to the layout-viewport top and its bottom
+          // is determined by the explicit visualViewport height —
+          // never by iOS Safari's interpretation of `bottom: 0`.
+          // h-[100dvh] is the fallback when visualViewport isn't
+          // available; it gets overridden by the inline `height`.
+          style={vvHeight != null ? { height: `${vvHeight}px` } : undefined}
+          className="fixed top-0 right-0 z-50 w-full max-w-md h-[100dvh] bg-space-900 border-l border-space-700 flex flex-col shadow-2xl outline-none"
         >
           <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
             <div className="min-w-0">
