@@ -14,6 +14,20 @@
 
 ## Changes
 
+### `f5150db` — In-app `<ConfirmDialog>` replaces 5 `window.confirm` calls
+**Surface(s):**
+- Suggest composer (Cancel with staged cards): "Discard this suggestion?"
+- Signal builder (Cancel with dirty draft): "Discard this draft?"
+- Session view: "Cancel this shared trade?"
+- Session view: "Decline this trade?"
+- Mobile actions kebab: "Clear all cards?"
+
+**What changed (before → after):** Previously: native OS `window.confirm()` modal — appearance varies per browser, no SWUTrade chrome, no destructive-action visual cue. Now: in-app Radix Dialog with title + body paragraph + Cancel/Confirm buttons. Destructive actions (discard, cancel trade, decline, clear all) get a crimson Confirm button; non-destructive actions get the gold treatment. ESC and overlay-click cancel; focus management + restore handled by Radix.
+**Why:** Audit MP-5: three different confirmation patterns coexisted (`window.confirm`, two-tap-confirm, ad-hoc dialogs). Standardising the cross-cutting destructive case onto one primitive. Two-tap-confirm stays for in-row destructives (`<RemoveButton>`, `<ClearAllButton>`).
+**Files touched:** `src/components/ui/ConfirmDialog.tsx` (new), `src/main.tsx` (provider mount), `src/components/SessionSuggestComposer.tsx`, `src/components/SignalBuilderView.tsx`, `src/components/SessionView.tsx`, `src/components/MobileActionsKebab.tsx`.
+**Screenshots / how to see it:** Open a shared session with cards → tap Cancel → in-app modal. Compose a signal with cards → tap Cancel → in-app modal. Same for the other three flows.
+**To revert:** `git revert f5150db`. Note: this re-introduces 5 `window.confirm` calls; if you want to keep the new dialog for some surfaces and not others, do partial reverts per file.
+
 ### `711031a` — `<SuccessState>` primitive; ReportProblemDialog success card uses it
 **Surface(s):** the green "Thanks — your report was sent." card after submitting a feedback report.
 **What changed (before → after):** Visual is byte-identical (same emerald-500/30 border, same emerald-500/5 background, same text-[11px] text-emerald-200, same role="status"). The hand-rolled JSX is now `<SuccessState variant="line">`.

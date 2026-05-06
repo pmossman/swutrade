@@ -12,7 +12,7 @@ import { ListCardPicker } from './ListCardPicker';
 import { cardFamilyId, variantBadgeColor, variantChipLabel } from '../variants';
 import { apiPost } from '../services/apiClient';
 import { restrictionKeyFromVariants } from '../../lib/shared';
-import { ErrorState } from './ui/states';
+import { ErrorState, LoadingState } from './ui/states';
 
 const restrictionKeyOf = restrictionKeyFromVariants;
 
@@ -454,7 +454,7 @@ export function SignalBuilderView({ auth, allCards, wants }: SignalBuilderViewPr
           <label className="flex items-center gap-2">
             <span className="text-gray-500 font-semibold uppercase tracking-wide">To</span>
             {guildsStatus === 'loading' ? (
-              <span className="text-gray-500 italic flex-1">Loading…</span>
+              <LoadingState inline className="flex-1" />
             ) : eligibleGuilds.length === 0 ? (
               <span className="text-amber-400 flex-1">No enrolled servers</span>
             ) : (

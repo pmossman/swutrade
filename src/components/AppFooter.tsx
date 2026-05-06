@@ -3,6 +3,7 @@ import { relativeTime } from '../utils/relativeTime';
 import { useAuthContext } from '../contexts/AuthContext';
 import { usePriceDataContext } from '../contexts/PriceDataContext';
 import type { SyncStatus } from '../hooks/useServerSync';
+import { LoadingState } from './ui/states';
 
 interface AppFooterProps {
   /** Surfaced as a small "Syncing…" / "Sync error" / "Offline" tail
@@ -59,7 +60,7 @@ export function AppFooter({ syncStatus }: AppFooterProps) {
         {priceData.isAnyLoading ? (
           <>
             <span className="text-space-600" aria-hidden>·</span>
-            <span className="text-gray-500 animate-pulse">Loading prices…</span>
+            <LoadingState inline label="Loading prices…" />
           </>
         ) : priceData.priceTimestamp && (
           <>
