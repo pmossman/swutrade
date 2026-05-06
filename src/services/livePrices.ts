@@ -28,6 +28,8 @@
  */
 
 import { useEffect, useState } from 'react';
+import { z } from 'zod';
+import { clearPersisted, readPersisted, writePersisted } from '../persistence';
 
 /** Match the server's wire shape exactly so we can JSON-cast on
  *  receive without normalizing. */
@@ -75,27 +77,25 @@ function notify() {
   });
 }
 
+/** Schema for the persisted store. Records of productId → LivePrice;
+ *  the schema validates the shape so a corrupted entry from a previous
+ *  version doesn't poison the in-memory map. */
+const LivePriceSchema = z.object({
+  marketPrice: z.number().nullable(),
+  lowPrice: z.number().nullable(),
+  fetchedAt: z.string(),
+});
+const StoreSchema = z.record(z.string(), LivePriceSchema);
+
 /** Hydrate from localStorage. Idempotent; called lazily on first
  *  hook subscription so SSR / unit-test environments without
- *  `window` stay clean. */
+ *  `window` stay clean. Goes through `readPersisted` so the
+ *  Safari-private-mode + corrupted-JSON branches share the
+ *  silent-fallback behaviour with every other localStorage user. */
 function hydrate() {
   if (hydrated) return;
   hydrated = true;
-  if (typeof window === 'undefined') return;
-  let raw: string | null;
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
-  } catch {
-    // Safari private mode etc. — silently skip.
-    return;
-  }
-  if (!raw) return;
-  let parsed: Record<string, LivePrice>;
-  try {
-    parsed = JSON.parse(raw) as Record<string, LivePrice>;
-  } catch {
-    return;
-  }
+  const parsed = readPersisted(STORAGE_KEY, StoreSchema, {});
   const cutoff = Date.now() - HYDRATE_TTL_MS;
   for (const [id, price] of Object.entries(parsed)) {
     const t = Date.parse(price.fetchedAt);
@@ -105,15 +105,9 @@ function hydrate() {
 }
 
 function persist() {
-  if (typeof window === 'undefined') return;
-  try {
-    const obj: Record<string, LivePrice> = {};
-    for (const [id, price] of overrides.entries()) obj[id] = price;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
-  } catch {
-    // Quota exceeded / private mode — drop silently. Override map
-    // still works for the rest of this session.
-  }
+  const obj: Record<string, LivePrice> = {};
+  for (const [id, price] of overrides.entries()) obj[id] = price;
+  writePersisted(STORAGE_KEY, obj);
 }
 
 /** Test/internal: read the current override for a productId. Lets
@@ -138,9 +132,7 @@ export function __resetLivePrices(): void {
     flushTimer = null;
   }
   hydrated = false;
-  if (typeof window !== 'undefined') {
-    try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
-  }
+  clearPersisted(STORAGE_KEY);
 }
 
 /** Fetch override for tests. Lets cases inject a mocked response
