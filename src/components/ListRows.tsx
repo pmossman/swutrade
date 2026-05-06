@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { formatPrice, getCardPrice } from '../services/priceService';
@@ -297,11 +298,15 @@ interface AvailableRowProps {
   /** Count of other signed-in users who have this card's family on
    *  their public wants list. 0 or undefined hides the badge. */
   wantCount?: number;
-  onChangeQty: (next: number) => void;
-  onRemove: () => void;
+  /** Takes (id, next-qty) so the parent can pass a stable reference
+   *  (the hook's `useCallback`'d update method) and let the row close
+   *  over its own item.id. Replaces the older `(next) => void` shape
+   *  whose inline arrow at the call site defeated React.memo. */
+  onChangeQty: (id: string, nextQty: number) => void;
+  onRemove: (id: string) => void;
 }
 
-export function AvailableRow({
+export const AvailableRow = memo(function AvailableRow({
   item,
   card,
   priceMode,
@@ -336,12 +341,12 @@ export function AvailableRow({
         </div>
       </div>
       <div className="flex items-center justify-between gap-2">
-        <QtyStepper qty={item.qty} onChangeQty={onChangeQty} />
-        <RemoveButton onRemove={onRemove} />
+        <QtyStepper qty={item.qty} onChangeQty={n => onChangeQty(item.id, n)} />
+        <RemoveButton onRemove={() => onRemove(item.id)} />
       </div>
     </RowShell>
   );
-}
+});
 
 // --- Icons -----------------------------------------------------------------
 

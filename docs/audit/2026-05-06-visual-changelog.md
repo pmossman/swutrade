@@ -14,6 +14,19 @@
 
 ## Changes
 
+### `fd60e79` — Inline error/success messages → canonical ErrorState/SuccessState/LoadingState
+**Surface(s):**
+- Session view invite-form (`/s/<id>` open-slot, when inviting by handle): success line + error line.
+- Session timeline panel: revert-error banner above the events list; chat-send error above the textarea.
+- Session suggest composer: footer error line.
+- Handle picker dialog: handle-validation error under the input; community-loading hint; community-load error.
+
+**What changed (before → after):** Same red/emerald tint, but the error text changes from `text-red-400` → `text-red-300` in two spots (very slightly lighter — matches the canonical ErrorState used everywhere else). Two error states gain `role="alert"` so screen readers announce them when they appear (revert-error in timeline; suggest composer footer error). All other surfaces visually identical.
+**Why:** Audit F-A5, F-A6, F-C3, F-C4 — convergence onto canonical primitives so future tweaks happen in one place.
+**Files touched:** `src/components/SessionView.tsx`, `src/components/SessionTimelinePanel.tsx`, `src/components/SessionSuggestComposer.tsx`, `src/components/HandlePickerDialog.tsx`.
+**Screenshots / how to see it:** Try to invite a non-existent handle to a session → red banner under the input. In a session, send an empty chat or trip a network error → banner above the textarea. In the suggest composer, trip an error → footer message.
+**To revert:** `git revert fd60e79`
+
 ### `94a55af` — Inline loading text now uses canonical LoadingState
 **Surface(s):** Signal-builder guild dropdown ("Loading…" while guild list loads); app footer ("Loading prices…" while price data is fetching).
 **What changed (before → after):** Same text, same animate-pulse, same gray color. SignalBuilder loses the `italic` style. AppFooter loses italic too (it wasn't italicised before; this just routes through the canonical primitive).

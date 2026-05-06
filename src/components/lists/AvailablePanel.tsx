@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../../types';
 import type { AvailableApi } from '../../hooks/useAvailable';
 import { cardFamilyId } from '../../variants';
@@ -59,6 +59,15 @@ export function AvailablePanel({
   }, [user, available.items, byProductId]);
   const wantCounts = usePopularWants(availableFamilyIds);
 
+  // Stable reference so each AvailableRow's React.memo can short-circuit
+  // when only `wantCounts` or another row changes. `available.update`
+  // is itself useCallback'd in the hook, so this just shapes the call
+  // signature for the row's `onChangeQty(id, qty)` API.
+  const handleChangeQty = useCallback(
+    (id: string, qty: number) => available.update(id, { qty }),
+    [available],
+  );
+
   if (mode === 'picker') {
     return (
       <ListCardPicker
@@ -106,8 +115,8 @@ export function AvailablePanel({
                   percentage={percentage}
                   priceMode={priceMode}
                   wantCount={fid ? wantCounts[fid] : undefined}
-                  onChangeQty={qty => available.update(item.id, { qty })}
-                  onRemove={() => available.remove(item.id)}
+                  onChangeQty={handleChangeQty}
+                  onRemove={available.remove}
                 />
               );
             })}
