@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { formatPrice, getCardPrice } from '../services/priceService';
@@ -6,6 +5,7 @@ import { CardThumb } from './ui/CardThumb';
 import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
 import { NumberStepper } from './ui/NumberStepper';
+import { useConfirmAction } from '../hooks/useConfirmAction';
 
 function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number) => void }) {
   return (
@@ -20,52 +20,22 @@ function QtyStepper({ qty, onChangeQty }: { qty: number; onChangeQty: (n: number
 }
 
 /**
- * Two-tap confirm-to-remove. First tap arms the button (turns crimson,
- * shows "Confirm?"); second tap inside the 3s window fires `onRemove`.
- * Auto-reverts on timeout, blur, or unmount so a stale armed state can't
- * fire on a later accidental tap. Mirrors the `ClearAllButton` pattern
- * — keeps the per-row delete snappy in the trade-builder drawer while
- * still gating accidental data loss.
+ * Two-tap confirm-to-remove for per-row × buttons. State logic lives
+ * in `useConfirmAction`; this component only owns the visual chrome
+ * (idle: 24×24 ×-icon button, armed: amber pill with warning icon +
+ * "Confirm?" label). `hit-area-44` extends the touch target invisibly
+ * so the 24×24 visual never traps a fingertip.
  */
 function RemoveButton({ onRemove }: { onRemove: () => void }) {
-  const [armed, setArmed] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const disarm = useCallback(() => {
-    setArmed(false);
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  // Cleanup on unmount — without this the timer's `setArmed` would fire
-  // on a torn-down component (React 19 surfaces this as a warning).
-  useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
-
-  const handleClick = () => {
-    if (armed) {
-      disarm();
-      onRemove();
-    } else {
-      setArmed(true);
-      timerRef.current = setTimeout(() => {
-        setArmed(false);
-        timerRef.current = null;
-      }, 3000);
-    }
-  };
-
+  const { armed, onClick, onBlur } = useConfirmAction(onRemove);
   return (
     <button
       type="button"
       aria-label={armed ? 'Tap again to confirm removal' : 'Remove'}
       aria-pressed={armed}
       title={armed ? 'Tap again to confirm' : 'Remove'}
-      onClick={handleClick}
-      onBlur={disarm}
+      onClick={onClick}
+      onBlur={onBlur}
       className={
         armed
           ? 'hit-area-44 shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded border border-crimson/60 bg-crimson/15 text-crimson-light text-[11px] font-semibold uppercase tracking-wide hover:bg-crimson/25 transition-colors'

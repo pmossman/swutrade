@@ -14,6 +14,14 @@
 
 ## Changes
 
+### `711031a` — `<SuccessState>` primitive; ReportProblemDialog success card uses it
+**Surface(s):** the green "Thanks — your report was sent." card after submitting a feedback report.
+**What changed (before → after):** Visual is byte-identical (same emerald-500/30 border, same emerald-500/5 background, same text-[11px] text-emerald-200, same role="status"). The hand-rolled JSX is now `<SuccessState variant="line">`.
+**Why:** Symmetric with the existing ErrorState; convergence target for future transient-success surfaces. Audit F-C10.
+**Files touched:** `src/components/ui/states.tsx` (added primitive), `src/components/ReportProblemDialog.tsx` (refactor).
+**Screenshots / how to see it:** Help menu → "Report a problem" → submit any message → green success card appears.
+**To revert:** `git revert 711031a`
+
 ### `1cfe3e1` — NumberStepper +/− 44×44 hit area
 **Surface(s):** every list row's qty editor, trade-side qty editors, signal-builder qty + max-price.
 **What changed (before → after):** Visual stays identical (24×24 / 20×20 buttons). Touch target on mobile now expands to a centred 44×44 transparent box via `hit-area-44` pseudo-element (already used elsewhere). Desktop unchanged (the visual stays the click target).

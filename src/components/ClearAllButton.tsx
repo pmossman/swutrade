@@ -1,46 +1,22 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useConfirmAction } from '../hooks/useConfirmAction';
 
 interface ClearAllButtonProps {
   onConfirm: () => void;
 }
 
 /**
- * Two-click "Clear All" with a 3-second confirm window. First tap arms
- * the button (turns red, asks "Clear?"); second tap confirms. If the
- * user walks away, it disarms on its own so a stale armed state can't
- * fire on the next accidental tap.
+ * Two-tap "Clear All" for the trade-builder header. State logic lives
+ * in `useConfirmAction`; this component only owns the visual chrome
+ * (idle: muted gray pill with trash icon, armed: red pill with warning
+ * icon + "Tap to confirm").
  */
 export function ClearAllButton({ onConfirm }: ClearAllButtonProps) {
-  const [armed, setArmed] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const disarm = useCallback(() => {
-    setArmed(false);
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-  }, []);
-
-  const handleClick = () => {
-    if (armed) {
-      onConfirm();
-      disarm();
-    } else {
-      setArmed(true);
-      timerRef.current = setTimeout(disarm, 3000);
-    }
-  };
-
+  const { armed, onClick, onBlur } = useConfirmAction(onConfirm);
   return (
     <button
       type="button"
-      onClick={handleClick}
-      onBlur={disarm}
+      onClick={onClick}
+      onBlur={onBlur}
       className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
         armed
           ? 'bg-red-900/50 text-red-200 border border-red-500/60 hover:bg-red-900/70'
