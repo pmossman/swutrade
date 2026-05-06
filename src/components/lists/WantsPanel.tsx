@@ -6,6 +6,7 @@ import { bestMatchForWant } from '../../listMatching';
 import { ListCardPicker } from '../ListCardPicker';
 import { WantsRow } from '../ListRows';
 import { restrictionKey } from '../../../lib/shared';
+import { EmptyState } from '../ui/states';
 
 /**
  * Shared wants-list body used by both the embedded drawer (quick-edit
@@ -110,7 +111,7 @@ export function WantsPanel({
     <>
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
         {sortedWants.length === 0 ? (
-          <EmptyState title={emptyState.title} body={emptyState.body} />
+          <EmptyState variant="centered" title={emptyState.title}>{emptyState.body}</EmptyState>
         ) : (
           <ul className="flex flex-col gap-2">
             {sortedWants.map(item => {
@@ -153,14 +154,6 @@ export function WantsPanel({
   );
 }
 
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="flex flex-col items-center text-center gap-2 py-10 px-6 text-gray-400">
-      <div className="text-sm font-semibold text-gray-300">{title}</div>
-      <div className="text-[12px] leading-relaxed max-w-[22rem]">{body}</div>
-    </div>
-  );
-}
 
 function AddCardFooter({ onClick, accent }: { onClick: () => void; accent: 'blue' | 'emerald' }) {
   const accentClass = accent === 'blue'

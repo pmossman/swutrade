@@ -41,20 +41,42 @@ export function LoadingState({
 }
 
 /**
- * Card-style empty state. Used when a list endpoint returned zero
- * rows and we want to explain why + what to do next. `title` is the
- * bold one-liner ("No one to trade with yet."), `children` is the
- * smaller explanation paragraph below it.
+ * Empty-state shown when a list endpoint returned zero rows + we want
+ * to explain why + what to do next. Two variants:
+ *
+ *   - `card` (default): rounded-lg bg-space-800/40 border-space-700,
+ *     left-aligned. Informational pill — slots into the document
+ *     flow next to other rows. Right when the empty state is one
+ *     element in a wider page.
+ *   - `centered`: full-panel centered-text treatment, no card chrome.
+ *     Right when the empty state OWNS the whole panel (wishlist /
+ *     binder when the list is empty). Convergence target for the
+ *     near-identical local EmptyStates in WantsPanel + AvailablePanel.
+ *
+ * `title` is the bold one-liner ("No one to trade with yet.");
+ * `children` is the smaller explanation paragraph below it.
  */
 export function EmptyState({
   title,
   children,
+  variant = 'card',
   className = '',
 }: {
   title: string;
   children?: ReactNode;
+  variant?: 'card' | 'centered';
   className?: string;
 }) {
+  if (variant === 'centered') {
+    return (
+      <div className={`flex flex-col items-center text-center gap-2 py-10 px-6 text-gray-400 ${className}`}>
+        <div className="text-sm font-semibold text-gray-300">{title}</div>
+        {children && (
+          <div className="text-[12px] leading-relaxed max-w-[22rem]">{children}</div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className={`rounded-lg bg-space-800/40 border border-space-700 px-4 py-6 text-sm text-gray-400 leading-relaxed ${className}`}>
       <p className="font-semibold text-gray-200 mb-2">{title}</p>
