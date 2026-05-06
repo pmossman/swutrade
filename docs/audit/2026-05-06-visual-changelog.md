@@ -14,6 +14,14 @@
 
 ## Changes
 
+### `95062d8` — PrimaryActionBar respects iOS home-indicator safe area
+**Surface(s):** The trade-builder's bottom-pinned action button (Send / Confirm / Save), and its emerald "Sent" success state.
+**What changed (before → after):** On iOS devices with a home indicator (iPhone X and newer), the action button could touch the bottom edge of the indicator. Now the bar's bottom padding is `max(12px, env(safe-area-inset-bottom))` so it gets pushed up by the system inset. Desktop and Android-without-gesture-bar render unchanged (env inset is 0 there).
+**Why:** Audit F-H1 — bottom-pinned controls without safe-area handling look broken on notched-bottom devices.
+**Files touched:** `src/components/PrimaryActionBar.tsx`.
+**Screenshots / how to see it:** Open the trade builder on an iPhone with a home indicator. The "Send" button sits clearly above the indicator now.
+**To revert:** `git revert 95062d8`
+
 ### `ed5cb62` — All disabled buttons now render at exactly 50% opacity
 **Surface(s):** Every button in the app that has a `disabled:` Tailwind state. Visible across NumberStepper +/− buttons, dialog Cancel/Confirm, suggest-composer Send, session Confirm/Decline/Cancel, share-live-trade button, etc.
 **What changed (before → after):** 31 sites had three different opacity values when disabled: 40% (4 sites — looked dim), 50% (16 sites — the most common), 60% (11 sites — looked brighter). Now everything is 50%. Each individual button shifts very slightly toward 50%; the visible app-wide effect is that every disabled button looks equally "off."
