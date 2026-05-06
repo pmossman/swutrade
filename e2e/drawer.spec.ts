@@ -61,7 +61,11 @@ test.describe('Lists drawer interactions', () => {
     await dialog.getByRole('tab', { name: /^trade binder/i }).click();
     const availPanel = dialog.getByRole('tabpanel', { name: /trade binder/i });
     await expect(availPanel.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible();
+    // Two-tap confirm-to-remove: first tap arms (button re-labels to
+    // "Tap again to confirm removal"), second tap fires the delete.
+    // Guards against accidental one-tap data loss.
     await availPanel.getByRole('button', { name: 'Remove' }).click();
+    await availPanel.getByRole('button', { name: /Tap again to confirm removal/i }).click();
     await expect(availPanel.getByText('Your trade binder is empty')).toBeVisible();
   });
 });
