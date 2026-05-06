@@ -14,6 +14,14 @@
 
 ## Changes
 
+### `70f8bab` — ShareLiveTradeButton now shows an error when create-open fails
+**Surface(s):** Trade-builder action strip "Invite someone" button.
+**What changed (before → after):** When `/api/sessions/create-open` fails (network down, server 5xx, etc.) the button used to silently reset to its idle state, leaving the user wondering whether anything happened. Now it shows a small red one-line error hint below the button ("Couldn't create the shared trade. Try again." or the server's message) for 4 seconds, then auto-clears so the next click is fresh.
+**Why:** Audit F-B10 — silent failures look broken. This is a small "make the failure honest" addition; no behaviour on the success path changes.
+**Files touched:** `src/components/ShareLiveTradeButton.tsx`.
+**Screenshots / how to see it:** Disable network or block the API endpoint, then click "Invite someone" in the trade builder. Red hint appears under the button.
+**To revert:** `git revert 70f8bab`. (Note: this also reverts the ProfileView/AutoBalanceBanner/SessionView/TradeSummary apiClient migrations — those are not user-visible. If you want to keep those and only undo the visible hint, hand-edit `src/components/ShareLiveTradeButton.tsx` to remove the `<span role="alert">` and the `setError` calls.)
+
 ### `fd60e79` — Inline error/success messages → canonical ErrorState/SuccessState/LoadingState
 **Surface(s):**
 - Session view invite-form (`/s/<id>` open-slot, when inviting by handle): success line + error line.

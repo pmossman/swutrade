@@ -70,7 +70,7 @@ export function AccountMenu({ auth }: AccountMenuProps) {
 
             <a
               href="/api/auth/discord"
-              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold bg-[#5865F2]/20 border border-[#5865F2]/40 text-white hover:bg-[#5865F2]/30 hover:border-[#5865F2]/60 transition-colors"
+              className="flex items-center gap-2 px-2 py-1.5 rounded text-xs font-semibold bg-discord/20 border border-discord/40 text-white hover:bg-discord/30 hover:border-discord/60 transition-colors"
             >
               <DiscordIcon className="w-3.5 h-3.5" />
               Sign in with Discord

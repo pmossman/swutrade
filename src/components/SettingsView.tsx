@@ -1059,7 +1059,7 @@ function InviteBotBlock({ botInstallUrl }: { botInstallUrl: string | null }) {
           href={botInstallUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#5865F2]/80 hover:bg-[#5865F2] text-white text-xs font-bold transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-discord/80 hover:bg-discord text-white text-xs font-bold transition-colors"
         >
           Invite SWUTrade bot
           <ExternalIcon className="w-3 h-3" />

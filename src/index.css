@@ -44,6 +44,12 @@
   --color-crimson-deep: #4a0a10;
   --color-crimson-light: #fca5a5;
 
+  /* Discord blurple — the platform's brand colour. Reserved for the
+     literal "this affordance talks to Discord" surface (Sign in with
+     Discord, Add to your server). Never use it for SWUTrade chrome
+     since it would dilute the gold-as-primary system. */
+  --color-discord: #5865F2;
+
   --shadow-glow-gold:
     0 0 0 1px rgba(245, 166, 35, 0.22),
     0 0 28px -6px rgba(245, 166, 35, 0.35);
