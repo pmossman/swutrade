@@ -18,6 +18,7 @@ import { useCardIndexContext } from '../contexts/CardIndexContext';
 import { usePriceDataContext } from '../contexts/PriceDataContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { LoadingState } from './ui/states';
+import { apiGet } from '../services/apiClient';
 
 interface ProfileUser {
   username: string;
@@ -144,15 +145,22 @@ export function ProfileView({
   useEffect(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/user/${encodeURIComponent(handle)}`)
-      .then(r => {
-        if (r.status === 404) throw new Error('User not found');
-        if (!r.ok) throw new Error(`Failed to load profile`);
-        return r.json();
-      })
-      .then(data => setProfile(data))
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    (async () => {
+      const result = await apiGet<ProfileData>(
+        `/api/user/${encodeURIComponent(handle)}`,
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setError(result.reason === 'not-found'
+          ? 'User not found'
+          : (result.detail ?? 'Failed to load profile'));
+      } else {
+        setProfile(result.data);
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, [handle]);
 
   const wantsRows = useMemo(() => {

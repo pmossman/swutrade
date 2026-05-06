@@ -6,6 +6,7 @@ import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { usePricing } from '../contexts/PricingContext';
 import { LoadingState } from './ui/states';
+import { apiGet } from '../services/apiClient';
 
 interface AutoBalanceBannerProps {
   senderHandle: string | null;
@@ -100,20 +101,16 @@ export function AutoBalanceBanner({
     setFetchState('loading');
 
     (async () => {
-      try {
-        const res = await fetch(`/api/user/${encodeURIComponent(senderHandle)}`);
-        if (cancelled) return;
-        if (!res.ok) {
-          setFetchState('error');
-          return;
-        }
-        const data: RemoteProfile = await res.json();
-        if (cancelled) return;
-        setProfile(data);
-        setFetchState('idle');
-      } catch {
-        if (!cancelled) setFetchState('error');
+      const result = await apiGet<RemoteProfile>(
+        `/api/user/${encodeURIComponent(senderHandle)}`,
+      );
+      if (cancelled) return;
+      if (!result.ok) {
+        setFetchState('error');
+        return;
       }
+      setProfile(result.data);
+      setFetchState('idle');
     })();
 
     return () => { cancelled = true; };

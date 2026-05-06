@@ -215,31 +215,23 @@ export function TradeSummary({ yourCards, theirCards, onClose }: TradeSummaryPro
   const handleSave = useCallback(async () => {
     if (!user || saveState === 'saving' || saveState === 'saved') return;
     setSaveState('saving');
-    try {
-      const snapshot = (cards: TradeCard[]) =>
-        cards.map(tc => ({
-          productId: tc.card.productId ?? '',
-          name: extractBaseName(tc.card.name),
-          variant: extractVariantLabel(tc.card.name),
-          qty: tc.qty,
-          unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
-        }));
-      await fetch('/api/trades', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          yourCards: snapshot(yourCards),
-          theirCards: snapshot(theirCards),
-          percentage,
-          priceMode,
-          totalYours: yourTotal,
-          totalTheirs: theirTotal,
-        }),
-      });
-      setSaveState('saved');
-    } catch {
-      setSaveState('error');
-    }
+    const snapshot = (cards: TradeCard[]) =>
+      cards.map(tc => ({
+        productId: tc.card.productId ?? '',
+        name: extractBaseName(tc.card.name),
+        variant: extractVariantLabel(tc.card.name),
+        qty: tc.qty,
+        unitPrice: adjustPrice(getCardPrice(tc.card, priceMode), percentage),
+      }));
+    const result = await apiPost('/api/trades', {
+      yourCards: snapshot(yourCards),
+      theirCards: snapshot(theirCards),
+      percentage,
+      priceMode,
+      totalYours: yourTotal,
+      totalTheirs: theirTotal,
+    });
+    setSaveState(result.ok ? 'saved' : 'error');
   }, [user, saveState, yourCards, theirCards, percentage, priceMode, yourTotal, theirTotal]);
 
   let actionLine: React.ReactNode = null;

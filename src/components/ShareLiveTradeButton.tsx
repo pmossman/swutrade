@@ -37,34 +37,50 @@ export function ShareLiveTradeButton({
 }) {
   const nav = useNavigation();
   const [starting, setStarting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleClick = useCallback(async () => {
     if (starting) return;
     setStarting(true);
-    try {
-      const initialCards = yourCards.map(toSnapshot);
-      const counterpartInitialCards = theirCards.map(toSnapshot);
-      const result = await apiPost<{ id: string }>('/api/sessions/create-open', {
-        initialCards,
-        counterpartInitialCards,
-      });
-      if (result.ok) nav.toSession(result.data.id);
-    } finally {
-      setStarting(false);
+    setError(null);
+    const initialCards = yourCards.map(toSnapshot);
+    const counterpartInitialCards = theirCards.map(toSnapshot);
+    const result = await apiPost<{ id: string }>('/api/sessions/create-open', {
+      initialCards,
+      counterpartInitialCards,
+    });
+    setStarting(false);
+    if (!result.ok || !result.data.id) {
+      // Surface failure to the user — silent failure was the prior
+      // behaviour and looked broken (button reset, no feedback). The
+      // `result.detail` carries the server's message when present;
+      // the fallback covers network / no-data branches.
+      setError(result.ok
+        ? "Couldn't create the shared trade. Try again."
+        : (result.detail ?? "Couldn't create the shared trade. Try again."));
+      // Auto-clear after a beat so the next click can retry cleanly.
+      window.setTimeout(() => setError(null), 4000);
+      return;
     }
+    nav.toSession(result.data.id);
   }, [nav, starting, yourCards, theirCards]);
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={starting}
-      title="Invite someone to edit this trade together — generates a QR + link you can share in person or remotely"
-      className="shrink-0 inline-flex items-center gap-1 px-2.5 h-8 rounded-md border border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 text-xs font-semibold transition-colors disabled:opacity-60"
-    >
-      <QRGlyph className="w-3.5 h-3.5" />
-      {starting ? 'Starting…' : 'Invite someone'}
-    </button>
+    <div className="flex flex-col items-stretch gap-1">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={starting}
+        title="Invite someone to edit this trade together — generates a QR + link you can share in person or remotely"
+        className="shrink-0 inline-flex items-center gap-1 px-2.5 h-8 rounded-md border border-cyan-500/50 text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 text-xs font-semibold transition-colors disabled:opacity-60"
+      >
+        <QRGlyph className="w-3.5 h-3.5" />
+        {starting ? 'Starting…' : 'Invite someone'}
+      </button>
+      {error && (
+        <span role="alert" className="text-[10px] text-red-300 leading-tight">{error}</span>
+      )}
+    </div>
   );
 }
 

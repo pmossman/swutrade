@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState, SuccessState } from './ui/states';
 import { useConfirm } from './ui/ConfirmDialog';
+import { apiPost } from '../services/apiClient';
 import { TradeSide } from './TradeSide';
 import { TradeBalance } from './TradeBalance';
 import { ListsDrawer } from './ListsDrawer';
@@ -1489,30 +1490,18 @@ function InviteByHandleForm({ sessionId }: { sessionId: string }) {
     setSubmitting(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-    try {
-      const res = await fetch(
-        `/api/sessions/${encodeURIComponent(sessionId)}/invite-handle`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ handle: trimmed }),
-        },
-      );
-      const body = (await res.json().catch(() => null)) as
-        | { invited?: { handle: string }; error?: string }
-        | null;
-      if (!res.ok) {
-        setErrorMessage(body?.error ?? 'Could not send the invite. Try again.');
-        return;
-      }
-      const invitedHandle = body?.invited?.handle ?? trimmed;
-      setSuccessMessage(`Invited @${invitedHandle} — they'll get a Discord DM.`);
-      setHandle('');
-    } catch {
-      setErrorMessage('Network error. Try again.');
-    } finally {
-      setSubmitting(false);
+    const result = await apiPost<{ invited?: { handle: string } }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/invite-handle`,
+      { handle: trimmed },
+    );
+    setSubmitting(false);
+    if (!result.ok) {
+      setErrorMessage(result.detail ?? 'Could not send the invite. Try again.');
+      return;
     }
+    const invitedHandle = result.data.invited?.handle ?? trimmed;
+    setSuccessMessage(`Invited @${invitedHandle} — they'll get a Discord DM.`);
+    setHandle('');
   }, [handle, sessionId, submitting]);
 
   return (
