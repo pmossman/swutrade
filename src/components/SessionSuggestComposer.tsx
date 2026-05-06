@@ -190,12 +190,19 @@ export function SessionSuggestComposer({
   // Footer keeps the summary line ("+2 ready to suggest" /
   // "Tap cards to add them"). The Send button lives in the header
   // now, so the footer is informational only.
+  // Wrap the footer status in an aria-live region so transient
+  // updates (lockedHint when a tap is rejected, "+2 ready to
+  // suggest" when content lands, error when send fails) get
+  // announced to screen readers without preempting them — `polite`
+  // means "wait until the user finishes their current word." The
+  // ErrorState below already carries role=alert for the hard-fail
+  // case, which preempts as designed.
   const footerStatus = error
     ? <ErrorState variant="banner" role="alert" className="truncate">{error}</ErrorState>
     : lockedHint
-      ? <div className="text-[11px] text-amber-300 truncate">{lockedHint}</div>
+      ? <div role="status" aria-live="polite" className="text-[11px] text-amber-300 truncate">{lockedHint}</div>
       : (
-        <div className="text-[11px] text-gray-500">
+        <div role="status" aria-live="polite" className="text-[11px] text-gray-500">
           {!hasContent
             ? 'Tap cards to add them to your suggestion.'
             : (() => {
