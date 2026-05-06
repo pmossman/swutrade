@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
 import type { SessionEvent, SessionView, TradeCardSnapshot } from '../hooks/useSession';
 import { cardImageUrl } from '../services/priceService';
 import { ErrorState } from './ui/states';
@@ -125,77 +124,81 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
   const counterpartHandle = session.counterpart?.handle ?? 'Your counterpart';
   const terminal = session.status !== 'active';
 
-  // Drive the panel's full positioning off `visualViewport`.
-  //
-  // Why not `100dvh` / `inset-y-0`: cached at first paint on iOS
-  // Safari 16.x. The first time the user opens the panel and taps
-  // the input, the keyboard pushes up but the cached values don't
-  // update — panel ends up taller than the visible area and the
-  // page peeks through.
-  //
-  // Why not just height: vv.height + top: 0: when iOS auto-scrolls
-  // the layout viewport to bring a focused input "into view",
-  // `vv.offsetTop` becomes positive (often by 100-200px). A
-  // `position: fixed; top: 0` element is anchored to the LAYOUT
-  // viewport top, not the visual viewport — so it slides up off the
-  // top of the screen by `vv.offsetTop` pixels. The user sees only
-  // the panel's bottom (the input) poking in at the top of the
-  // visible area, with the underlying page revealed below.
-  //
-  // The fix: anchor `top` to `vv.offsetTop` and `height` to
-  // `vv.height`. This explicitly positions the panel inside the
-  // visual viewport, no matter how iOS has scrolled the layout
-  // viewport. visualViewport's `resize` + `scroll` events fire on
-  // every keyboard open/close AND on iOS's auto-scroll, so the
-  // listener catches both classes of motion.
-  //
-  // Combined with Radix Dialog (focus trap, ESC, scroll lock,
-  // restore-focus), this is the durable shape for keyboard-aware
-  // overlays. Same pattern can be lifted to a `useVisualViewport`
-  // hook when SessionSuggestComposer / TradeSearchOverlay get the
-  // same treatment.
-  const [vv, setVv] = useState<{ top: number; height: number } | null>(null);
+  // Body scroll lock — iOS otherwise scrolls the underlying page to
+  // keep the focused input visible, which exposes the trade canvas.
+  // We previously had this via Radix's RemoveScroll; rolling our
+  // own again here because the simpler `fixed inset-0` layout
+  // (matching SessionSuggestComposer) is more reliable on iOS than
+  // Radix Dialog's portal + RemoveScroll combo for keyboard-aware
+  // overlays. Trade-off: we lose Radix's free focus-trap +
+  // ESC-handler + restore-focus-on-close. Rebuild those manually:
   useEffect(() => {
-    const v = window.visualViewport;
-    if (!v) return;
-    const update = () => setVv({ top: v.offsetTop, height: v.height });
-    update();
-    v.addEventListener('resize', update);
-    v.addEventListener('scroll', update);
-    return () => {
-      v.removeEventListener('resize', update);
-      v.removeEventListener('scroll', update);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
     };
-  }, []);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
 
+  // Layout strategy (matching SessionSuggestComposer, which works
+  // reliably on iOS Safari with text inputs):
+  //
+  // - `fixed inset-0` on mobile: full-screen takeover, opaque
+  //   background. The trade canvas is COMPLETELY hidden — there's
+  //   no gap or seam where it could peek through, regardless of
+  //   how iOS Safari handles the keyboard transition.
+  // - `sm:inset-y-0 sm:left-auto sm:right-0 sm:max-w-md` on
+  //   desktop: side drawer, max 28rem wide, right-aligned.
+  // - `flex flex-col` inside, with header (shrink-0) + scrollable
+  //   events list (flex-1) + footer with input (shrink-0). When
+  //   the layout viewport shrinks (with `interactive-widget=
+  //   resizes-content`), the events list shrinks naturally and
+  //   the footer stays at the bottom.
+  //
+  // We deliberately use `inset-0` (top: 0 + bottom: 0 implicitly
+  // sized by both anchors) rather than explicit `100dvh`. The
+  // anchored top + bottom mean the panel always covers the layout
+  // viewport edge-to-edge — even if iOS Safari has a transient
+  // dvh-cache mismatch, there's never a GAP for the trade canvas
+  // to peek through. (Worst case: input briefly behind keyboard
+  // until layout settles. That's a separate-and-much-smaller bug
+  // than "trade canvas visible during chat.")
   return (
-    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          // Inline style overrides the CSS class's `top` and `h-[100dvh]`
-          // when visualViewport is available. The CSS classes act
-          // as a fallback for browsers without the API.
-          style={vv != null ? { top: `${vv.top}px`, height: `${vv.height}px` } : undefined}
-          className="fixed top-0 right-0 z-50 w-full max-w-md h-[100dvh] bg-space-900 border-l border-space-700 flex flex-col shadow-2xl outline-none"
-        >
+    <>
+      {/* Click-outside backdrop. Rendered separately so the panel
+          doesn't have to nest inside it (which complicates
+          stacking on mobile full-screen takeover). */}
+      <div
+        aria-hidden
+        className="fixed inset-0 z-40 bg-black/40"
+        onClick={onClose}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="session-timeline-panel-title"
+        className="fixed inset-0 z-50 sm:inset-y-0 sm:left-auto sm:right-0 sm:w-full sm:max-w-md bg-space-900 sm:border-l sm:border-space-700 flex flex-col sm:shadow-2xl"
+      >
           <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
             <div className="min-w-0">
               <div className="text-[10px] tracking-[0.25em] text-gray-500 uppercase">Activity</div>
-              <Dialog.Title className="text-sm font-semibold text-gray-100 truncate">
+              <h2 id="session-timeline-panel-title" className="text-sm font-semibold text-gray-100 truncate">
                 with @{counterpartHandle}
-              </Dialog.Title>
+              </h2>
             </div>
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                aria-label="Close activity"
-                className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
-              >
-                ×
-              </button>
-            </Dialog.Close>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close activity"
+              className="shrink-0 px-2 py-1 text-gray-500 hover:text-gray-200 transition-colors text-lg leading-none"
+            >
+              ×
+            </button>
           </header>
 
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
@@ -259,9 +262,8 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
               </div>
             </footer>
           )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      </div>
+    </>
   );
 }
 
