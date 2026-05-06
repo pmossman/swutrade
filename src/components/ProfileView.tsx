@@ -157,27 +157,33 @@ export function ProfileView({
 
   const wantsRows = useMemo(() => {
     if (!profile?.wants) return [];
-    return profile.wants
+    type WantRow = { key: string; card: CardVariant; qty: number; restriction: VariantRestriction; isPriority?: boolean };
+    const rows: Array<WantRow | null> = profile.wants
       .map((w, i) => {
         const candidates = byFamilyAll.get(w.familyId) ?? [];
         if (candidates.length === 0) return null;
-        const synth = { ...w, id: '_', addedAt: 0 };
-        const card = bestMatchForWant(synth as any, candidates, priceMode);
+        // bestMatchForWant only reads `restriction`; pass the minimum
+        // (Pick<WantsItem, 'restriction'>) so we don't need to fake
+        // the storage-layer fields (id, addedAt) just to satisfy types.
+        const card = bestMatchForWant({ restriction: w.restriction }, candidates, priceMode);
         if (!card) return null;
         return { key: 'w-' + i, card, qty: w.qty, restriction: w.restriction, isPriority: w.isPriority };
-      })
-      .filter(Boolean) as Array<{ key: string; card: CardVariant; qty: number; restriction: VariantRestriction; isPriority?: boolean }>;
+      });
+    // Type-guard predicate replaces `as Array<…>`; the `is` narrows
+    // the post-filter array element type without an unsafe assertion.
+    return rows.filter((r): r is WantRow => r !== null);
   }, [profile?.wants, byFamilyAll, priceMode]);
 
   const availableRows = useMemo(() => {
     if (!profile?.available) return [];
-    return profile.available
+    type AvailRow = { key: string; card: CardVariant; qty: number };
+    const rows: Array<AvailRow | null> = profile.available
       .map((a, i) => {
         const card = byProductId.get(a.productId);
         if (!card) return null;
         return { key: 'a-' + i, card, qty: a.qty };
-      })
-      .filter(Boolean) as Array<{ key: string; card: CardVariant; qty: number }>;
+      });
+    return rows.filter((r): r is AvailRow => r !== null);
   }, [profile?.available, byProductId]);
 
   if (loading || isAnyLoading) {

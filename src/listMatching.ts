@@ -14,9 +14,15 @@ export function matchesRestriction(card: CardVariant, restriction: VariantRestri
  * Pick the variant of the base card that best represents a wants item for
  * quick-add purposes. "Best" = cheapest variant that satisfies the
  * restriction. Returns null when no variant matches.
+ *
+ * Accepts the minimum the function actually reads (a `restriction`)
+ * rather than a full `WantsItem` so callers with synthesised partial
+ * shapes (e.g. ProfileView, which constructs a wants-shaped row from
+ * a /api/user response without the storage fields) don't need an
+ * `as any` cast at the boundary.
  */
 export function bestMatchForWant(
-  item: WantsItem,
+  item: Pick<WantsItem, 'restriction'>,
   candidates: CardVariant[],
   priceMode: PriceMode,
 ): CardVariant | null {

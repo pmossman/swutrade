@@ -14,7 +14,15 @@
 
 ## Changes
 
-_(none yet — populated as commits land)_
+### `1cfe3e1` — NumberStepper +/− 44×44 hit area
+**Surface(s):** every list row's qty editor, trade-side qty editors, signal-builder qty + max-price.
+**What changed (before → after):** Visual stays identical (24×24 / 20×20 buttons). Touch target on mobile now expands to a centred 44×44 transparent box via `hit-area-44` pseudo-element (already used elsewhere). Desktop unchanged (the visual stays the click target).
+**Why:** WCAG 2.1 Target Size minimum; mistaps on mobile qty editors flagged in audit F-J1.
+**Files touched:** `src/components/ui/NumberStepper.tsx`.
+**Screenshots / how to see it:** mobile view of the wishlist drawer (any qty stepper). The visual button is unchanged; the tap area extends invisibly outwards.
+**To revert:** `git revert 1cfe3e1`
+
+
 
 <!--
 Template for entries:

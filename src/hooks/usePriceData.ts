@@ -45,12 +45,13 @@ export function usePriceData() {
         cards: { ...prev.cards, [set.slug]: data },
         loading: { ...prev.loading, [set.slug]: false },
       }));
-    } catch (err: any) {
+    } catch (err) {
       loadedRef.current.delete(set.slug); // Allow retry
+      const message = err instanceof Error ? err.message : 'Unknown error loading prices';
       setState(prev => ({
         ...prev,
         loading: { ...prev.loading, [set.slug]: false },
-        errors: { ...prev.errors, [set.slug]: err.message },
+        errors: { ...prev.errors, [set.slug]: message },
       }));
     }
   }, []);
