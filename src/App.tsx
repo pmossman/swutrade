@@ -966,15 +966,16 @@ function App() {
               ≥1 session). Position-fixed at top so every view sees it
               regardless of header structure. Cleared on dismiss. */}
           <MergeReassuranceBanner auth={auth} />
-          {/* The trade-builder owns its own 100dvh layout AND
-              renders AppFooter + MobileLegalDisclaimer inline
-              (see renderTradeBuilder), so wrapping it here would
-              double-render the footer. Every other view renders
-              flat content without a footer — wrap those in a
-              min-h-[100dvh] flex column so AppFooter sticks to the
-              viewport bottom on short pages and naturally follows
-              long-page content. */}
-          {viewMode === 'trade' ? (
+          {/* The trade-builder + the mobile chat-page own their own
+              viewport-height layouts AND render any chrome inline,
+              so wrapping them here would (a) double-render the
+              footer or (b) push the chat input below the page
+              footer where iOS auto-scrolls past it on focus. Every
+              other view renders flat content without a footer —
+              wrap those in a min-h-[100dvh] flex column so AppFooter
+              sticks to the viewport bottom on short pages and
+              naturally follows long-page content. */}
+          {viewMode === 'trade' || viewMode === 'session-chat' ? (
             <Suspense fallback={<LoadingState centered />}>
               {renderBody()}
             </Suspense>

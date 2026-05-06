@@ -44,8 +44,21 @@ export function SessionChatView({ sessionId }: { sessionId: string }) {
     { label: 'Chat' },
   ], [counterpartHandle, sessionId]);
 
+  // `h-[100dvh]` (NOT `min-h`) so the layout exactly fills the
+  // viewport — important for the chat input pinning. With min-height
+  // the page can grow taller than the viewport (e.g. when AppFooter
+  // is rendered as a sibling), which lets iOS auto-scroll past the
+  // input on focus and reveal page-footer content between the input
+  // and keyboard. Fixed-height + flex-col + flex-1 on the body
+  // means: events list shrinks when the keyboard pushes 100dvh
+  // smaller; input stays anchored at the bottom of the visible
+  // viewport.
+  //
+  // App.tsx skips its outer footer-wrapper when viewMode is
+  // 'session-chat' (matches the same special-case for 'trade'), so
+  // we don't double-mount AppFooter here either.
   return (
-    <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
+    <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
       <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
       <main className="flex-1 min-h-0 flex flex-col">
         {status === 'loading' && !session && (
