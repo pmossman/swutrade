@@ -182,7 +182,18 @@ export function SessionTimelinePanel({ session, onClose, sendChat, proposeRevert
         role="dialog"
         aria-modal="true"
         aria-labelledby="session-timeline-panel-title"
-        className="fixed inset-0 z-50 sm:inset-y-0 sm:left-auto sm:right-0 sm:w-full sm:max-w-md bg-space-900 sm:border-l sm:border-space-700 flex flex-col sm:shadow-2xl"
+        // Mobile: explicit `top-0 left-0 right-0 h-screen` (NOT
+        // `inset-0`). h-screen = 100vh = full screen height, NOT the
+        // shrunken-by-keyboard layout viewport that `inset-0` resolves
+        // to on iOS Safari. Trade-off: when the keyboard opens, the
+        // bottom of the panel sits BEHIND the keyboard. The input
+        // (in the footer) is briefly occluded — but the trade canvas
+        // is GUARANTEED hidden regardless of any iOS Safari viewport
+        // weirdness, which was the worse bug.
+        //
+        // Desktop (sm:): right-side drawer at max-w-md, height
+        // implicit from `top-0 bottom-0`.
+        className="fixed top-0 left-0 right-0 h-screen z-50 sm:left-auto sm:bottom-0 sm:h-auto sm:max-w-md bg-space-900 sm:border-l sm:border-space-700 flex flex-col sm:shadow-2xl"
       >
           <header className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-space-800">
             <div className="min-w-0">
