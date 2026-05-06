@@ -109,7 +109,7 @@ export function NumberStepper({
         aria-label={`Decrease${ariaLabel ? ` ${ariaLabel.toLowerCase()}` : ''}`}
         onClick={() => bump(-1)}
         disabled={value != null && value <= min}
-        className={`${btnSize} rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:border-space-700 transition-colors flex items-center justify-center font-bold`}
+        className={`${btnSize} hit-area-44 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:border-space-700 transition-colors flex items-center justify-center font-bold`}
       >
         −
       </button>
@@ -141,7 +141,7 @@ export function NumberStepper({
         aria-label={`Increase${ariaLabel ? ` ${ariaLabel.toLowerCase()}` : ''}`}
         onClick={() => bump(1)}
         disabled={value != null && value >= max}
-        className={`${btnSize} rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:border-space-700 transition-colors flex items-center justify-center font-bold`}
+        className={`${btnSize} hit-area-44 rounded bg-space-800 border border-space-700 text-gray-400 hover:text-gold hover:border-gold/40 disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:border-space-700 transition-colors flex items-center justify-center font-bold`}
       >
         +
       </button>
