@@ -59,21 +59,29 @@ export function SessionChatView({ sessionId }: { sessionId: string }) {
     { label: 'Chat' },
   ], [counterpartHandle, sessionId]);
 
-  // `h-[100dvh]` (NOT `min-h`) so the layout exactly fills the
-  // viewport — important for the chat input pinning. With min-height
-  // the page can grow taller than the viewport (e.g. when AppFooter
-  // is rendered as a sibling), which lets iOS auto-scroll past the
-  // input on focus and reveal page-footer content between the input
-  // and keyboard. Fixed-height + flex-col + flex-1 on the body
-  // means: events list shrinks when the keyboard pushes 100dvh
-  // smaller; input stays anchored at the bottom of the visible
-  // viewport.
+  // `position: fixed; inset: 0` on the outer (NOT just `h-[100dvh]`)
+  // because iOS Safari's input-focus-into-view scroll bypasses
+  // `body { overflow: hidden }` — it programmatically shifts the
+  // layout viewport even when scroll is "locked." A `position: fixed`
+  // element is anchored to the viewport regardless of how iOS has
+  // shifted things, so the AppHeader stays put across keyboard
+  // open/close cycles. (Without this, the header slides behind the
+  // iPhone notch when the keyboard closes.)
+  //
+  // The internal layout (flex-col, flex-1 main, sticky-bottom input)
+  // still works the same way because the inner children are normal-flow
+  // descendants of the fixed wrapper. Critically: this is the FULL
+  // PAGE wrapper, not a child overlay nested inside another page —
+  // earlier iterations of `position: fixed` on the chat panel had
+  // issues because they were CHILDREN of SessionView's normal-flow
+  // tree. Here the chat view IS the page; fixed positioning anchors
+  // it to the viewport with no parent-tree quirks.
   //
   // App.tsx skips its outer footer-wrapper when viewMode is
   // 'session-chat' (matches the same special-case for 'trade'), so
   // we don't double-mount AppFooter here either.
   return (
-    <div className="h-[100dvh] bg-space-900 text-gray-100 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 bg-space-900 text-gray-100 flex flex-col overflow-hidden">
       <AppHeader auth={auth} breadcrumbs={breadcrumbs} />
       <main className="flex-1 min-h-0 flex flex-col">
         {status === 'loading' && !session && (
