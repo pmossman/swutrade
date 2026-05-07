@@ -161,73 +161,44 @@ traders negotiate without leaving the canvas. Sets up snapshot history
 
 Ordered smallest / highest-clarity first so the between-slice ritual feedback loop stays fast. Re-order as priorities shift.
 
-### 1. Wishlist / Binder split (foundational)
+### 1. Card signals — Discord-native response surface (PR 2)
 
-**Why:** Home presents "Your wishlist" and "Your binder" as two first-class modules, but both deep-link into the same `ListsDrawer` with tabs labelled "Wants" + "Available". The copy mismatch (wishlist↔wants, binder↔available) is a comprehension gap; more importantly, the shared edit surface couples the two concepts' evolution. They have different mental models (hunting vs. holding) and different data shapes (wants carries priority + variant restriction; available does not) — any improvement to one has to defend against regressions in the other. Splitting them unblocks independent evolution.
+**Why:** SWUTrade's wishlist + binder are the long-tail "what I want / what I have" inventory; signals are the **acute** version — "I specifically need 1× Luke before Friday's draft" or "I have an extra Cassian I want to offload by tonight." PR 1 (shipped 2026-04-28) made the *broadcast* — embed with public match listing, cancel/specify-variant buttons. But there's still no way for a matched user to *act* on a signal short of free-text DMing the author. PR 2 closes that gap.
 
-**What ships (split slice only — no new features):**
-- Two dedicated full-page views reachable from Home: `/?view=wishlist` and `/?view=binder` (or the equivalent via existing query-param router). Each owns its own layout + chrome.
-- Reconcile vocabulary: "Wishlist" / "Binder" everywhere user-facing (headers, nav, breadcrumbs, empty states). Schema names (`wants` / `available`) stay internal.
-- Keep the in-trade-builder drawer as a slim quick-edit sidebar only — it's load-bearing for "let me add a card I have while staging a trade." Home's module links route to the dedicated views, not the drawer.
-- Feature parity with today's drawer tabs — no new functionality in this slice.
-- `useNavigation` grows `toWishlist()` / `toBinder()` methods; Home modules call them.
-- Route config (`src/routing/config.ts`) adds the two new view modes + STANDALONE flags so `useTradeUrl` leaves their params alone.
+**Design pivot from the original plan (2026-05-06):** the original PR 2 was proposal-shaped (modal → `trade_proposals` row → ghost-mint on response → fulfillment detection on `accepted`). Phase C deleted proposals; the new shape is Discord-native — auto-thread + author/matched-user pings, with a single escalation button into a pre-seeded session. Drops the modal-submit dispatcher, the `signal-respond:*` custom_ids, the ghost-mint-on-response wedge, and the auto-detect-on-settle PR 3 entirely. Wedge moves from "anonymous Discord user mints a ghost on click" to "Discord user clicks 'Trade with @author', lands on session-create, signs in *there* — at the moment SWUTrade adds unique value." Better fit with the mission memory ("Discord augments local/in-person trading").
+
+**What ships:**
+- **Auto-spawn a thread** under each new signal post via `startThreadFromMessage` (new method on `lib/discordBot.ts`). Thread name format: `signal-{authorHandle}-{shortCode}` ≤100 chars. `card_signals.thread_id` denorm column for fulfillment-time updates.
+- **Thread opener message** mentions matched users from the existing match listing: "Hey @alice, @bob — this signal matches cards in your wishlist." Replaces the auto-DM idea outright. Uses Discord's `<@id>` mention syntax so notifications fire.
+- **"Trade with @author" button on the embed** — deep-links to `/sessions/new?counterpart=<authorHandle>&seedFromSignal=<signalId>` on web. The session-create endpoint reads the signal payload + the clicker's binder/wishlist and pre-seeds both halves (author's "looking for" cards on author's side; clicker's matching binder cards on clicker's side). Sign-in gate is at the web boundary — natural place for the ask, not on a Discord click.
+- **"Mark fulfilled" button on the embed** — author-only. PATCHes the embed with a green "Fulfilled" badge, locks the thread, transitions `card_signals.status` → `fulfilled`. Manual close — drops the original PR 3's auto-detection-on-settle. Users self-resolve; matches the in-person reality of trades happening offline.
+- **Re-post-same-card behavior** (carried over from original PR 3): `POST /api/signals` for an already-active card bumps `expires_at` rather than duplicating.
+- **Tests:** vitest extends `tests/api/signals.test.ts` for the thread-id round-trip + mark-fulfilled handler; new `e2e/signals.auth.spec.ts` covers the "Trade with @author" deep-link → pre-seeded session flow.
 
 **Done when:**
-- [ ] Two dedicated views render feature-equivalent to today's drawer tabs.
-- [ ] Home's wishlist + binder modules link to the dedicated views.
-- [ ] Drawer retains only the in-trade-builder role; no Home entry point into it.
-- [ ] Vocabulary reconciled across the wishlist/binder user-facing surfaces.
-- [ ] e2e specs that clicked into "Edit wishlist →" / "Edit binder →" updated for the new routes.
+- [ ] New signal posts spawn a thread; matched users get notified via mention in the opener.
+- [ ] "Trade with @author" deep-link lands on session-create with both halves pre-seeded.
+- [ ] Author "Mark fulfilled" PATCHes embed + locks thread.
+- [ ] Re-post-same-card bumps `expires_at` instead of duplicating.
+- [ ] `docs/wiki/i-discord-bot.md` updated with thread + mark-fulfilled surface.
 - [ ] Between-slice ritual passes.
 
-**Follow-up:** the enhancement backlog below lives on its own so we can pick per-slice after this foundation lands.
-
----
-
-### 2. Card signals — response surface (PR 2 / PR 3)
-
-**Why:** SWUTrade's wishlist + binder are the long-tail "what I want / what I have" inventory; signals are the **acute** version — "I specifically need 1× Luke before Friday's draft" or "I have an extra Cassian I want to offload by tonight." Today users do this via free-text Discord channels; the bot can structure that flood, auto-add to inventory, ping matched users, and turn anonymous responders into ghost users with an inviting on-ramp into SWUTrade. Designed forward-compat for the future LGS integration (event scope is in the schema from day 1).
-
-Wireframe doc lives in conversation history (2026-04-28) — fold into a `docs/wiki/` page when implementation starts.
-
-**What ships (PR 1 — shipped 2026-04-28; see Active slice above):**
-- New `card_signals` table + the web Signal Builder + Discord embed
-  rendering + button interactions (Cancel post, Specify variant).
-- Match listings render publicly in the embed. No auto-DMs.
-
-**What ships (PR 2 — response surface, not yet started):**
-- Thread spawned under each live signal post for a visible response trail.
-- "I have this!" / "I want this!" button → Discord modal → quick-respond flow:
-  - Signed-in users → real `trade_proposals` row, posts public response in thread.
-  - Anonymous users → ghost user minted (`createGhostUser` keyed to `discord_id`), proposal still real, response posted with "Discord-only · join SWUTrade" badge, confirmation DM with soft sign-in CTA.
-- Ghost spam limit: max 3 active responses across all signals (forces resolution or sign-in for headroom).
-- `lib/discordBot.ts` — add `startThreadFromMessage` + modal-response helpers (modal interaction type is new for us).
-- `api/bot.ts` — modal-submit dispatch path for `signal-respond:*` custom_ids.
-
-**What ships (PR 3 — fulfillment detection):**
-- `lib/proposalResolve.ts` — on `accepted` transition, mark matching signal `fulfilled`, PATCH embed (green "Fulfilled by @responder" badge), lock thread.
-- Re-post-same-card behavior: `POST /api/signals` for an already-active card bumps the existing signal's `expires_at` rather than posting a duplicate.
-- Vitest coverage extends `tests/api/signals.test.ts` (response thread, ghost mint, fulfillment); e2e in `e2e/signals.auth.spec.ts` for the signed-in response flow.
-
-**Done when:**
-- [ ] Anonymous click → modal → ghost-mint → real proposal + public response thread post all work end-to-end.
-- [ ] Ghost claims merge cleanly when the user later signs in via OAuth.
-- [ ] Fulfillment-detection PATCHes the signal embed correctly on `accepted`.
-- [ ] Ghost spam limit enforced.
-- [ ] `docs/wiki/` page created summarizing the feature surface.
-- [ ] Between-slice ritual passes for each PR.
+**Explicit non-goals (vs. original plan):**
+- No "I have this!" / "I want this!" structured response button. Discord-native conversation in the thread replaces it.
+- No Discord modal-submit dispatcher. (Modals stay an unused interaction type for us until a feature genuinely needs them.)
+- No ghost-mint-on-response wedge. Ghosts already exist for sessions; sign-up happens at session-create, not at thread-reply.
+- No fulfillment detection on session-settle. Manual "Mark fulfilled" is enough until volume warrants automation.
 
 **Follow-ups (post-shipping, separate slices):**
-- Endorse-a-response (⭐ button the requester can click on a public response) — deferred per design discussion.
-- Bulk `/event-list <event>` aggregating all of a user's active signals into one event-scoped post once LGS lands.
-- Privacy-mode signal (DM-only response, no public thread) for users who want lower visibility — separate consent toggle.
+- If users start asking "how do I tell the author I'm interested without committing to a trade," consider a thin "react with 🤝 to ping the author" pattern — purely Discord-native, no new schema.
+- Bulk `/event-list <event>` aggregating a user's active signals into one event-scoped post once LGS lands.
+- Privacy-mode signal (DM-only, no thread) for users who want lower visibility — separate consent toggle.
 
 ---
 
 ## Wishlist / Binder enhancement backlog
 
-Each item is a potential per-slice pickup after the **Wishlist / Binder split (foundational)** queue item lands. Nothing here is committed; they're a menu to choose from as real use warrants. Items are intentionally unsized — scope them when one is promoted to the Queue.
+The foundational split shipped 2026-04-21 (see Done). Each item below is a potential per-slice pickup; nothing here is committed. They're a menu to choose from as real use warrants. Items are intentionally unsized — scope them when one is promoted to the Queue.
 
 ### Wishlist (forward-looking — "what I'm hunting for")
 
@@ -320,6 +291,9 @@ Branch preserved for reference (no merge planned). `docs/v2/` scaffolding stays 
 ## Done
 
 *(append here as slices ship; newest-first)*
+
+### 2026-04-21 — Wishlist / Binder split (foundational) ✅
+Commits: `14a7d48` (split landed) + follow-ups (`64fd3a4` vocab tweak, `8c1be05` picker consolidation, `4d7380a` viewport lock, `9c365d0` AvailableRow memoization, `9724079` EmptyState centered variant, `c237cf8` restrictionKey centralization). Two dedicated views at `/?view=wishlist` and `/?view=binder` (`src/components/WishlistView.tsx`, `BinderView.tsx`), shared edit panels split out under `src/components/lists/{WantsPanel,AvailablePanel}.tsx`. `useNavigation` grew `toWishlist()` / `toBinder()`; Home's WishlistModule + BinderModule call them and never deep-link the drawer. Routes added to `src/routing/config.ts` with STANDALONE flags so trade-codec sync leaves them alone. ListsDrawer kept for in-trade-builder quick-edit only (App.tsx + SessionView.tsx mount it). Vocabulary reconciled: "Wishlist" / "Trade binder" everywhere user-facing; schema names (`wants` / `available`) stay internal. e2e at `e2e/wishlist-binder.spec.ts` covers both views + NavMenu routing; `e2e/drawer.spec.ts` retained for the in-trade-builder surface. Unblocks the Wishlist / Binder enhancement backlog.
 
 ### 2026-05-05 — Sessions become the only trade primitive (Phase B + C complete)
 
