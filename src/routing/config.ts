@@ -38,7 +38,7 @@ export type ViewMode =
   | 'signal-builder';
 
 /** Params that a trade-composer URL carries. Any of them → trade view. */
-const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance'] as const;
+const TRADE_INTENT_KEYS = ['propose', 'counter', 'edit', 'from', 'autoBalance', 'seedFromSignal'] as const;
 
 /** Trade-codec keys — owned by useTradeUrl's merge-write, NOT by a view's `paramKeys`. */
 const TRADE_CODEC_KEYS = ['y', 't', 'pct', 'pm'] as const;

@@ -88,9 +88,23 @@ export interface DiscordBotClient {
     parentChannelId: string,
     opts: { name: string; autoArchive?: 60 | 1440 | 4320 | 10080 },
   ): Promise<{ id: string; parent_id: string }>;
+  /** Create a public thread anchored to a specific message. The thread
+   *  shows up under the message ("View thread" affordance) and anyone
+   *  in the parent channel can see + post in it without being added.
+   *  Used by signal posts so responses live in a visible trail tied to
+   *  the broadcast embed. */
+  startThreadFromMessage(
+    channelId: string,
+    messageId: string,
+    opts: { name: string; autoArchive?: 60 | 1440 | 4320 | 10080 },
+  ): Promise<{ id: string; parent_id: string }>;
   /** Add a user to a thread. Sends them a "X added you to a thread"
    *  system message + push notification. */
   addThreadMember(threadId: string, userId: string): Promise<void>;
+  /** Archive + lock a thread. New posts are rejected; existing
+   *  contents stay readable. Used to close a signal thread when the
+   *  author marks it fulfilled so stragglers don't keep replying. */
+  lockThread(threadId: string): Promise<void>;
   /** Delete a channel or thread. Used to clean up an orphan thread
    *  after `addThreadMember` fails (e.g. recipient isn't a real
    *  Discord user) — otherwise the parent channel accumulates empty
@@ -301,12 +315,42 @@ export function createDiscordBotClient(opts: CreateBotClientOptions = {}): Disco
       return res.json() as Promise<{ id: string; parent_id: string }>;
     },
 
+    async startThreadFromMessage(channelId, messageId, opts) {
+      if (isSyntheticDiscordId(channelId) || isSyntheticDiscordId(messageId)) {
+        return { id: syntheticId('synth-thread'), parent_id: channelId };
+      }
+      // POST /channels/{cid}/messages/{mid}/threads creates a public
+      // thread (type 11) anchored to the message. No `type` field
+      // needed — Discord infers public-anchored from the URL shape.
+      // Anyone with channel access can see + post; visibility is the
+      // whole point versus createPrivateThread (type 12).
+      const res = await request(`/channels/${channelId}/messages/${messageId}/threads`, {
+        method: 'POST',
+        body: JSON.stringify({
+          name: opts.name,
+          auto_archive_duration: opts.autoArchive ?? 1440,
+        }),
+      });
+      return res.json() as Promise<{ id: string; parent_id: string }>;
+    },
+
     async addThreadMember(threadId, userId) {
       if (isSyntheticDiscordId(threadId) || isSyntheticDiscordId(userId)) return;
       // PUT — idempotent. Adding a user already in the thread is a
       // 204 no-op, so retrying on 5xx can't double-add.
       await request(`/channels/${threadId}/thread-members/${userId}`, {
         method: 'PUT',
+      }, { idempotent: true });
+    },
+
+    async lockThread(threadId) {
+      if (isSyntheticDiscordId(threadId)) return;
+      // PATCH /channels/{tid} with archived+locked. Order matters
+      // for older API versions — archive must come before lock —
+      // but v10 accepts both in one body.
+      await request(`/channels/${threadId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archived: true, locked: true }),
       }, { idempotent: true });
     },
 

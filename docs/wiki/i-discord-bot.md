@@ -142,7 +142,9 @@ Dropped in `drizzle/0031_prefs_hygiene_drop_dead_columns.sql` together with the 
 | `sendDirectMessage(userId, body)` | open-then-post composite | proposal DMs, thread-approval prompts, welcome DMs, enrollment invites |
 | `getGuild(guildId)` | `GET /guilds/{id}` | fallback when `APPLICATION_AUTHORIZED` event data lacks guild name/icon |
 | `createPrivateThread(parentChannelId, {name, autoArchive})` | `POST /channels/{id}/threads` with `type: 12, invitable: false` | both the initial `thread-immediately` path and the later approve-thread flow |
+| `startThreadFromMessage(channelId, messageId, {name, autoArchive})` | `POST /channels/{id}/messages/{mid}/threads` (public, type 11) | spawns a public response thread anchored to a signal post — anyone in the channel can see + reply |
 | `addThreadMember(threadId, userId)` | `PUT /channels/{id}/thread-members/{uid}` | adds proposer + recipient to a new thread (Discord emits "X added you to a thread" system message + push) |
+| `lockThread(threadId)` | `PATCH /channels/{tid}` with `{archived:true, locked:true}` | closes a signal thread when the author marks it fulfilled — new posts are rejected, contents stay readable |
 | `deleteChannel(channelId)` | `DELETE /channels/{id}` | cleanup of orphaned threads when `addThreadMember` fails (e.g., recipient isn't in the guild or the bot lacks perms) |
 | `createGuildChannel(guildId, opts)` | `POST /guilds/{id}/channels` | auto-create `#swutrade-threads` on install |
 | `getGuildBotMember(guildId, botUserId)` | `GET /guilds/{gid}/members/{uid}` | resolve the bot's managed-integration role so we can hand it channel overwrites; Discord's `/members/@me` rejects bots with 403 so caller passes the id explicitly |
@@ -181,6 +183,7 @@ Every button carries a `custom_id` the handler pattern-matches on. Prefixes (def
 |---|---|---|
 | `pref:` | `pref:{key}:{open\|set}[:value]` (self only) | `handlePrefsButton` |
 | `server-invite:` | `server-invite:{guildId}:enroll` | `handleServerInviteButton` |
+| `signal:` | `signal:{groupId\|rowId}:{cancel\|fulfilled\|trade\|variant-open\|variant-pick}` | `handleSignalButton` |
 
 Retired prefixes — `trade-proposal:` (Phase C, with the proposal primitive) and `comm-pref:` + the `pref:peer:*` / `pref:combo:*` grammars (prefs hygiene pass, with the peer scope) — fall through to the unknown-button branch (silent `DEFERRED_UPDATE` ack). In-flight DMs from before each retirement keep working at the surface level (no error toast).
 
@@ -195,6 +198,22 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 ### Resolver
 
 - `resolvePref({ key, viewerUserId }) → Promise<PrefValue>` — `lib/prefsResolver.ts`. Throws on unknown key (catch at the API boundary, not here). The historical `peerUserId` parameter is accepted for compatibility but ignored after the prefs hygiene pass.
+
+### Signals (web-authored, bot-broadcast)
+
+Signals are the *acute* version of wishlist/binder — "I specifically need 1× Luke before Friday's draft" — authored on the web at `/?signals=new` and broadcast as a Discord embed. The bot owns the embed render, the response thread, and the per-post button interactions.
+
+**Data model:** `card_signals` table (`lib/schema.ts`). Composite group via `group_id` for multi-card signals. Status enum: `active` / `cancelled` / `expired` / `fulfilled`. Forward-compat for LGS via `event_id` + `lgs_id` columns. `thread_id` denorm carries the response thread's id once spawned.
+
+**Embed buttons** (`lib/signalMessages.ts::buildActionRow`):
+- **Trade with @author** (`signal:{groupId}:trade`) — primary CTA, public. Anyone in the channel can click; the ephemeral response carries a deep link `/?seedFromSignal=<groupId>`. Sign-in (or ghost mint) happens at the web boundary, not here. This is the conversion funnel for anonymous Discord users.
+- **Mark fulfilled** (`signal:{groupId}:fulfilled`) — author-only. Flips every row in the group to `fulfilled`, PATCHes the embed (gray badge, no buttons), locks the response thread. Manual close — there's no auto-detection on session-settle.
+- **Cancel post** (`signal:{groupId}:cancel`) — author-only. Same shape, status → `cancelled`.
+- **Pick a printing** (`signal:{rowId}:variant-open`) — single-card author-only, only when variant=any. Opens an ephemeral string-select.
+
+**Response thread:** `startThreadFromMessage` spawns a public thread anchored to the signal post (`api/signals.ts::handleCreate`). The opener message mentions matched users (`<@discordId>`) with `allowed_mentions: { parse: ['users'] }` so they actually get pinged — the embed itself sets `parse: []` to suppress its own match-list mentions. Thread spawn is best-effort: failure logs + reports but doesn't roll back the embed (the post is already up).
+
+**Re-fetch on /?seedFromSignal=<id>:** the deep link from the trade button is read on web by the App-level effect in `App.tsx` — fetches `GET /api/signals/seed?groupId=<id>`, translates to `?propose=<authorHandle>` (re-uses the existing propose flow), strips the seed param. The `seed` endpoint is public-read; returns 404 for missing/cancelled/expired/fulfilled groups.
 
 ### Error reporter
 

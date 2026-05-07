@@ -23,7 +23,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
 import {
@@ -45,6 +45,7 @@ import {
 } from '../lib/signalMatching.js';
 import {
   buildSignalPost,
+  buildSignalThreadOpener,
   formatExpiryHint,
 } from '../lib/signalMessages.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
@@ -57,6 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     case 'create': return handleCreate(req, res);
     case 'cancel': return handleCancel(req, res);
     case 'mine':   return handleListMine(req, res);
+    case 'seed':   return handleSeed(req, res);
     default:
       return res.status(404).json({ error: 'Unknown /api/signals action' });
   }
@@ -390,15 +392,57 @@ export async function handleCreate(
     });
   }
 
-  // Stamp the message id on every row.
+  // Spawn a public response thread anchored to the post so matched
+  // users get pinged in the opener and any reply trail stays visible
+  // to the channel. Thread-spawn failures are non-fatal — the embed
+  // is already up; we report + continue. Author can still get a
+  // "Trade with @author" click.
+  const threadName = buildSignalThreadName({ handle: signaler.handle, groupId });
+  let threadId: string | null = null;
+  try {
+    const thread = await bot.startThreadFromMessage(channelId, postedMessageId, {
+      name: threadName,
+    });
+    threadId = thread.id;
+  } catch (err) {
+    console.error('handleCreate: startThreadFromMessage failed', err);
+    await reportError({
+      source: 'signals.create.thread',
+      tags: { groupId, channelId, messageId: postedMessageId },
+    }, err);
+  }
+
+  if (threadId) {
+    // Dedupe matched discord ids across cards — a member who has
+    // multiple matching cards should only be mentioned once.
+    const matchedDiscordIds = Array.from(new Set(
+      cardsForEmbed.flatMap(c => c.matchedUsers.map(m => m.discordId)),
+    ));
+    try {
+      await bot.postChannelMessage(threadId, buildSignalThreadOpener({
+        authorHandle: signaler.handle,
+        matchedDiscordIds,
+        kind: body.kind,
+      }));
+    } catch (err) {
+      console.error('handleCreate: thread opener post failed', err);
+      await reportError({
+        source: 'signals.create.thread-opener',
+        tags: { groupId, threadId },
+      }, err);
+    }
+  }
+
+  // Stamp the message id (+ thread id if we got one) on every row.
   await db.update(cardSignals)
-    .set({ messageId: postedMessageId })
+    .set({ messageId: postedMessageId, ...(threadId ? { threadId } : {}) })
     .where(eq(cardSignals.groupId, groupId));
 
   return res.status(201).json({
     groupId,
     messageId: postedMessageId,
     channelId,
+    threadId,
     guildId: body.guildId,
     messageUrl: `https://discord.com/channels/${body.guildId}/${channelId}/${postedMessageId}`,
     matchSummary: cardsForEmbed.map(c => ({
@@ -406,6 +450,14 @@ export async function handleCreate(
       matchCount: c.matchedUsers.length,
     })),
   });
+}
+
+/** Discord thread names cap at 100 chars. Format mirrors the trade-
+ *  thread convention — `signal-{handle}-{shortId}` — so the channel
+ *  list stays scannable. */
+function buildSignalThreadName(args: { handle: string; groupId: string }): string {
+  const shortId = args.groupId.replace(/-/g, '').slice(0, 8);
+  return `signal-${args.handle}-${shortId}`.slice(0, 100);
 }
 
 // --- cancel ----------------------------------------------------------------
@@ -505,6 +557,107 @@ export async function handleCancel(
   }
 
   return res.status(200).json({ ok: true, groupId });
+}
+
+// --- seed (powers /?seedFromSignal=<id> on the web) -------------------------
+
+/**
+ * Public read endpoint — returns the author handle + a
+ * TradeCardSnapshot[] for every card in the signal group. The web
+ * trade builder calls this when it detects `?seedFromSignal=<id>` in
+ * the URL and uses the response to pre-fill one side of the canvas
+ * (which side depends on `kind` — see comment below).
+ *
+ * No auth — the embed itself is public, and this endpoint exposes
+ * strictly less than what the embed already shows. Anonymous Discord
+ * users hitting this via the "Trade with @author" deep link is the
+ * conversion funnel.
+ *
+ * 404 when the group is missing or fully cancelled/expired/fulfilled
+ * — there's nothing meaningful to seed in those cases.
+ */
+export async function handleSeed(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+  const groupId = (req.query.groupId as string | undefined) ?? '';
+  if (!groupId) return res.status(400).json({ error: 'groupId required' });
+
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(cardSignals)
+    .where(and(
+      eq(cardSignals.groupId, groupId),
+      eq(cardSignals.status, 'active'),
+    ));
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Signal not found or no longer active' });
+  }
+
+  const [author] = await db
+    .select({ id: users.id, handle: users.handle, username: users.username, avatarUrl: users.avatarUrl })
+    .from(users)
+    .where(eq(users.id, rows[0].userId))
+    .limit(1);
+  if (!author) return res.status(404).json({ error: 'Signal author missing' });
+
+  // Resolve family + variantSpec via the batch helper, then a side
+  // query for qty (which lives on the underlying wants/available
+  // row, not on card_signals itself). Two extra SELECTs maximum,
+  // independent of group size.
+  const resolved = await resolveSignalCardsBatch(db, rows);
+  const wantsIds = rows.flatMap(r => r.kind === 'wanted' && r.wantsItemId ? [r.wantsItemId] : []);
+  const availIds = rows.flatMap(r => r.kind === 'offering' && r.availableItemId ? [r.availableItemId] : []);
+  const [wantsQtys, availQtys] = await Promise.all([
+    wantsIds.length > 0
+      ? db.select({ id: wantsItems.id, qty: wantsItems.qty }).from(wantsItems).where(inArray(wantsItems.id, wantsIds))
+      : Promise.resolve([] as Array<{ id: string; qty: number }>),
+    availIds.length > 0
+      ? db.select({ id: availableItems.id, qty: availableItems.qty }).from(availableItems).where(inArray(availableItems.id, availIds))
+      : Promise.resolve([] as Array<{ id: string; qty: number }>),
+  ]);
+  const wantsQtyMap = new Map(wantsQtys.map(r => [r.id, r.qty] as const));
+  const availQtyMap = new Map(availQtys.map(r => [r.id, r.qty] as const));
+
+  const cards = rows.map((row) => {
+    const r = resolved.get(row.id);
+    if (!r) return null;
+    const { family, variantSpec } = r;
+    // For variantSpec='any', pick the family's representative
+    // variant so the snapshot has a concrete productId; the user
+    // can swap in the trade builder if they want.
+    const representative = variantSpec.mode === 'restricted'
+      ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
+      : family.variants[0];
+    if (!representative) return null;
+    const qty = row.kind === 'wanted' && row.wantsItemId
+      ? wantsQtyMap.get(row.wantsItemId) ?? 1
+      : row.kind === 'offering' && row.availableItemId
+        ? availQtyMap.get(row.availableItemId) ?? 1
+        : 1;
+    return {
+      productId: representative.productId,
+      name: family.name,
+      variant: representative.variant,
+      qty,
+      unitPrice: representative.market ?? null,
+    };
+  }).filter((c): c is NonNullable<typeof c> => c !== null);
+
+  return res.status(200).json({
+    groupId,
+    kind: rows[0].kind,
+    note: rows[0].signalNote,
+    author: {
+      id: author.id,
+      handle: author.handle,
+      username: author.username,
+      avatarUrl: author.avatarUrl,
+    },
+    cards,
+  });
 }
 
 // --- list mine -------------------------------------------------------------

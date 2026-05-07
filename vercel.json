@@ -47,6 +47,7 @@
     { "source": "/api/sessions/:id/propose-revert", "destination": "/api/sessions?action=propose-revert&id=:id" },
     { "source": "/api/sessions/:id", "destination": "/api/sessions?action=get&id=:id" },
     { "source": "/api/signals/mine", "destination": "/api/signals?action=mine" },
+    { "source": "/api/signals/seed", "destination": "/api/signals?action=seed" },
     { "source": "/api/signals/:groupId/cancel", "destination": "/api/signals?action=cancel&groupId=:groupId" },
     { "source": "/api/signals/create", "destination": "/api/signals?action=create" },
     { "source": "/api/(.*)", "destination": "/api/$1" }

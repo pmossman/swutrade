@@ -25,7 +25,9 @@ export const SIGNAL_CUSTOM_ID_PREFIX = 'signal';
 const COMPONENT_TYPE_ACTION_ROW = 1;
 const COMPONENT_TYPE_BUTTON = 2;
 const COMPONENT_TYPE_STRING_SELECT = 3;
+const BUTTON_STYLE_PRIMARY = 1;
 const BUTTON_STYLE_SECONDARY = 2;
+const BUTTON_STYLE_SUCCESS = 3;
 const BUTTON_STYLE_DANGER = 4;
 
 // Brand palette: blue for "wanted" (one side of a trade), emerald
@@ -235,10 +237,23 @@ function formatMatchLine(matches: MatchedMember[], kind: CardSignalKind): string
 function buildActionRow(ctx: SignalEmbedContext): DiscordComponent[] {
   if (ctx.status !== 'active') return [];
 
-  // Live: Cancel post + (single-card with variant=any) Specify
-  // variant. Multi-card defers per-card variant pinning to a
-  // follow-up.
+  // Order: primary CTA first (Trade with @author), then author tools
+  // (Mark fulfilled, Cancel), then variant picker. Action rows cap at
+  // 5 buttons; the worst case here is 4 (single-card variant=any).
   const buttons: DiscordComponent[] = [];
+
+  buttons.push({
+    type: COMPONENT_TYPE_BUTTON,
+    style: BUTTON_STYLE_PRIMARY,
+    label: `Trade with @${ctx.requester.handle}`.slice(0, 80),
+    custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:trade`,
+  });
+  buttons.push({
+    type: COMPONENT_TYPE_BUTTON,
+    style: BUTTON_STYLE_SUCCESS,
+    label: 'Mark fulfilled',
+    custom_id: `${SIGNAL_CUSTOM_ID_PREFIX}:${ctx.groupId}:fulfilled`,
+  });
   if (ctx.cards.length === 1 && ctx.cards[0].variantSpec.mode === 'any') {
     buttons.push({
       type: COMPONENT_TYPE_BUTTON,
@@ -292,6 +307,29 @@ export function buildVariantPickerEphemeral(args: {
         max_values: 1,
       }],
     }],
+  };
+}
+
+/**
+ * Opener message posted as the first reply inside the response thread
+ * spawned under a signal post. Mentions matched users so they see a
+ * Discord notification — `allowed_mentions: { parse: ['users'] }`
+ * makes the pings actually fire (the embed itself suppresses pings
+ * because match listings are a discovery surface, not a notification
+ * firehose; the thread opener is the *opt-in* notification path).
+ */
+export function buildSignalThreadOpener(args: {
+  authorHandle: string;
+  matchedDiscordIds: string[];
+  kind: CardSignalKind;
+}): DiscordMessageBody {
+  const verb = args.kind === 'wanted' ? 'have' : 'want';
+  const content = args.matchedDiscordIds.length === 0
+    ? `No matches in this server yet — reply here if you can help @${args.authorHandle}, or hit **Trade with @${args.authorHandle}** on the post to start a session.`
+    : `${args.matchedDiscordIds.map(id => `<@${id}>`).join(', ')} — your binder/wishlist suggests you ${verb} cards on this list. Reply here, or hit **Trade with @${args.authorHandle}** on the post to start a session.`;
+  return {
+    content,
+    allowed_mentions: { parse: ['users'] },
   };
 }
 

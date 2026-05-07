@@ -14,13 +14,14 @@ import { parseIntentFromSearch, EMPTY_INTENT } from './useTradeIntent';
  */
 describe('parseIntentFromSearch', () => {
   it('seeds every field from the URL', () => {
-    const intent = parseIntentFromSearch('propose=alice&from=bob&counter=c-1&edit=e-2&autoBalance=1');
+    const intent = parseIntentFromSearch('propose=alice&from=bob&counter=c-1&edit=e-2&autoBalance=1&seedFromSignal=g-7');
     expect(intent).toEqual({
       propose: 'alice',
       from: 'bob',
       counter: 'c-1',
       edit: 'e-2',
       autoBalance: true,
+      seedFromSignal: 'g-7',
     });
   });
 

@@ -442,6 +442,53 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
+  // seedFromSignal=<groupId> deep-link handler. The Discord embed's
+  // "Trade with @author" button lands here. Resolve the group's
+  // author handle, translate to the existing `propose=<handle>`
+  // flow (which already renders the author's wants/available as
+  // picker chips inside the trade builder), and strip the param so
+  // a refresh doesn't re-fetch.
+  //
+  // Card-on-canvas pre-seed deferred to a follow-up — the propose
+  // flow already surfaces the right cards as suggestions; auto-
+  // adding them to a side is a UX choice we can iterate on once
+  // the surface is in real use.
+  const seedFromSignalGroupId = intent.seedFromSignal;
+  useEffect(() => {
+    if (!seedFromSignalGroupId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`/api/signals/seed?groupId=${encodeURIComponent(seedFromSignalGroupId)}`);
+        if (!resp.ok) {
+          // 404 (signal cancelled / expired) is the common case —
+          // drop the param, leave the user on whatever default the
+          // URL otherwise routes to.
+          if (!cancelled) intent.setIntent({ seedFromSignal: null });
+          return;
+        }
+        const body = await resp.json() as { author?: { handle?: string } };
+        const handle = body?.author?.handle ?? null;
+        if (cancelled) return;
+        const params = new URLSearchParams(window.location.search);
+        params.delete('seedFromSignal');
+        if (handle) params.set('propose', handle);
+        params.set('view', 'trade');
+        window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
+        intent.setIntent({ seedFromSignal: null, propose: handle });
+        setViewMode('trade');
+      } catch (err) {
+        console.error('seedFromSignal: fetch failed', err);
+        if (!cancelled) intent.setIntent({ seedFromSignal: null });
+      }
+    })();
+    return () => { cancelled = true; };
+    // intent.setIntent is stable from useTradeIntent (useCallback);
+    // re-running on its identity change would loop. The seed param
+    // is the only meaningful trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seedFromSignalGroupId]);
+
   // Card indexes + flat array come from CardIndexContext — derived
   // once from the shared PriceData cache rather than recomputed per view.
   const { allLoadedCards } = cardIndex;

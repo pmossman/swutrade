@@ -42,6 +42,11 @@ export interface TradeIntent {
   /** `?autoBalance=1` — one-shot "apply a balance suggestion now"
    *  signal set by ProfileView's "Balanced trade with @X" CTA. */
   autoBalance: boolean;
+  /** `?seedFromSignal=<groupId>` — Discord embed's "Trade with @author"
+   *  button deep-links here. App.tsx fetches /api/signals/seed,
+   *  translates to a `propose=<authorHandle>` intent, and strips this
+   *  param. Carrier-only in this hook; nothing else reads it. */
+  seedFromSignal: string | null;
 }
 
 export interface TradeIntentApi extends TradeIntent {
@@ -74,6 +79,7 @@ export const EMPTY_INTENT: TradeIntent = {
   counter: null,
   edit: null,
   autoBalance: false,
+  seedFromSignal: null,
 };
 
 /** Pure URL → intent parse. Exported so the reducer is testable
@@ -86,6 +92,7 @@ export function parseIntentFromSearch(search: string): TradeIntent {
     counter: readId(p.get('counter')),
     edit: readId(p.get('edit')),
     autoBalance: p.get('autoBalance') === '1',
+    seedFromSignal: readId(p.get('seedFromSignal')),
   };
 }
 
@@ -113,7 +120,7 @@ export function useTradeIntent(): TradeIntentApi {
   }, []);
 
   const clearIntent = useCallback(() => {
-    setState({ propose: null, from: null, counter: null, edit: null, autoBalance: false });
+    setState({ ...EMPTY_INTENT });
   }, []);
 
   return { ...state, setIntent, clearIntent };

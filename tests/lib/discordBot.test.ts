@@ -208,4 +208,65 @@ describe('createDiscordBotClient.request — retry + error typing', () => {
     expect(r.id).toBe('msg-ok');
     expect(sleepCalled).toBe(false);
   });
+
+  it('startThreadFromMessage hits POST /channels/:cid/messages/:mid/threads with the supplied name + auto-archive', async () => {
+    let captured: { url?: string; init?: RequestInit } = {};
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async (url, init) => {
+        captured = { url: String(url), init };
+        return okResponse({ id: 'thread-1', parent_id: '123456789012345678' });
+      }) as typeof fetch,
+      sleep: async () => {},
+    });
+    const t = await client.startThreadFromMessage(
+      '123456789012345678',
+      '987654321098765432',
+      { name: 'signal-alice-X8K2' },
+    );
+    expect(t.id).toBe('thread-1');
+    expect(captured.url).toMatch(/\/channels\/123456789012345678\/messages\/987654321098765432\/threads$/);
+    expect(captured.init?.method).toBe('POST');
+    const body = JSON.parse(String(captured.init?.body));
+    expect(body).toEqual({ name: 'signal-alice-X8K2', auto_archive_duration: 1440 });
+  });
+
+  it('startThreadFromMessage short-circuits synthetic ids', async () => {
+    let calls = 0;
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async () => { calls += 1; return okResponse({}); }) as typeof fetch,
+      sleep: async () => {},
+    });
+    const t = await client.startThreadFromMessage('test-iso-1-abc', 'msg-xyz', { name: 't' });
+    expect(t.id).toMatch(/^synth-thread-/);
+    expect(calls).toBe(0);
+  });
+
+  it('lockThread PATCHes the thread with archived+locked', async () => {
+    let captured: { url?: string; init?: RequestInit } = {};
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async (url, init) => {
+        captured = { url: String(url), init };
+        return okResponse({});
+      }) as typeof fetch,
+      sleep: async () => {},
+    });
+    await client.lockThread('123456789012345678');
+    expect(captured.url).toMatch(/\/channels\/123456789012345678$/);
+    expect(captured.init?.method).toBe('PATCH');
+    expect(JSON.parse(String(captured.init?.body))).toEqual({ archived: true, locked: true });
+  });
+
+  it('lockThread is a no-op on synthetic ids', async () => {
+    let calls = 0;
+    const client = createDiscordBotClient({
+      token: 'test-token',
+      fetch: (async () => { calls += 1; return okResponse({}); }) as typeof fetch,
+      sleep: async () => {},
+    });
+    await client.lockThread('synth-thread-x');
+    expect(calls).toBe(0);
+  });
 });

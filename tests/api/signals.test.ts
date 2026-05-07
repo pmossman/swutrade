@@ -1,7 +1,7 @@
 import { describeWithDb } from './helpers.js';
 import { describe, it, expect, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { handleCreate, handleCancel, handleListMine } from '../../api/signals.js';
+import { handleCreate, handleCancel, handleListMine, handleSeed } from '../../api/signals.js';
 import { dispatchBotPayload } from '../../api/bot.js';
 import {
   mockRequest,
@@ -32,9 +32,18 @@ const STABLE_FAMILY_ID = 'jump-to-lightspeed::luke-skywalker-hero-of-yavin';
 const STABLE_PRODUCT_ID = '617180';
 const SECONDARY_FAMILY_ID = 'secrets-of-power::aggressive-negotiations';
 
-function makeSignalBot(opts: { postId?: string } = {}): RecordingFakeBot {
+function makeSignalBot(opts: {
+  postId?: string;
+  threadId?: string;
+  threadFails?: boolean;
+} = {}): RecordingFakeBot & {
+  threadCalls: Array<{ channelId: string; messageId: string; name: string }>;
+  lockedThreadIds: string[];
+} {
   const postCalls: PostCall[] = [];
   const editCalls: EditCall[] = [];
+  const threadCalls: Array<{ channelId: string; messageId: string; name: string }> = [];
+  const lockedThreadIds: string[] = [];
   let postSeq = 0;
   return Object.assign(
     createBaseFakeBot({
@@ -45,9 +54,20 @@ function makeSignalBot(opts: { postId?: string } = {}): RecordingFakeBot {
       async editChannelMessage(channelId, messageId, body) {
         editCalls.push({ channelId, messageId, body });
       },
+      async startThreadFromMessage(channelId, messageId, threadOpts) {
+        threadCalls.push({ channelId, messageId, name: threadOpts.name });
+        if (opts.threadFails) throw new Error('simulated thread failure');
+        return { id: opts.threadId ?? `signal-thread-${++postSeq}`, parent_id: channelId };
+      },
+      async lockThread(threadId) {
+        lockedThreadIds.push(threadId);
+      },
     }),
-    { postCalls, editCalls, sendCalls: [], createDmCalls: [] },
-  ) as RecordingFakeBot;
+    { postCalls, editCalls, sendCalls: [], createDmCalls: [], threadCalls, lockedThreadIds },
+  ) as RecordingFakeBot & {
+    threadCalls: typeof threadCalls;
+    lockedThreadIds: typeof lockedThreadIds;
+  };
 }
 
 describeWithDb('POST /api/signals?action=create', () => {
@@ -213,10 +233,12 @@ describeWithDb('POST /api/signals?action=create', () => {
     expect(body.messageUrl).toContain('/posted-1');
     groupIds.push(body.groupId);
 
-    // Post landed on the right channel.
-    expect(bot.postCalls).toHaveLength(1);
-    expect(bot.postCalls[0].channelId).toBe('ch-h');
-    const embed = bot.postCalls[0].body.embeds?.[0];
+    // The signal embed landed on the right channel. The thread
+    // opener is a separate post on the spawned thread channel —
+    // filter to the signal-channel post for this assertion.
+    const embedPosts = bot.postCalls.filter(c => c.channelId === 'ch-h');
+    expect(embedPosts).toHaveLength(1);
+    const embed = embedPosts[0].body.embeds?.[0];
     expect(embed?.title).toMatch(/Looking for/);
     expect(embed?.description).toContain('2×');
     expect(embed?.description).toMatch(/for Friday's draft/);
@@ -272,7 +294,9 @@ describeWithDb('POST /api/signals?action=create', () => {
     const groupId = (res._json as { groupId: string }).groupId;
     groupIds.push(groupId);
 
-    expect(bot.postCalls).toHaveLength(1);
+    // One embed post on the signal channel; thread opener is a
+    // separate post on the spawned thread channel.
+    expect(bot.postCalls.filter(c => c.channelId === 'ch-mc')).toHaveLength(1);
     const db = getDb();
     const rows = await db.select().from(cardSignals).where(eq(cardSignals.groupId, groupId));
     expect(rows).toHaveLength(2);
@@ -356,10 +380,105 @@ describeWithDb('POST /api/signals?action=create', () => {
     expect(res._status).toBe(201);
     groupIds.push((res._json as { groupId: string }).groupId);
 
-    const desc = bot.postCalls[0].body.embeds?.[0]?.description ?? '';
+    // Filter to the signal-channel post (the thread opener also
+    // mentions matched users, but the embed description is what
+    // this test cares about).
+    const embedPost = bot.postCalls.find(c => c.channelId === 'ch-mlp');
+    const desc = embedPost?.body.embeds?.[0]?.description ?? '';
     expect(desc).toContain(`<@${matcher.id}>`);
-    // Match listings render as text only — no auto-DMs.
-    expect(bot.postCalls[0].body.allowed_mentions).toEqual({ parse: [] });
+    // Match listings on the embed itself render as text only — no
+    // auto-DMs from the embed mentions. (The thread opener flips
+    // allowed_mentions to ['users'] so matched users get a real
+    // ping in the response thread; the embed match list does not.)
+    expect(embedPost?.body.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it('spawns a public thread anchored to the signal post + posts an opener mentioning matched users', async () => {
+    const signaler = await createTestUser();
+    const matcher = await createTestUser();
+    fixtures.push(signaler, matcher);
+    const guildId = `g-th-${Math.random().toString(36).slice(2, 8)}`;
+    guildCleanups.push(await createMutualGuildMembership(
+      signaler.id,
+      matcher.id,
+      guildId,
+      { tradesChannelId: 'ch-th' },
+    ));
+    await insertAvailable(matcher.id, STABLE_PRODUCT_ID);
+
+    const bot = makeSignalBot({ postId: 'th-1', threadId: 'th-thread-1' });
+    const res = mockResponse();
+    await handleCreate(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(signaler.id) },
+        body: {
+          kind: 'wanted',
+          cards: [{ familyId: STABLE_FAMILY_ID, qty: 1 }],
+          guildId,
+        },
+      }),
+      res,
+      { bot },
+    );
+
+    expect(res._status).toBe(201);
+    const body = res._json as { groupId: string; threadId?: string };
+    groupIds.push(body.groupId);
+    expect(body.threadId).toBe('th-thread-1');
+
+    // Thread spawn was called with the right channel + message ids.
+    expect(bot.threadCalls).toHaveLength(1);
+    expect(bot.threadCalls[0].channelId).toBe('ch-th');
+    expect(bot.threadCalls[0].messageId).toBe('th-1');
+
+    // threadId persisted on the row.
+    const db = getDb();
+    const [row] = await db.select().from(cardSignals).where(eq(cardSignals.groupId, body.groupId)).limit(1);
+    expect(row.threadId).toBe('th-thread-1');
+
+    // Thread opener was posted on the thread channel and mentions
+    // the matched user (so they actually get pinged).
+    const opener = bot.postCalls.find(c => c.channelId === 'th-thread-1');
+    expect(opener).toBeDefined();
+    expect(opener?.body.content).toContain(`<@${matcher.id}>`);
+    expect(opener?.body.allowed_mentions).toEqual({ parse: ['users'] });
+  });
+
+  it('thread spawn failure does not roll back the signal — embed still ships', async () => {
+    const signaler = await createTestUser();
+    fixtures.push(signaler);
+    const guildId = `g-tf-${Math.random().toString(36).slice(2, 8)}`;
+    guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-tf' }));
+    guildCleanups.push(await createGuildMembership(signaler.id, guildId, { enrolled: true }));
+
+    const bot = makeSignalBot({ postId: 'tf-1', threadFails: true });
+    const res = mockResponse();
+    await handleCreate(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(signaler.id) },
+        body: {
+          kind: 'wanted',
+          cards: [{ familyId: STABLE_FAMILY_ID, qty: 1 }],
+          guildId,
+        },
+      }),
+      res,
+      { bot },
+    );
+
+    // Status is still 201 — thread is best-effort, not part of the
+    // critical path. threadId is null on the response + on the row.
+    expect(res._status).toBe(201);
+    const body = res._json as { groupId: string; threadId: string | null };
+    groupIds.push(body.groupId);
+    expect(body.threadId).toBeNull();
+
+    const db = getDb();
+    const [row] = await db.select().from(cardSignals).where(eq(cardSignals.groupId, body.groupId)).limit(1);
+    expect(row.threadId).toBeNull();
+    expect(row.status).toBe('active');
   });
 });
 
@@ -661,6 +780,117 @@ describeWithDb('GET /api/signals?action=mine', () => {
   });
 });
 
+describeWithDb('GET /api/signals?action=seed', () => {
+  const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
+  const guildCleanups: Array<() => Promise<void>> = [];
+  const groupIds: string[] = [];
+
+  afterEach(async () => {
+    const db = getDb();
+    for (const id of groupIds) {
+      await db.delete(cardSignals).where(eq(cardSignals.groupId, id)).catch(() => {});
+    }
+    groupIds.length = 0;
+    for (const fn of guildCleanups.reverse()) await fn();
+    guildCleanups.length = 0;
+    for (const f of fixtures) await f.cleanup();
+    fixtures.length = 0;
+  });
+
+  it('returns author + cards for an active group, no auth required', async () => {
+    const author = await createTestUser();
+    fixtures.push(author);
+    const guildId = `g-sd-${Math.random().toString(36).slice(2, 8)}`;
+    guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-sd' }));
+    guildCleanups.push(await createGuildMembership(author.id, guildId, { enrolled: true }));
+
+    const bot = makeSignalBot({ postId: 'sd-1' });
+    const createRes = mockResponse();
+    await handleCreate(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(author.id) },
+        body: {
+          kind: 'wanted',
+          cards: [{ familyId: STABLE_FAMILY_ID, qty: 2 }],
+          guildId,
+          note: 'Friday draft',
+        },
+      }),
+      createRes,
+      { bot },
+    );
+    const groupId = (createRes._json as { groupId: string }).groupId;
+    groupIds.push(groupId);
+
+    // No cookie — public read.
+    const res = mockResponse();
+    await handleSeed(mockRequest({ method: 'GET', query: { groupId } }), res);
+
+    expect(res._status).toBe(200);
+    const body = res._json as {
+      groupId: string;
+      kind: string;
+      note: string | null;
+      author: { handle: string };
+      cards: Array<{ productId: string; name: string; variant: string; qty: number }>;
+    };
+    expect(body.groupId).toBe(groupId);
+    expect(body.kind).toBe('wanted');
+    expect(body.note).toBe('Friday draft');
+    expect(body.author.handle).toBe(author.handle);
+    expect(body.cards).toHaveLength(1);
+    expect(body.cards[0].name).toMatch(/Luke Skywalker/);
+    expect(body.cards[0].qty).toBe(2);
+  });
+
+  it('400s when groupId is missing', async () => {
+    const res = mockResponse();
+    await handleSeed(mockRequest({ method: 'GET', query: {} }), res);
+    expect(res._status).toBe(400);
+  });
+
+  it('404s for an unknown groupId', async () => {
+    const res = mockResponse();
+    await handleSeed(mockRequest({ method: 'GET', query: { groupId: 'no-such-group' } }), res);
+    expect(res._status).toBe(404);
+  });
+
+  it('404s for a cancelled group — only active signals are seedable', async () => {
+    const author = await createTestUser();
+    fixtures.push(author);
+    const guildId = `g-sdc-${Math.random().toString(36).slice(2, 8)}`;
+    guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-sdc' }));
+    guildCleanups.push(await createGuildMembership(author.id, guildId, { enrolled: true }));
+
+    const createRes = mockResponse();
+    await handleCreate(
+      mockRequest({
+        method: 'POST',
+        cookies: { swu_session: await sealTestCookie(author.id) },
+        body: { kind: 'wanted', cards: [{ familyId: STABLE_FAMILY_ID, qty: 1 }], guildId },
+      }),
+      createRes,
+      { bot: makeSignalBot({ postId: 'sdc-1' }) },
+    );
+    const groupId = (createRes._json as { groupId: string }).groupId;
+    groupIds.push(groupId);
+
+    const db = getDb();
+    await db.update(cardSignals).set({ status: 'cancelled' }).where(eq(cardSignals.groupId, groupId));
+
+    const res = mockResponse();
+    await handleSeed(mockRequest({ method: 'GET', query: { groupId } }), res);
+    expect(res._status).toBe(404);
+  });
+
+  it('405s on non-GET methods', async () => {
+    const res = mockResponse();
+    await handleSeed(mockRequest({ method: 'POST', query: { groupId: 'x' } }), res);
+    expect(res._status).toBe(405);
+  });
+});
+
 describeWithDb('signal: button handler (Discord-side actions on web-posted signals)', () => {
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
   const guildCleanups: Array<() => Promise<void>> = [];
@@ -885,6 +1115,188 @@ describeWithDb('signal: button handler (Discord-side actions on web-posted signa
         res,
       );
       expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/Only the post's author/i);
+    });
+  });
+
+  describe('trade (Trade with @author button)', () => {
+    it('any clicker — including unaffiliated Discord users — gets a deep-link ephemeral', async () => {
+      const owner = await createTestUser();
+      fixtures.push(owner);
+      const guildId = `g-tw-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-tw' }));
+      guildCleanups.push(await createGuildMembership(owner.id, guildId, { enrolled: true }));
+
+      const { groupId } = await createLiveSignal(owner.id, guildId);
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:trade` },
+          // Anonymous Discord user — no SWUTrade row. The trade
+          // button is the only signal action that doesn't gate on
+          // having a SWUTrade account because the deep link IS the
+          // sign-up funnel.
+          member: { user: { id: 'discord-id-no-account' } },
+        },
+        res,
+        { bot: makeSignalBot() },
+      );
+
+      expect((res._json as { type: number }).type).toBe(4);
+      const content = (res._json as { data?: { content?: string } }).data?.content ?? '';
+      expect(content).toContain(`seedFromSignal=${groupId}`);
+      expect(content).toContain(`@${owner.handle}`);
+    });
+
+    it('returns "no longer exists" for an unknown groupId', async () => {
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: 'signal:nonexistent-group:trade' },
+          member: { user: { id: 'any-id' } },
+        },
+        res,
+        { bot: makeSignalBot() },
+      );
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/no longer exists/i);
+    });
+
+    it('returns the cancelled-state message when the signal has been cancelled', async () => {
+      const owner = await createTestUser();
+      fixtures.push(owner);
+      const guildId = `g-twc-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-twc' }));
+      guildCleanups.push(await createGuildMembership(owner.id, guildId, { enrolled: true }));
+
+      const { groupId } = await createLiveSignal(owner.id, guildId);
+      const db = getDb();
+      await db.update(cardSignals).set({ status: 'cancelled' }).where(eq(cardSignals.groupId, groupId));
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:trade` },
+          member: { user: { id: 'any' } },
+        },
+        res,
+        { bot: makeSignalBot() },
+      );
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/already cancelled/i);
+    });
+  });
+
+  describe('fulfilled (Mark fulfilled button)', () => {
+    it('owner click → all rows flip to fulfilled, embed PATCHes via type-7, thread is locked', async () => {
+      const owner = await createTestUser();
+      fixtures.push(owner);
+      const guildId = `g-fu-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-fu' }));
+      guildCleanups.push(await createGuildMembership(owner.id, guildId, { enrolled: true }));
+
+      const { groupId } = await createLiveSignal(owner.id, guildId);
+
+      const bot = makeSignalBot();
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:fulfilled` },
+          member: { user: { id: owner.id } },
+        },
+        res,
+        { bot },
+      );
+
+      // Type-7 UPDATE_MESSAGE flips the embed in place.
+      expect((res._json as { type: number }).type).toBe(7);
+
+      // Status flipped + fulfilledAt stamped.
+      const db = getDb();
+      const rows = await db
+        .select({ status: cardSignals.status, fulfilledAt: cardSignals.fulfilledAt, threadId: cardSignals.threadId })
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId));
+      expect(rows.every(r => r.status === 'fulfilled')).toBe(true);
+      expect(rows[0].fulfilledAt).toBeInstanceOf(Date);
+
+      // Thread locked (the live-signal helper persists threadId via
+      // the post flow). We check the lock list rather than the
+      // exact thread id since signals.test.ts mints fresh ids
+      // dynamically.
+      expect(bot.lockedThreadIds).toEqual([rows[0].threadId]);
+    });
+
+    it('non-owner click → ephemeral error mentioning the right verb, status unchanged', async () => {
+      const owner = await createTestUser();
+      const stranger = await createTestUser();
+      fixtures.push(owner, stranger);
+      const guildId = `g-fnx-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-fnx' }));
+      guildCleanups.push(await createGuildMembership(owner.id, guildId, { enrolled: true }));
+
+      const { groupId } = await createLiveSignal(owner.id, guildId);
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:fulfilled` },
+          member: { user: { id: stranger.id } },
+        },
+        res,
+        { bot: makeSignalBot() },
+      );
+
+      expect((res._json as { type: number }).type).toBe(4);
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/mark this fulfilled/i);
+
+      const db = getDb();
+      const [row] = await db
+        .select({ status: cardSignals.status })
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId))
+        .limit(1);
+      expect(row.status).toBe('active');
+    });
+
+    it('owner click on already-cancelled signal returns the cancelled-state ephemeral, no double-state-write', async () => {
+      const owner = await createTestUser();
+      fixtures.push(owner);
+      const guildId = `g-fac-${Math.random().toString(36).slice(2, 8)}`;
+      guildCleanups.push(await installBotInGuild(guildId, { tradesChannelId: 'ch-fac' }));
+      guildCleanups.push(await createGuildMembership(owner.id, guildId, { enrolled: true }));
+
+      const { groupId } = await createLiveSignal(owner.id, guildId);
+      const db = getDb();
+      await db.update(cardSignals).set({ status: 'cancelled' }).where(eq(cardSignals.groupId, groupId));
+
+      const res = mockResponse();
+      await dispatchBotPayload(
+        'interactions',
+        {
+          type: 3,
+          data: { custom_id: `signal:${groupId}:fulfilled` },
+          member: { user: { id: owner.id } },
+        },
+        res,
+        { bot: makeSignalBot() },
+      );
+      expect((res._json as { data?: { content?: string } }).data?.content).toMatch(/already cancelled/i);
+
+      const [row] = await db
+        .select({ status: cardSignals.status })
+        .from(cardSignals)
+        .where(eq(cardSignals.groupId, groupId))
+        .limit(1);
+      expect(row.status).toBe('cancelled');
     });
   });
 });

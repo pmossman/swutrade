@@ -627,11 +627,19 @@ async function handleSignalButton(
     return;
   }
   // The id slot is either a row id (for variant-* actions) or a
-  // group id (for cancel / confirm-draft / cancel-draft). Single-
-  // card signals have groupId === rowId so both lookups work the
-  // same way for those.
+  // group id (for cancel / fulfilled / trade). Single-card signals
+  // have groupId === rowId so both lookups work the same way for
+  // those.
   const id = parts[1];
   const action = parts[2];
+
+  // Public action — no auth, no SWUTrade-account check. The
+  // ephemeral response carries a deep link that the web side
+  // handles sign-in for. Discord users without a SWUTrade account
+  // are exactly the audience this button is converting.
+  if (action === 'trade') {
+    return handleTradeWithAuthor({ groupId: id, res });
+  }
 
   const clickerDiscordId =
     (payload.member as { user?: { id?: string } } | undefined)?.user?.id
@@ -658,9 +666,9 @@ async function handleSignalButton(
     return;
   }
 
-  // Group-scoped actions: cancel.
+  // Group-scoped actions: cancel, fulfilled. Both author-only.
   // Row-scoped actions: variant-open, variant-pick.
-  const isGroupAction = action === 'cancel';
+  const isGroupAction = action === 'cancel' || action === 'fulfilled';
 
   if (isGroupAction) {
     return handleSignalGroupAction({
@@ -758,10 +766,11 @@ async function handleSignalGroupAction(args: {
 
   const ownerId = groupRows[0].userId;
   if (ownerId !== clickerUserId) {
+    const verb = action === 'fulfilled' ? 'mark this fulfilled' : 'cancel it';
     res.status(200).json({
       type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
       data: {
-        content: `Only the post's author can cancel it.`,
+        content: `Only the post's author can ${verb}.`,
         flags: MESSAGE_FLAG_EPHEMERAL,
       },
     });
@@ -771,7 +780,150 @@ async function handleSignalGroupAction(args: {
   if (action === 'cancel') {
     return handleCancelLive(groupId, groupRows, res, deps);
   }
+  if (action === 'fulfilled') {
+    return handleMarkFulfilled(groupId, groupRows, res, deps);
+  }
   res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
+}
+
+/**
+ * Public "Trade with @author" button. No auth — anyone in the channel
+ * can click. Returns an ephemeral with a deep link to the web trade
+ * builder, which reads `?seedFromSignal=<groupId>` and pre-fills the
+ * counterpart + cards from the signal payload. Sign-in (or ghost
+ * mint) happens at the web boundary, not here.
+ */
+async function handleTradeWithAuthor(args: {
+  groupId: string;
+  res: VercelResponse;
+}): Promise<void> {
+  const { groupId, res } = args;
+  const db = getDb();
+
+  const [row] = await db
+    .select({ userId: cardSignals.userId, status: cardSignals.status })
+    .from(cardSignals)
+    .where(eq(cardSignals.groupId, groupId))
+    .limit(1);
+  if (!row) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: 'This post no longer exists.', flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+  if (row.status !== 'active') {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: `This post is already ${row.status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  const [author] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, row.userId))
+    .limit(1);
+  const handle = author?.handle ?? 'them';
+
+  const origin = process.env.SWUTRADE_PUBLIC_URL ?? 'https://swutrade.com';
+  const url = `${origin}/?seedFromSignal=${encodeURIComponent(groupId)}`;
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+    data: {
+      content: `Open the trade builder, pre-filled with @${handle}'s signal: ${url}`,
+      flags: MESSAGE_FLAG_EPHEMERAL,
+    },
+  });
+}
+
+/**
+ * "Mark fulfilled" button — author-only. Flips every row in the
+ * group to fulfilled, PATCHes the embed (green badge, no buttons),
+ * locks the response thread so stragglers don't keep replying.
+ *
+ * Auth note: ownership is already enforced by handleSignalGroupAction
+ * before we land here — non-owners get an ephemeral error one layer
+ * up. This function just runs the state transition.
+ */
+async function handleMarkFulfilled(
+  groupId: string,
+  groupRows: Array<typeof cardSignals.$inferSelect>,
+  res: VercelResponse,
+  deps: BotDeps,
+): Promise<void> {
+  if (groupRows.some(r => r.status !== 'active')) {
+    res.status(200).json({
+      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
+      data: { content: `This post is already ${groupRows[0].status}.`, flags: MESSAGE_FLAG_EPHEMERAL },
+    });
+    return;
+  }
+
+  const db = getDb();
+  const fulfilledAt = new Date();
+  await db.update(cardSignals)
+    .set({ status: 'fulfilled', fulfilledAt })
+    .where(eq(cardSignals.groupId, groupId));
+
+  const [signaler] = await db
+    .select({ id: users.id, handle: users.handle, avatarUrl: users.avatarUrl, discordId: users.discordId })
+    .from(users)
+    .where(eq(users.id, groupRows[0].userId))
+    .limit(1);
+
+  const resolvedCards = await resolveSignalCardsBatch(db, groupRows);
+  const cards = groupRows.map((row) => {
+    const r = resolvedCards.get(row.id);
+    if (!r) return null;
+    const { family, variantSpec } = r;
+    const representative = variantSpec.mode === 'restricted'
+      ? family.variants.find(v => v.variant === variantSpec.variants[0]) ?? family.variants[0]
+      : family.variants[0];
+    return {
+      signalId: row.id,
+      name: family.name,
+      setCode: family.setCode,
+      cardType: family.cardType,
+      productId: representative.productId,
+      variantSpec,
+      qty: 1,
+      matchedUsers: [],
+    };
+  });
+  const firstRow = groupRows[0];
+  const fulfilledEmbed = buildSignalPost({
+    groupId,
+    kind: firstRow.kind,
+    status: 'fulfilled',
+    cards: cards.filter(c => c !== null) as Array<NonNullable<typeof cards[number]>>,
+    note: firstRow.signalNote,
+    requester: {
+      discordId: signaler?.discordId ?? null,
+      handle: signaler?.handle ?? '?',
+      avatarUrl: signaler?.avatarUrl ?? null,
+    },
+    expiryHint: '',
+  });
+
+  // Lock the response thread (best-effort — Discord may have
+  // already auto-archived if the thread idled past 24h, in which
+  // case the lock still succeeds and re-archive is a no-op).
+  if (firstRow.threadId) {
+    const bot = deps.bot ?? createDiscordBotClient();
+    try {
+      await bot.lockThread(firstRow.threadId);
+    } catch (err) {
+      console.error('handleMarkFulfilled: lockThread failed', err);
+    }
+  }
+
+  res.status(200).json({
+    type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
+    data: fulfilledEmbed,
+  });
 }
 
 /**
