@@ -199,21 +199,19 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 
 - `resolvePref({ key, viewerUserId }) → Promise<PrefValue>` — `lib/prefsResolver.ts`. Throws on unknown key (catch at the API boundary, not here). The historical `peerUserId` parameter is accepted for compatibility but ignored after the prefs hygiene pass.
 
-### Signals (web-authored, bot-broadcast)
+### Signals (bot-side dispatch)
 
-Signals are the *acute* version of wishlist/binder — "I specifically need 1× Luke before Friday's draft" — authored on the web at `/?signals=new` and broadcast as a Discord embed. The bot owns the embed render, the response thread, and the per-post button interactions.
+This page covers the bot-side dispatch only. Full subsystem coverage — `card_signals` schema, web Signal Builder, `findMatches`, embed builders, response thread mechanics, the `seedFromSignal` translator — lives in [`k-signals.md`](./k-signals.md).
 
-**Data model:** `card_signals` table (`lib/schema.ts`). Composite group via `group_id` for multi-card signals. Status enum: `active` / `cancelled` / `expired` / `fulfilled`. Forward-compat for LGS via `event_id` + `lgs_id` columns. `thread_id` denorm carries the response thread's id once spawned.
+**`signal:` custom_id grammar** is in the prefix table above. Dispatcher entry point is `handleSignalButton` in `api/bot.ts`. Notable behavior owned here:
 
-**Embed buttons** (`lib/signalMessages.ts::buildActionRow`):
-- **Trade with @author** (`signal:{groupId}:trade`) — primary CTA, public. Anyone in the channel can click; the ephemeral response carries a deep link `/?seedFromSignal=<groupId>`. Sign-in (or ghost mint) happens at the web boundary, not here. This is the conversion funnel for anonymous Discord users.
-- **Mark fulfilled** (`signal:{groupId}:fulfilled`) — author-only. Flips every row in the group to `fulfilled`, PATCHes the embed (gray badge, no buttons), locks the response thread. Manual close — there's no auto-detection on session-settle.
-- **Cancel post** (`signal:{groupId}:cancel`) — author-only. Same shape, status → `cancelled`.
-- **Pick a printing** (`signal:{rowId}:variant-open` + follow-up `signal:{rowId}:variant-pick`) — single-card author-only, only when the row's variant is `any`. `variant-open` opens an ephemeral string-select listing every variant in the family. The user's selection fires `variant-pick:<value>`, which narrows the underlying inventory row (for `wanted` signals: pins `wants_items.restriction_mode='restricted'` with the picked variant; for `offering`: re-points `available_items.product_id` to the chosen printing), recomputes matches against the narrower spec, and PATCHes the public embed in place via `editChannelMessage`. The picker ephemeral updates with a "Set to **X** only. Updated above." confirmation.
+- The `'trade'` action is special-cased BEFORE the clicker auth check — anyone (including Discord users without a SWUTrade account) can click and get an ephemeral with the `/?seedFromSignal=<groupId>` deep link. That's the conversion funnel.
+- `'cancel'` and `'fulfilled'` are author-only group actions; ownership is checked once via `handleSignalGroupAction` and the verb-appropriate ephemeral renders ("Only the post's author can cancel it" / "...mark this fulfilled").
+- `'fulfilled'` additionally calls `bot.lockThread(threadId)` after flipping status — manual close, no auto-detection on session-settle.
+- `'variant-open'` / `'variant-pick'` are row-scoped author-only and only valid on single-card variant=any rows; they narrow the underlying `wants_items.restriction_mode` (for wanted) or repoint `available_items.product_id` (for offering), recompute matches, and PATCH the embed in place.
+- `cron-signals` action runs daily at 08:00 UTC; flips overdue active rows to `expired` and PATCHes their embeds.
 
-**Response thread:** `startThreadFromMessage` spawns a public thread anchored to the signal post (`api/signals.ts::handleCreate`). The opener message mentions matched users (`<@discordId>`) with `allowed_mentions: { parse: ['users'] }` so they actually get pinged — the embed itself sets `parse: []` to suppress its own match-list mentions. Thread spawn is best-effort: failure logs + reports but doesn't roll back the embed (the post is already up).
-
-**Re-fetch on /?seedFromSignal=<id>:** the deep link from the trade button is read on web by the App-level effect in `App.tsx` — fetches `GET /api/signals/seed?groupId=<id>`, translates to `?propose=<authorHandle>` (re-uses the existing propose flow), strips the seed param. The `seed` endpoint is public-read; returns 404 for missing/cancelled/expired/fulfilled groups.
+The bot client methods specific to signals (`startThreadFromMessage`, `lockThread`) are in the bot-client method table above.
 
 ### Error reporter
 

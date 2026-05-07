@@ -23,6 +23,7 @@ Reference documentation for the SWUTrade codebase — one page per subsystem. Wr
 | H | [Card data + pricing](./h-cards-pricing.md) | Card index, variants/enrichment, TCGPlayer prices, price refresh cron, pricing context |
 | I | [Discord bot + webhooks](./i-discord-bot.md) | Bot client, signature verification, slash commands, interaction handler, prefs registry, error reporter |
 | J | [Infra — build, deploy, CI, testing](./j-infra.md) | Vercel function topology, vercel.json rewrites, CI pipeline, vitest + playwright config, migrations |
+| K | [Card signals (web-authored, bot-broadcast)](./k-signals.md) | `card_signals` table, web Signal Builder, Discord embed + response thread, Trade-with-author deep link, Mark fulfilled, daily expiry cron |
 
 ## Conventions
 
