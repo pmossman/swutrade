@@ -39,29 +39,19 @@ test.describe('Settings view', () => {
   test('toggling a bot-DM category persists (preferences tab)', async ({ page }) => {
     await page.goto('/?settings=1&tab=preferences');
 
-    const matchAlerts = page.getByRole('checkbox', { name: /^Match alerts/ });
-    await expect(matchAlerts).not.toBeChecked();
-    await matchAlerts.check();
+    // dmSessionActivity defaults to true → toggling unchecks it.
+    // Pick this pref because it survives the prefs hygiene pass and
+    // is the auto-DM that replaced the manual Ping button.
+    const tradeActivity = page.getByRole('checkbox', { name: /^Trade activity/ });
+    await expect(tradeActivity).toBeChecked();
+    await tradeActivity.uncheck();
 
     // Wait for save to round-trip by asserting the underlying DB
     // state reflects the change (more reliable than sleeping).
     await expect.poll(async () => {
       const s = await getUserSettings(user.userId);
-      return s?.dmMatchAlerts;
-    }, { timeout: 5_000 }).toBe(true);
-  });
-
-  test('changing Thread conversations (communicationPref) persists (preferences tab)', async ({ page }) => {
-    await page.goto('/?settings=1&tab=preferences');
-
-    const commPref = page.getByLabel('Thread conversations');
-    await expect(commPref).toHaveValue('allow');
-    await commPref.selectOption('prefer');
-
-    await expect.poll(async () => {
-      const s = await getUserSettings(user.userId);
-      return s?.communicationPref;
-    }, { timeout: 5_000 }).toBe('prefer');
+      return s?.dmSessionActivity;
+    }, { timeout: 5_000 }).toBe(false);
   });
 
   test('changing profile visibility persists (profile tab)', async ({ page }) => {

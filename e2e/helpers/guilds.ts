@@ -80,10 +80,11 @@ export async function getUserSettings(userId: string) {
   const [row] = await db
     .select({
       profileVisibility: users.profileVisibility,
-      dmTradeProposals: users.dmTradeProposals,
-      dmMatchAlerts: users.dmMatchAlerts,
-      dmMeetupReminders: users.dmMeetupReminders,
-      communicationPref: users.communicationPref,
+      dmServerNewInstall: users.dmServerNewInstall,
+      dmSessionInvited: users.dmSessionInvited,
+      dmSessionActivity: users.dmSessionActivity,
+      dmSessionSettled: users.dmSessionSettled,
+      dmSessionDeclined: users.dmSessionDeclined,
     })
     .from(users)
     .where(eq(users.id, userId))
