@@ -67,4 +67,4 @@ Integration tests under `tests/api/` hit handlers with `mockRequest / mockRespon
 
 ## Cron jobs
 
-`vercel.json` declares crons; each points at an `api/cron/*.ts` file. Those **do** count toward the function ceiling. Today's active vercel cron is `/api/cron/signals` (daily at 08:00 UTC, expires past-due `card_signals` posts). The price-refresh job runs as a GitHub Actions workflow, not as a vercel cron.
+`vercel.json` declares one cron today — `/api/cron/signals` (daily at 08:00 UTC, expires past-due `card_signals` posts). There is no `api/cron/` directory; the pretty cron URL rewrites to `api/bot?action=cron-signals`, so the cron handler lives inside the bot dispatcher and doesn't add to the function count. The price-refresh job is separate — `.github/workflows/refresh-prices.yml` fires a Vercel deploy hook every 2 hours UTC, not a Vercel cron.

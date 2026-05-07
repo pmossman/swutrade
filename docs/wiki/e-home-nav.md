@@ -27,23 +27,23 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 
 ## Key concepts / glossary
 
-- **ViewMode** — union of nine values (`'home' | 'trade' | 'list' | 'settings' | 'community' | 'trades-history' | 'trade-detail' | 'session' | 'profile'`). Declared at `src/routing/config.ts:25`. The `renderBody()` switch in `src/App.tsx:421` reads this to pick a component.
+- **ViewMode** — union of 14 values (`'home' | 'trade' | 'list' | 'settings' | 'community' | 'trades-history' | 'trade-detail' | 'session' | 'session-chat' | 'profile' | 'wishlist' | 'binder' | 'cards' | 'signal-builder'`). Declared at `src/routing/config.ts`. The `renderBody()` switch in `src/App.tsx` reads this to pick a component. `'session-chat'` is the dedicated `/s/:id/chat` mobile route (see [`a-sessions.md`](./a-sessions.md) for the iOS keyboard rationale); `'wishlist'` / `'binder'` / `'cards'` are dedicated full-page views reached from Home modules and NavMenu; `'signal-builder'` is `/?signals=new`.
 - **`detectViewMode(isSignedIn)`** — pure function at `src/routing/config.ts:212` that reads `window.location` and returns a `ViewMode`. Uses the `VIEW_ROUTES` table's `matches()` predicates in declaration order; first match wins.
 - **`VIEW_ROUTES`** — ordered table of `{ mode, matches, paramKeys }` at `src/routing/config.ts:113`. The `paramKeys` are consulted by `useTradeUrl`'s merge-write so a non-trade-builder view's params don't get stripped when a card is added.
-- **`VIEW_PARAM_KEYS`** — superset at `src/routing/config.ts:52` used by `nav.toX()` methods to blow away stale view params before setting the destination's. Deliberately excludes trade-codec keys (`y`/`t`/`pct`/`pm`) and trade-intent keys (`propose`/`counter`/`edit`/`from`/`autoBalance`).
+- **`VIEW_PARAM_KEYS`** — superset at `src/routing/config.ts` used by `nav.toX()` methods to blow away stale view params before setting the destination's. Deliberately excludes trade-codec keys (`y`/`t`/`pct`/`pm`) and trade-intent keys (`propose`/`counter`/`edit`/`from`/`autoBalance`/`seedFromSignal`).
 - **`NavigationApi`** — interface at `src/contexts/NavigationContext.tsx:28`. Methods named by destination (`toHome`, `toTradesHistory`, `toSettings`), not by URL structure. Every in-app nav flows through one of these.
 - **Signed-in hint** — `localStorage` key `swu.signedInHint` at `src/hooks/useAuth.ts:41`. Pre-seeds `isSignedIn` on first render so a returning signed-in user doesn't flash the trade-builder view before `/api/auth/me` resolves. Advisory only; server remains the trust surface.
 - **Ghost user** — anonymous user minted by a shared-trade claim or open-session creation (see [`g-auth.md`](./g-auth.md)). `auth.user?.isAnonymous === true`. From the user's POV, ghost === guest — the same chrome a pure signed-out visitor sees. Routing's `home` rule gates on real-user-only so ghosts land on the trade builder regardless of bare URL or `?view=home`. The separate `GhostHomeView` surface was deleted as part of the two-state user collapse (2026-04-22).
-- **Trade intent** — the five query-param signals (`propose`, `from`, `counter`, `edit`, `autoBalance`) owned by `useTradeIntent`. The `NavigationApi` mirrors them into React state whenever a nav is issued so pushState-driven nav works without a reload (see `aeb0aa2`).
+- **Trade intent** — the six query-param signals (`propose`, `from`, `counter`, `edit`, `autoBalance`, `seedFromSignal`) owned by `useTradeIntent`. The `NavigationApi` mirrors them into React state whenever a nav is issued so pushState-driven nav works without a reload (see `aeb0aa2`). `seedFromSignal` is one-shot — set by Discord's "Trade with @author" button deep link, translated to `propose=<authorHandle>` by an App-level effect (see [`c-trade-builder.md`](./c-trade-builder.md)).
 - **`STANDALONE` views** — `profile`, `settings`, `community`, `trade-detail`, `trades-history`, `session`. Defined in `isStandaloneView` at `src/routing/config.ts:239`. `useTradeUrl` bails its merge-write on these views so its trade-codec rewrites can't strip their URL params.
 - **State badge** — the trade-state palette owned by `HomeView.tsx`'s `BADGE_TONES` / `stateBadgeSpec()` (`src/components/HomeView.tsx:517`). Canonical visual language for `TradeRowState`; other areas (history, detail) use `StatusBadge` which is a parallel primitive for `TradeStatus`.
-- **Module (in HomeView)** — one of four parallel panels on the signed-in dashboard, arranged in a 2×2 grid: row 1 = `TradesModule` + `CommunitiesModule`, row 2 = `WishlistModule` + `BinderModule`. All use the shared `ModuleSection` chrome. `CommunitiesModule` was briefly removed in UX-A4 (2026-04-21) then reinstated the same day as the walk-back (see tech-debt section). `StoresModule` (Phase 4 LGS placeholder) was removed in the walk-back — reserving a dimmed quadrant for a feature that'll ship its own surface wasn't earning its real estate.
+- **Zone (in HomeView)** — one of four vertical sections on the signed-in dashboard (Home v2). Top-to-bottom: **Zone 1** Quick actions row (responsive grid of action tiles); **Zone 2** Inbox section (in-flight trades + sessions surfaced as actionable rows); **Zone 3** Wishlist + Binder (two `ModuleSection` cards in a 2-col grid, packed into a single bordered surface with a divider); **Zone 4** Communities + Partners (`CommunitiesModule` + `PartnersModule`, also a 2-col grid). The earlier 2×2 module-grid layout (Trades / Communities / Wishlist / Binder) was retired with Home v2; `NeedsResponseCallout` was removed in the same restructure. `StoresModule` (Phase 4 LGS placeholder) was removed earlier in UX-A4's walk-back.
 
 ## File map
 
 ### Home surfaces
 
-**`src/components/HomeView.tsx`** — Signed-in dashboard. Four modules in a 2×2 grid (row 1: Trades / Communities, row 2: Wishlist / Binder) plus the `NeedsResponseCallout` at the top. Also exports the `BADGE_TONES` record + `stateBadgeSpec()` that map `TradeRowState → tone` (the canonical trade-state visual language other areas consume). `CommunitiesModule` was briefly deleted in UX-A4 then reinstated as a peer module in the same-day walk-back; `StoresModule` was deleted in that walk-back.
+**`src/components/HomeView.tsx`** — Signed-in dashboard. Vertical-zone layout (Home v2) — see Zone in the glossary. Top-to-bottom: Quick actions row → Inbox → Wishlist+Binder → Communities+Partners. Also exports the `BADGE_TONES` record + `stateBadgeSpec()` that map `TradeRowState → tone` (the canonical trade-state visual language other areas consume).
 
 ### Chrome
 
@@ -66,9 +66,17 @@ The model is a query-param-driven SPA on top of Vercel rewrites. There is no fra
 **`src/App.tsx`** — `renderBody()` switch at line 421, the `nav` memo at line 267 (implements `NavigationApi`), the popstate handler at line 180, and the `isSignedInRef` live-ref at line 176. Also owns `handleStartTrade` (the legacy pre-`nav` entry point, still used by `<ListView>` + `<ProfileView>` Start-trade CTAs).
 **`src/main.tsx`** — Provider stack. Order matters; see "Data flow" below.
 
+### First-run tutorial
+
+**`src/components/TutorialOverlay.tsx`** + **`src/contexts/TutorialContext.tsx`** + **`src/hooks/useTutorial.ts`** — Three-step coachmark tour for signed-out first-time visitors. Custom lightweight overlay (no floating-ui / Radix dep) — backdrop with a box-shadow hole-punch around the anchor rect, callout card positioned above/below with viewport clamping. Gated on `!isSignedIn && !isAuthLoading && !localStorage['swu.tour.dismissedAt']` so signed-in users + returning visitors never see it. Replayable via the AccountMenu's "Show tutorial" entry. Coverage: `e2e/tutorial.spec.ts`.
+
+### Primary action bar
+
+**`src/components/PrimaryActionBar.tsx`** + **`src/contexts/PrimaryActionContext.tsx`** + **`src/hooks/usePrimaryAction.ts`** — Thin context that lets a view register a "primary action" (label + handler) which the bar renders pinned to viewport bottom. Currently used by AutoBalancePrimaryAction inside the trade builder; designed so other views can register their own primary CTA without each rolling its own pinned-bar layout.
+
 ### Global contexts
 
-**`src/contexts/AuthContext.tsx`** — Thin wrapper around `useAuth()` so every view reads from one source. Owns `user`, `isLoading`, `isSignedIn`, `botInstallUrl`, `login`, `logout`.
+**`src/contexts/AuthContext.tsx`** — Thin wrapper around `useAuth()` so every view reads from one source. Owns `user`, `isLoading`, `isSignedIn`, `botInstallUrl`, `login`, `logout`, `pendingMergeBanner`, `dismissMergeBanner`.
 **`src/contexts/CardIndexContext.tsx`** — Cross-printing indexes (`byFamily`, `byFamilyAll`, `byProductId`, `allLoadedCards`) derived from the price catalog. Lives BELOW `<PriceDataProvider>` in `main.tsx` so it can read the catalog.
 **`src/contexts/DrawerContext.tsx`** — Shared ListsDrawer open-state + `requestedTab` hint (UX-A1). One drawer, one open boolean.
 **`src/contexts/NavigationContext.tsx`** — `NavigationApi` interface + Provider. `useNavigation()` throws if mounted outside the provider — catches misuse at render time.
@@ -107,9 +115,11 @@ Stored as `'1'` when true, absent otherwise. Read on `useAuth()` mount into `ini
 
 **Invariant:** the last segment is the current page and omits `href`. The AppHeader Back button (`AppHeader.tsx:79`) reads the second-to-last segment's `href` as the parent URL — if that segment lacks `href`, no Back button renders.
 
-### `NavigationApi` (`src/contexts/NavigationContext.tsx:28`)
+### `NavigationApi` (`src/contexts/NavigationContext.tsx`)
 
-Ten methods named by destination. Every method that sets an intent param guarantees the intent state is mirrored; every method that navigates away from the trade builder clears stale intent. Options bags (`{ tab?, guildId?, memberHandle? }`) are open-shaped so new drill-down keys can land without breaking existing callers.
+Methods named by destination. Every method that sets an intent param guarantees the intent state is mirrored; every method that navigates away from the trade builder clears stale intent. Options bags (`{ tab?, guildId?, memberHandle? }`) are open-shaped so new drill-down keys can land without breaking existing callers.
+
+Surface today (non-exhaustive list — see `NavigationContext.tsx` for the canonical interface): `toHome`, `toBuildTrade`, `toStartTradeFrom`, `toTradesHistory`, `toWishlist`, `toBinder`, `toCardBrowser`, `toSettings`, `toCommunity`, `toProfile`, `toTradeDetail`, `toSession`, `toSignalBuilder`. The `toWishlist` / `toBinder` methods route to the dedicated `?view=wishlist` / `?view=binder` pages added in the 2026-04-21 split (see [`d-lists.md`](./d-lists.md)); `toCardBrowser` routes to `?view=cards`; `toSignalBuilder` to `?signals=new`.
 
 ## Public surface
 
@@ -276,29 +286,35 @@ The `detectViewMode` rule order matters: the `/u/` pathname check is FIRST (`src
 - Space-900/80 background + backdrop-blur — the view scrolls under it but stays legible.
 - No contextual-action slot. View-specific CTAs (Share, Clear, Invite someone, Done on settings) live in a per-view action strip BELOW the header. This was a 2026-04-19 refactor — pre-refactor the header had a mix of identity + action chrome and couldn't scale to breadcrumb-heavy views without the CTAs getting starved of width.
 
-### 3-module dashboard (`HomeView.tsx`)
+### Vertical-zone dashboard (`HomeView.tsx`)
 
-Desktop:
+Home v2 layout — top-to-bottom zones rather than the old 2×2 module grid. Desktop:
 ```
-┌────────────────── NeedsResponseCallout (full width) ───┐
+┌─────────────── Greeting / Quick actions row (Zone 1) ──┐
+│ ⚡ Build a trade │ ⚡ Browse cards │ ⚡ Post a signal …  │
+├─────────────────────────────────────────────────────────┤
+│ 📥 Inbox (Zone 2)                                       │
+│   In-flight sessions / trades surfaced as actionable    │
+│   rows. Empty state when nothing's pending.             │
+├─────────────────────────────────────────────────────────┤
+│ Your wishlist          │ Your trade binder              │
+│ (Zone 3 — packed into one bordered card with divider)   │
 ├──────────────────────────┬──────────────────────────────┤
-│ My Trades (action)       │ Your binder (resource)       │
-│ Your wishlist (action)   │                              │
-├──────────────────────────┴──────────────────────────────┤
-│ My Stores (placeholder, full width, dashed border)      │
+│ My Communities          │ My Trading Partners           │
+│ (Zone 4 — 2-col grid; PartnersModule reads useFavorites)│
 └─────────────────────────────────────────────────────────┘
 ```
 
-Mobile collapses to a single column in priority order: Trades, Wishlist, Binder, Stores.
+Mobile collapses to a single column with the same top-to-bottom order. The split from one ListsModule into two first-class modules (WishlistModule + BinderModule) was the UX-A1 audit change; in Zone 3 they share a single bordered surface with a divider so the dashboard reads as "Wishlist + Binder are siblings" rather than two competing panels.
 
 Visual language:
 - `ModuleSection` is the shared chrome — rounded-xl, `bg-space-800/20` wash, uppercase tracked-label header with icon, optional right-aligned action link.
-- `NeedsResponseCallout` uses gold: `border-gold/40 bg-gold/8`. The callout reads as "attention required" without being alarming. Single-row expanded at a time — tapping a new row collapses the previous peek.
-- Gold column-left border is reserved for the callout ONLY — the module panels use neutral space-700 borders so the callout visually dominates.
+- Module panels use neutral `space-700` borders. Gold accents are reserved for one-off attention surfaces (e.g. priority stars).
 
-The split from one ListsModule into two first-class modules (WishlistModule + BinderModule) was the UX-A1 audit change. Rationale: "these are my cards" is load-bearing for the trading loop, not a sidebar affordance. Priorities still pin to the top via the `isPriority` boolean sort.
-
-`CommunitiesModule` occupies the top-right quadrant alongside `TradesModule`. Short history: deleted entirely in UX-A4 (2026-04-21) on the theory it competed with the trading loop, then reinstated the same day — removing it left a blank quadrant and buried enrolled servers behind the hamburger menu. The reinstated version is a peer module (not a sidebar widget): icon + "My Communities" label, enrolled-guild count + total trader count header stats, up to 5 rows of guild name + member count sorted by traders descending, "Browse all →" action that routes to `/?community=1`. Each row deep-links to `/?community=1&guildId=<id>` so clicking a server lands on that server's page directly, not the general community hub.
+Module history:
+- The `NeedsResponseCallout` and the 2×2 grid (Trades / Communities / Wishlist / Binder) are both retired — replaced by the zone layout above.
+- `CommunitiesModule` was deleted in UX-A4 (2026-04-21) then reinstated the same day; it now lives in Zone 4 next to `PartnersModule`.
+- `PartnersModule` (Trading Partners) reads `useFavorites`; cap of 6 visible rows, empty-state pointer to the profile-star workflow. See [`f-community-profile.md`](./f-community-profile.md) for the Favorites data model.
 
 ### State badge palette (the canonical trade-state language)
 

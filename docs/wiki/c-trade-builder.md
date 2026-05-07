@@ -4,7 +4,7 @@
 >
 > The solo-mode "calculator" surface — two panels, a balance strip, the picker overlay, and the URL codec that makes any of it shareable. Specifically:
 >
-> UI — `src/App.tsx` (the `renderTradeBuilder()` body), `src/components/TradeSide.tsx`, `src/components/TradeRow.tsx`, `src/components/TradeBalance.tsx`, `src/components/TradeSummary.tsx`, `src/components/TradeSearchOverlay.tsx`, `src/components/AutoBalanceBanner.tsx`, `src/components/CardTile.tsx`, `src/components/CardResultsGrid.tsx`, `src/components/SearchResults.tsx`, `src/components/PanelDivider.tsx`, `src/components/ShareButtons.tsx`, `src/components/ShareLiveTradeButton.tsx`, `src/components/ClearAllButton.tsx`, `src/components/MobileActionsKebab.tsx`, `src/components/VariantBadge.tsx`, `src/components/SelectionFilterBar.tsx`, `src/components/SetFilter.tsx`, `src/components/CollapsibleChipFilter.tsx`, `src/components/PriceSlider.tsx`, `src/components/PriceModeToggle.tsx`, `src/components/KebabMenu.tsx`, `src/components/Popover.tsx`, `src/components/TradeImageModal.tsx`.
+> UI — `src/App.tsx` (the `renderTradeBuilder()` body), `src/components/TradeSide.tsx`, `src/components/TradeRow.tsx`, `src/components/TradeBalance.tsx`, `src/components/TradeSummary.tsx`, `src/components/TradeSearchOverlay.tsx`, `src/components/AutoBalanceBanner.tsx`, `src/components/CardTile.tsx`, `src/components/CardResultsGrid.tsx`, `src/components/SearchResults.tsx`, `src/components/PanelDivider.tsx`, `src/components/ShareButtons.tsx`, `src/components/ShareLiveTradeButton.tsx`, `src/components/ClearAllButton.tsx`, `src/components/MobileActionsKebab.tsx`, `src/components/VariantBadge.tsx`, `src/components/SelectionFilterBar.tsx`, `src/components/SetFilter.tsx`, `src/components/CollapsibleChipFilter.tsx`, `src/components/PriceSlider.tsx`, `src/components/PriceModeToggle.tsx`, `src/components/KebabMenu.tsx`, `src/components/Popover.tsx`, `src/components/TradeImageModal.tsx`, `src/components/CardActionsDialog.tsx`, `src/components/FilterPopover.tsx`, `src/components/MoreFiltersPopover.tsx`. Adjacent card-browser surface (`view=cards` route): `src/components/CardBrowserView.tsx`, `src/components/FamilyRow.tsx` — same picker primitives, no balance strip.
 >
 > State + codec — `src/hooks/useTradeUrl.ts`, `src/hooks/useTradeIntent.ts`, `src/hooks/useTradeViewMode.ts`, `src/hooks/useCardSearch.ts`, `src/urlCodec.ts`, `src/applySelectionFilters.ts`, `src/utils/forceBalance.ts`, `src/utils/matchmaker.ts`, `src/utils/filterSummaries.ts`, `src/services/tradeActions.ts` (the *send* path used from `TradeSummary`; the server-side lifecycle is B's).
 >
@@ -24,7 +24,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 - **Favored direction** — `BalanceFavored` = `'you' | 'them' | 'none'`. Computed in `src/utils/forceBalance.ts:57` — `'them'` means **the trade tilts toward the counterpart** (you're offering more than receiving). Inverted from the raw diff sign because "your total" is what you're giving up.
 - **Tiers** — `empty → balanced → ripple → disturbance → chaos`, with absolute-dollar floors so a $2 gap can't escalate into "great disturbance" language. See `src/utils/forceBalance.ts:67-82`.
 - **URL codec** — `y=...` encodes offering, `t=...` encodes receiving; `pct=` + `pm=` encode the pricing knobs. Card-codec keys are `['y', 't', 'pct', 'pm']` — exported as `TRADE_CODEC_KEYS` from `src/routing/config.ts:40` and consumed by `useTradeUrl` as the set of params it owns.
-- **Trade intent** — the five `?propose=/?from=/?counter=/?edit=/?autoBalance=` URL signals that tell the builder to mount a composer bar (or the AutoBalanceBanner). Owned by `useTradeIntent` (`src/hooks/useTradeIntent.ts`).
+- **Trade intent** — the six `?propose=/?from=/?counter=/?edit=/?autoBalance=/?seedFromSignal=` URL signals owned by `useTradeIntent` (`src/hooks/useTradeIntent.ts`). Today only `?from=` + `?autoBalance=` actively render UI (the AutoBalanceBanner); `?propose=` quietly scopes the picker to the recipient's wants/available without rendering its own composer bar (the dedicated ProposeBar was retired with the proposal primitive in Phase C); `?counter=` / `?edit=` are vestigial for the same reason. `?seedFromSignal=<groupId>` is a one-shot translator: the App-level effect fetches `/api/signals/seed`, rewrites the URL to `?propose=<authorHandle>`, and hands off to the propose path. Discord's "Trade with @author" embed button is the only entry point that sets it.
 - **Source chips** — the picker's scope filter. Four kinds: `mine` (your own list), `theirs` (counterpart's list), `overlap` (intersection), `community` (guild rollup). See `src/components/TradeSide.tsx:323-362`.
 - **Family / productId** — family = base card identity across prints (e.g. "Luke, Hero of Yavin"); productId = one specific printing (Standard vs Hyperspace vs Showcase). Wants are family-scoped with a variant restriction; Available is productId-scoped. The picker / matchmaker bridge the two.
 - **PricingContext** — shared `{ percentage, priceMode, setPercentage, setPriceMode }` state with localStorage persistence. Imported wherever a price is rendered — TradeBalance, TradeSummary, TradeRow, CardTile, etc. The URL codec also reads/writes these two values (see "Pricing state" below).
@@ -33,7 +33,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 
 ### UI — trade builder body
 
-**`src/App.tsx`** — Root component. Hosts `yourCards` / `theirCards` state (`App.tsx:87-88`), mounts the mutex bar (Edit / Counter / Propose / AutoBalanceBanner at lines `575-624`), both `TradeSide` panels, the `TradeBalance` strip, the summary modal, the footer, and the view-level action strip (toggle / Share / Clear). Also defines `TradeViewToggle` + `TradeTabBar` at the bottom of the same file.
+**`src/App.tsx`** — Root component. Hosts `yourCards` / `theirCards` state, mounts the AutoBalanceBanner + AutoBalancePrimaryAction (the only intent-driven banner that still renders post-Phase-C), both `TradeSide` panels, the `TradeBalance` strip, the summary modal, the footer, and the view-level action strip (toggle / Share / Clear). Also defines `TradeViewToggle` + `TradeTabBar` at the bottom of the same file. The seedFromSignal translator effect is here.
 
 **`src/components/TradeSide.tsx`** — One panel. Owns its own card list and the search overlay; computes source-chip pools (mine / theirs / overlap / community), the saber-bar accent on the left edge, the collapse chevron, and the Add-Card footer. Threaded by `App.tsx` with accent color, cards array, qty/remove handlers, and context (`sharedLists`, community rollup, `autoScopeToTheirs`, `counterpartHandle`).
 
@@ -79,7 +79,7 @@ The builder is the root view for signed-out users (no Home to return to) and one
 
 **`src/hooks/useTradeUrl.ts`** — The two-way binder between `(yourCards, theirCards, pct, pm)` and the URL. On mount, parses the URL, seeds the React state from `y=` / `t=` refs (deferred until `allCards` loads — see `pendingRef`). On state change, rewrites `y=` / `t=` / `pct=` / `pm=` while **preserving all unknown params** (the merge at lines 99-107 — this is the 2026-04-17 bugfix; previously it replaced the whole search string and dropped `?propose` + `?from` on every card add).
 
-**`src/hooks/useTradeIntent.ts`** — Unified `?propose=/?from=/?counter=/?edit=/?autoBalance=` store. Replaces five earlier separately-lazy-init hooks that each silently ignored pushState (see the note at `useTradeIntent.ts:7-14` and commit `aeb0aa2`). Seeds from URL, re-syncs on popstate, mirrors from `nav` helpers in `App.tsx:267-341` on in-app navigation.
+**`src/hooks/useTradeIntent.ts`** — Unified `?propose=/?from=/?counter=/?edit=/?autoBalance=/?seedFromSignal=` store. Replaces several earlier separately-lazy-init hooks that each silently ignored pushState (see the note at the top of the file and commit `aeb0aa2`). Seeds from URL, re-syncs on popstate, mirrors from `nav` helpers in `App.tsx` on in-app navigation. `seedFromSignal` is one-shot — the App-level translator clears it after fetching the signal payload and rewriting to `?propose=<authorHandle>`.
 
 **`src/hooks/useTradeViewMode.ts`** — Per-device split-vs-tabbed toggle. localStorage key `swu.tradeView`. Cross-tab storage-event sync included. Deliberately NOT synced to the server profile — a phone's tabbed preference shouldn't change the desktop view.
 
@@ -145,7 +145,7 @@ The builder is a leaf of `App`, not an area with external consumers — the only
 ### URL surface (read/written)
 
 - **Trade codec** — `y`, `t`, `pct`, `pm`. Owned by `useTradeUrl`; round-tripped through `src/urlCodec.ts`.
-- **Trade intent** — `propose`, `from`, `counter`, `edit`, `autoBalance`. Owned by `useTradeIntent`; read by the mutex-bar switch in `App.tsx:575-624`.
+- **Trade intent** — `propose`, `from`, `counter`, `edit`, `autoBalance`, `seedFromSignal`. Owned by `useTradeIntent`; the only intent that actively renders UI today is the `from`+`autoBalance` pair (AutoBalanceBanner). `propose` scopes the picker to the recipient. `seedFromSignal` is a one-shot URL signal that translates to `propose` after fetching the seed.
 - **View flag** — `view=trade|list|home|...`. Owned by routing/config; read by `detectViewMode` in `App.tsx:166`.
 
 ### Components used by other areas
@@ -276,15 +276,14 @@ PriceModeToggle (Market/Low) + PriceSlider (50/60/70/80/90/100%). The slider is 
 - **Chaos tier** adds `animate-pulse-crimson` — a slow, low-intensity pulse to make lopsided trades visible at a glance without being alarmist.
 - **Favored direction → verb**: if the trade tilts toward **them** (you're offering more), the action line reads "Ask for $X more"; if it tilts toward **you**, "Offer $X more". The "or settle in cash" framing existed in earlier copy and was kept in the propose path — users didn't realize cash was a valid balancing tool without it.
 
-## The mutex bar
+## The intent banner slot
 
-One horizontal strip between the action row and the trade panels. After Phase C retired the proposal primitive, the propose/counter/edit composer bars no longer render — only the AutoBalanceBanner remains in this slot:
+One horizontal strip between the action row and the trade panels. After Phase C retired the proposal primitive, the propose/counter/edit composer bars no longer render — only `AutoBalanceBanner` + `AutoBalancePrimaryAction` mount here, gated on the `?from=<handle>` (+ optional `?autoBalance=1`) intent. `?propose=<handle>` is *not* a banner trigger today; it quietly scopes the picker to the recipient's wants/available (via `useRecipientProfile`) without rendering its own UI.
 
 | Condition | Component | Role |
 |-----------|-----------|------|
-| `?from=<handle>` | `<AutoBalanceBanner senderHandle={from} autoBalanceRequested={autoBalance} …>` | "Trade with @X" suggestion / auto-balance |
-
-See `App.tsx:575-624`.
+| `?from=<handle>` | `<AutoBalanceBanner>` + `<AutoBalancePrimaryAction>` | "Trade with @X" suggestion / one-shot auto-balance when `?autoBalance=1` is also set |
+| `?propose=<handle>` | (no banner) | scopes the picker to the recipient's lists; entry point for the seedFromSignal translator |
 
 ## Tech debt + known gaps
 

@@ -6,7 +6,8 @@
 > - `src/components/ProfileView.tsx` — `/u/<handle>` and `/?profile=<handle>` public profile pages.
 > - `src/components/SettingsView.tsx` — `/?settings=1` drill-down hub (profile / preferences / servers → guild → members → per-user prefs).
 > - `src/components/HandlePickerDialog.tsx` — "Trade with…" dialog that gates propose + shared-session entry points.
-> - `src/hooks/useCommunityMembers.ts` — `/api/me/community-members` directory + peer-pref mutations.
+> - `src/hooks/useCommunityMembers.ts` — `/api/me/community-members` directory. (Historically also owned peer-pref mutations; that flow was retired with the prefs hygiene pass — `setPeerPref` still exists in the hook signature for shape-compat but the underlying API now returns 410 Gone.)
+> - `src/hooks/useFavorites.ts` — `/api/me/favorites` add/remove/list. Powers Home's `PartnersModule` + the profile-page star toggle + HandlePickerDialog chips.
 > - `src/hooks/useCommunityActivity.ts` — `/api/me/community-activity` activity feed.
 > - `src/hooks/useGuildMemberships.ts` — `/api/me/guilds` + enroll/patch + Discord refresh.
 > - `src/hooks/useAccountSettings.ts` — `/api/me/prefs` registry-driven self prefs.
@@ -21,7 +22,7 @@
 
 This area owns every surface SWUTrade exposes for **"who else is here, and what are they willing to trade"**: the per-guild community pages, the public profile view, the Slack-style Settings drill-down, and the dialog that binds them to the proposal + session flows. All four surfaces share one substrate — the **three-axis consent model** (`enrolled` · `includeInRollups` · `appearInQueries`) stored per `user_guild_memberships` row — and the **pref registry** (`lib/prefsRegistry.ts`) that drives every form field in Settings. If you're reading "what is user X willing to show whom, and how do I render it," you are on the right page.
 
-The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business rules (who's eligible to appear in a rollup, whose events surface in a feed, how peer-pref overrides cascade) live in `api/me.ts` and `lib/communityEvents.ts`; this page documents those rules from the consumer's perspective and points at `i-discord-bot.md` for the authoritative registry shape and Discord-side DM behavior.
+The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business rules (who's eligible to appear in a rollup, whose events surface in a feed) live in `api/me.ts` and `lib/communityEvents.ts`; this page documents those rules from the consumer's perspective and points at `i-discord-bot.md` for the authoritative registry shape and Discord-side DM behavior. Per-peer override semantics (the historical "peer pref cascade") were retired with the prefs hygiene pass — the only peer-scoped pref (`communicationPref`) lost its consumer when proposals were retired, and the table was dropped in migration 0031.
 
 ## Key concepts / glossary
 
@@ -47,7 +48,7 @@ The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business r
 
 ### Hooks (client state)
 
-**`src/hooks/useCommunityMembers.ts`** — single-fetch-on-mount directory. Optimistic `setPeerPref` that rolls back by refetch on failure (can't reverse a per-field mutation locally without a stale snapshot). Clearing an override (`value === null`) refetches regardless of success so `effective` resolves against the authoritative cascade.
+**`src/hooks/useCommunityMembers.ts`** — single-fetch-on-mount directory. The hook still exports `setPeerPref` and the per-member shape still carries `peerPrefs.override` / `peerPrefs.effective` (empty maps after the hygiene pass) for backwards-compat with consumers that haven't been pruned; calling `setPeerPref` against the live API returns 410 Gone.
 
 **`src/hooks/useCommunityActivity.ts`** — guild-scoped feed (re-fetches when `guildId` changes). Idle state when no guild is active so the selector view doesn't fire a pointless request.
 
@@ -114,7 +115,7 @@ Owned by `lib/communityEvents.ts`. Two event types today:
 - `mutualGuildNames` + `mutualGuildIds` — parallel arrays; the Settings drill-down uses the ids to scope a member row to a specific guild without a second endpoint.
 - `wantsPublic` / `availablePublic` — flags that gate the `wantFamilyIds` / `availableProductIds` arrays on the same row. Arrays empty when the flag is false.
 - `wantsTotal` / `availableTotal` — total counts even when the lists are private. Not leakage of WHICH cards, and signals "worth approaching off-platform." Noted in the API docstring as a deliberate choice that can be gated later if it turns out wrong.
-- `peerPrefs.override` + `peerPrefs.effective` — both shapes, see above. Resolved inline in the member handler (`api/me.ts:798-827`) to avoid N+1 DB reads through `resolvePref`.
+- `peerPrefs.override` + `peerPrefs.effective` — empty maps after the prefs hygiene pass dropped peer-scoped prefs. Retained on the wire for shape-compat; future readers should treat them as no-ops until a peer pref is re-introduced (would require a new migration + a new `peer` arm in `PrefScope`).
 
 ### Public profile payload (`/api/user/[handle]`)
 
@@ -140,20 +141,25 @@ Owned by `lib/communityEvents.ts`. Two event types today:
 - `POST /api/me/guilds/refresh` — manual re-pull of Discord `/users/@me/guilds`, reconcile, return the same shape as GET. 409 `discord-token-unavailable` when the OAuth access token is missing/expired/revoked — the hook's `refreshStatus: 'needs-reauth'` keys off this and renders a sign-in-again banner (`SettingsView.tsx:1035-1045`).
 - `PUT /api/me/guilds/:guildId` — patch body `{ enrolled?, includeInRollups?, appearInQueries? }`. Server applies the bundle-default on first-enroll (`api/me.ts:435-438`) and zeroes the other two on un-enroll; response carries the canonical post-write state so the optimistic UI can reconcile.
 - `GET /api/me/prefs` — self-scoped prefs projection. Registry-driven; unknown keys 400 on PUT.
-- `PUT /api/me/prefs` — self patch OR peer patch depending on body shape. `{ peerUserId, key, value }` hits the peer branch; `value: null` clears the override.
+- `PUT /api/me/prefs` — self patch only. The historical `{peerUserId, key, value}` peer branch returns 410 Gone after the prefs hygiene pass.
+- `GET /api/me/prefs?peer=<id>` — returns `{override:{}, effective:{}}` (empty) for shape-compat after peer scope retirement.
 - `GET /api/me/community` — rollup. `{ wantFamilyIds, availableProductIds }` across all users in the viewer's enrolled+rollup guilds. Only consumed by the builder's picker today (not this area).
 - `GET /api/me/community-members` — directory. Gating documented in `handleCommunityMembers`'s docstring (`api/me.ts:561-591`).
 - `GET /api/me/community-activity?guildId=X&limit=N` — guild feed. 403 when the viewer isn't enrolled+queryable in that guild — distinct from 200-with-empty-events, so the client can render a wall-hit state rather than silently showing nothing.
 - `GET /api/me/recent-partners` — up to five distinct counterparts from `trade_sessions`, newest-first, both-sides. Private profiles are included — the dialog just needs a handle to navigate to.
+- `GET /api/me/favorites` — list the viewer's favorited trade partners (handle, username, avatar, optional note, addedAt). Powers the Home `PartnersModule`.
+- `POST /api/me/favorites` — body `{ handle, note? }` adds a favorite. 400 on self-favorite; idempotent on re-add (no duplicate row); 403 from a ghost.
+- `DELETE /api/me/favorites/:handle` — remove the favorite for that handle. Idempotent (404 ≡ already gone, treated as success).
 - `GET /api/user/:handle` — public profile. Cached `s-maxage=60, stale-while-revalidate=300`. 404 on unknown handle (consumed by HandlePickerDialog's validation path).
 
 ### Hooks
 
-- `useCommunityMembers()` — `{ members, status, setPeerPref }`. Single fetch on mount. `setPeerPref` is optimistic with refetch-on-failure.
+- `useCommunityMembers()` — `{ members, status, setPeerPref }`. Single fetch on mount. `setPeerPref` is now a no-op against the live API (returns 410 Gone after the hygiene pass) — kept on the hook for shape-compat.
 - `useCommunityActivity(guildId)` — re-fetches when guildId changes; idle when null.
 - `useGuildMemberships()` — `{ enrollable, other, status, refreshStatus, refreshFromDiscord, updateGuild }`. Module-scoped cache across hook instances; one-shot auto-refresh per tab session.
 - `useAccountSettings()` — `{ settings, status, update }`. Optimistic patch with refetch-on-failure rollback.
 - `useRecentPartners()` — `{ partners, status }`. Fires once per mount.
+- `useFavorites()` — `{ favorites, status, add, remove }`. Module-scoped cache shared across consumers (Home's PartnersModule, HandlePickerDialog, the profile-page star toggle). Optimistic add/remove with refetch-on-failure rollback.
 
 ### Components
 

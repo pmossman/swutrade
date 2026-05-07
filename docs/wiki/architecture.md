@@ -4,7 +4,7 @@ Cross-cutting themes that span multiple area pages. Read this when you need the 
 
 ## One-paragraph summary
 
-SWUTrade is a trading tool for Star Wars: Unlimited. Users maintain a **wishlist** (cards they want) and a **binder** (cards they have), then work out trades either solo (calculator), async (Discord-DM proposals), or live (shared-canvas sessions). Built as a Vite+React SPA deployed on Vercel, backed by Neon Postgres, with a Discord bot as the first-class social layer — Discord identity is the only login, DMs and threads are the notification channel, and guilds are the scope for community discovery.
+SWUTrade is a trading tool for Star Wars: Unlimited. Users maintain a **wishlist** (cards they want) and a **binder** (cards they have), then work out trades either solo (calculator) or live (shared-canvas sessions). Cards-needed broadcasts go out as **signals** — Discord-posted embeds with a public response thread and a "Trade with @author" deep link that lands on a pre-seeded session. Built as a Vite+React SPA deployed on Vercel, backed by Neon Postgres, with a Discord bot as the first-class social layer — Discord identity is the only login, DMs and threads are the notification channel, and guilds are the scope for community discovery.
 
 ## System topology
 
@@ -192,8 +192,8 @@ Four jobs: `types/tests` → `anonymous e2e` → `deploy wait` → `auth e2e`. A
 
 ### Scheduled work
 
-- **Price refresh** — GitHub Actions workflow (`refresh-prices.yml`) runs daily, fires a Vercel deploy hook to publish fresh TCGPlayer prices. Not a Vercel cron (the memory `project_swutrade_deploy` and `api/context.md` both claim it is — that's stale; flagged in [`j-infra.md`](./j-infra.md)).
-- **Proposal expiry** — not scheduled yet. Proposals sit `pending` indefinitely; cron planned but not shipped. See NEXT.md queue.
+- **Price refresh** — GitHub Actions workflow (`refresh-prices.yml`) runs every 2 hours UTC (`cron: '0 */2 * * *'`), fires a Vercel deploy hook to publish fresh TCGPlayer prices. Not a Vercel cron (the memory `project_swutrade_deploy` and `api/context.md` both claim it is — that's stale; flagged in [`j-infra.md`](./j-infra.md)).
+- **Signal expiry** — Vercel cron `/api/cron/signals` (08:00 UTC daily) sweeps past-due `card_signals` rows + PATCHes their embeds.
 
 ### Rewrites are load-bearing
 
@@ -215,7 +215,7 @@ Four jobs: `types/tests` → `anonymous e2e` → `deploy wait` → `auth e2e`. A
 
 ### Event types
 
-Session events: `created`, `edited`, `confirmed`, `cancelled`, `settled`, `expired`, `notified`. Proposal events: `created`, `delivered_ok`, `delivered_failed`, `edited`, `nudged`, `accepted`, `declined`, `cancelled`, `countered`, `expired`. Community events: `trade_accepted`, `member_joined`. Reused types carry a `kind` discriminant in payload.
+Session events: `created`, `edited`, `confirmed`, `cancelled`, `settled`, `expired`, `notified`, `chat`, `edit-snapshot`. Community events: `trade_accepted`, `member_joined`. Card-signal status enum on `card_signals.status`: `active` / `cancelled` / `expired` / `fulfilled` (no separate event log — the row IS the timeline). Reused types carry a `kind` discriminant in payload (e.g. `notified` events with `kind: 'invite' | 'invite-debounced' | 'activity'`). Proposal events were retired with the proposal flow in Phase C.
 
 ### Preference registry scopes
 

@@ -6,7 +6,8 @@
 > - `api/sessions.ts` — HTTP dispatcher for `/api/sessions/*` actions.
 > - `src/hooks/useSession.ts` — client polling, mutation mutex, optimistic updates.
 > - `src/components/SessionView.tsx` — the `/s/:id` canvas (InvitePrompt, OpenSlotInvite, InviteByHandleForm, GhostSignInBanner, SessionIdentityStrip, TerminalBanner, SessionActionBar, TimelineToggle).
-> - `src/components/SessionTimelinePanel.tsx` — slide-in chat + activity timeline (PR 1 of session collaboration slice).
+> - `src/components/SessionChatView.tsx` — dedicated `/s/:id/chat` mobile route. Fullscreen chat surface with the input pinned to viewport bottom; spun out from the in-canvas timeline overlay because iOS Safari's keyboard kept fighting the overlay (see "iOS keyboard architecture" in Decisions).
+> - `src/components/SessionTimelinePanel.tsx` — slide-in chat + activity timeline used on desktop and as the in-canvas overlay (PR 1 of session collaboration slice).
 > - `src/components/SessionSuggestions.tsx` — pending-suggestions strip rendered above the trade canvas (PR 2 + PR 3).
 > - `src/components/SessionSuggestComposer.tsx` — fullscreen card-picker for authoring cross-side suggestions (PR 2).
 > - `src/components/ShareLiveTradeButton.tsx` — "Invite someone" button in the trade builder's action strip.
@@ -53,7 +54,9 @@ All three reuse `pending_suggestions` JSONB on the session row + the existing `s
 
 ### Client
 
-**`src/components/SessionView.tsx`** — The `/s/:id` canvas. Mounts via `App.tsx:486` when the router detects the session view mode. Owns the whole stage-→-confirm layout (identity strip → balance → two panels → action bar) plus the InvitePrompt, OpenSlotInvite, InviteByHandleForm, GhostSignInBanner, SessionIdentityStrip, TerminalBanner, and SessionActionBar sub-components.
+**`src/components/SessionView.tsx`** — The `/s/:id` canvas. Mounts via the App router when `viewMode === 'session'`. Owns the whole stage-→-confirm layout (identity strip → balance → two panels → action bar) plus the InvitePrompt, OpenSlotInvite, InviteByHandleForm, GhostSignInBanner, SessionIdentityStrip, TerminalBanner, and SessionActionBar sub-components.
+
+**`src/components/SessionChatView.tsx`** — Dedicated mobile chat page at `/s/:id/chat`. Routed via the `session-chat` ViewMode. Carries an outer `position: fixed; inset: 0` wrapper anchoring the chat input to viewport bottom and the page footer is suppressed at the App level for this view — both fixes for iOS Safari's keyboard fighting the in-canvas overlay (see "iOS keyboard architecture" under Decisions).
 
 **`src/hooks/useSession.ts`** — Client-side state machine. Fetches via `GET /api/sessions/:id`, polls every 2.5s with visibility pause + mutation mutex + terminal skip, maintains a module-scoped cache (`createKeyedCache`), exposes `saveCards` / `confirm` / `cancel` / `claim` with optimistic updates.
 
@@ -61,7 +64,7 @@ All three reuse `pending_suggestions` JSONB on the session row + the existing `s
 
 **`src/contexts/NavigationContext.tsx:66/334`** — `toSession(id)` exposed via the nav API. Full navigation (`window.location.href`) so `App` remounts and `SessionView` reads the pathname cleanly — no SPA intent state is mirrored because sessions are server-authoritative.
 
-**`src/App.tsx:479-487`** — Router dispatch: when `viewMode === 'session'`, extracts the id from the pathname and renders `<SessionView sessionId={...} />`.
+**`src/App.tsx`** — Router dispatch: when `viewMode === 'session'`, extracts the id from the pathname and renders `<SessionView sessionId={...} />`. The `session-chat` mode renders `<SessionChatView>` instead and skips the App-level page-footer wrapper so the chat input can sit flush against the keyboard.
 
 ### Routing
 
@@ -562,6 +565,7 @@ Both panels collapse to a single column below `md` breakpoint (`SessionView.tsx:
 - **Creators seed BOTH halves on `ShareLiveTradeButton`**. Alternative was seeding only the creator's side, making the scanner build their own half from scratch. Chose to seed both because the mental model is "here's the trade I was thinking about" — dropping the counterpart-side work the creator just did in the calculator would be disrespectful of their effort. The scanner can edit their half freely post-claim.
 - **Counterpart panel renders the full price breakdown, not a stripped readonly list**. Alternative was showing just names + quantities on the counterpart side. Chose the full breakdown because both sides need to see the per-card prices to evaluate the balance — asymmetry would make the counterpart's contribution feel like a black box.
 - **14-day rolling TTL instead of absolute-from-creation**. Proposals are 30-day absolute; sessions are 14-day rolling. Chose rolling because sessions are active back-and-forth collaborations; ticking down a hard deadline while two people are negotiating is hostile. Short enough (14 days) that abandoned sessions do eventually expire — `project_swutrade_phase2` notes this was a deliberate choice to avoid infinite-lived session rows.
+- **iOS keyboard architecture: dedicated `/s/:id/chat` route over in-canvas overlay**. The chat surface originally lived as a slide-in overlay in `SessionTimelinePanel` over the trade canvas. iOS Safari kept fighting it — gap between input and keyboard, header sliding behind the notch after dismissal, content jumping partially off screen on focus. After several CSS strategies failed (`100dvh`, `visualViewport` tracking, body scroll lock alone), the fix was architectural: a dedicated mobile route at `/s/:id/chat` (`SessionChatView.tsx`) wrapping content in `position: fixed; inset: 0`, with the App-level page-footer wrapper suppressed for this view so the chat input sits flush against the keyboard. Desktop keeps the slide-in overlay. Lesson: iOS Safari keyboard handling is hostile to overlays; full-page routes are the safe pattern when an input needs to track the keyboard.
 
 ## Operational notes
 

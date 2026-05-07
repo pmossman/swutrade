@@ -21,7 +21,8 @@ One sentence: this area owns "who is the caller, and do they have a real Discord
 - **Guest handle** — the human-facing name of a ghost: `guest-<5-char-suffix>`, suffix drawn from `abcdefghjkmnpqrstuvwxyz23456789` (lowercase + digits, no confusables; `lib/sessions.ts:42`). Display username is `Guest <SUFFIX>` uppercased.
 - **Iron-session** — sealed-cookie session library. One encrypted cookie (`swu_session`) carries the `SessionData` payload; no DB session table, no JWTs. See `lib/auth.ts:4` for the shape and `lib/auth.ts:24` for cookie options.
 - **signedInHint** — a localStorage flag (`swu.signedInHint`) written after each confirmed sign-in. Used to pick the right view on first paint before `/api/auth/me` has round-tripped, eliminating the trade-builder-flash papercut (`src/hooks/useAuth.ts:41` + `:97`).
-- **Ghost → real merge** — `mergeGhostIntoRealUser(db, ghostId, realUserId)` in `lib/sessions.ts:856`. Called from the OAuth callback (`api/auth.ts:289`) when a caller hits `/api/auth/callback` while already carrying a ghost session cookie. Rewrites `trade_sessions` + `session_events` references, then deletes the ghost if nothing else still points at it.
+- **Ghost → real merge** — `mergeGhostIntoRealUser(db, ghostId, realUserId)` in `lib/sessions.ts`. Called from the OAuth callback when a caller hits `/api/auth/callback` while already carrying a ghost session cookie. Rewrites `trade_sessions` + `session_events` references, then deletes the ghost if nothing else still points at it. Returns `{ migrated: number }` — the OAuth callback uses this count to decide whether to set `pendingMergeBanner` on the new session cookie (≥1 → banner; 0 → silent).
+- **Pending merge banner** (UX-A5, shipped 2026-04-20) — `pendingMergeBanner: { carriedCount: number } | null` rides on the session cookie immediately after a ghost-to-real merge with `migrated >= 1`. `/api/auth/me` echoes it; the client's `<MergeReassuranceBanner>` renders a one-shot toast ("Carried N trade(s) into your account"); dismissal calls `POST /api/auth/dismiss-merge-banner` to clear the flag.
 - **Bot install URL** — `/api/auth/me` returns a second field, `botInstallUrl`, built server-side by `buildBotInstallUrl()` (`api/auth.ts:73`). Kept off the client bundle so `DISCORD_CLIENT_ID` doesn't ship in Vite output and so permission-bit changes live in one place.
 - **Auth guard** — `requireSession(req, res)` at `lib/auth.ts:101`. Returns `SessionData | null`; on null it has already written a 401 JSON body, so callers early-return. The softer `getSession()` returns null without writing a response — use that when a missing session is a valid state (e.g., `/api/auth/me`, open-slot session creation that mints a ghost).
 
@@ -124,11 +125,12 @@ Single key: `swu.signedInHint` (`src/hooks/useAuth.ts:41`). Value `'1'` or absen
 ### Exports — `lib/sessions.ts` (auth-side only)
 
 - `createGhostUser(db) → Promise<GhostUser>` — mint a ghost `users` row. Returns `{ id, handle, username }`. Caller is responsible for installing the iron-session cookie after (pattern: `createGhostUser` → `createSession({ isAnonymous: true, ... })`).
-- `mergeGhostIntoRealUser(db, ghostId, realUserId) → Promise<void>` — migrate references from the ghost to the real user. See the State + data flow section for the full choreography.
+- `mergeGhostIntoRealUser(db, ghostId, realUserId) → Promise<{ migrated: number }>` — migrate references from the ghost to the real user. The returned `migrated` count drives the OAuth callback's pending-merge-banner gate (≥1 → set the flag). See the State + data flow section for the full choreography.
 
 ### Endpoints
 
-- `GET /api/auth/me` (handled by `handleMe`, `api/auth.ts:34`) — returns `{ user: User | null, botInstallUrl: string | null }`. Always 200. No session → `user: null`. Authenticated → user shape includes `isAnonymous`. Never writes cookies.
+- `GET /api/auth/me` (handled by `handleMe`) — returns `{ user: User | null, botInstallUrl: string | null, pendingMergeBanner: { carriedCount: number } | null }`. Always 200. No session → `user: null`. Authenticated → user shape includes `isAnonymous`. `pendingMergeBanner` is non-null for one fetch after a ghost-to-real merge that moved ≥1 session; the client surfaces it as a banner and POSTs `dismiss-merge-banner` to clear it. Never writes cookies (the dismiss endpoint owns the cookie write).
+- `POST /api/auth/dismiss-merge-banner` — clears `pendingMergeBanner` on the session cookie. 200 on success, 200 on idempotent re-dismiss; 405 on GET.
 
 - `GET /api/auth/discord` (handled by `handleDiscordStart`, `api/auth.ts:111`) — starts OAuth. Generates `state` + `codeVerifier`, writes them as cookies, and returns a **200 HTML interstitial** that redirects to `discord.com/oauth2/authorize`. Scopes requested: `identify` + `guilds` (`api/auth.ts:123`). The interstitial (not a 302) is an iOS Safari cross-origin-redirect workaround documented inline at `api/auth.ts:141`–`:150`: a bare 302 to a JS-heavy target can strand iOS users on a white screen until refresh; giving Safari a real HTML document to render first lets the browser commit to our response before navigating cross-origin.
 
@@ -138,7 +140,7 @@ Single key: `swu.signedInHint` (`src/hooks/useAuth.ts:41`). Value `'1'` or absen
 
 ### Hooks / components
 
-- `useAuth()` (`src/hooks/useAuth.ts:60`) — returns `{ user, isLoading, isSignedIn, botInstallUrl, login, logout }`. Owns the single `/api/auth/me` fetch at mount. `isSignedIn` is the view-routing flag — prefer it over `!!user` for first-paint branches.
+- `useAuth()` (`src/hooks/useAuth.ts`) — returns `{ user, isLoading, isSignedIn, botInstallUrl, login, logout, pendingMergeBanner, dismissMergeBanner }`. Owns the single `/api/auth/me` fetch at mount. `isSignedIn` is the view-routing flag — prefer it over `!!user` for first-paint branches. `dismissMergeBanner` POSTs `/api/auth/dismiss-merge-banner` and clears the local `pendingMergeBanner` state on success.
 - `<AuthProvider>` (`src/contexts/AuthContext.tsx:6`) — wraps `useAuth()` once near `<App>` root. Every descendant uses `useAuthContext()` to read the same state; calling `useAuth()` bare elsewhere would duplicate the `/api/auth/me` fetch.
 
 ## State + data flow
@@ -252,7 +254,7 @@ The hint is intentionally weak:
 
 ## Tech debt + known gaps
 
-- **UX-A5 — Ghost → real merge reassurance banner (queued)**. Current merge is *silent*: the user signs in and their ghost's in-progress session just appears under the real account. Silent success in ownership transitions is anxiety-inducing — users wonder whether they lost their work. `NEXT.md:144`–`:148` specifies the fix: a one-shot dismissible gold banner on the first post-merge load that says "We carried your trade with @alice over. View it." The mechanism isn't specified yet — candidates include a `user.pendingMergeBannerSessionIds` column or a transient cookie written by `mergeGhostIntoRealUser`. Unimplemented.
+- **~~UX-A5 — Ghost → real merge reassurance banner~~ (shipped 2026-04-20)**. The implementation lives via `pendingMergeBanner: { carriedCount: number }` on the session cookie. OAuth callback sets the flag when `mergeGhostIntoRealUser` returns `migrated >= 1`; `/api/auth/me` echoes it; `<MergeReassuranceBanner>` renders the one-shot toast; `POST /api/auth/dismiss-merge-banner` clears it. See "Pending merge banner" in the glossary.
 
 - **Conflict-blocked ghost sessions linger until TTL**. When the pair-uniqueness index rejects a merge UPDATE, the ghost row *and* the conflicting session stay alive (`lib/sessions.ts:907`). The session is invisible to the real user (their client queries filter on their id) and invisible to the counterpart (they see the other, non-conflicting session). Both age out naturally at 14 days. There's no explicit cleanup or error surfaced to the user — an argument could be made for surfacing "we couldn't merge one of your guest sessions because you already had an active trade with @alice; here's the link to view it." Queued under UX considerations but not in NEXT.
 

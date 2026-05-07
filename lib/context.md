@@ -10,10 +10,22 @@ Shared code used by `api/` handlers, cron jobs, and (via `.js` imports — see b
 | `db.ts`                  | Lazy-initialized `drizzle(...)` client. `getDb()` is the only import most handlers need.            |
 | `auth.ts`                | Session cookie seal/unseal + `requireSession` + OAuth token cache helpers.                          |
 | `discordClient.ts`       | **User-scoped** Discord REST client (uses OAuth token). For `/users/@me/guilds` etc.                |
-| `discordBot.ts`          | **Bot-scoped** Discord REST client (uses bot token). For DMs, thread create, message edit.          |
+| `discordBot.ts`          | **Bot-scoped** Discord REST client (uses bot token). For DMs, thread create + lock, message edit.   |
 | `discordSignature.ts`    | Ed25519 verification for Discord webhook signatures.                                                |
+| `discordErrors.ts`       | Typed error hierarchy + `classifyDiscordError(status, …)` mapping.                                  |
 | `guildSync.ts`           | Reconciles `user_guild_memberships` from a Discord `/guilds` response.                              |
 | `discordMessages.ts`     | Builders for the Discord messages the bot sends — pref selectors, server-invite outreach, session-lifecycle DMs. |
+| `signalMessages.ts`      | Discord embed + thread-opener builders for `card_signals` posts (separate from `discordMessages.ts` to keep the signals subsystem self-contained). |
+| `signalMatching.ts`      | Server-side matching for signals — finds guild members holding the inverse inventory, given a signal's family + variant spec. |
+| `sessions.ts`            | Domain module for `trade_sessions` — every state transition + `notifySessionActivity` (auto-DM-on-activity). See [`a-sessions.md`](../docs/wiki/a-sessions.md). |
+| `tradeGuild.ts`          | `ensureSwutradeCategory` + `ensureTradesChannel` — bookkeeping for the bot-installed-guild category/channel pair created on install. |
+| `prefsRegistry.ts`       | Single source of truth for user preferences (typed defs, validation). See [`i-discord-bot.md`](../docs/wiki/i-discord-bot.md). |
+| `prefsResolver.ts`       | `resolvePref({ key, viewerUserId })` — self column → registry default. (Peer scope retired in migration 0031.) |
+| `livePriceCache.ts`      | Server-side TCGPlayer overlay cache — batched fetches, 60s TTL, in-flight dedup. Powers `/api/prices`. |
+| `listShareCodec.ts`      | URL share codec for wishlist/binder lists (`?w=` / `?a=` payloads).                                 |
+| `errorReporter.ts`       | `reportError` posts to `#bot-errors` Discord webhook with noise filtering.                          |
+| `feedbackReporter.ts`    | Posts user-reported feedback to a separate Discord webhook.                                         |
+| `communityEvents.ts`     | Append-only event log + `listEvents` for the per-guild activity feed.                               |
 | `shared.ts`              | Isomorphic helpers used by both server + frontend (`restrictionKey`, price math, etc).              |
 
 ## Invariants
@@ -40,7 +52,7 @@ Server code imports from sibling modules with explicit `.js` extensions (`from '
 
 Every Discord message shape the bot sends (pref selectors, server-invite outreach, session-lifecycle DMs — invite, decline, ping) has a dedicated builder here. **Do not** inline-construct these bodies in handlers — the ergonomics of keeping color/copy/button consistency depends on them all coming through this module.
 
-Button `custom_id` prefixes live here as exported constants (`PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `COMM_PREF_CUSTOM_ID_PREFIX` retained as a transitional alias for DMs that predate the registry migration; `SERVER_INVITE_CUSTOM_ID_PREFIX` for the bot-install outreach DM) so the dispatcher in `api/bot.ts` stays in sync.
+Button `custom_id` prefixes live here as exported constants (`PREF_CUSTOM_ID_PREFIX` for registry-driven preference controls; `SERVER_INVITE_CUSTOM_ID_PREFIX` for the bot-install outreach DM) so the dispatcher in `api/bot.ts` stays in sync. The signals subsystem owns its own `SIGNAL_CUSTOM_ID_PREFIX` over in `signalMessages.ts`. The retired `COMM_PREF_CUSTOM_ID_PREFIX` (and the trade-proposal prefix from Phase C) fall through to the unknown-button silent-ack branch.
 
 ## Testing
 

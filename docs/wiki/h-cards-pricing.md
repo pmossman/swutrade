@@ -8,6 +8,9 @@
 > - `src/variants.ts` + `src/variants.test.ts` — variant parsing, ordering, badge chrome, `cardFamilyId`
 > - `src/enrichment.ts` + `src/enrichment.test.ts` — pure swuapi↔TCGPlayer join
 > - `src/services/priceService.ts` — price fetch/read/format/URL helpers
+> - `lib/livePriceCache.ts` + `tests/lib/livePriceCache.test.ts` — server-side TCGPlayer overlay cache (batched fetches, TTL, in-flight dedup)
+> - `src/services/livePrices.ts` + `src/services/livePrices.test.ts` — client-side overlay queue (debounced batches, localStorage persistence, pub-sub reactivity)
+> - `api/me.ts::handlePrices` — exposed as `/api/prices?ids=…`; bridges the client queue to the server cache (rewritten to `/api/me?action=prices` in vercel.json)
 > - `src/contexts/PriceDataContext.tsx` — raw per-set catalog, timestamp, loading/error state
 > - `src/contexts/CardIndexContext.tsx` — derived cross-printing indexes
 > - `src/contexts/PricingContext.tsx` — user-controlled `percentage` + `priceMode`
@@ -243,6 +246,17 @@ This is deliberate: price data changes at most every 2h; a Vercel static asset b
 ### Runtime — retry on fetch failure
 
 When a `/data/{slug}.json` fetch fails, `usePriceData` writes `errors[slug]` and removes the slug from `loadedRef` so the next `retrySet` call can re-issue the fetch (`usePriceData.ts:48-53`). No auto-retry — a user-visible retry button is expected to drive it. As of writing, the only retry surface is on the way: `PriceDataContext` exposes `retrySet` but no component currently wires it.
+
+### Runtime — live-price overlay (on-demand TCGPlayer fresh reads)
+
+The static catalog is a snapshot — at most 2 hours old, often much fresher, but never *current*. For high-value cards landing in a live trade, "stale by an hour" is a real problem (a $40 card swing under negotiation feels different at the start of a draft vs. the end). The live-price overlay is the on-demand path that bridges that gap:
+
+1. **Client queue** (`src/services/livePrices.ts`). When a price-sensitive surface mounts (TradeRow, TradeBalance, AutoBalance comparator), it calls `requestLivePrice(productId)`. The service debounces — coalesces N requests across a tick window into one batched fetch. localStorage persists the most recently observed live price per productId so a page reload doesn't re-request immediately. Pub-sub (`subscribe(productId, cb)`) lets consumers react when the overlay value updates without prop-drilling.
+2. **HTTP** (`/api/prices?ids=A,B,C`, dispatched as `/api/me?action=prices`). The handler reads from `lib/livePriceCache.ts` (server-side TTL cache + in-flight request dedup so concurrent users don't fan out duplicate TCGPlayer fetches). Returns `{ id, market, low, mid }` per requested productId.
+3. **Server cache** (`lib/livePriceCache.ts`). 60-second TTL; in-flight dedup short-circuits concurrent same-id requests onto one promise. TCGPlayer failures (network or non-2xx) return empty results without throwing — silence is treated as "temporarily illiquid," so a downstream price renderer falls back to the static catalog rather than showing zero.
+4. **Render layer** picks the overlay when present; otherwise the static catalog wins. The "Prices updated Xd ago" footer label still reads from the static `priceTimestamp` — the overlay is a per-card freshness signal, not a global one.
+
+Failure semantics are deliberately silent: if TCGPlayer is down or rate-limiting us, the overlay just stays unchanged and the static price renders. No visible "live price unavailable" treatment — would just be noise.
 
 ### Runtime — ghost mode / unauthenticated
 
