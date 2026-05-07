@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
-import { botInstalledGuilds, userGuildMemberships, userPeerPrefs, users } from '../lib/schema.js';
+import { botInstalledGuilds, userGuildMemberships, users } from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
@@ -10,23 +10,17 @@ import {
   sendSessionCreateInviteDm,
 } from '../lib/sessions.js';
 import {
-  COMM_PREF_CUSTOM_ID_PREFIX,
   PREF_CUSTOM_ID_PREFIX,
   SERVER_INVITE_CUSTOM_ID_PREFIX,
   buildPrefOptionsMessage,
   buildPrefConfirmationMessage,
-  buildPeerPrefOptionsMessage,
-  buildPeerPrefConfirmationMessage,
   buildSelfPrefsIndexMessage,
-  buildPeerPrefsIndexMessage,
-  buildCombinedPrefsMessage,
   buildServerInviteMessage,
   buildServerAutoEnrolledMessage,
   buildServerEnrollConfirmationMessage,
 } from '../lib/discordMessages.js';
 import {
   PREF_DEFINITIONS,
-  getPeerPrefColumn,
   getPrefDefinition,
   getUserPrefColumn,
   validatePrefValue,
@@ -275,10 +269,7 @@ async function handleInteraction(
     // the unknown-button branch below — Discord clears the pending
     // state silently. The proposal flow has no consumers in current
     // code; sessions are the only trade primitive.
-    if (
-      customId.startsWith(`${PREF_CUSTOM_ID_PREFIX}:`)
-      || customId.startsWith(`${COMM_PREF_CUSTOM_ID_PREFIX}:`)
-    ) {
+    if (customId.startsWith(`${PREF_CUSTOM_ID_PREFIX}:`)) {
       return handlePrefsButton(payload, res);
     }
     if (customId.startsWith(`${SERVER_INVITE_CUSTOM_ID_PREFIX}:`)) {
@@ -452,21 +443,13 @@ async function buildApplicationCommandFollowup(
     };
   }
 
-  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
-  const maybeUser = payload.user as { id?: string } | undefined;
-  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
-  if (clickerDiscordId && clickerDiscordId === peerDiscordId) {
-    return {
-      content: "You can't set per-trader prefs for yourself. Use `/swutrade settings` (no target user) for your global defaults.",
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    };
-  }
-
-  const peerDefs = PREF_DEFINITIONS.filter(
-    d => d.scope.kind === 'peer' && d.surfaces.includes('discord'),
-  );
+  // Per-trader settings have no entries after the prefs hygiene pass
+  // (the only peer-scoped pref, `communicationPref`, was retired with
+  // the proposal flow). Surface a friendly explanation instead of an
+  // empty selector — the user-context menu still pipes here.
+  void peerRow;
   return {
-    ...buildPeerPrefsIndexMessage(peerDefs, peerRow.id, peerRow.handle),
+    content: 'No per-trader preferences are available right now — only global defaults. Use `/swutrade settings` to adjust those.',
     flags: MESSAGE_FLAG_EPHEMERAL,
   };
 }
@@ -1142,11 +1125,6 @@ async function runSignalExpirySweep(res: VercelResponse): Promise<void> {
  *     column and reply with an ephemeral confirmation that replaces
  *     the selector.
  *
- * Legacy `comm-pref:*` custom_ids from DMs shipped before the
- * registry existed dispatch through this handler too — they pin the
- * key to `communicationPref`. Remove once deployed DMs have rolled
- * over to the `pref:*` form.
- *
  * Rejects any key that isn't registered self-scope + Discord-surfaced.
  * A user forging a custom_id for a web-only pref (e.g. profileVisibility)
  * gets a silent deferred ack — no write, no surface leak.
@@ -1159,52 +1137,17 @@ export async function handlePrefsButton(
   const customId = data?.custom_id ?? '';
   const parts = customId.split(':');
 
-  // Combined-view fork: `pref:combo:<peerUserId>:open`. Opens an
-  // ephemeral showing BOTH the viewer's global default AND their
-  // override vs this peer, in one message. The option buttons inside
-  // carry standard per-scope custom_ids (pref:<key>:set:X for self,
-  // pref:peer:<peerUserId>:<key>:set:X for peer) so clicks route back
-  // through the existing per-scope handlers — this is a layout over
-  // primitives, not a new write path.
-  if (parts[0] === PREF_CUSTOM_ID_PREFIX && parts[1] === 'combo') {
-    return handleCombinedPrefsButton(payload, res, {
-      peerUserId: parts[2] ?? '',
-      action: parts[3] ?? '',
-    });
-  }
-
-  // Peer-scope fork: `pref:peer:<peerUserId>:<key>:<action>[:<value>]`.
-  // Routes to a separate handler that reads/writes user_peer_prefs
-  // instead of users. `peerUserId` in the custom_id is a SWUTrade
-  // user id (set at selector-render time by the slash/context menu
-  // handler after mapping the Discord id to users.id).
-  if (parts[0] === PREF_CUSTOM_ID_PREFIX && parts[1] === 'peer') {
-    return handlePeerPrefButton(payload, res, {
-      peerUserId: parts[2] ?? '',
-      defKey: parts[3] ?? '',
-      action: parts[4] ?? '',
-      rawValue: parts[5],
-    });
-  }
-
-  // Self scope — existing logic. Parse into (defKey, action, rawValue).
-  // The two prefixes differ in arity — legacy `comm-pref:{action}[:{value}]`
-  // vs new `pref:{key}:{action}[:{value}]` — so keep the dispatch explicit.
-  let defKey: string;
-  let action: string;
-  let rawValue: string | undefined;
-  if (parts[0] === PREF_CUSTOM_ID_PREFIX) {
-    defKey = parts[1] ?? '';
-    action = parts[2] ?? '';
-    rawValue = parts[3];
-  } else if (parts[0] === COMM_PREF_CUSTOM_ID_PREFIX) {
-    defKey = 'communicationPref';
-    action = parts[1] ?? '';
-    rawValue = parts[2];
-  } else {
+  // Self-scope is the only surface left after the prefs hygiene pass
+  // (peer-scope existed only for `communicationPref`, retired with the
+  // proposal flow). Parse `pref:{key}:{action}[:{value}]`. Legacy
+  // `comm-pref:*` clicks fall through to the unknown-button branch.
+  if (parts[0] !== PREF_CUSTOM_ID_PREFIX) {
     res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
     return;
   }
+  const defKey = parts[1] ?? '';
+  const action = parts[2] ?? '';
+  const rawValue = parts[3];
 
   // Registry lookup is the authorization gate. Unknown keys + keys
   // the registry doesn't surface on Discord (web-only, like
@@ -1275,269 +1218,6 @@ export async function handlePrefsButton(
   res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
 }
 
-/**
- * Peer-scope variant of the prefs button handler. Reads/writes
- * `user_peer_prefs` keyed on (viewerId, peerUserId). Called from
- * buttons emitted by the `/swutrade settings user:@peer` ephemeral.
- *
- * The `set:inherit` action clears the override (UPSERT null) so the
- * resolver cascade falls back to the viewer's self value. Any other
- * set value is validated against the peer-scoped registry def before
- * writing. Unknown peer keys, web-only defs, or custom_ids missing
- * the peer id all silently defer — no leak surface.
- */
-/**
- * `pref:combo:<peerUserId>:open` — render the two-row "self + peer"
- * ephemeral. `communicationPref` is the only pref that renders here
- * today (it's the only one registered at both scopes); if we register
- * a second dual-scope pref in the future, we'll either loop over all
- * of them or add disambiguation to the custom_id.
- */
-async function handleCombinedPrefsButton(
-  payload: Record<string, unknown>,
-  res: VercelResponse,
-  parsed: { peerUserId: string; action: string },
-): Promise<void> {
-  const { peerUserId, action } = parsed;
-  if (!peerUserId || action !== 'open') {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  // The combined view today always surfaces communicationPref. Pull
-  // both defs and bail if either isn't registered at the expected scope.
-  const selfDef = getPrefDefinition('communicationPref', 'self');
-  const peerDef = getPrefDefinition('communicationPref', 'peer');
-  if (!selfDef || !peerDef) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
-  const maybeUser = payload.user as { id?: string } | undefined;
-  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
-  if (!clickerDiscordId) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  const db = getDb();
-  const [viewer] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.discordId, clickerDiscordId))
-    .limit(1);
-  if (!viewer) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-  // If someone's DM somehow carried their own id as the peer
-  // (shouldn't happen — proposer != recipient is a handlePropose
-  // invariant), fall back to the self-only selector.
-  if (viewer.id === peerUserId) {
-    const [row] = await db
-      .select({ value: getUserPrefColumn(selfDef.key) })
-      .from(users)
-      .where(eq(users.id, viewer.id))
-      .limit(1);
-    const current = (row?.value ?? selfDef.default) as boolean | string;
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: { ...buildPrefOptionsMessage(selfDef, current), flags: MESSAGE_FLAG_EPHEMERAL },
-    });
-    return;
-  }
-
-  // Pull the three values the combined view displays in parallel.
-  const [selfRow] = await db
-    .select({ value: getUserPrefColumn(selfDef.key) })
-    .from(users)
-    .where(eq(users.id, viewer.id))
-    .limit(1);
-  const [overrideRow] = await db
-    .select({ value: getPeerPrefColumn(peerDef.key) })
-    .from(userPeerPrefs)
-    .where(and(
-      eq(userPeerPrefs.userId, viewer.id),
-      eq(userPeerPrefs.peerUserId, peerUserId),
-    ))
-    .limit(1);
-  const [peerRow] = await db
-    .select({ handle: users.handle })
-    .from(users)
-    .where(eq(users.id, peerUserId))
-    .limit(1);
-
-  const currentSelf = (selfRow?.value ?? selfDef.default) as boolean | string;
-  const currentOverride = (overrideRow?.value ?? null) as boolean | string | null;
-  const effective = (await resolvePref({
-    key: selfDef.key,
-    viewerUserId: viewer.id,
-    peerUserId,
-  })) as boolean | string | null;
-  const peerHandle = peerRow?.handle ?? peerUserId.slice(0, 8);
-
-  res.status(200).json({
-    type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-    data: {
-      ...buildCombinedPrefsMessage(
-        selfDef,
-        peerUserId,
-        peerHandle,
-        currentSelf,
-        currentOverride,
-        effective,
-      ),
-      flags: MESSAGE_FLAG_EPHEMERAL,
-    },
-  });
-}
-
-async function handlePeerPrefButton(
-  payload: Record<string, unknown>,
-  res: VercelResponse,
-  parsed: { peerUserId: string; defKey: string; action: string; rawValue: string | undefined },
-): Promise<void> {
-  const { peerUserId, defKey, action, rawValue } = parsed;
-  if (!peerUserId || !defKey || !action) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  const def = getPrefDefinition(defKey, 'peer');
-  if (!def || !def.surfaces.includes('discord')) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  const maybeMember = payload.member as { user?: { id?: string } } | undefined;
-  const maybeUser = payload.user as { id?: string } | undefined;
-  const clickerDiscordId = maybeMember?.user?.id ?? maybeUser?.id;
-  if (!clickerDiscordId) {
-    res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-    return;
-  }
-
-  const db = getDb();
-
-  // Map the clicker's Discord id to their SWUTrade user id — that's
-  // the `userId` side of the user_peer_prefs composite key.
-  const [viewer] = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.discordId, clickerDiscordId))
-    .limit(1);
-  if (!viewer) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: {
-        content: "You need to sign into SWUTrade on the web before setting per-trader prefs.",
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      },
-    });
-    return;
-  }
-  if (viewer.id === peerUserId) {
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: {
-        content: "You can't override prefs against yourself.",
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      },
-    });
-    return;
-  }
-
-  // Resolve peer handle for the message copy — purely cosmetic, so a
-  // missing row just falls back to the raw id.
-  const [peerRow] = await db
-    .select({ handle: users.handle })
-    .from(users)
-    .where(eq(users.id, peerUserId))
-    .limit(1);
-  const peerHandle = peerRow?.handle ?? peerUserId.slice(0, 8);
-
-  const column = getPeerPrefColumn(def.key);
-
-  if (action === 'open') {
-    const [row] = await db
-      .select({ value: column })
-      .from(userPeerPrefs)
-      .where(and(
-        eq(userPeerPrefs.userId, viewer.id),
-        eq(userPeerPrefs.peerUserId, peerUserId),
-      ))
-      .limit(1);
-    const override = (row?.value ?? null) as boolean | string | null;
-    const effective = (await resolvePref({
-      key: def.key,
-      viewerUserId: viewer.id,
-      peerUserId,
-    })) as boolean | string | null;
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_CHANNEL_MESSAGE,
-      data: {
-        ...buildPeerPrefOptionsMessage(def, peerUserId, peerHandle, override, effective),
-        flags: MESSAGE_FLAG_EPHEMERAL,
-      },
-    });
-    return;
-  }
-
-  if (action === 'set') {
-    // `set:inherit` clears the override; any other value goes through
-    // the registry validator (with the boolean literal coercion from
-    // the self-scope path).
-    let persisted: boolean | string | null;
-    if (rawValue === 'inherit') {
-      persisted = null;
-    } else {
-      let candidate: unknown = rawValue;
-      if (def.type.kind === 'boolean') {
-        if (rawValue === 'true') candidate = true;
-        else if (rawValue === 'false') candidate = false;
-      }
-      const validated = validatePrefValue(def, candidate);
-      if (!validated.ok) {
-        res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-        return;
-      }
-      persisted = validated.value;
-    }
-
-    const now = new Date();
-    await db
-      .insert(userPeerPrefs)
-      .values({
-        userId: viewer.id,
-        peerUserId,
-        [def.column]: persisted,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [userPeerPrefs.userId, userPeerPrefs.peerUserId],
-        set: { [def.column]: persisted, updatedAt: now },
-      });
-
-    // Compute the post-write effective value for the confirmation
-    // message — matters when we cleared (inherited) so the user sees
-    // what their self default now resolves to.
-    const effectiveAfter = (await resolvePref({
-      key: def.key,
-      viewerUserId: viewer.id,
-      peerUserId,
-    })) as boolean | string | null;
-
-    res.status(200).json({
-      type: INTERACTION_RESPONSE_TYPE_UPDATE_MESSAGE,
-      data: buildPeerPrefConfirmationMessage(def, peerUserId, peerHandle, persisted, effectiveAfter),
-    });
-    return;
-  }
-
-  res.status(200).json({ type: INTERACTION_RESPONSE_TYPE_DEFERRED_UPDATE });
-}
 
 // --- event webhook handler --------------------------------------------------
 

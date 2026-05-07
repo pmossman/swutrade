@@ -12,6 +12,10 @@ import { users } from '../../lib/schema.js';
  * schema, would produce silent runtime bugs (writes that land in
  * the wrong column, reads that fall back to a mismatched literal).
  * These tests run in CI so drift fails the build.
+ *
+ * Peer-scoped prefs and the user_peer_prefs table were retired in
+ * the prefs hygiene pass — only self-scoped defs remain. The peer-
+ * scope tests are gone with them.
  */
 describe('prefsRegistry', () => {
   describe('shape invariants', () => {
@@ -21,34 +25,6 @@ describe('prefsRegistry', () => {
         const composite = `${def.key}@${def.scope.kind}`;
         expect(seen.has(composite), `duplicate ${composite}`).toBe(false);
         seen.add(composite);
-      }
-    });
-
-    it('every peer-scoped def has a matching self-scoped def with the same key, column, and enum options', () => {
-      const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
-      for (const peerDef of peerDefs) {
-        const selfDef = PREF_DEFINITIONS.find(
-          d => d.scope.kind === 'self' && d.key === peerDef.key,
-        );
-        expect(selfDef, `peer def ${peerDef.key} has no self-scoped counterpart`).toBeTruthy();
-        if (!selfDef) continue;
-        // Column must match — the resolver falls back from peer table
-        // to users.<column>, so divergence would write to the wrong
-        // place.
-        expect(peerDef.column).toBe(selfDef.column);
-        // Type kind must agree.
-        expect(peerDef.type.kind).toBe(selfDef.type.kind);
-        // Enum options, if present, must match by value set — the
-        // cascade resolver assumes any value storable in peer is
-        // storable in self.
-        if (peerDef.type.kind === 'enum' && selfDef.type.kind === 'enum') {
-          const peerValues = new Set(peerDef.type.options.map(o => o.value));
-          const selfValues = new Set(selfDef.type.options.map(o => o.value));
-          expect(peerValues).toEqual(selfValues);
-        }
-        // Peer-scoped defs MUST default to null (sparse storage
-        // invariant — a missing override inherits from self).
-        expect(peerDef.default).toBeNull();
       }
     });
 
@@ -112,8 +88,8 @@ describe('prefsRegistry', () => {
 
   describe('getPrefDefinition', () => {
     it('finds a known (key, scope)', () => {
-      const def = getPrefDefinition('communicationPref', 'self');
-      expect(def?.column).toBe('communicationPref');
+      const def = getPrefDefinition('dmSessionActivity', 'self');
+      expect(def?.column).toBe('dmSessionActivity');
     });
 
     it('returns undefined for an unknown key', () => {
@@ -123,13 +99,13 @@ describe('prefsRegistry', () => {
     it('returns undefined for a known key at a scope where no def is registered', () => {
       // guild-scoped defs have a reserved slot in the scope union
       // but nothing is registered there yet — the lookup should miss.
-      expect(getPrefDefinition('communicationPref', 'guild')).toBeUndefined();
+      expect(getPrefDefinition('dmSessionActivity', 'guild')).toBeUndefined();
     });
   });
 
   describe('validatePrefValue', () => {
-    const boolDef = getPrefDefinition('dmTradeProposals', 'self')!;
-    const enumDef = getPrefDefinition('communicationPref', 'self')!;
+    const boolDef = getPrefDefinition('dmSessionActivity', 'self')!;
+    const enumDef = getPrefDefinition('profileVisibility', 'self')!;
 
     it('accepts a matching boolean', () => {
       expect(validatePrefValue(boolDef, true)).toEqual({ ok: true, value: true });
@@ -142,7 +118,7 @@ describe('prefsRegistry', () => {
     });
 
     it('accepts a known enum value', () => {
-      expect(validatePrefValue(enumDef, 'allow')).toEqual({ ok: true, value: 'allow' });
+      expect(validatePrefValue(enumDef, 'public')).toEqual({ ok: true, value: 'public' });
     });
 
     it('rejects an unknown enum value', () => {
@@ -156,7 +132,7 @@ describe('prefsRegistry', () => {
       expect(r.ok).toBe(false);
     });
 
-    it('rejects null — null is a peer-scope "clear override" signal handled elsewhere, not a value', () => {
+    it('rejects null — null is not a valid value for any active pref', () => {
       const r = validatePrefValue(boolDef, null);
       expect(r.ok).toBe(false);
     });

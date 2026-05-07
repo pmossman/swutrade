@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { and, count, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../lib/db.js';
-import { users, userGuildMemberships, userPeerPrefs, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeSessions } from '../lib/schema.js';
+import { users, userGuildMemberships, userFavoritePartners, botInstalledGuilds, wantsItems, availableItems, tradeSessions } from '../lib/schema.js';
 import { getSession, requireSession, getDiscordAccessToken } from '../lib/auth.js';
 import { reportFeedback, type FeedbackKind } from '../lib/feedbackReporter.js';
 import { resolveLivePrices } from '../lib/livePriceCache.js';
@@ -160,99 +160,30 @@ async function handlePrefsSelfPut(
   return res.json({ ok: true });
 }
 
+// Peer-scoped prefs were retired in the prefs hygiene pass. The peer
+// GET / PUT handlers and the user_peer_prefs table they read are gone.
+// `/api/me/prefs?peer=…` and `PUT { peerUserId, key, value }` now
+// short-circuit with a 410-style payload — kept inline above rather
+// than 410'ing in case any cached client is still calling them.
+
 async function handlePrefsPeerGet(
   _req: VercelRequest,
   res: VercelResponse,
-  userId: string,
-  peerUserId: string,
+  _userId: string,
+  _peerUserId: string,
 ) {
-  const db = getDb();
-  const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
-  const peerCols = userPeerPrefs as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
-
-  // Fetch the single peer-prefs row if it exists; project every
-  // registered peer-scoped column.
-  const projection: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
-  for (const def of peerDefs) {
-    projection[def.key] = peerCols[def.column];
-  }
-  const [overrideRow] = Object.keys(projection).length > 0
-    ? await db
-        .select(projection)
-        .from(userPeerPrefs)
-        .where(and(
-          eq(userPeerPrefs.userId, userId),
-          eq(userPeerPrefs.peerUserId, peerUserId),
-        ))
-        .limit(1)
-    : [undefined];
-
-  const override: Record<string, boolean | string | null> = {};
-  const effective: Record<string, boolean | string | null> = {};
-  for (const def of peerDefs) {
-    const stored = overrideRow ? overrideRow[def.key] : null;
-    override[def.key] = (stored ?? null) as boolean | string | null;
-    // Resolve separately so the client gets both the raw override and
-    // the value the cascade would produce (for "inherit (currently X)").
-    effective[def.key] = (await resolvePref({
-      key: def.key,
-      viewerUserId: userId,
-      peerUserId,
-    })) as boolean | string | null;
-  }
-
   res.setHeader('Cache-Control', 'private, no-store');
-  return res.json({ override, effective });
+  return res.json({ override: {}, effective: {} });
 }
 
 async function handlePrefsPeerPut(
   res: VercelResponse,
-  userId: string,
-  body: Record<string, unknown>,
+  _userId: string,
+  _body: Record<string, unknown>,
 ) {
-  const db = getDb();
-  const peerUserId = body.peerUserId as string;
-  const key = typeof body.key === 'string' ? body.key : '';
-  const value = body.value;
-
-  if (!key) return res.status(400).json({ error: 'Missing key' });
-  if (peerUserId === userId) {
-    return res.status(400).json({ error: "Can't override prefs against yourself" });
-  }
-
-  const def = getPrefDefinition(key, 'peer');
-  if (!def) return res.status(400).json({ error: 'Unknown peer pref', key });
-
-  // Null = clear override (fall back to self default). Any other
-  // value goes through the validator.
-  let persisted: boolean | string | null;
-  if (value === null) {
-    persisted = null;
-  } else {
-    const v = validatePrefValue(def, value);
-    if (!v.ok) return res.status(400).json({ error: 'Invalid value', key, reason: v.reason });
-    persisted = v.value;
-  }
-
-  // Upsert on (userId, peerUserId). Keep the row even when every
-  // column is nulled — simpler than delete-when-all-null, and a
-  // future peer-scoped column can land in the same row.
-  const now = new Date();
-  await db
-    .insert(userPeerPrefs)
-    .values({
-      userId,
-      peerUserId,
-      [def.column]: persisted,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [userPeerPrefs.userId, userPeerPrefs.peerUserId],
-      set: { [def.column]: persisted, updatedAt: now },
-    });
-
-  return res.json({ ok: true });
+  return res.status(410).json({
+    error: 'Per-trader prefs are no longer supported. Adjust your global defaults via /api/me/prefs.',
+  });
 }
 
 /**
@@ -762,63 +693,13 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
     availTotalByUser.set(a.userId, s);
   }
 
-  // Peer-scoped registry defs drive the `peerPrefs` field on each
-  // member. Two queries total — one for viewer's self values
-  // (cascade fallback), one for the viewer's override rows keyed by
-  // peer user id. No N+1.
-  const peerDefs = PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer');
-  const usersCols = users as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
-  const peerCols = userPeerPrefs as unknown as Record<string, import('drizzle-orm/pg-core').AnyPgColumn>;
-
-  let viewerSelf: Record<string, boolean | string | null> = {};
-  if (peerDefs.length > 0) {
-    const selfProj: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {};
-    for (const def of peerDefs) selfProj[def.key] = usersCols[def.column];
-    const [viewerRow] = await db
-      .select(selfProj)
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-    viewerSelf = (viewerRow ?? {}) as Record<string, boolean | string | null>;
-  }
-
-  const overrideByPeer = new Map<string, Record<string, boolean | string | null>>();
-  if (peerDefs.length > 0 && visibleIds.length > 0) {
-    const overrideProj: Record<string, import('drizzle-orm/pg-core').AnyPgColumn> = {
-      peerUserId: userPeerPrefs.peerUserId,
-    };
-    for (const def of peerDefs) overrideProj[def.key] = peerCols[def.column];
-    const overrideRows = await db
-      .select(overrideProj)
-      .from(userPeerPrefs)
-      .where(and(
-        eq(userPeerPrefs.userId, session.userId),
-        inArray(userPeerPrefs.peerUserId, visibleIds),
-      ));
-    for (const row of overrideRows) {
-      const peerId = row.peerUserId as string;
-      const entry: Record<string, boolean | string | null> = {};
-      for (const def of peerDefs) {
-        entry[def.key] = (row[def.key] ?? null) as boolean | string | null;
-      }
-      overrideByPeer.set(peerId, entry);
-    }
-  }
-
+  // Peer-scoped prefs were retired in the prefs hygiene pass. Member
+  // rows now ship empty override/effective maps for shape compat with
+  // the `useCommunityMembers` consumer; the UI side renders an empty
+  // state when the maps are empty (see SettingsView's MemberPrefsDetail).
   const members: CommunityMember[] = visibleUsers.map(u => {
     const override: Record<string, boolean | string | null> = {};
     const effective: Record<string, boolean | string | null> = {};
-    const overrideRow = overrideByPeer.get(u.id) ?? {};
-    for (const def of peerDefs) {
-      const stored = overrideRow[def.key] ?? null;
-      override[def.key] = stored;
-      // Cascade resolved inline: override → viewer self value → self
-      // def's registry default. Mirrors `resolvePref` without the
-      // N+1 DB reads we'd incur if we called it per member.
-      const selfValue = viewerSelf[def.key];
-      const selfDef = getPrefDefinition(def.key, 'self');
-      effective[def.key] = stored ?? selfValue ?? selfDef?.default ?? null;
-    }
     return {
       userId: u.id,
       handle: u.handle,

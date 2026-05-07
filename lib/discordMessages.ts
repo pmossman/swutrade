@@ -27,13 +27,6 @@ export const PREF_CUSTOM_ID_PREFIX = 'pref';
  *  action buttons. Format: `server-invite:{guildId}:{action}`. Handler
  *  dispatch in api/bot.ts (`handleServerInviteButton`). */
 export const SERVER_INVITE_CUSTOM_ID_PREFIX = 'server-invite';
-/** Legacy prefix for the comm-pref button shipped before the registry
- *  existed. The dispatcher accepts this during the transition and
- *  infers the key as `communicationPref`; new DMs emit the `pref:*`
- *  form instead. Remove once deployed DM buttons have had a release
- *  to roll over. */
-export const COMM_PREF_CUSTOM_ID_PREFIX = 'comm-pref';
-
 const COLORS = {
   gold: 0xD4AF37,
   emerald: 0x34D399,
@@ -99,77 +92,6 @@ export function buildPrefOptionsMessage(
   };
 }
 
-/**
- * Peer-scoped variant of `buildPrefOptionsMessage`. Renders an extra
- * leading "Inherit" button alongside the enum/boolean options; picking
- * Inherit clears the override so the viewer's self value takes over
- * via the cascade. `currentOverride` is the raw `user_peer_prefs`
- * value (null = no row or null column); `currentEffective` is what
- * `resolvePref` currently returns so the highlighted button matches
- * the value the matrix is actually seeing.
- */
-export function buildPeerPrefOptionsMessage(
-  def: PrefDefinition,
-  peerUserId: string,
-  peerHandle: string,
-  currentOverride: PrefValue,
-  currentEffective: PrefValue,
-): DiscordMessageBody {
-  // Inherit button — no override stored when selected.
-  const inheritButton = {
-    type: COMPONENT_TYPE_BUTTON,
-    // Highlight inherit when there's no override; otherwise secondary.
-    style: currentOverride == null ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-    // Button copy is "Use my default" — end-user readable vs the
-    // dev-jargon "Inherit". The custom_id action stays `:set:inherit`
-    // (internal contract with the handler) to avoid a migration.
-    label: 'Use my default',
-    custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:inherit`,
-  };
-  if (def.type.kind === 'boolean') {
-    const cur = currentOverride as boolean | null;
-    return {
-      content: `**${def.label}** for <@${peerUserId}> (@${peerHandle}) — ${def.description}\nCurrent effective value: **${currentEffective ? 'On' : 'Off'}**`,
-      components: [{
-        type: COMPONENT_TYPE_ACTION_ROW,
-        components: [
-          inheritButton,
-          {
-            type: COMPONENT_TYPE_BUTTON,
-            style: cur === true ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-            label: 'On',
-            custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:true`,
-          },
-          {
-            type: COMPONENT_TYPE_BUTTON,
-            style: cur === false ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-            label: 'Off',
-            custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:false`,
-          },
-        ],
-      }],
-    };
-  }
-  // Enum — max 4 options to fit alongside the leading Inherit button
-  // in a single 5-button action row. Registry invariant enforces ≤ 4
-  // option enums for peer-scoped Discord surfaces (see peer def for
-  // communicationPref — 4 options + inherit = 5 total).
-  return {
-    content: `**${def.label}** for <@${peerUserId}> (@${peerHandle}) — ${def.description}\nCurrent effective value is highlighted.`,
-    components: [{
-      type: COMPONENT_TYPE_ACTION_ROW,
-      components: [
-        inheritButton,
-        ...def.type.options.map(opt => ({
-          type: COMPONENT_TYPE_BUTTON,
-          style: opt.value === currentOverride ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-          label: opt.label,
-          custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:${opt.value}`,
-        })),
-      ],
-    }],
-  };
-}
 
 /**
  * Top-level index shown when a user runs `/swutrade settings` with
@@ -197,41 +119,6 @@ export function buildSelfPrefsIndexMessage(
   };
 }
 
-/**
- * Peer-scoped index rendered when the user invokes `/swutrade settings
- * user:@alice` or the "SWUTrade prefs" user context menu on someone.
- * One button per Discord-surfaced peer-scoped pref; each click opens
- * that pref's selector with the peer id baked in. The content line
- * names the target user via an `@` mention so the user sees who
- * they're setting prefs for.
- */
-export function buildPeerPrefsIndexMessage(
-  defs: ReadonlyArray<PrefDefinition>,
-  peerUserId: string,
-  peerHandle: string,
-): DiscordMessageBody {
-  if (defs.length === 0) {
-    return {
-      content:
-        `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
-        "no per-trader settings are available yet. Your global defaults apply.",
-    };
-  }
-  return {
-    content:
-      `**SWUTrade preferences for <@${peerUserId}> (@${peerHandle})** — ` +
-      `choose a setting to override specifically for this trader. ` +
-      `"Use my default" = no override, your global setting applies.`,
-    components: chunkButtonsIntoActionRows(
-      defs.map(def => ({
-        type: COMPONENT_TYPE_BUTTON,
-        style: BUTTON_STYLE_SECONDARY,
-        label: def.label,
-        custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:open`,
-      })),
-    ),
-  };
-}
 
 /**
  * Discord caps action rows at 5 components and a single message at
@@ -282,128 +169,7 @@ export function buildPrefConfirmationMessage(
   };
 }
 
-/**
- * Two-row ephemeral shown when the viewer clicks ⚙ Prefs on a
- * proposal DM. The top row sets their GLOBAL default; the bottom
- * row sets an OVERRIDE specifically for the proposer on this DM.
- * Both rows carry the existing per-scope `pref:*:set:*` custom_ids
- * so clicks land on the already-tested self + peer write paths —
- * this is purely a layout over primitives that already ship.
- *
- * After either button fires the ephemeral gets PATCHed to the
- * single-click confirmation message; the user closes the ephemeral
- * and re-clicks ⚙ Prefs if they want to tweak more. That's a minor
- * friction, but keeping confirmation behaviour consistent with the
- * standalone flows wins more than a stateful dashboard would.
- */
-export function buildCombinedPrefsMessage(
-  def: PrefDefinition,
-  peerUserId: string,
-  peerHandle: string,
-  currentSelf: PrefValue,
-  currentOverride: PrefValue,
-  currentEffective: PrefValue,
-): DiscordMessageBody {
-  const humanize = (value: PrefValue): string => {
-    if (def.type.kind === 'boolean') {
-      return value === true ? 'On' : value === false ? 'Off' : 'unset';
-    }
-    const opt = def.type.kind === 'enum'
-      ? def.type.options.find(o => o.value === value)
-      : undefined;
-    return opt?.label ?? String(value ?? 'unset');
-  };
 
-  // Self row: one button per option, current highlighted. Writes go
-  // to users.<column> via the existing self handler.
-  const selfButtons = def.type.kind === 'enum'
-    ? def.type.options.map(opt => ({
-        type: COMPONENT_TYPE_BUTTON,
-        style: opt.value === currentSelf ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-        label: opt.label,
-        custom_id: `${PREF_CUSTOM_ID_PREFIX}:${def.key}:set:${opt.value}`,
-      }))
-    : [];
-
-  // Peer row: Use-my-default + per-option. "Use my default" is always
-  // styled success when there's no override; otherwise the current
-  // override option is highlighted. Writes go to user_peer_prefs.
-  const peerButtons = [
-    {
-      type: COMPONENT_TYPE_BUTTON,
-      style: currentOverride == null ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-      label: 'Use my default',
-      custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:inherit`,
-    },
-    ...(def.type.kind === 'enum'
-      ? def.type.options.map(opt => ({
-          type: COMPONENT_TYPE_BUTTON,
-          style: opt.value === currentOverride ? BUTTON_STYLE_SUCCESS : BUTTON_STYLE_SECONDARY,
-          label: opt.label,
-          custom_id: `${PREF_CUSTOM_ID_PREFIX}:peer:${peerUserId}:${def.key}:set:${opt.value}`,
-        }))
-      : []),
-  ];
-
-  const overrideDescription = currentOverride == null
-    ? `using your default (${humanize(currentEffective)})`
-    : `**${humanize(currentOverride)}**`;
-
-  return {
-    content: [
-      `**${def.label}** — ${def.description}`,
-      ``,
-      `**Your default** (top row, applies to everyone): **${humanize(currentSelf)}**`,
-      `**For <@${peerUserId}> (@${peerHandle})** (bottom row): ${overrideDescription}`,
-    ].join('\n'),
-    components: [
-      { type: COMPONENT_TYPE_ACTION_ROW, components: selfButtons },
-      { type: COMPONENT_TYPE_ACTION_ROW, components: peerButtons },
-    ],
-  };
-}
-
-/**
- * Peer-scope variant of the confirmation. `newValue == null` means
- * the override was cleared (inherit path); show the effective value
- * the cascade now resolves to so the user sees the new answer, not
- * just "removed."
- */
-export function buildPeerPrefConfirmationMessage(
-  def: PrefDefinition,
-  peerUserId: string,
-  peerHandle: string,
-  newValue: PrefValue,
-  effectiveAfter: PrefValue,
-): DiscordMessageBody {
-  if (newValue == null) {
-    let humanEffective: string;
-    if (def.type.kind === 'boolean') {
-      humanEffective = effectiveAfter ? 'on' : 'off';
-    } else {
-      const opt = def.type.kind === 'enum'
-        ? def.type.options.find(o => o.value === effectiveAfter)
-        : undefined;
-      humanEffective = opt?.label ?? String(effectiveAfter ?? 'unset');
-    }
-    return {
-      content: `Override cleared for <@${peerUserId}> (@${peerHandle}). **${def.label}** now uses your default: **${humanEffective}**.`,
-      components: [],
-    };
-  }
-  let humanValue: string;
-  if (def.type.kind === 'boolean') {
-    humanValue = newValue ? 'on' : 'off';
-  } else if (def.type.kind === 'enum') {
-    humanValue = def.type.options.find(o => o.value === newValue)?.label ?? String(newValue);
-  } else {
-    humanValue = String(newValue);
-  }
-  return {
-    content: `Saved. **${def.label}** for <@${peerUserId}> (@${peerHandle}) is now **${humanValue}**.`,
-    components: [],
-  };
-}
 
 // --- Server invite DM (bot-install outreach to existing members) -----------
 
@@ -612,28 +378,6 @@ export function buildSessionDeclinedMessage(opts: {
   return {
     embeds: [{
       title: 'Trade declined',
-      description: lines.join('\n'),
-      color: COLORS.gold,
-      footer: { text: 'SWUTrade shared trade' },
-    }],
-  };
-}
-
-export function buildSessionPingMessage(opts: {
-  pingerHandle: string;
-  sessionUrl: string;
-  note?: string;
-}): DiscordMessageBody {
-  const lines: string[] = [
-    `@${opts.pingerHandle} wants you to take a look at your shared trade.`,
-  ];
-  if (opts.note && opts.note.trim().length > 0) {
-    lines.push('', `> ${opts.note.trim()}`);
-  }
-  lines.push('', `[Open shared trade](<${opts.sessionUrl}>)`);
-  return {
-    embeds: [{
-      title: 'Ping from a counterpart',
       description: lines.join('\n'),
       color: COLORS.gold,
       footer: { text: 'SWUTrade shared trade' },

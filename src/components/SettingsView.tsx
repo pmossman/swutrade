@@ -469,22 +469,17 @@ function PreferencesSection({ account }: { account: AccountSettingsApi }) {
   // Group by section — section labels drive the visible headings.
   const bySection = new Map<string, PrefDefinition[]>();
   for (const def of defs) {
-    const key = def.section ?? 'communication';
+    const key = def.section ?? 'notifications';
     const list = bySection.get(key) ?? [];
     list.push(def);
     bySection.set(key, list);
   }
 
-  const sections: Array<{ id: 'communication' | 'notifications' | 'membership'; label: string; description?: string }> = [
-    {
-      id: 'communication',
-      label: 'Communication',
-      description: 'How SWUTrade routes Discord conversation for trade proposals.',
-    },
+  const sections: Array<{ id: 'notifications' | 'membership'; label: string; description?: string }> = [
     {
       id: 'notifications',
       label: 'Bot notifications',
-      description: "Discord DMs SWUTrade's bot will send you. Trade proposals sent directly to you are separate from broadcast alerts.",
+      description: "Discord DMs SWUTrade's bot will send you about your shared trades.",
     },
     {
       id: 'membership',
@@ -816,9 +811,12 @@ function MemberPrefsDetail({
     );
   }
 
-  const peerDefs = PREF_DEFINITIONS.filter(
-    d => d.scope.kind === 'peer' && d.surfaces.includes('web'),
-  );
+  // No peer-scoped prefs exist after the prefs hygiene pass — the
+  // only one (`communicationPref`) was retired with the proposal flow.
+  // Leaving the empty-state branch in place so the route doesn't 404
+  // for any cached deep-link; a future cleanup can drop the entire
+  // members/user drill-down if it stays empty.
+  const peerDefs: PrefDefinition[] = [];
 
   return (
     <div className="mt-4 flex flex-col gap-5">

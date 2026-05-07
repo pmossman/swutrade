@@ -5,7 +5,6 @@ import {
   handleChatSession,
   handleEditSession,
   handleConfirmSession,
-  handlePingSession,
 } from '../../api/sessions.js';
 import { getDb } from '../../lib/db.js';
 import {
@@ -320,37 +319,4 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     expect(res._status).toBe(200);
   });
 
-  // Sanity: the manual-ping handler still fires its own DM and the
-  // notify helper-fired activity DM doesn't trip on the same path.
-  // (A successful ping STAMPS lastNotifiedAt, which then suppresses
-  // the activity DM for the cooldown window — interlock validated by
-  // the unit test above.)
-  it('manual ping handler still works alongside the activity wiring', async () => {
-    const alice = await createTestUser();
-    fixtures.push(alice);
-    const bob = await createTestUser();
-    fixtures.push(bob);
-    const db = getDb();
-    const seed = await createOrGetActiveSession(db, {
-      creatorUserId: alice.id,
-      counterpartUserId: bob.id,
-      creatorCards: [snap('p-1')],
-    });
-    createdSessionIds.push(seed.id);
-
-    const bot = makeFakeBot();
-    const cookie = await sealTestCookie(alice.id);
-    const req = mockRequest({
-      method: 'POST',
-      cookies: { swu_session: cookie },
-      query: { id: seed.id },
-      body: {},
-    });
-    const res = mockResponse();
-    await handlePingSession(req, res, { bot });
-    // Bob has no Discord id in test fixtures, so the ping collapses
-    // to no-discord-id — but the handler itself doesn't crash, which
-    // is the wiring assertion we care about here.
-    expect([200, 409]).toContain(res._status);
-  });
 });

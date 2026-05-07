@@ -44,27 +44,18 @@ export const users = pgTable('users', {
   profileVisibility: text('profile_visibility', { enum: ['public', 'discord', 'private'] })
     .default('discord')
     .notNull(),
-  dmTradeProposals: boolean('dm_trade_proposals').default(true).notNull(),
-  dmMatchAlerts: boolean('dm_match_alerts').default(false).notNull(),
-  dmMeetupReminders: boolean('dm_meetup_reminders').default(false).notNull(),
-  // Phase B (sessions consolidation) — five flags gating session-
-  // lifecycle DMs. All default ON because sessions are the primary
-  // trade primitive and silence is a worse UX than mild over-
-  // notification. Users opt out per-event via Settings →
-  // Notifications. The corresponding DM-send sites (B1 invite, B2
-  // ping, B5 decline, future settled/expired) check the recipient's
-  // flag before firing.
+  // Session-lifecycle DM toggles. Default ON because sessions are the
+  // primary trade primitive and silence is a worse UX than mild
+  // over-notification. Users opt out per-event via Settings →
+  // Notifications. Each DM-send site checks the relevant flag before
+  // firing.
   dmSessionInvited: boolean('dm_session_invited').default(true).notNull(),
-  dmSessionPing: boolean('dm_session_ping').default(true).notNull(),
   dmSessionSettled: boolean('dm_session_settled').default(true).notNull(),
-  dmSessionExpired: boolean('dm_session_expired').default(true).notNull(),
   dmSessionDeclined: boolean('dm_session_declined').default(true).notNull(),
   // Auto-notification when the counterpart does anything in a shared
   // session (chat / edit / confirm / suggest). Cooldown-throttled
   // server-side via `trade_sessions.last_notified_at` so a burst of
-  // activity collapses into a single DM. Distinct from dmSessionPing
-  // (which gates the explicit "Ping" button) — this is the silent
-  // FYI that keeps the recipient from missing activity while away.
+  // activity collapses into a single DM.
   dmSessionActivity: boolean('dm_session_activity').default(true).notNull(),
   // Fires once per APPLICATION_AUTHORIZED event for an existing user
   // already in that guild. Opt-out surface for "SWUTrade just landed
@@ -86,62 +77,9 @@ export const users = pgTable('users', {
   // AND historical events; events are still recorded so flipping back
   // on restores the trail.
   shareActivityPublicly: boolean('share_activity_publicly').default(true).notNull(),
-  // Trade-thread consent model. Four states driving the decision of
-  // whether a proposal's chat happens in a private thread (with both
-  // traders inside) or stays in per-user DMs:
-  //   - prefer       — wants threads by default when the other side
-  //                    is also opted in
-  //   - auto-accept  — DM first, but auto-approves any thread request
-  //                    from the counterpart
-  //   - allow        — DM first, approves/declines thread requests
-  //                    manually via button (default)
-  //   - dm-only      — refuses threads entirely; no "Request thread"
-  //                    button is surfaced to the counterpart
-  // See handlePropose's decision matrix for the full 4×4 routing.
-  communicationPref: text('communication_pref', {
-    enum: ['prefer', 'auto-accept', 'allow', 'dm-only'],
-  }).default('allow').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
-
-/**
- * Per-peer preference overrides — sparse storage for "I want a
- * different default specifically when trading with this person."
- * A missing row (or a null column) means "no override; resolve
- * through the cascade to the viewer's self-scoped default" (see
- * docs/prefs-registry.md for the resolution rule).
- *
- * Composite primary key `(user_id, peer_user_id)` enforces at most
- * one row per viewer/peer pair. Both FKs cascade on delete: if
- * either party deactivates, their peer pref rows vanish. Rows are
- * NOT cleaned up when the viewer leaves a mutual guild — overrides
- * are tied to user identity, not the guild relationship.
- */
-export const userPeerPrefs = pgTable(
-  'user_peer_prefs',
-  {
-    userId: text('user_id')
-      .references(() => users.id, { onDelete: 'cascade' })
-      .notNull(),
-    peerUserId: text('peer_user_id')
-      .references(() => users.id, { onDelete: 'cascade' })
-      .notNull(),
-    // Override for the viewer's self-scoped communicationPref when
-    // the counterpart is `peerUserId`. Null = inherit from self.
-    // Enum values must stay in sync with users.communicationPref;
-    // the registry unit test asserts the peer-scoped def and the
-    // self-scoped def agree on options.
-    communicationPref: text('communication_pref', {
-      enum: ['prefer', 'auto-accept', 'allow', 'dm-only'],
-    }),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    primaryKey({ columns: [t.userId, t.peerUserId] }),
-  ],
-);
 
 /**
  * Explicit bookmark list — "I know @bob, I want to trade with him."

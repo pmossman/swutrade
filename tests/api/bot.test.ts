@@ -122,79 +122,18 @@ describeWithDb('/api/bot dispatcher', () => {
 
 
     describe('prefs buttons (registry-driven)', () => {
-      it('pref:communicationPref:open returns a 4-button selector with current highlighted, buttons carrying the new `pref:*` commit ids', async () => {
-        const user = await createTestUser({ communicationPref: 'auto-accept' });
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: 'pref:communicationPref:open' },
-            user: { id: user.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { flags?: number; components?: Array<{ components?: Array<{ style?: number; custom_id?: string; label?: string }> }> };
-        };
-        expect(body.type).toBe(4);
-        expect(body.data?.flags).toBe(64);
-        const buttons = body.data?.components?.[0]?.components ?? [];
-        expect(buttons).toHaveLength(4);
-        expect(buttons.map(b => b.custom_id)).toEqual([
-          'pref:communicationPref:set:prefer',
-          'pref:communicationPref:set:auto-accept',
-          'pref:communicationPref:set:allow',
-          'pref:communicationPref:set:dm-only',
-        ]);
-        // Current value rendered as success (style 3); others secondary (2).
-        expect(buttons.find(b => b.custom_id === 'pref:communicationPref:set:auto-accept')?.style).toBe(3);
-        expect(buttons.find(b => b.custom_id === 'pref:communicationPref:set:prefer')?.style).toBe(2);
-
-        await user.cleanup();
-      });
-
-      it('pref:communicationPref:set:prefer updates users.communication_pref + returns UPDATE_MESSAGE confirmation', async () => {
-        const user = await createTestUser({ communicationPref: 'allow' });
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: 'pref:communicationPref:set:prefer' },
-            user: { id: user.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as { type: number; data?: { content?: string; components?: unknown[] } };
-        expect(body.type).toBe(7);
-        expect(body.data?.content).toMatch(/Prefer threads/);
-        expect(body.data?.components).toEqual([]);
-
-        const db = getDb();
-        const [row] = await db
-          .select({ communicationPref: users.communicationPref })
-          .from(users)
-          .where(eq(users.discordId, user.id))
-          .limit(1);
-        expect(row.communicationPref).toBe('prefer');
-
-        await user.cleanup();
-      });
-
-      it('pref:dmTradeProposals:open returns On/Off buttons for a boolean pref, current highlighted', async () => {
+      // Post-hygiene-pass, the registry has only boolean prefs that
+      // surface on Discord. Enum prefs (profileVisibility) are web-
+      // only, so the boolean flow is the entire test surface. Pick
+      // dmSessionActivity (default true) as a representative.
+      it('pref:dmSessionActivity:open returns On/Off buttons for a boolean pref, current highlighted', async () => {
         const user = await createTestUser();
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'pref:dmTradeProposals:open' },
+            data: { custom_id: 'pref:dmSessionActivity:open' },
             user: { id: user.id },
           },
           res,
@@ -208,24 +147,24 @@ describeWithDb('/api/bot dispatcher', () => {
         const buttons = body.data?.components?.[0]?.components ?? [];
         expect(buttons.map(b => b.label)).toEqual(['On', 'Off']);
         expect(buttons.map(b => b.custom_id)).toEqual([
-          'pref:dmTradeProposals:set:true',
-          'pref:dmTradeProposals:set:false',
+          'pref:dmSessionActivity:set:true',
+          'pref:dmSessionActivity:set:false',
         ]);
-        // Default for dmTradeProposals is true → On is success (3), Off secondary (2).
+        // Default true → On highlighted (style 3), Off secondary (2).
         expect(buttons[0].style).toBe(3);
         expect(buttons[1].style).toBe(2);
 
         await user.cleanup();
       });
 
-      it('pref:dmMatchAlerts:set:true updates the boolean column', async () => {
+      it('pref:dmSessionActivity:set:false updates the boolean column + returns UPDATE_MESSAGE', async () => {
         const user = await createTestUser();
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'pref:dmMatchAlerts:set:true' },
+            data: { custom_id: 'pref:dmSessionActivity:set:false' },
             user: { id: user.id },
           },
           res,
@@ -236,11 +175,11 @@ describeWithDb('/api/bot dispatcher', () => {
 
         const db = getDb();
         const [row] = await db
-          .select({ dmMatchAlerts: users.dmMatchAlerts })
+          .select({ dmSessionActivity: users.dmSessionActivity })
           .from(users)
           .where(eq(users.discordId, user.id))
           .limit(1);
-        expect(row.dmMatchAlerts).toBe(true);
+        expect(row.dmSessionActivity).toBe(false);
 
         await user.cleanup();
       });
@@ -283,14 +222,14 @@ describeWithDb('/api/bot dispatcher', () => {
         await user.cleanup();
       });
 
-      it('pref:communicationPref:set:bogus defers + no DB write', async () => {
-        const user = await createTestUser({ communicationPref: 'allow' });
+      it('pref:dmSessionActivity:set:bogus defers + no DB write', async () => {
+        const user = await createTestUser();
         const res = mockResponse();
         await dispatchBotPayload(
           'interactions',
           {
             type: 3,
-            data: { custom_id: 'pref:communicationPref:set:bogus' },
+            data: { custom_id: 'pref:dmSessionActivity:set:bogus' },
             user: { id: user.id },
           },
           res,
@@ -301,279 +240,18 @@ describeWithDb('/api/bot dispatcher', () => {
 
         const db = getDb();
         const [row] = await db
-          .select({ communicationPref: users.communicationPref })
+          .select({ dmSessionActivity: users.dmSessionActivity })
           .from(users)
           .where(eq(users.discordId, user.id))
           .limit(1);
-        expect(row.communicationPref).toBe('allow');
+        // Default still applies (true) — bogus value rejected.
+        expect(row.dmSessionActivity).toBe(true);
 
         await user.cleanup();
       });
     });
 
-    describe('combined prefs view (pref:combo:<peerId>:open)', () => {
-      it('returns a two-row ephemeral: self buttons up top, peer buttons below with Use-my-default', async () => {
-        const viewer = await createTestUser({ communicationPref: 'allow' });
-        const peer = await createTestUser();
 
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:combo:${peer.id}:open` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: {
-            flags?: number;
-            content?: string;
-            components?: Array<{ components?: Array<{ style?: number; label?: string; custom_id?: string }> }>;
-          };
-        };
-        expect(body.type).toBe(4);
-        expect(body.data?.flags).toBe(64);
-        expect(body.data?.content).toMatch(/Thread conversations/);
-        expect(body.data?.content).toMatch(/Your default/i);
-        expect(body.data?.content).toMatch(new RegExp(`<@${peer.id}>`));
-
-        const rows = body.data?.components ?? [];
-        expect(rows).toHaveLength(2);
-
-        // Self row: 4 buttons, all emitting pref:communicationPref:set:<value>.
-        const selfButtons = rows[0].components ?? [];
-        expect(selfButtons).toHaveLength(4);
-        for (const b of selfButtons) {
-          expect(b.custom_id).toMatch(/^pref:communicationPref:set:/);
-        }
-        // Current self ('allow') highlighted success (3).
-        expect(selfButtons.find(b => b.custom_id === 'pref:communicationPref:set:allow')?.style).toBe(3);
-
-        // Peer row: 5 buttons (Use my default + 4 options), all peer-scoped to this peer id.
-        const peerButtons = rows[1].components ?? [];
-        expect(peerButtons).toHaveLength(5);
-        expect(peerButtons[0].label).toBe('Use my default');
-        expect(peerButtons[0].custom_id).toBe(`pref:peer:${peer.id}:communicationPref:set:inherit`);
-        // No override set → Use-my-default highlighted.
-        expect(peerButtons[0].style).toBe(3);
-        for (const b of peerButtons.slice(1)) {
-          expect(b.custom_id).toMatch(new RegExp(`^pref:peer:${peer.id}:communicationPref:set:`));
-        }
-
-        await viewer.cleanup();
-        await peer.cleanup();
-      });
-
-      it('falls back to self-only selector when the peer id equals the viewer', async () => {
-        // Shouldn't happen in practice (the proposal DM is always
-        // from a different user), but belt-and-suspenders — we
-        // render a usable UI rather than an invalid self-override.
-        const viewer = await createTestUser();
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:combo:${viewer.id}:open` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { components?: Array<{ components?: Array<{ custom_id?: string }> }> };
-        };
-        expect(body.type).toBe(4);
-        const rows = body.data?.components ?? [];
-        expect(rows).toHaveLength(1);
-        // Single row, self-only custom_ids.
-        for (const b of rows[0].components ?? []) {
-          expect(b.custom_id).toMatch(/^pref:communicationPref:set:/);
-        }
-
-        await viewer.cleanup();
-      });
-    });
-
-    describe('peer prefs buttons (pref:peer:...)', () => {
-      it('pref:peer:<peerId>:communicationPref:open returns Use-my-default + 4 option buttons, highlights override when set', async () => {
-        const viewer = await createTestUser();
-        const peer = await createTestUser();
-
-        // Pre-seed an override so the handler's "highlight current override" path runs.
-        const { userPeerPrefs } = await import('../../lib/schema.js');
-        const db = getDb();
-        await db.insert(userPeerPrefs).values({
-          userId: viewer.id,
-          peerUserId: peer.id,
-          communicationPref: 'dm-only',
-        });
-
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:peer:${peer.id}:communicationPref:open` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { flags?: number; components?: Array<{ components?: Array<{ style?: number; label?: string; custom_id?: string }> }> };
-        };
-        expect(body.type).toBe(4);
-        expect(body.data?.flags).toBe(64);
-        const buttons = body.data?.components?.[0]?.components ?? [];
-        expect(buttons.map(b => b.label)).toEqual([
-          'Use my default', 'Prefer threads', 'Auto-accept requests', 'Allow (ask each time)', 'DM only',
-        ]);
-        // Override is 'dm-only' → DM only button is success (3).
-        const dmOnly = buttons.find(b => b.custom_id === `pref:peer:${peer.id}:communicationPref:set:dm-only`);
-        const inherit = buttons.find(b => b.custom_id === `pref:peer:${peer.id}:communicationPref:set:inherit`);
-        expect(dmOnly?.style).toBe(3);
-        expect(inherit?.style).toBe(2);
-
-        await viewer.cleanup();
-        await peer.cleanup();
-      });
-
-      it('pref:peer:<peerId>:communicationPref:set:prefer upserts the override + returns a peer-scoped confirmation', async () => {
-        const viewer = await createTestUser();
-        const peer = await createTestUser();
-
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:peer:${peer.id}:communicationPref:set:prefer` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as { type: number; data?: { content?: string } };
-        expect(body.type).toBe(7);
-        expect(body.data?.content).toMatch(/Prefer threads/);
-
-        const { userPeerPrefs } = await import('../../lib/schema.js');
-        const db = getDb();
-        const [row] = await db
-          .select()
-          .from(userPeerPrefs)
-          .where(and(
-            eq(userPeerPrefs.userId, viewer.id),
-            eq(userPeerPrefs.peerUserId, peer.id),
-          ))
-          .limit(1);
-        expect(row?.communicationPref).toBe('prefer');
-
-        await viewer.cleanup();
-        await peer.cleanup();
-      });
-
-      it('pref:peer:<peerId>:communicationPref:set:inherit clears the override (null)', async () => {
-        const viewer = await createTestUser({ communicationPref: 'allow' });
-        const peer = await createTestUser();
-
-        const { userPeerPrefs } = await import('../../lib/schema.js');
-        const db = getDb();
-        await db.insert(userPeerPrefs).values({
-          userId: viewer.id,
-          peerUserId: peer.id,
-          communicationPref: 'dm-only',
-        });
-
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:peer:${peer.id}:communicationPref:set:inherit` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as { type: number; data?: { content?: string } };
-        expect(body.type).toBe(7);
-        expect(body.data?.content).toMatch(/Override cleared/);
-        // Confirmation quotes the now-effective self value (cascade falls back to 'allow').
-        expect(body.data?.content).toMatch(/Allow/);
-
-        const [row] = await db
-          .select()
-          .from(userPeerPrefs)
-          .where(and(
-            eq(userPeerPrefs.userId, viewer.id),
-            eq(userPeerPrefs.peerUserId, peer.id),
-          ))
-          .limit(1);
-        expect(row?.communicationPref).toBeNull();
-
-        await viewer.cleanup();
-        await peer.cleanup();
-      });
-
-      it('pref:peer:<self-id>:...:open rejects with an ephemeral — no self-override via peer scope', async () => {
-        const viewer = await createTestUser();
-
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:peer:${viewer.id}:communicationPref:open` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        expect((res._json as { type: number }).type).toBe(4);
-        expect((res._json as { data?: { content?: string } }).data?.content)
-          .toMatch(/override prefs against yourself/i);
-
-        await viewer.cleanup();
-      });
-
-      it('pref:peer:<peerId>:unknownKey:open defers — registry rejects unknown peer-scoped keys', async () => {
-        const viewer = await createTestUser();
-        const peer = await createTestUser();
-
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: `pref:peer:${peer.id}:dmTradeProposals:open` },
-            user: { id: viewer.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        // dmTradeProposals exists at scope=self but NOT scope=peer;
-        // the handler should silently defer.
-        expect((res._json as { type: number }).type).toBe(6);
-
-        await viewer.cleanup();
-        await peer.cleanup();
-      });
-    });
 
     describe('application commands (/swutrade settings + user context menu)', () => {
       // Application commands ACK with type-5 (deferred ephemeral)
@@ -638,13 +316,16 @@ describeWithDb('/api/bot dispatcher', () => {
         expect(followup.flags).toBe(64);
         const buttons = followup.components?.[0]?.components ?? [];
         const customIds = buttons.map(b => b.custom_id ?? '');
-        expect(customIds.some(c => c === 'pref:communicationPref:open')).toBe(true);
+        // Index surfaces every Discord-surfaced self-pref as a
+        // "<key>:open" button. Pick one we know survives the prefs
+        // hygiene pass (registered in lib/prefsRegistry.ts).
+        expect(customIds.some(c => c === 'pref:dmSessionInvited:open')).toBe(true);
         expect(customIds.every(c => c.startsWith('pref:') && c.endsWith(':open'))).toBe(true);
 
         await user.cleanup();
       });
 
-      it('slash /swutrade settings user:@peer follows up with peer-prefs index keyed to the peer id', async () => {
+      it('slash /swutrade settings user:@peer follows up with the empty-peer-prefs message (peer scope retired)', async () => {
         const viewer = await createTestUser();
         const peer = await createTestUser();
 
@@ -687,15 +368,13 @@ describeWithDb('/api/bot dispatcher', () => {
         const followup = calls[0].body as {
           flags?: number;
           content?: string;
-          components?: Array<{ components?: Array<{ custom_id?: string }> }>;
+          components?: unknown[];
         };
         expect(followup.flags).toBe(64);
-        expect(followup.content).toMatch(/preferences for/i);
-        const buttons = followup.components?.[0]?.components ?? [];
-        expect(buttons.length).toBeGreaterThan(0);
-        for (const b of buttons) {
-          expect(b.custom_id).toMatch(new RegExp(`^pref:peer:${peer.id}:[^:]+:open$`));
-        }
+        expect(followup.content).toMatch(/No per-trader preferences are available/i);
+        // No buttons: the peer surface ships the empty-state copy
+        // only after the prefs hygiene pass dropped communicationPref.
+        expect(followup.components ?? []).toEqual([]);
 
         await viewer.cleanup();
         await peer.cleanup();
@@ -739,7 +418,7 @@ describeWithDb('/api/bot dispatcher', () => {
         await viewer.cleanup();
       });
 
-      it('user context menu (type 2 command) follows up with the same peer-prefs index', async () => {
+      it('user context menu (type 2 command) follows up with the same empty-peer-prefs message', async () => {
         const viewer = await createTestUser();
         const peer = await createTestUser();
 
@@ -770,47 +449,11 @@ describeWithDb('/api/bot dispatcher', () => {
         expect(res._status).toBe(200);
         expect((res._json as { type: number }).type).toBe(5);
         expect(calls).toHaveLength(1);
-        expect((calls[0].body as { content?: string }).content).toMatch(/preferences for/i);
+        expect((calls[0].body as { content?: string }).content)
+          .toMatch(/No per-trader preferences are available/i);
 
         await viewer.cleanup();
         await peer.cleanup();
-      });
-
-      it('slash /swutrade settings user:<self> rejects — no self-override via peer surface', async () => {
-        const viewer = await createTestUser();
-
-        const res = mockResponse();
-        const { calls, fetchImpl } = captureFollowup();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 2,
-            application_id: APP_ID,
-            token: TOKEN,
-            data: {
-              type: 1,
-              name: 'swutrade',
-              options: [
-                {
-                  type: 1,
-                  name: 'settings',
-                  options: [{ type: 6, name: 'user', value: viewer.id }],
-                },
-              ],
-            },
-            user: { id: viewer.id },
-          },
-          res,
-          { fetchImpl, awaitFollowup: true },
-        );
-
-        expect(res._status).toBe(200);
-        expect((res._json as { type: number }).type).toBe(5);
-        expect(calls).toHaveLength(1);
-        expect((calls[0].body as { content?: string }).content)
-          .toMatch(/can't set per-trader prefs for yourself/i);
-
-        await viewer.cleanup();
       });
 
       // --- /swutrade trade @user (Phase B3) ----------------------------
@@ -980,60 +623,6 @@ describeWithDb('/api/bot dispatcher', () => {
     // transition so in-flight DMs posted before the registry-driven
     // handler shipped keep working. Drop this block once deployed
     // DMs have had a release to roll over.
-    describe('comm-pref buttons (legacy alias)', () => {
-      it('comm-pref:open still works — selector renders using the new `pref:*` commit ids', async () => {
-        const user = await createTestUser({ communicationPref: 'allow' });
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: 'comm-pref:open' },
-            user: { id: user.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        const body = res._json as {
-          type: number;
-          data?: { components?: Array<{ components?: Array<{ custom_id?: string }> }> };
-        };
-        const customIds = body.data?.components?.[0]?.components?.map(b => b.custom_id) ?? [];
-        // Selector is forward-compatible — clicks on these buttons
-        // route through the new `pref:*` handler, not the legacy path.
-        expect(customIds[0]).toMatch(/^pref:communicationPref:set:/);
-
-        await user.cleanup();
-      });
-
-      it('comm-pref:set:dm-only still writes through to users.communication_pref', async () => {
-        const user = await createTestUser({ communicationPref: 'allow' });
-        const res = mockResponse();
-        await dispatchBotPayload(
-          'interactions',
-          {
-            type: 3,
-            data: { custom_id: 'comm-pref:set:dm-only' },
-            user: { id: user.id },
-          },
-          res,
-        );
-
-        expect(res._status).toBe(200);
-        expect((res._json as { type: number }).type).toBe(7);
-
-        const db = getDb();
-        const [row] = await db
-          .select({ communicationPref: users.communicationPref })
-          .from(users)
-          .where(eq(users.discordId, user.id))
-          .limit(1);
-        expect(row.communicationPref).toBe('dm-only');
-
-        await user.cleanup();
-      });
-    });
   });
 
   describe('events', () => {

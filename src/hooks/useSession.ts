@@ -161,15 +161,6 @@ export interface SessionApi {
    *  on cap-exceeded so the UI can show a transient "slow down"
    *  hint without retrying. */
   sendChat: (body: string) => Promise<{ ok: true } | { ok: false; reason: 'rate-limited' | 'invalid' | 'error' }>;
-  /** User-triggered "ping the counterpart" — fires a Discord DM to
-   *  the other side asking them to take a look. Optional free-form
-   *  note carried with the DM. Rate-limited server-side (one ping
-   *  per ~15 min per session per sender); the UI uses the returned
-   *  reason to show a friendly message instead of retrying. */
-  ping: (note?: string) => Promise<
-    | { ok: true }
-    | { ok: false; reason: 'rate-limited' | 'opted-out' | 'no-counterpart' | 'no-discord-id' | 'error' }
-  >;
   /** Stamp the viewer's last-read timestamp to NOW. Called
    *  automatically on visibilitychange→visible (matches the
    *  background-sync pattern). Idempotent. */
@@ -508,33 +499,6 @@ export function useSession(sessionId: string | null): SessionApi {
     }
   }, [sessionId, applyServerSession]);
 
-  const ping = useCallback(async (note?: string) => {
-    if (!sessionId) return { ok: false as const, reason: 'error' as const };
-    const trimmedNote = note?.trim();
-    try {
-      const result = await apiPost<{ pinged: { userId: string } }>(
-        `/api/sessions/${encodeURIComponent(sessionId)}/ping`,
-        trimmedNote ? { note: trimmedNote } : {},
-      );
-      if (!result.ok) {
-        // Map server reason codes to the narrow UI-facing union. The
-        // server returns 429/409/etc. with a reason string from
-        // PingResult; apiPost flattens to result.reason. The fallback
-        // is the generic 'error' for anything we don't have a
-        // specific UI message for (dm-failed, terminal, network).
-        const r = (result.reason ?? '') as string;
-        if (r === 'rate-limited') return { ok: false as const, reason: 'rate-limited' as const };
-        if (r === 'opted-out') return { ok: false as const, reason: 'opted-out' as const };
-        if (r === 'no-counterpart') return { ok: false as const, reason: 'no-counterpart' as const };
-        if (r === 'no-discord-id') return { ok: false as const, reason: 'no-discord-id' as const };
-        return { ok: false as const, reason: 'error' as const };
-      }
-      return { ok: true as const };
-    } catch {
-      return { ok: false as const, reason: 'error' as const };
-    }
-  }, [sessionId]);
-
   const markRead = useCallback(async () => {
     if (!sessionId) return;
     // Skip if already at zero — avoids a write per visibility change
@@ -648,7 +612,6 @@ export function useSession(sessionId: string | null): SessionApi {
     hasUnseenCounterpartEdit,
     markCounterpartSeen,
     sendChat,
-    ping,
     decline,
     markRead,
     suggest,

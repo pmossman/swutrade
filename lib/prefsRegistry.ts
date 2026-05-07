@@ -18,7 +18,7 @@
  */
 
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { users, userPeerPrefs } from './schema.js';
+import { users } from './schema.js';
 
 // -- types -------------------------------------------------------------------
 
@@ -35,11 +35,12 @@ export type PrefType =
 
 export type PrefSurface = 'web' | 'discord';
 
-/** `kind` is all the registry needs for dispatch — targetId is
- *  carried on the interaction payload, not on the def. */
+/** Only `self` is in active use after the prefs hygiene pass; the
+ *  `guild` scope is reserved for future per-guild overrides (none
+ *  exist today). The `peer` scope existed for `communicationPref`,
+ *  which was dropped along with the proposal flow. */
 export type PrefScope =
   | { kind: 'self' }
-  | { kind: 'peer' }
   | { kind: 'guild' };
 
 export type PrefValue = boolean | string | null;
@@ -70,7 +71,7 @@ export interface PrefDefinition {
    *  cleanly inside Discord's component limits. */
   surfaces: ReadonlyArray<PrefSurface>;
   /** Web grouping. Settings page renders one section per value. */
-  section?: 'privacy' | 'notifications' | 'communication' | 'membership';
+  section?: 'privacy' | 'notifications' | 'membership';
   discord?: {
     /** Optional header override on the ephemeral selector. */
     prompt?: string;
@@ -92,68 +93,7 @@ export function definePref(def: PrefDefinition): PrefDefinition {
 
 // -- definitions -------------------------------------------------------------
 
-/**
- * Discord-renderable enum options reused between the self-scoped
- * default and the future peer-scoped override (step 7 of the
- * migration plan). Kept in one const so the two defs can't drift.
- */
-const COMMUNICATION_PREF_OPTIONS: ReadonlyArray<PrefOption> = [
-  {
-    value: 'prefer',
-    label: 'Prefer threads',
-    description: 'Start every proposal in a thread when the other side is also opted in.',
-  },
-  {
-    value: 'auto-accept',
-    label: 'Auto-accept requests',
-    description: "DM first, but instantly approve any thread request from the counterpart.",
-  },
-  {
-    value: 'allow',
-    label: 'Allow (ask each time)',
-    description: 'DM first, approve or decline thread requests manually per trade.',
-  },
-  {
-    value: 'dm-only',
-    label: 'DM only',
-    description: "Refuse threads entirely — no Request thread button on your proposal DMs.",
-  },
-];
-
 export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
-  definePref({
-    key: 'communicationPref',
-    scope: { kind: 'self' },
-    column: 'communicationPref',
-    type: { kind: 'enum', options: COMMUNICATION_PREF_OPTIONS },
-    label: 'Thread conversations',
-    description:
-      'How SWUTrade routes Discord conversation for new trade proposals — ' +
-      'private thread with both traders inside, or per-user DMs.',
-    default: 'allow',
-    surfaces: ['web', 'discord'],
-    section: 'communication',
-    discord: { order: 0 },
-  }),
-  // Peer-scoped override. Null default = "no override, inherit from
-  // the viewer's self-scoped value." Both enum options and column
-  // name MUST match the self-scoped def — the registry unit test
-  // asserts this so the cascade resolver never returns a value the
-  // schema can't store.
-  definePref({
-    key: 'communicationPref',
-    scope: { kind: 'peer' },
-    column: 'communicationPref',
-    type: { kind: 'enum', options: COMMUNICATION_PREF_OPTIONS },
-    label: 'Thread conversations (override)',
-    description:
-      'Override your default specifically when trading with this person. ' +
-      'Pick Inherit to fall back to your global setting.',
-    default: null,
-    surfaces: ['web', 'discord'],
-    section: 'communication',
-    discord: { order: 0 },
-  }),
   definePref({
     key: 'profileVisibility',
     scope: { kind: 'self' },
@@ -186,42 +126,6 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     section: 'privacy',
   }),
   definePref({
-    key: 'dmTradeProposals',
-    scope: { kind: 'self' },
-    column: 'dmTradeProposals',
-    type: { kind: 'boolean' },
-    label: 'Trade proposals sent to me',
-    description: 'Bot DM when another user proposes a trade with you specifically.',
-    default: true,
-    surfaces: ['web', 'discord'],
-    section: 'notifications',
-    discord: { order: 10 },
-  }),
-  definePref({
-    key: 'dmMatchAlerts',
-    scope: { kind: 'self' },
-    column: 'dmMatchAlerts',
-    type: { kind: 'boolean' },
-    label: 'Match alerts',
-    description: "Unsolicited pings when someone's wants overlap with your available list.",
-    default: false,
-    surfaces: ['web', 'discord'],
-    section: 'notifications',
-    discord: { order: 11 },
-  }),
-  definePref({
-    key: 'dmMeetupReminders',
-    scope: { kind: 'self' },
-    column: 'dmMeetupReminders',
-    type: { kind: 'boolean' },
-    label: 'Meetup reminders',
-    description: "Reminders for LGS visits you've announced.",
-    default: false,
-    surfaces: ['web', 'discord'],
-    section: 'notifications',
-    discord: { order: 12 },
-  }),
-  definePref({
     key: 'dmServerNewInstall',
     scope: { kind: 'self' },
     column: 'dmServerNewInstall',
@@ -249,18 +153,6 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     discord: { order: 20 },
   }),
   definePref({
-    key: 'dmSessionPing',
-    scope: { kind: 'self' },
-    column: 'dmSessionPing',
-    type: { kind: 'boolean' },
-    label: 'Counterpart pings',
-    description: 'DM me when a counterpart explicitly pings me about an in-flight trade.',
-    default: true,
-    surfaces: ['web', 'discord'],
-    section: 'notifications',
-    discord: { order: 21 },
-  }),
-  definePref({
     key: 'dmSessionActivity',
     scope: { kind: 'self' },
     column: 'dmSessionActivity',
@@ -283,18 +175,6 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     surfaces: ['web', 'discord'],
     section: 'notifications',
     discord: { order: 22 },
-  }),
-  definePref({
-    key: 'dmSessionExpired',
-    scope: { kind: 'self' },
-    column: 'dmSessionExpired',
-    type: { kind: 'boolean' },
-    label: 'Trade expired',
-    description: 'DM me when an idle trade auto-expires.',
-    default: true,
-    surfaces: ['web', 'discord'],
-    section: 'notifications',
-    discord: { order: 23 },
   }),
   definePref({
     key: 'dmSessionDeclined',
@@ -353,7 +233,6 @@ export function getPrefDefinition(
 // hatch for dynamic column lookup; downstream callers see a typed
 // `AnyPgColumn` from the helpers below. Audit 03-discord #4.
 const userColumns = users as unknown as Record<string, AnyPgColumn>;
-const peerColumns = userPeerPrefs as unknown as Record<string, AnyPgColumn>;
 
 /**
  * Resolve the Drizzle column on `users` for a self-scoped pref key.
@@ -373,19 +252,6 @@ export function getUserPrefColumn(key: string): AnyPgColumn {
   const column = userColumns[def.column];
   if (!column) {
     throw new Error(`getUserPrefColumn: column "${def.column}" not on users schema (key="${key}")`);
-  }
-  return column;
-}
-
-/** Same as `getUserPrefColumn` but resolves against the peer table. */
-export function getPeerPrefColumn(key: string): AnyPgColumn {
-  const def = getPrefDefinition(key, 'peer');
-  if (!def) {
-    throw new Error(`getPeerPrefColumn: no peer-scoped def for key "${key}"`);
-  }
-  const column = peerColumns[def.column];
-  if (!column) {
-    throw new Error(`getPeerPrefColumn: column "${def.column}" not on userPeerPrefs schema (key="${key}")`);
   }
   return column;
 }

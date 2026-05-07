@@ -1,37 +1,33 @@
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { getDb } from './db.js';
-import { users, userPeerPrefs } from './schema.js';
+import { users } from './schema.js';
 import {
-  getPeerPrefColumn,
   getPrefDefinition,
   getUserPrefColumn,
   type PrefValue,
 } from './prefsRegistry.js';
 
 /**
- * Resolve a pref's effective value for a (viewer, peer?) pair.
+ * Resolve a pref's effective value for a viewer.
  *
  * Cascade:
- *   1. Peer override — if a peer-scoped def exists AND the caller
- *      supplied `peerUserId` AND a non-null override row exists for
- *      that pair, return the override.
- *   2. Viewer's self-scoped value — read from the `users` column
- *      matching the self-scoped def's `column`.
- *   3. Registry default — the self-scoped def's `default` literal.
+ *   1. Viewer's self-scoped value — read from the `users` column
+ *      matching the def's `column`.
+ *   2. Registry default — the def's `default` literal.
  *
- * Always goes through the self-scoped def — every key MUST be
- * registered at self scope (a peer-only registration has no
- * baseline to inherit from). Unknown keys throw; callers should
- * validate key names at the API boundary, not rely on this for
- * fallback behavior.
+ * Unknown keys throw; callers should validate key names at the API
+ * boundary, not rely on this for fallback behavior.
  *
- * This keeps downstream consumers — notification gating, settings UI,
- * etc. — pure: they receive a single resolved value and never touch
- * storage.
+ * (Per-peer overrides existed historically when `communicationPref`
+ * was a peer-scoped pref. With proposals retired in Phase C and
+ * `communicationPref` dropped in the prefs hygiene pass, no
+ * peer-scoped prefs remain. The `peerUserId` arg is preserved for
+ * legacy callers that still pass it; the value is ignored.)
  */
 export async function resolvePref(opts: {
   key: string;
   viewerUserId: string;
+  /** @deprecated No peer-scoped prefs exist after the hygiene pass. */
   peerUserId?: string;
 }): Promise<PrefValue> {
   const selfDef = getPrefDefinition(opts.key, 'self');
@@ -40,24 +36,6 @@ export async function resolvePref(opts: {
   }
 
   const db = getDb();
-
-  // Step 1: peer override.
-  const peerDef = getPrefDefinition(opts.key, 'peer');
-  if (peerDef && opts.peerUserId) {
-    const [row] = await db
-      .select({ value: getPeerPrefColumn(peerDef.key) })
-      .from(userPeerPrefs)
-      .where(and(
-        eq(userPeerPrefs.userId, opts.viewerUserId),
-        eq(userPeerPrefs.peerUserId, opts.peerUserId),
-      ))
-      .limit(1);
-    if (row?.value !== undefined && row.value !== null) {
-      return row.value as PrefValue;
-    }
-  }
-
-  // Step 2: viewer's self-scoped column.
   const [row] = await db
     .select({ value: getUserPrefColumn(selfDef.key) })
     .from(users)
@@ -66,7 +44,5 @@ export async function resolvePref(opts: {
   if (row?.value !== undefined && row.value !== null) {
     return row.value as PrefValue;
   }
-
-  // Step 3: registry default.
   return selfDef.default;
 }

@@ -219,7 +219,7 @@ Session events: `created`, `edited`, `confirmed`, `cancelled`, `settled`, `expir
 
 ### Preference registry scopes
 
-`scope={self, peer, guild}` × `section={privacy, notifications, communication, membership}` × `type={boolean, enum}`. Resolver cascade: peer override → viewer self → registry default. See [`i-discord-bot.md`](./i-discord-bot.md).
+`scope={self, guild}` × `section={privacy, notifications, membership}` × `type={boolean, enum}`. Resolver: viewer self column → registry default. The `peer` scope and `communication` section were retired in migration 0031 (prefs hygiene pass). See [`i-discord-bot.md`](./i-discord-bot.md).
 
 ## Key cross-cutting decisions
 

@@ -39,7 +39,6 @@
     { "source": "/api/sessions/:id/decline", "destination": "/api/sessions?action=decline&id=:id" },
     { "source": "/api/sessions/:id/claim", "destination": "/api/sessions?action=claim&id=:id" },
     { "source": "/api/sessions/:id/invite-handle", "destination": "/api/sessions?action=invite-handle&id=:id" },
-    { "source": "/api/sessions/:id/ping", "destination": "/api/sessions?action=ping&id=:id" },
     { "source": "/api/sessions/:id/chat", "destination": "/api/sessions?action=chat&id=:id" },
     { "source": "/api/sessions/:id/mark-read", "destination": "/api/sessions?action=mark-read&id=:id" },
     { "source": "/api/sessions/:id/suggest", "destination": "/api/sessions?action=suggest&id=:id" },

@@ -13,7 +13,7 @@
 > - `src/hooks/useRecentPartners.ts` — `/api/me/recent-partners` chips in HandlePickerDialog.
 > - `api/me.ts` — single dispatcher for every `/api/me/*` action (prefs, guilds, community-members, community-activity, recent-partners).
 > - `api/user/[handle].ts` — public profile fetch for `/u/<handle>`.
-> - Schema rows in `lib/schema.ts`: `users` privacy columns (lines 30–88), `userPeerPrefs` (lines 103–126), `botInstalledGuilds` (lines 143–160), `userGuildMemberships` (lines 172–200), `communityEvents` (see migration 0016).
+> - Schema rows in `lib/schema.ts`: `users` privacy + DM-toggle columns, `botInstalledGuilds`, `userGuildMemberships`, `communityEvents` (see migration 0016). `userPeerPrefs` was retired in migration 0031 alongside the proposal flow's `communicationPref`.
 > - Integration tests: `tests/api/me-settings.test.ts`, `me-community-members.test.ts`, `me-community-activity.test.ts`, `me-guilds-refresh.test.ts`, `me-recent-partners.test.ts`, `user-handle.test.ts`, `tests/lib/prefsRegistry.test.ts`.
 > - Browser specs: `e2e/community.auth.spec.ts`, `e2e/community-directory.auth.spec.ts`, `e2e/profile.auth.spec.ts`, `e2e/settings.auth.spec.ts`.
 
@@ -26,8 +26,7 @@ The area is a frontend layer over a few narrow `/api/me/*` endpoints. Business r
 ## Key concepts / glossary
 
 - **Three-axis consent** — `user_guild_memberships.enrolled`, `includeInRollups`, `appearInQueries` (`lib/schema.ts:189-191`). Stored as three booleans per user/guild row. `enrolled=true` is the root consent ("I'm in this community"); the other two gate specific surfaces (rollup aggregation, directory/who-has lookups). When the user toggles `enrolled` off, the API zeroes the other two (`api/me.ts:439-442`) so inconsistent combinations can't linger.
-- **Pref registry** — `lib/prefsRegistry.ts`. Typed definitions with `scope: self | peer | guild`, `type: boolean | enum`, `surfaces: web[] | discord[]`, plus `section` for grouping in `SettingsView`. Drives both form rendering (`SettingsView.tsx:503-526`) and the peer-override select (`SettingsView.tsx:859-906`). The SCHEMA of individual prefs is owned by [`i-discord-bot.md`](./i-discord-bot.md) — this page documents the WEB renderings only.
-- **Peer prefs** — per-peer overrides stored in `user_peer_prefs` (`lib/schema.ts:103-126`). `override` column = null means "inherit"; any other value wins over the viewer's self pref. The client sees both `override` (raw, null-able) and `effective` (resolved through the cascade) so the UI can render `Use my default (Threads preferred)` without a second round trip (`useCommunityMembers.ts:11-16`).
+- **Pref registry** — `lib/prefsRegistry.ts`. Typed definitions with `scope: self | guild`, `type: boolean | enum`, `surfaces: web[] | discord[]`, plus `section` for grouping in `SettingsView`. Drives form rendering. The SCHEMA of individual prefs is owned by [`i-discord-bot.md`](./i-discord-bot.md) — this page documents the WEB renderings only. The peer scope was retired in the prefs hygiene pass (migration 0031); only self-scoped defs render today.
 - **Guild sync** — `lib/guildSync.ts`. Pulls the user's Discord guild list and reconciles `user_guild_memberships`, preserving consent flags on upsert. Auto-enrolls new memberships when the guild is in `bot_installed_guilds` (guildSync.ts:57-95), but never flips an existing row's consent state.
 - **Community events** — append-only log at `community_events` (read via `lib/communityEvents.ts:listEvents`). Two event types today: `trade_accepted`, `member_joined`. Writes never fail the parent action — the insert is try/caught (`communityEvents.ts:37-54`).
 - **Activity privacy toggle** — `users.shareActivityPublicly` (`lib/schema.ts:70`). Read-time filter in the listEvents SQL — set to false and the actor's events vanish from every feed, including the historical trail, but stay in the table for the day the user flips it back on.
@@ -92,13 +91,9 @@ One row per (user, guild). Schema: `lib/schema.ts:172-200`. The four fields that
 
 **Post-enrollment zeroing** (`api/me.ts:439-442`): when `next.enrolled === false` is about to be written, the handler forcibly zeroes `includeInRollups` and `appearInQueries`. That preserves the invariant "only `enrolled=true` rows contribute to any community surface" without making every downstream query add the two-axis conjunction.
 
-### `user_peer_prefs` (peer overrides)
+### `user_peer_prefs` (retired)
 
-`lib/schema.ts:103-126`. Composite PK `(user_id, peer_user_id)`. One row per viewer/peer pair; FK cascades on delete so deactivated users don't leave orphan overrides. Today the only peer-scoped column is `communicationPref` (mirrors the self-scoped column on `users`). Adding a second peer pref flows through the registry + the hook shape without a new migration step — the UI iterates `PREF_DEFINITIONS.filter(d => d.scope.kind === 'peer')`, and the API GET/PUT do the same.
-
-**Rows are kept when overrides are cleared** — `api/me.ts:225-243` upserts with `persisted = null` rather than deleting. Cleaner than "delete when every column is null" for a table that will gain more columns, and the null row is harmless (the resolver treats null overrides identically to absent ones).
-
-**Clearing refetches** — `useCommunityMembers.setPeerPref` (`useCommunityMembers.ts:102-107`) refetches on `value === null` success because the client doesn't have enough local state to predict what `effective` resolves to after the override is removed. The resolver's cascade is "peer override → viewer self → registry default," and only the self value is reliably on the client (not the registry default).
+Dropped in migration `drizzle/0031_prefs_hygiene_drop_dead_columns.sql` along with the only peer-scoped pref (`communicationPref`). The hook shape on `useCommunityMembers` no longer carries `override` / `effective`; if a future pref needs per-peer overrides, restore the table + add a new pref-scope branch instead of mining the historical schema.
 
 ### `community_events` (the activity feed table)
 

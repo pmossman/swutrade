@@ -16,7 +16,7 @@ import {
   insertAvailable,
 } from './helpers.js';
 import { getDb } from '../../lib/db.js';
-import { userGuildMemberships, userPeerPrefs, botInstalledGuilds, users, wantsItems, availableItems } from '../../lib/schema.js';
+import { userGuildMemberships, botInstalledGuilds, users } from '../../lib/schema.js';
 import { and, eq } from 'drizzle-orm';
 
 describeWithDb('Phase 4 account + guild settings', () => {
@@ -78,10 +78,13 @@ describeWithDb('Phase 4 account + guild settings', () => {
       // means this test fails — that's the intent.
       expect(res._json).toMatchObject({
         profileVisibility: 'discord',
-        communicationPref: 'allow',
-        dmTradeProposals: true,
-        dmMatchAlerts: false,
-        dmMeetupReminders: false,
+        dmServerNewInstall: true,
+        dmSessionInvited: true,
+        dmSessionActivity: true,
+        dmSessionSettled: true,
+        dmSessionDeclined: true,
+        autoEnrollOnBotInstall: false,
+        shareActivityPublicly: true,
       });
     });
   });
@@ -95,7 +98,7 @@ describeWithDb('Phase 4 account + guild settings', () => {
       const req = mockRequest({
         method: 'PUT',
         cookies: { swu_session: cookie },
-        body: { communicationPref: 'prefer', dmMatchAlerts: true },
+        body: { profileVisibility: 'public', dmSessionActivity: false },
       });
       const res = mockResponse();
       await prefsHandler(req, res);
@@ -103,11 +106,11 @@ describeWithDb('Phase 4 account + guild settings', () => {
       expect(res._status).toBe(200);
       const db = getDb();
       const [row] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
-      expect(row.communicationPref).toBe('prefer');
-      expect(row.dmMatchAlerts).toBe(true);
+      expect(row.profileVisibility).toBe('public');
+      expect(row.dmSessionActivity).toBe(false);
       // Untouched fields stay at their defaults.
-      expect(row.profileVisibility).toBe('discord');
-      expect(row.dmTradeProposals).toBe(true);
+      expect(row.dmSessionInvited).toBe(true);
+      expect(row.dmServerNewInstall).toBe(true);
     });
 
     it('400s on an unknown pref key with `key` in the response (no silent drop)', async () => {
@@ -135,7 +138,7 @@ describeWithDb('Phase 4 account + guild settings', () => {
       const req = mockRequest({
         method: 'PUT',
         cookies: { swu_session: cookie },
-        body: { communicationPref: 'threadify' },
+        body: { profileVisibility: 'galaxy-far-far-away' },
       });
       const res = mockResponse();
       await prefsHandler(req, res);
@@ -143,7 +146,7 @@ describeWithDb('Phase 4 account + guild settings', () => {
       expect(res._status).toBe(400);
       expect(res._json).toMatchObject({
         error: 'Invalid value',
-        key: 'communicationPref',
+        key: 'profileVisibility',
       });
       expect((res._json as { reason?: string }).reason).toMatch(/expected one of/);
     });
@@ -156,13 +159,13 @@ describeWithDb('Phase 4 account + guild settings', () => {
       const req = mockRequest({
         method: 'PUT',
         cookies: { swu_session: cookie },
-        body: { dmTradeProposals: 'yes' },
+        body: { dmSessionInvited: 'yes' },
       });
       const res = mockResponse();
       await prefsHandler(req, res);
 
       expect(res._status).toBe(400);
-      expect(res._json).toMatchObject({ error: 'Invalid value', key: 'dmTradeProposals' });
+      expect(res._json).toMatchObject({ error: 'Invalid value', key: 'dmSessionInvited' });
     });
 
     it('400s on an empty body (no-op patches are client bugs)', async () => {
@@ -182,9 +185,14 @@ describeWithDb('Phase 4 account + guild settings', () => {
     });
   });
 
-  describe('peer scope — /api/me/prefs?peer=<id> + PUT with peerUserId', () => {
-    it('GET returns override (null when no row) + resolved effective values', async () => {
-      const viewer = await createTestUser({ communicationPref: 'prefer' });
+  // Peer scope was retired in the prefs hygiene pass — see
+  // drizzle/0031_prefs_hygiene_drop_dead_columns.sql. The handler
+  // returns `{override:{}, effective:{}}` and PUT with peerUserId
+  // returns 410 Gone. No active surface depends on either.
+
+  describe('peer scope — retired (handler returns empty/410)', () => {
+    it('GET ?peer=<id> returns empty override + effective (no peer-scoped prefs registered)', async () => {
+      const viewer = await createTestUser();
       const peer = await createTestUser();
       fixtures.push(viewer, peer);
       const cookie = await sealTestCookie(viewer.id);
@@ -198,142 +206,10 @@ describeWithDb('Phase 4 account + guild settings', () => {
       await prefsHandler(req, res);
 
       expect(res._status).toBe(200);
-      expect(res._json).toEqual({
-        override: { communicationPref: null },
-        // No override → effective falls through to the viewer's self value.
-        effective: { communicationPref: 'prefer' },
-      });
+      expect(res._json).toEqual({ override: {}, effective: {} });
     });
 
-    it('PUT with {peerUserId, key, value} upserts a peer override', async () => {
-      const viewer = await createTestUser({ communicationPref: 'allow' });
-      const peer = await createTestUser();
-      fixtures.push(viewer, peer);
-      const cookie = await sealTestCookie(viewer.id);
-
-      const req = mockRequest({
-        method: 'PUT',
-        cookies: { swu_session: cookie },
-        body: {
-          peerUserId: peer.id,
-          key: 'communicationPref',
-          value: 'dm-only',
-        },
-      });
-      const res = mockResponse();
-      await prefsHandler(req, res);
-
-      expect(res._status).toBe(200);
-      const db = getDb();
-      const [row] = await db
-        .select()
-        .from(userPeerPrefs)
-        .where(and(
-          eq(userPeerPrefs.userId, viewer.id),
-          eq(userPeerPrefs.peerUserId, peer.id),
-        ))
-        .limit(1);
-      expect(row?.communicationPref).toBe('dm-only');
-
-      // GET now reflects both the raw override and the resolved effective value.
-      const getReq = mockRequest({
-        method: 'GET',
-        cookies: { swu_session: cookie },
-        query: { peer: peer.id },
-      });
-      const getRes = mockResponse();
-      await prefsHandler(getReq, getRes);
-      expect(getRes._json).toEqual({
-        override: { communicationPref: 'dm-only' },
-        effective: { communicationPref: 'dm-only' },
-      });
-    });
-
-    it('PUT with value: null clears the override (resolver falls back to self)', async () => {
-      const viewer = await createTestUser({ communicationPref: 'prefer' });
-      const peer = await createTestUser();
-      fixtures.push(viewer, peer);
-      const cookie = await sealTestCookie(viewer.id);
-      const db = getDb();
-      await db.insert(userPeerPrefs).values({
-        userId: viewer.id,
-        peerUserId: peer.id,
-        communicationPref: 'dm-only',
-      });
-
-      const req = mockRequest({
-        method: 'PUT',
-        cookies: { swu_session: cookie },
-        body: {
-          peerUserId: peer.id,
-          key: 'communicationPref',
-          value: null,
-        },
-      });
-      const res = mockResponse();
-      await prefsHandler(req, res);
-
-      expect(res._status).toBe(200);
-      const [row] = await db
-        .select()
-        .from(userPeerPrefs)
-        .where(and(
-          eq(userPeerPrefs.userId, viewer.id),
-          eq(userPeerPrefs.peerUserId, peer.id),
-        ))
-        .limit(1);
-      expect(row?.communicationPref).toBeNull();
-    });
-
-    it('PUT upserting a second time updates the same row (no duplicates)', async () => {
-      const viewer = await createTestUser();
-      const peer = await createTestUser();
-      fixtures.push(viewer, peer);
-      const cookie = await sealTestCookie(viewer.id);
-
-      for (const value of ['dm-only', 'prefer', 'auto-accept']) {
-        const req = mockRequest({
-          method: 'PUT',
-          cookies: { swu_session: cookie },
-          body: { peerUserId: peer.id, key: 'communicationPref', value },
-        });
-        const res = mockResponse();
-        await prefsHandler(req, res);
-        expect(res._status).toBe(200);
-      }
-
-      const db = getDb();
-      const rows = await db
-        .select()
-        .from(userPeerPrefs)
-        .where(and(
-          eq(userPeerPrefs.userId, viewer.id),
-          eq(userPeerPrefs.peerUserId, peer.id),
-        ));
-      expect(rows).toHaveLength(1);
-      expect(rows[0].communicationPref).toBe('auto-accept');
-    });
-
-    it('PUT rejects self-override (peerUserId === viewer)', async () => {
-      const viewer = await createTestUser();
-      fixtures.push(viewer);
-      const cookie = await sealTestCookie(viewer.id);
-
-      const req = mockRequest({
-        method: 'PUT',
-        cookies: { swu_session: cookie },
-        body: {
-          peerUserId: viewer.id,
-          key: 'communicationPref',
-          value: 'prefer',
-        },
-      });
-      const res = mockResponse();
-      await prefsHandler(req, res);
-      expect(res._status).toBe(400);
-    });
-
-    it('PUT rejects unknown peer-scoped key', async () => {
+    it('PUT with peerUserId returns 410 Gone — peer overrides are no longer accepted', async () => {
       const viewer = await createTestUser();
       const peer = await createTestUser();
       fixtures.push(viewer, peer);
@@ -344,13 +220,13 @@ describeWithDb('Phase 4 account + guild settings', () => {
         cookies: { swu_session: cookie },
         body: {
           peerUserId: peer.id,
-          key: 'dmTradeProposals', // not registered at peer scope
-          value: false,
+          key: 'anything',
+          value: 'whatever',
         },
       });
       const res = mockResponse();
       await prefsHandler(req, res);
-      expect(res._status).toBe(400);
+      expect(res._status).toBe(410);
     });
   });
 
@@ -371,9 +247,9 @@ describeWithDb('Phase 4 account + guild settings', () => {
       expect(res._status).toBe(200);
       expect(res._json).toMatchObject({
         profileVisibility: 'discord',
-        dmTradeProposals: true,
-        dmMatchAlerts: false,
-        dmMeetupReminders: false,
+        dmSessionInvited: true,
+        dmSessionActivity: true,
+        dmSessionSettled: true,
       });
     });
 
@@ -394,7 +270,7 @@ describeWithDb('Phase 4 account + guild settings', () => {
       const req = mockRequest({
         method: 'PUT',
         cookies: { swu_session: cookie },
-        body: { profileVisibility: 'discord', dmMatchAlerts: true },
+        body: { profileVisibility: 'public', dmSessionActivity: false },
       });
       const res = mockResponse();
       await settingsHandler(req, res);
@@ -402,10 +278,10 @@ describeWithDb('Phase 4 account + guild settings', () => {
       expect(res._status).toBe(200);
       const db = getDb();
       const [row] = await db.select().from(users).where(eq(users.id, user.id)).limit(1);
-      expect(row.profileVisibility).toBe('discord');
-      expect(row.dmMatchAlerts).toBe(true);
+      expect(row.profileVisibility).toBe('public');
+      expect(row.dmSessionActivity).toBe(false);
       // Fields not in the patch stay at their defaults.
-      expect(row.dmTradeProposals).toBe(true);
+      expect(row.dmSessionInvited).toBe(true);
     });
 
     it('rejects unknown fields with a 400', async () => {

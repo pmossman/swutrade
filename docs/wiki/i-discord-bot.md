@@ -10,7 +10,7 @@
 > - `lib/errorReporter.ts` — fire-and-forget `#bot-errors` webhook poster with noise filters.
 > - `lib/guildSync.ts` — `syncGuildMemberships` reconciles `user_guild_memberships` on sign-in; auto-enrolls members of bot-installed guilds.
 > - `lib/prefsRegistry.ts` — typed registry of user prefs (scope × type × surface). Single source of truth.
-> - `lib/prefsResolver.ts` — cascade `resolvePref({key, viewerUserId, peerUserId})` → peer override → self → default.
+> - `lib/prefsResolver.ts` — `resolvePref({key, viewerUserId})` → self column → registry default. (The historical peer-override step was dropped with migration 0031.)
 > - `scripts/discord-admin.mjs` — dev-ops wrapper that talks to Discord via a SEPARATE admin bot token (not the product bot).
 > - `scripts/register-discord-commands.mjs` — one-off slash-command registration against the product bot.
 > - Tests: `tests/api/discord-signature.test.ts`, `tests/lib/discordErrors.test.ts`, `tests/api/guild-sync.test.ts`.
@@ -34,11 +34,10 @@ Three things keep this area honest: (1) signature verification happens before an
 - **`DiscordBotClient`** — `lib/discordBot.ts:50`. Outbound bot API wrapper. 429 auto-retry (once, up to `maxRetrySleepSeconds`=5). Tests swap `fetch` + `sleep` via `CreateBotClientOptions`.
 - **Typed error hierarchy** — `lib/discordErrors.ts`. `DiscordRateLimitError` / `Permission` / `NotFound` / `Validation` / `Server` / `Unknown`, all extending `DiscordApiError`. `classifyDiscordError` is the only path from HTTP → typed.
 - **`errorReporter` `#bot-errors` webhook** — `lib/errorReporter.ts:52`. Fire-and-forget out-of-band alert. `shouldSkip` filters out transient noise (429, 10003/10008/10013 not-found churn, 50007 DMs-disabled); `isTestTraffic` filters out synthetic e2e IDs so real signals stay loud.
-- **Prefs registry** — `lib/prefsRegistry.ts:120` (`PREF_DEFINITIONS`). Each def has `scope` (self/peer/guild), `type` (boolean/enum), `surfaces` (web/discord), `section` (privacy/notifications/communication/membership), `column` (on the scope's backing table). Adding a pref is DB migration + one `definePref()` entry; every consumer iterates the registry.
-- **Resolver cascade** — `lib/prefsResolver.ts:31`. For `(key, viewer, peer?)`: peer override on `user_peer_prefs` → viewer's self column on `users` → self-scope def's `default`. Unknown keys throw — no silent fallback at the resolver layer.
-- **`CommunicationPref`** — historical: a 4-state enum on `users.communication_pref` (`prefer` / `auto-accept` / `allow` / `dm-only`) that drove thread-vs-DM routing for the proposal flow. Phase C retired the consumer (`lib/threadConsent.ts` + the proposal-button thread-flow) but the column + registry def are still wired through `lib/prefsRegistry.ts` for migration history.
+- **Prefs registry** — `lib/prefsRegistry.ts` (`PREF_DEFINITIONS`). Each def has `scope` (self/guild — peer scope was retired in migration 0031), `type` (boolean/enum), `surfaces` (web/discord), `section` (privacy/notifications/membership), `column` (on the scope's backing table). Adding a pref is DB migration + one `definePref()` entry; every consumer iterates the registry.
+- **Resolver** — `lib/prefsResolver.ts`. For `(key, viewer)`: viewer's self column on `users` → self-scope def's `default`. Unknown keys throw — no silent fallback at the resolver layer. The historical peer-override step was removed alongside the `user_peer_prefs` table.
 - **Per-guild trade channel** — each `bot_installed_guilds` row carries `trades_channel_id` for that guild's `#swutrade-threads` channel, auto-created on install (`api/bot.ts::handleApplicationAuthorized`). The channel exists for category/install bookkeeping; sessions don't post into it. After Phase C retired the proposal primitive, there's no longer a "host guild for a (proposer, recipient) pair" routing concept — `lib/tradeGuild.ts` keeps `ensureSwutradeCategory` + `ensureTradesChannel` only.
-- **`PREF_CUSTOM_ID_PREFIX` / `COMM_PREF_CUSTOM_ID_PREFIX` / `SERVER_INVITE_CUSTOM_ID_PREFIX`** — declared in `lib/discordMessages.ts`, consumed in `api/bot.ts:224`. The handler dispatches on these prefixes to split pref selectors from enrollment buttons. The legacy `BUTTON_CUSTOM_ID_PREFIX` (= `'trade-proposal:'`) was removed in Phase C; stale clicks fall through to the unknown-button silent-ack branch.
+- **`PREF_CUSTOM_ID_PREFIX` / `SERVER_INVITE_CUSTOM_ID_PREFIX`** — declared in `lib/discordMessages.ts`, consumed in `api/bot.ts`. The handler dispatches on these prefixes to split pref selectors from enrollment buttons. Legacy prefixes — `BUTTON_CUSTOM_ID_PREFIX` (= `'trade-proposal:'`, Phase C) and `COMM_PREF_CUSTOM_ID_PREFIX` (prefs hygiene pass) — fall through to the unknown-button silent-ack branch.
 
 ## File map
 
@@ -73,15 +72,14 @@ Three things keep this area honest: (1) signature verification happens before an
 
 ### Preferences
 
-**`lib/prefsRegistry.ts`** — 8 defs today, across 4 sections:
-- **communication** — `communicationPref` (self + peer; `prefer`/`auto-accept`/`allow`/`dm-only`)
-- **privacy** — `profileVisibility` (web-only), `shareActivityPublicly` (both)
-- **notifications** — `dmTradeProposals`, `dmMatchAlerts`, `dmMeetupReminders`, `dmServerNewInstall` (all both)
+**`lib/prefsRegistry.ts`** — 8 self-scoped defs today (post-hygiene-pass), across 3 sections:
+- **privacy** — `profileVisibility` (web-only enum: discord/public/private), `shareActivityPublicly` (both)
+- **notifications** — `dmServerNewInstall`, `dmSessionInvited`, `dmSessionActivity`, `dmSessionSettled`, `dmSessionDeclined` (all both)
 - **membership** — `autoEnrollOnBotInstall` (both)
 
 `definePref()` is an identity helper for type inference; `validatePrefValue()` is the belt-and-suspenders schema check used by both the `/api/me/prefs` PATCH handler and the button handler (the Discord `custom_id` is attacker-controlled — never trust a raw string to be a valid enum).
 
-**`lib/prefsResolver.ts`** — Pure cascade: `resolvePref({ key, viewerUserId, peerUserId? })`. Always routes through the self-scoped def even when only `peer` is registered — a peer-only pref with no baseline has no meaningful inherit target.
+**`lib/prefsResolver.ts`** — `resolvePref({ key, viewerUserId })`. Reads the self-scoped column off `users`, falls back to the registry default when unset. Throws on unknown keys.
 
 ### Scripts / ops
 
@@ -110,17 +108,16 @@ This area reads from and writes to several schemas; most are OWNED elsewhere (us
 | `installed_by_user_id` | the Discord user who added the bot; used for the welcome DM |
 | `trades_channel_id` | nullable; set by `handleApplicationAuthorized` after auto-creating `#swutrade-threads` |
 
-### Owned: `user_peer_prefs`
-
-Composite PK `(user_id, peer_user_id)`. Stores a user's per-trader overrides. `communicationPref` is the only column today (an override of `null` means "inherit from self"). Schema is flat — one column per peer-scoped def — so the registry can access it by dynamic column lookup: `userPeerPrefs as Record<string, AnyPgColumn>` in `handlePeerPrefButton` (`api/bot.ts:1398`) and in the resolver (`lib/prefsResolver.ts:46`). Adding a peer-scoped pref = schema column + one registry entry.
-
 ### Read: `users`
 
-Self-scoped pref columns live directly on `users`. The registry's `column` field is validated against this schema at test time so typos don't ship. Resolver reads via the same dynamic column trick.
+Self-scoped pref columns live directly on `users`. The registry's `column` field is validated against this schema at test time so typos don't ship. Resolver reads via dynamic column lookup (`getUserPrefColumn` in `lib/prefsRegistry.ts`).
+
+### Retired: `user_peer_prefs`
+
+Dropped in `drizzle/0031_prefs_hygiene_drop_dead_columns.sql` together with the only peer-scoped pref (`communicationPref`). Restoring per-peer overrides means a new migration + a new `peer` arm in `PrefScope` — historical schema is not re-introducible without ceremony.
 
 ### Invariants worth naming
 
-- **Self + peer enum options MUST match.** The peer-scope `communicationPref` def reuses `COMMUNICATION_PREF_OPTIONS` literally (`lib/prefsRegistry.ts:97`). A unit test asserts the cascade can never yield a value the self column can't store.
 - **`type: 12` private threads with `invitable: false`.** `lib/discordBot.ts:219`. Auto-archive 24h (1440 minutes) default. Invisible to anyone not added via `addThreadMember`.
 - **Thread name format** — `trade-{proposerHandle}-{recipientHandle}-{shortId}`.slice(0, 100) — Discord's thread-name limit is 100 chars. `api/bot.ts:742` and `api/trades.ts` share the convention.
 - **`@everyone` role id equals guild id.** Used by `handleApplicationAuthorized` when computing permission overwrites for `#swutrade-threads`.
@@ -171,10 +168,10 @@ Named to pair with the Discord-docs enum values so `grep` works both ways:
 
 The product bot registers exactly two commands today (`scripts/register-discord-commands.mjs:52`):
 
-- `/swutrade settings [user: User]` — type 1 slash with a type-1 SUB_COMMAND `settings` carrying an optional type-6 USER option. No user → self-prefs index. With user → peer-prefs index for that target.
-- `SWUTrade prefs` — type 2 user-context menu (right-click a member → Apps → SWUTrade prefs). Always the peer-prefs index for the clicked user.
+- `/swutrade settings [user: User]` — type 1 slash with a type-1 SUB_COMMAND `settings` carrying an optional type-6 USER option. No user → self-prefs index. With user → empty-state message ("No per-trader preferences are available right now") since the peer scope was retired in the prefs hygiene pass. The slot is kept registered so the surface stays familiar if a peer-scoped pref returns.
+- `SWUTrade prefs` — type 2 user-context menu (right-click a member → Apps → SWUTrade prefs). Same empty-state message as the slash variant.
 
-Both route through `handleApplicationCommand` (`api/bot.ts:257`). The slash command drills into `data.options[0].options[?name=user]` to find the target; the context menu reads `data.target_id`. Both set `flags: MESSAGE_FLAG_EPHEMERAL` so the follow-up is only visible to the clicker.
+Both route through `handleApplicationCommand`. The slash command drills into `data.options[0].options[?name=user]` to find the target; the context menu reads `data.target_id`. Both set `flags: MESSAGE_FLAG_EPHEMERAL` so the follow-up is only visible to the clicker.
 
 ### Button custom_id grammar
 
@@ -182,11 +179,10 @@ Every button carries a `custom_id` the handler pattern-matches on. Prefixes (def
 
 | prefix | grammar | dispatched to |
 |---|---|---|
-| `pref:` | `pref:{key}:{open\|set}[:value]` (self) or `pref:peer:{peerUserId}:{key}:{open\|set}[:value]` or `pref:combo:{peerUserId}:open` | `handlePrefsButton` → self / peer / combined forks |
-| `comm-pref:` (legacy) | `comm-pref:{open\|set}[:value]` | `handlePrefsButton` → pinned to `communicationPref` for DMs that shipped before the registry existed |
+| `pref:` | `pref:{key}:{open\|set}[:value]` (self only) | `handlePrefsButton` |
 | `server-invite:` | `server-invite:{guildId}:enroll` | `handleServerInviteButton` |
 
-The legacy `trade-proposal:` (= `BUTTON_CUSTOM_ID_PREFIX`) dispatcher was removed in Phase C alongside the proposal primitive. Stale clicks from in-flight DMs fall through to the unknown-button branch (silent `DEFERRED_UPDATE` ack).
+Retired prefixes — `trade-proposal:` (Phase C, with the proposal primitive) and `comm-pref:` + the `pref:peer:*` / `pref:combo:*` grammars (prefs hygiene pass, with the peer scope) — fall through to the unknown-button branch (silent `DEFERRED_UPDATE` ack). In-flight DMs from before each retirement keep working at the surface level (no error toast).
 
 Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a known prefix: also silent defer — better than "interaction failed" toast for the user.
 
@@ -194,11 +190,11 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 
 - `PREF_DEFINITIONS: ReadonlyArray<PrefDefinition>` — the list.
 - `getPrefDefinition(key, scope)` — `(key, scope) → def | undefined`. Used as the authorization gate in the Discord button handler; an unknown key or a web-only def receives a silent defer (no column read, no surface leak).
-- `validatePrefValue(def, value)` — `{ok: true, value} | {ok: false, reason}`. Rejects `null` explicitly — callers handling "clear peer override" check for the literal `'inherit'` before calling the validator (see `handlePeerPrefButton`, `api/bot.ts:1434`).
+- `validatePrefValue(def, value)` — `{ok: true, value} | {ok: false, reason}`. Rejects `null` explicitly — null was a peer-scope "clear override" signal that no longer has callers after the hygiene pass.
 
 ### Resolver
 
-- `resolvePref({ key, viewerUserId, peerUserId? }) → Promise<PrefValue>` — `lib/prefsResolver.ts:31`. Throws on unknown key (catch at the API boundary, not here).
+- `resolvePref({ key, viewerUserId }) → Promise<PrefValue>` — `lib/prefsResolver.ts`. Throws on unknown key (catch at the API boundary, not here). The historical `peerUserId` parameter is accepted for compatibility but ignored after the prefs hygiene pass.
 
 ### Error reporter
 
@@ -221,8 +217,8 @@ Unknown prefixes: silent `DEFERRED_UPDATE` ack. Unknown `custom_id` under a know
 1. An admin installs the bot in a guild. Discord POSTs `APPLICATION_AUTHORIZED` to `/api/bot/events`.
 2. `handleApplicationAuthorized` (`api/bot.ts:1535`) upserts `bot_installed_guilds`; fresh install is detected by the absence of a prior row.
 3. `getGuildBotMember(guildId, DISCORD_CLIENT_ID)` resolves the bot's managed-integration role. `createGuildChannel` creates `#swutrade-threads` with overwrites granting `@everyone` VIEW_CHANNEL (so the system messages for thread creation aren't invisible) and the bot role the full permission set.
-4. `trades_channel_id` gets stored on the guild row — every future trade in this guild prefers a thread by default (assuming both sides' comm prefs allow).
-5. If auto-create throws, the error is logged + `reportError`'d; the install itself DOES NOT fail. Trade proposals gracefully degrade to DM in the absence of a trades channel.
+4. `trades_channel_id` gets stored on the guild row. After Phase C and the prefs hygiene pass, sessions don't post into this channel and there's no per-user threading preference; the column survives for category bookkeeping and to leave a hook for any future channel-anchored surface.
+5. If auto-create throws, the error is logged + `reportError`'d; the install itself DOES NOT fail.
 6. Welcome DM to the installer (fresh installs only — re-auth shouldn't re-notify).
 7. `outreachToMembers` enumerates SWUTrade users who are already in the guild, batches DMs at `BATCH_SIZE = 5` (`api/bot.ts:1740`) via `Promise.allSettled` so one user's DMs-disabled doesn't kill the batch. Per-user prefs gate the DM (`dmServerNewInstall`) and the auto-enroll path (`autoEnrollOnBotInstall`).
 
