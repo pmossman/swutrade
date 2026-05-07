@@ -211,6 +211,13 @@
       "when": 1778044786094,
       "tag": "0029_drop_proposals",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1778115442196,
+      "tag": "0030_add_dm_session_activity",
+      "breakpoints": true
     }
   ]
 }

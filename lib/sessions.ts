@@ -17,6 +17,7 @@ import {
   type DiscordBotClient,
 } from './discordBot.js';
 import {
+  buildSessionActivityMessage,
   buildSessionDeclinedMessage,
   buildSessionInviteMessage,
   buildSessionPingMessage,
@@ -1693,6 +1694,24 @@ export async function sendSessionCreateInviteDm(
 export const SESSION_PING_RATE_LIMIT_MS = 15 * 60 * 1000;
 
 /**
+ * Cooldown window for the auto-activity DM (chat / edit / confirm /
+ * suggestion notifications fired from the activity-emitting paths).
+ * 10 min coalesces a burst of activity into one notification — the
+ * recipient gets pointed at the trade once, then anything else the
+ * counterpart does in the next 10 min lands silently in chat history
+ * (recipient sees it when they tap the existing DM's link).
+ *
+ * Tracked via `trade_sessions.last_notified_at[recipientUserId]` so
+ * it survives across requests AND interleaves with the manual ping
+ * (manual ping bumps lastNotifiedAt, suppressing auto-activity for
+ * 10 min after; auto-activity bumps the same column, suppressing a
+ * subsequent ping for the cooldown window). Avoids the "manual ping
+ * fires + auto-activity DMs the same recipient 30 seconds later"
+ * double-notification.
+ */
+export const SESSION_ACTIVITY_DM_COOLDOWN_MS = 10 * 60 * 1000;
+
+/**
  * Optional free-form note carried with the ping DM. Hard-capped
  * server-side so a malicious / fat-fingered sender can't inflate
  * the recipient's DM to message-cap territory.
@@ -1841,6 +1860,145 @@ export async function pingSessionCounterpart(
   });
 
   return { ok: true, pingedUserId: targetUserId };
+}
+
+/**
+ * Auto-DM the counterpart that something happened in the session.
+ * Fired fire-and-forget from `sendChatMessage`, `editSessionSide`,
+ * `confirmSession`, `unconfirmSession`, `suggestForSession`,
+ * `acceptSuggestion`. The cooldown collapses bursts; the pref +
+ * Discord-id checks let users opt out cleanly.
+ *
+ * Returns a structured result so callers can log, but every caller
+ * passes the result to `void` — this is fire-and-forget. The
+ * `notified` event is recorded ONLY when a DM actually goes out
+ * (the cooldown counter reads off `last_notified_at`, not events).
+ *
+ * Failure modes intentionally collapse to silent skips:
+ *   - `recipient` has no Discord id (anonymous/ghost)        → skip
+ *   - `recipient.dmSessionActivity = false`                  → skip
+ *   - cooldown still active (lastNotifiedAt within 10 min)    → skip
+ *   - actor is the only participant (open-slot session)      → skip
+ *   - DM send throws                                          → log, skip
+ *
+ * None of these block the action that triggered the call. The DM
+ * is supplemental; the in-app state is canonical.
+ */
+export type ActivityNotificationResult =
+  | { sent: true; recipientUserId: string }
+  | { sent: false; reason:
+      | 'no-counterpart'
+      | 'self-actor'
+      | 'no-discord-id'
+      | 'opted-out'
+      | 'cooldown-active'
+      | 'session-not-found'
+      | 'session-terminal'
+      | 'dm-failed'
+    };
+
+export async function notifySessionActivity(
+  db: Db,
+  args: {
+    sessionId: string;
+    actorUserId: string;
+    bot: DiscordBotClient;
+    appBaseUrl: string;
+  },
+): Promise<ActivityNotificationResult> {
+  const [sessionRow] = await db
+    .select()
+    .from(tradeSessions)
+    .where(eq(tradeSessions.id, args.sessionId))
+    .limit(1);
+  if (!sessionRow) return { sent: false, reason: 'session-not-found' };
+  // Don't fire activity DMs on terminal sessions — the lifecycle
+  // DMs (settled / cancelled / expired / declined) cover those.
+  if (sessionRow.status !== 'active') return { sent: false, reason: 'session-terminal' };
+
+  const isA = sessionRow.userAId === args.actorUserId;
+  const isB = sessionRow.userBId === args.actorUserId;
+  if (!isA && !isB) return { sent: false, reason: 'self-actor' };
+  const recipientUserId = isA ? sessionRow.userBId : sessionRow.userAId;
+  if (!recipientUserId) return { sent: false, reason: 'no-counterpart' };
+
+  // Cooldown gate. lastNotifiedAt is a per-user-id map; the manual
+  // ping bumps the same column, so the two flows interlock cleanly
+  // (a user-triggered ping suppresses auto-activity DMs for the
+  // cooldown window, and vice versa).
+  const lastNotifiedRaw = sessionRow.lastNotifiedAt?.[recipientUserId];
+  if (lastNotifiedRaw) {
+    const lastNotifiedTs = Date.parse(lastNotifiedRaw);
+    if (Number.isFinite(lastNotifiedTs)
+        && Date.now() - lastNotifiedTs < SESSION_ACTIVITY_DM_COOLDOWN_MS) {
+      return { sent: false, reason: 'cooldown-active' };
+    }
+  }
+
+  // Pull recipient discord_id + pref + actor handle in one round-trip.
+  const [recipient] = await db
+    .select({
+      discordId: users.discordId,
+      dmSessionActivity: users.dmSessionActivity,
+    })
+    .from(users)
+    .where(eq(users.id, recipientUserId))
+    .limit(1);
+  if (!recipient?.discordId) return { sent: false, reason: 'no-discord-id' };
+  if (!recipient.dmSessionActivity) return { sent: false, reason: 'opted-out' };
+
+  const [actor] = await db
+    .select({ handle: users.handle })
+    .from(users)
+    .where(eq(users.id, args.actorUserId))
+    .limit(1);
+  // Actor lookup failure shouldn't block — fall back to a generic
+  // handle string. The recipient still gets a usable DM.
+  const counterpartHandle = actor?.handle ?? 'someone';
+
+  const sessionUrl = `${args.appBaseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(args.sessionId)}`;
+  const body = buildSessionActivityMessage({
+    counterpartHandle,
+    sessionUrl,
+  });
+
+  try {
+    await args.bot.sendDirectMessage(recipient.discordId, body);
+  } catch (err) {
+    console.error(
+      'notifySessionActivity: sendDirectMessage failed',
+      args.sessionId,
+      recipientUserId,
+      err,
+    );
+    return { sent: false, reason: 'dm-failed' };
+  }
+
+  // Bump lastNotifiedAt so the cooldown gate catches subsequent
+  // events. JSON-merge: keep other users' timestamps untouched.
+  const nextLastNotifiedAt: Record<string, string> = {
+    ...sessionRow.lastNotifiedAt,
+    [recipientUserId]: new Date().toISOString(),
+  };
+  await db
+    .update(tradeSessions)
+    .set({ lastNotifiedAt: nextLastNotifiedAt })
+    .where(eq(tradeSessions.id, args.sessionId));
+
+  // Record a session event so the timeline (and future debugging)
+  // can see that we DM'd. payload.kind disambiguates from the
+  // manual-ping notified events.
+  await recordSessionEvent(db, {
+    sessionId: args.sessionId,
+    actorUserId: args.actorUserId,
+    type: 'notified',
+    payload: {
+      kind: 'activity',
+      recipientUserId,
+    },
+  });
+
+  return { sent: true, recipientUserId };
 }
 
 /**

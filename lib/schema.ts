@@ -59,6 +59,13 @@ export const users = pgTable('users', {
   dmSessionSettled: boolean('dm_session_settled').default(true).notNull(),
   dmSessionExpired: boolean('dm_session_expired').default(true).notNull(),
   dmSessionDeclined: boolean('dm_session_declined').default(true).notNull(),
+  // Auto-notification when the counterpart does anything in a shared
+  // session (chat / edit / confirm / suggest). Cooldown-throttled
+  // server-side via `trade_sessions.last_notified_at` so a burst of
+  // activity collapses into a single DM. Distinct from dmSessionPing
+  // (which gates the explicit "Ping" button) — this is the silent
+  // FYI that keeps the recipient from missing activity while away.
+  dmSessionActivity: boolean('dm_session_activity').default(true).notNull(),
   // Fires once per APPLICATION_AUTHORIZED event for an existing user
   // already in that guild. Opt-out surface for "SWUTrade just landed
   // in your server, want to join?" DMs. Default on — this is how we

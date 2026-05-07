@@ -261,6 +261,18 @@ export const PREF_DEFINITIONS: ReadonlyArray<PrefDefinition> = [
     discord: { order: 21 },
   }),
   definePref({
+    key: 'dmSessionActivity',
+    scope: { kind: 'self' },
+    column: 'dmSessionActivity',
+    type: { kind: 'boolean' },
+    label: 'Trade activity',
+    description: 'DM me when a counterpart sends a chat, edits cards, confirms, or suggests changes — throttled to one DM per ~10 min per trade.',
+    default: true,
+    surfaces: ['web', 'discord'],
+    section: 'notifications',
+    discord: { order: 21 },
+  }),
+  definePref({
     key: 'dmSessionSettled',
     scope: { kind: 'self' },
     column: 'dmSessionSettled',

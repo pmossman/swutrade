@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "dm_session_activity" boolean DEFAULT true NOT NULL;
