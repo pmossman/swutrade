@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
-import { createSingletonCache } from './sharedCache';
+import { createPersistentSingletonCache } from './sharedCache';
 
 export interface GuildMembershipSummary {
   guildId: string;
@@ -47,16 +47,35 @@ export interface GuildMembershipsApi {
 // in/out of Settings. Manual button clicks always refresh.
 const AUTO_REFRESHED_KEY = 'swu-settings-auto-refreshed';
 
-// Module-scoped cache: shared across hook instances for the SPA session.
-// Lets return-navigation render the last-known guild list instantly while
-// a background fetch revalidates. Any successful server response
-// (loadLocal, refreshFromDiscord, updateGuild optimistic + canonical)
-// overwrites the cache so it stays in sync with what's on screen.
+// Module-scoped cache: shared across hook instances for the SPA session
+// AND persisted to localStorage. Lets return-navigation render the
+// last-known guild list instantly while a background fetch revalidates;
+// the persisted layer extends that to cold loads too. Any successful
+// server response (loadLocal, refreshFromDiscord, updateGuild
+// optimistic + canonical) overwrites the cache so it stays in sync
+// with what's on screen.
 interface GuildsCache {
   enrollable: GuildMembershipSummary[];
   other: GuildMembershipSummary[];
 }
-const cache = createSingletonCache<GuildsCache>();
+const cache = createPersistentSingletonCache<GuildsCache>('swu.cache.guilds.v1', {
+  validate: raw => {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as { enrollable?: unknown; other?: unknown };
+    if (!Array.isArray(obj.enrollable) || !Array.isArray(obj.other)) return null;
+    for (const list of [obj.enrollable, obj.other]) {
+      for (const g of list) {
+        if (!g || typeof g !== 'object') return null;
+        const guild = g as Record<string, unknown>;
+        if (typeof guild.guildId !== 'string' || typeof guild.guildName !== 'string') return null;
+      }
+    }
+    return {
+      enrollable: obj.enrollable as GuildMembershipSummary[],
+      other: obj.other as GuildMembershipSummary[],
+    };
+  },
+});
 
 /** Testing-only: reset the module-scoped cache between test cases. */
 export function __resetGuildMembershipsCache() {

@@ -84,7 +84,6 @@ interface HomeViewProps {
  *     single-column flow.
  */
 export function HomeView({ auth, wants, available }: HomeViewProps) {
-  const { user } = auth;
   const nav = useNavigation();
   // Local shorthands for readability — these wrap the `nav` primitive
   // into the method-per-action shape the view body already expects.
@@ -108,19 +107,20 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
   // DON'T gate on `enrolledGuilds.length > 0` here, even though a
   // user with zero enrolled servers can't actually post: that gate
   // depends on the /api/me/guilds fetch, which resolves later than
-  // auth, and was causing the Post-a-signal tile (and the
-  // Post-to-server links inside Wishlist/Binder) to pop in well
-  // after the rest of Home rendered. SignalBuilderView already
-  // handles the empty-enrolled-server case with a "No enrolled
-  // servers" prompt + Settings link, so the user lands somewhere
-  // useful either way and the home affordance shows up at the same
-  // time as the rest of the page chrome.
-  const canPostToServer = !!user && !user.isAnonymous;
+  // auth. SignalBuilderView already handles the empty-enrolled-server
+  // case with a "No enrolled servers" prompt + Settings link, so the
+  // user lands somewhere useful either way.
+  //
+  // Use `isSignedInRealUser` (pre-seeded by the realUserHint
+  // localStorage flag) so returning real users see the tile from
+  // frame 1 — gating on `!!user` directly produced a 200-300ms
+  // pop-in while the auth round-trip resolved.
+  const canPostToServer = auth.isSignedInRealUser;
   // Explicit trading-partner bookmarks. Independent of community
   // enrollment — lets users pin Discord friends who aren't in any
   // bot-enabled server. Signed-in only; the server endpoint 401s
   // for ghosts, so we gate the fetch here and skip for anonymous.
-  const favorites = useFavorites(!!user && !user.isAnonymous);
+  const favorites = useFavorites(auth.isSignedInRealUser);
   // CardIndexContext keeps the byFamily index globally synced — no
   // need for this view to re-trigger `loadAllSets`, the PriceData
   // provider handles that once at app mount. The Lists drawer is a

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiDelete, apiGet, apiPost } from '../services/apiClient';
-import { createSingletonCache } from './sharedCache';
+import { createPersistentSingletonCache } from './sharedCache';
 
 export interface Favorite {
   userId: string;
@@ -28,11 +28,23 @@ export interface FavoritesApi {
 }
 
 // Module-scoped cache: shared across hook instances for the SPA
-// session. HandlePickerDialog mounts useFavorites on every open even
-// when HomeView already mounted it; without the cache we'd pay an
-// extra `/api/me/favorites` round-trip per open. Audit
-// 07-performance #5.
-const cache = createSingletonCache<Favorite[]>();
+// session AND persisted to localStorage so a returning real user
+// sees their PartnersModule populated on frame 1 instead of
+// popping in 200-300ms after auth resolves. HandlePickerDialog
+// mounts useFavorites on every open even when HomeView already
+// mounted it; without the cache we'd pay an extra
+// `/api/me/favorites` round-trip per open. Audit 07-performance #5.
+const cache = createPersistentSingletonCache<Favorite[]>('swu.cache.favorites.v1', {
+  validate: raw => {
+    if (!Array.isArray(raw)) return null;
+    for (const f of raw) {
+      if (!f || typeof f !== 'object') return null;
+      const fav = f as Record<string, unknown>;
+      if (typeof fav.userId !== 'string' || typeof fav.handle !== 'string') return null;
+    }
+    return raw as Favorite[];
+  },
+});
 
 /** Testing-only: reset the module-scoped cache between test cases. */
 export function __resetFavoritesCache() {

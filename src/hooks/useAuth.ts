@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { apiGet, apiPost } from '../services/apiClient';
 import { MeResponseSchema, type MeResponseUser } from '../../lib/shared';
+import { clearAllPersistentCaches } from './sharedCache';
 
 // `User` was previously hand-rolled here in parallel with
 // `SessionData` (lib/auth.ts) and the wire shape in api/auth.ts.
@@ -16,11 +17,21 @@ export interface AuthApi {
    * resolved OR when we're still loading but have a localStorage hint
    * from a prior visit. Use this (not `!!user`) for view-routing
    * decisions so signed-in users don't see a flash of the trade
-   * builder on first paint before `/api/auth/me` resolves.
+   * builder on first paint before `/api/auth/me` resolves. Includes
+   * ghost cookies (per the wide hint).
    *
    * Source of truth remains the server; the hint is advisory only.
    */
   isSignedIn: boolean;
+  /**
+   * Tighter pre-seed: best current guess at "real user (non-ghost)
+   * signed in." Use this (not `isSignedIn`) for first-paint gates
+   * that should *not* show ghosts — e.g. the "Post a signal" tile,
+   * which requires Discord identity. Pre-seeded by a separate
+   * realUserHint localStorage flag set after `/api/auth/me` confirms
+   * `!user.isAnonymous`. Falls through to the server-confirmed value
+   * once auth resolves. */
+  isSignedInRealUser: boolean;
   /** OAuth URL that installs SWUTrade's bot in a Discord guild. */
   botInstallUrl: string | null;
   /** UX-A5: when the just-completed OAuth callback merged ghost
@@ -37,12 +48,23 @@ export interface AuthApi {
 
 /**
  * Presence of this key in localStorage means "this browser was signed
- * in on its last successful /api/auth/me". Set after each confirmed
- * auth, cleared on logout or confirmed-not-signed-in responses. Not a
- * trust surface — the server gates every actual call. Purely used to
- * pre-seed the view router so we don't flash the wrong view.
+ * in (real or ghost) on its last successful /api/auth/me". Set after
+ * each confirmed auth, cleared on logout or confirmed-not-signed-in
+ * responses. Not a trust surface — the server gates every actual
+ * call. Purely used to pre-seed the view router so we don't flash
+ * the wrong view.
  */
 const SIGNED_IN_HINT_KEY = 'swu.signedInHint';
+
+/**
+ * Tighter sibling of SIGNED_IN_HINT_KEY: set ONLY when the last
+ * successful /api/auth/me confirmed a real (non-ghost) user. Drives
+ * `isSignedInRealUser` so first-paint gates that exclude ghosts
+ * (e.g. HomeView's "Post a signal" tile) render the right shape on
+ * frame 1 for returning real users instead of popping in 200-300ms
+ * later when the auth round-trip completes. Cleared on logout or any
+ * confirmed-ghost / confirmed-signed-out response. */
+const REAL_USER_HINT_KEY = 'swu.realUserHint';
 
 function readHint(): boolean {
   try {
@@ -61,6 +83,23 @@ function writeHint(value: boolean): void {
   }
 }
 
+function readRealUserHint(): boolean {
+  try {
+    return localStorage.getItem(REAL_USER_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeRealUserHint(value: boolean): void {
+  try {
+    if (value) localStorage.setItem(REAL_USER_HINT_KEY, '1');
+    else localStorage.removeItem(REAL_USER_HINT_KEY);
+  } catch {
+    /* Private-mode Safari / storage disabled — harmless. */
+  }
+}
+
 export function useAuth(): AuthApi {
   const [user, setUser] = useState<User | null>(null);
   const [botInstallUrl, setBotInstallUrl] = useState<string | null>(null);
@@ -68,10 +107,11 @@ export function useAuth(): AuthApi {
   const [pendingMergeBanner, setPendingMergeBanner] = useState<
     { carriedCount: number } | null
   >(null);
-  // Read once on mount — the hint exists to steer the very first
+  // Read once on mount — the hints exist to steer the very first
   // render. After `isLoading` flips false, `!!user` drives isSignedIn
-  // and this initial value no longer matters.
+  // and these initial values no longer matter.
   const [initialHint] = useState<boolean>(() => readHint());
+  const [initialRealUserHint] = useState<boolean>(() => readRealUserHint());
 
   useEffect(() => {
     (async () => {
@@ -82,14 +122,20 @@ export function useAuth(): AuthApi {
       // other apiGet call sites can opt in opportunistically.
       const result = await apiGet('/api/auth/me', MeResponseSchema);
       if (result.ok) {
-        setUser(result.data.user ?? null);
+        const u = result.data.user ?? null;
+        setUser(u);
         setBotInstallUrl(result.data.botInstallUrl ?? null);
         setPendingMergeBanner(result.data.pendingMergeBanner ?? null);
-        writeHint(!!result.data.user);
+        writeHint(!!u);
+        // Real-user hint is the tighter signal — only set when we
+        // confirmed a non-anonymous account. Ghosts get the wide
+        // hint but not this one.
+        writeRealUserHint(!!u && !u.isAnonymous);
       } else {
         setUser(null);
         setPendingMergeBanner(null);
         writeHint(false);
+        writeRealUserHint(false);
       }
       setIsLoading(false);
     })();
@@ -104,6 +150,11 @@ export function useAuth(): AuthApi {
     setUser(null);
     setPendingMergeBanner(null);
     writeHint(false);
+    writeRealUserHint(false);
+    // Wipe every persistent client cache so the next user on this
+    // browser doesn't flash the previous user's cached Home modules
+    // (myTrades, favorites, guilds) before /api/auth/me round-trips.
+    clearAllPersistentCaches();
   }, []);
 
   const dismissMergeBanner = useCallback(async () => {
@@ -116,6 +167,8 @@ export function useAuth(): AuthApi {
   }, []);
 
   const isSignedIn = !!user || (isLoading && initialHint);
+  const isSignedInRealUser =
+    (isLoading && initialRealUserHint) || (!!user && !user.isAnonymous);
 
   // Memoize the returned API so AuthContext consumers don't re-render
   // on every parent re-render (the 60s minute-tick in App.tsx, every
@@ -127,6 +180,7 @@ export function useAuth(): AuthApi {
       user,
       isLoading,
       isSignedIn,
+      isSignedInRealUser,
       botInstallUrl,
       pendingMergeBanner,
       dismissMergeBanner,
@@ -137,6 +191,7 @@ export function useAuth(): AuthApi {
       user,
       isLoading,
       isSignedIn,
+      isSignedInRealUser,
       botInstallUrl,
       pendingMergeBanner,
       dismissMergeBanner,

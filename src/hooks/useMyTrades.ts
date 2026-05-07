@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../services/apiClient';
-import { createSingletonCache } from './sharedCache';
+import { createPersistentSingletonCache } from './sharedCache';
 import type { SessionView, SessionStatus } from './useSession';
 
 /**
@@ -70,7 +70,33 @@ export interface MyTradesApi {
 interface CachedShape {
   rows: TradeRow[];
 }
-const cache = createSingletonCache<CachedShape>();
+
+/**
+ * Persistent across cold loads so returning users see their inbox
+ * populated on frame 1 instead of a 200-300ms pop-in. Bump the v
+ * suffix when the row shape changes — the validator below rejects
+ * anything that doesn't match the current `TradeRow` keys, but
+ * versioning the key is a cleaner hard-reset than relying on the
+ * validator alone.
+ */
+const cache = createPersistentSingletonCache<CachedShape>('swu.cache.myTrades.v1', {
+  validate: raw => {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as { rows?: unknown };
+    if (!Array.isArray(obj.rows)) return null;
+    // Soft validation: each row must have the load-bearing fields.
+    // Anything malformed returns null → the entry gets wiped + the
+    // hook treats this as a cold load.
+    for (const r of obj.rows) {
+      if (!r || typeof r !== 'object') return null;
+      const row = r as Record<string, unknown>;
+      if (typeof row.id !== 'string') return null;
+      if (typeof row.state !== 'string') return null;
+      if (typeof row.lastActivityAt !== 'string') return null;
+    }
+    return { rows: obj.rows as TradeRow[] };
+  },
+});
 
 /** Testing-only reset. */
 export function __resetMyTradesCache() {
