@@ -6,6 +6,7 @@ import {
   handleEditSession,
   handleConfirmSession,
 } from '../../api/sessions.js';
+import { runSessionFollowupsSweep } from '../../api/bot.js';
 import { getDb } from '../../lib/db.js';
 import {
   sessionEvents,
@@ -15,32 +16,39 @@ import {
 } from '../../lib/schema.js';
 import {
   createOrGetActiveSession,
-  notifySessionActivity,
-  SESSION_ACTIVITY_DM_COOLDOWN_MS,
+  recordSessionEvent,
+  sendChatMessage,
 } from '../../lib/sessions.js';
 import type { DiscordBotClient } from '../../lib/discordBot.js';
 import { createBaseFakeBot, type SendCall } from './discordFakes.js';
 
 /**
- * Coverage for the auto-DM-on-activity behaviour wired into chat /
- * edit / confirm / unconfirm / suggest / accept-suggestion handlers.
- * `notifySessionActivity` does the cooldown + pref + Discord-id
- * gating; the handlers fire it via `waitUntil`.
+ * Activity DM coverage. The flow used to fire synchronously from each
+ * emit-site (`notifySessionActivity` with a 10-min cooldown); since
+ * 2026-05-08 it's a periodic cron sweep
+ * (`api/bot.ts::runSessionFollowupsSweep`, action `cron-session-
+ * followups`, every 2 min). This file exercises the sweep against
+ * a real DB:
  *
- * What's tested here:
- *   - Happy path: first activity event → DM goes out, lastNotifiedAt
- *     bumps, `notified` event with kind='activity' lands.
- *   - Cooldown: a second event within SESSION_ACTIVITY_DM_COOLDOWN_MS
- *     doesn't re-DM.
- *   - Manual ping interlock: ping bumps the same lastNotifiedAt, so a
- *     subsequent activity event in the cooldown window is silent.
- *   - Pref opt-out: counterpart with dmSessionActivity=false gets no DM.
- *   - No discord_id: ghost / anon counterpart gets no DM (silent skip).
- *   - Terminal session: no DM (lifecycle DMs cover those).
- *   - Self-actor: no DM (you never ping yourself).
+ *   - Happy path: counterpart-authored activity → DM, last_notified_at
+ *     stamped, `notified` event with kind='activity' recorded.
+ *   - Already DM'd: a re-sweep with no new counterpart activity is a
+ *     no-op (idempotent).
+ *   - Read-state gate: counterpart authored activity, then recipient
+ *     marked-read past the activity → no DM (they've seen it).
+ *   - Pref opt-out: dmSessionActivity=false → no DM.
+ *   - Ghost recipient: no Discord id → no DM.
+ *   - Terminal session: cancelled / settled / expired skipped.
+ *   - Open-slot session: counterpart slot is null → skipped (no
+ *     counterpart to author activity).
+ *   - Self-authored events: don't notify yourself.
+ *   - Activity event filter: edit-snapshot and notified events don't
+ *     count as activity (excluded from the sweep's input set).
  *
- * The library function is called directly so the cooldown-time math
- * is deterministic without `waitUntil` or Vercel runtime edges.
+ * The handler-level smoke tests at the bottom are kept from the
+ * pre-cron iteration — they just confirm chat/edit/confirm handlers
+ * still succeed end-to-end after the sync DM call sites were
+ * removed.
  */
 
 function snap(productId: string, qty = 1): TradeCardSnapshot {
@@ -51,16 +59,41 @@ function makeFakeBot(): DiscordBotClient & { sendCalls: SendCall[] } {
   const sendCalls: SendCall[] = [];
   return Object.assign(
     createBaseFakeBot({
+      async createDmChannel() { return { id: 'dm-fake' }; },
       async sendDirectMessage(userId, body) {
         sendCalls.push({ userId, body });
-        return { id: 'msg-activity', channel_id: 'dm-activity' };
+        return { id: 'msg-activity', channel_id: 'dm-fake' };
       },
     }),
     { sendCalls },
   );
 }
 
-describeWithDb('notifySessionActivity', () => {
+/**
+ * Run the cron sweep with a fake bot + scoped to specific sessions.
+ * The CI test DB accumulates thousands of leftover active sessions
+ * across runs; without `sessionIds` scoping the sweep iterates them
+ * all and hits the vitest timeout. Production calls omit the scope
+ * (sweep walks all active sessions).
+ */
+async function runSweep(bot: DiscordBotClient, sessionIds: string[]): Promise<{
+  scanned: number;
+  dmd: number;
+  skipped: number;
+  errors: number;
+}> {
+  const req = mockRequest({ method: 'GET' });
+  const res = mockResponse();
+  await runSessionFollowupsSweep(req, res, {
+    bot,
+    appBaseUrl: 'https://beta.swutrade.com',
+    sessionIds,
+  });
+  expect(res._status).toBe(200);
+  return res._json as { scanned: number; dmd: number; skipped: number; errors: number };
+}
+
+describeWithDb('cron-session-followups sweep', () => {
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
   const createdSessionIds: string[] = [];
 
@@ -90,140 +123,201 @@ describeWithDb('notifySessionActivity', () => {
     return { alice, bob, sessionId: result.id };
   }
 
-  it('happy path: first activity → DM, lastNotifiedAt bumps, notified event lands', async () => {
+  it('happy path: counterpart-authored activity → DM, last_notified_at stamped, notified event recorded', async () => {
     const { alice, bob, sessionId } = await seedPair();
-    const bot = makeFakeBot();
     const db = getDb();
 
-    const result = await notifySessionActivity(db, {
+    // Alice (counterpart of Bob) chats. The chat send already
+    // records its own `chat` session_event.
+    await sendChatMessage(db, {
       sessionId,
-      actorUserId: alice.id,
-      bot,
-      appBaseUrl: 'https://beta.swutrade.com',
+      viewerUserId: alice.id,
+      body: 'hello',
     });
-
-    expect(result.sent).toBe(true);
-    if (result.sent) expect(result.recipientUserId).toBe(bob.id);
+    const bot = makeFakeBot();
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(1);
+    // Bob has a real Discord id (createTestUser sets one), so a DM
+    // goes out.
     expect(bot.sendCalls).toHaveLength(1);
-    expect(bot.sendCalls[0].userId).toBeTruthy();
 
-    // lastNotifiedAt[bob] now stamped to ~now
     const [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, sessionId)).limit(1);
     expect(row?.lastNotifiedAt[bob.id]).toBeTruthy();
 
-    // notified event with kind='activity' recorded
     const events = await db.select().from(sessionEvents).where(eq(sessionEvents.sessionId, sessionId));
-    const activityEvents = events.filter(e => e.type === 'notified' && (e.payload as { kind?: string } | null)?.kind === 'activity');
-    expect(activityEvents).toHaveLength(1);
+    const notifiedEvents = events.filter(
+      e => e.type === 'notified' && (e.payload as { kind?: string } | null)?.kind === 'activity',
+    );
+    expect(notifiedEvents).toHaveLength(1);
   });
 
-  it('cooldown: second activity inside the window is silent', async () => {
+  it('idempotent re-sweep: a second run with no new counterpart activity is a no-op', async () => {
     const { alice, sessionId } = await seedPair();
-    const bot = makeFakeBot();
     const db = getDb();
+    await sendChatMessage(db, { sessionId, viewerUserId: alice.id, body: 'hi' });
 
-    // Fire once.
-    await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(bot.sendCalls).toHaveLength(1);
+    const bot1 = makeFakeBot();
+    const stats1 = await runSweep(bot1, [sessionId]);
+    expect(stats1.dmd).toBe(1);
 
-    // Second call immediately.
-    const second = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(second.sent).toBe(false);
-    if (!second.sent) expect(second.reason).toBe('cooldown-active');
-    expect(bot.sendCalls).toHaveLength(1);
+    const bot2 = makeFakeBot();
+    const stats2 = await runSweep(bot2, [sessionId]);
+    expect(stats2.dmd).toBe(0);
+    expect(bot2.sendCalls).toHaveLength(0);
   });
 
-  it('cooldown: rolls back after the window and re-fires', async () => {
-    const { alice, bob, sessionId } = await seedPair();
-    const bot = makeFakeBot();
-    const db = getDb();
-
-    // Pre-populate lastNotifiedAt with a stale timestamp (just past
-    // the cooldown).
-    const stale = new Date(Date.now() - SESSION_ACTIVITY_DM_COOLDOWN_MS - 1000);
-    await db
-      .update(tradeSessions)
-      .set({ lastNotifiedAt: { [bob.id]: stale.toISOString() } })
-      .where(eq(tradeSessions.id, sessionId));
-
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(true);
-    expect(bot.sendCalls).toHaveLength(1);
-  });
-
-  it('manual ping bumps the same column → subsequent activity is silent', async () => {
+  it('read-state gate: recipient mark-read past the activity → no DM', async () => {
     const { alice, bob, sessionId } = await seedPair();
     const db = getDb();
+    await sendChatMessage(db, { sessionId, viewerUserId: alice.id, body: 'hi' });
 
-    // Simulate a manual ping just having stamped lastNotifiedAt.
+    // Bob marks-read AFTER Alice's chat. createOrGetActiveSession
+    // enforces canonical user_a_id < user_b_id ordering so we don't
+    // know which slot Bob landed in — look it up.
+    const [row] = await db
+      .select({ userAId: tradeSessions.userAId, userBId: tradeSessions.userBId })
+      .from(tradeSessions)
+      .where(eq(tradeSessions.id, sessionId))
+      .limit(1);
+    const bobIsUserA = row.userAId === bob.id;
     await db
       .update(tradeSessions)
-      .set({ lastNotifiedAt: { [bob.id]: new Date().toISOString() } })
+      .set(bobIsUserA ? { userALastReadAt: new Date() } : { userBLastReadAt: new Date() })
       .where(eq(tradeSessions.id, sessionId));
 
     const bot = makeFakeBot();
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(false);
-    if (!result.sent) expect(result.reason).toBe('cooldown-active');
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(0);
+    expect(stats.skipped).toBeGreaterThan(0);
     expect(bot.sendCalls).toHaveLength(0);
   });
 
-  it('opted out: counterpart with dmSessionActivity=false gets no DM', async () => {
+  it('pref opt-out: dmSessionActivity=false → no DM', async () => {
     const { alice, bob, sessionId } = await seedPair();
     const db = getDb();
     await db.update(users).set({ dmSessionActivity: false }).where(eq(users.id, bob.id));
+    await sendChatMessage(db, { sessionId, viewerUserId: alice.id, body: 'hi' });
 
     const bot = makeFakeBot();
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(false);
-    if (!result.sent) expect(result.reason).toBe('opted-out');
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(0);
     expect(bot.sendCalls).toHaveLength(0);
   });
 
-  it('no discord_id: ghost counterpart gets silent skip', async () => {
+  it('ghost recipient: no Discord id → no DM', async () => {
     const { alice, bob, sessionId } = await seedPair();
     const db = getDb();
     await db.update(users).set({ discordId: null }).where(eq(users.id, bob.id));
+    await sendChatMessage(db, { sessionId, viewerUserId: alice.id, body: 'hi' });
 
     const bot = makeFakeBot();
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(false);
-    if (!result.sent) expect(result.reason).toBe('no-discord-id');
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(0);
     expect(bot.sendCalls).toHaveLength(0);
   });
 
-  it('terminal session: no DM (lifecycle DMs cover that case)', async () => {
+  it('terminal session: cancelled session is skipped entirely', async () => {
     const { alice, sessionId } = await seedPair();
     const db = getDb();
+    await sendChatMessage(db, { sessionId, viewerUserId: alice.id, body: 'hi' });
     await db.update(tradeSessions).set({ status: 'cancelled' }).where(eq(tradeSessions.id, sessionId));
 
     const bot = makeFakeBot();
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: alice.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(false);
-    if (!result.sent) expect(result.reason).toBe('session-terminal');
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(0);
+    expect(bot.sendCalls).toHaveLength(0);
+    // Cancelled session isn't even scanned — only `status = active`
+    // rows enter the loop.
+  });
+
+  it('self-authored activity (no counterpart slot filled) does not DM the actor', async () => {
+    // This is implicit in the cron's per-recipient loop: the actor
+    // is excluded from "counterpart authored activity" lookups by
+    // construction. Cover it explicitly: Bob authors, only Alice
+    // gets DM'd, never Bob.
+    const { alice, bob, sessionId } = await seedPair();
+    const db = getDb();
+    await sendChatMessage(db, { sessionId, viewerUserId: bob.id, body: 'from bob' });
+
+    const bot = makeFakeBot();
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(1);
+    expect(bot.sendCalls).toHaveLength(1);
+
+    const [row] = await db.select().from(tradeSessions).where(eq(tradeSessions.id, sessionId)).limit(1);
+    expect(row?.lastNotifiedAt[alice.id]).toBeTruthy();
+    expect(row?.lastNotifiedAt[bob.id]).toBeUndefined();
+  });
+
+  it('activity-event filter: only chat/edited/confirmed/suggestion-* count; edit-snapshot and notified do not', async () => {
+    const { alice, sessionId } = await seedPair();
+    const db = getDb();
+    // Record an edit-snapshot event (internal bookkeeping). It must
+    // NOT trigger a DM because edit-snapshot is excluded from
+    // ACTIVITY_EVENT_TYPES.
+    await recordSessionEvent(db, {
+      sessionId,
+      actorUserId: alice.id,
+      type: 'edit-snapshot',
+      payload: { yourCards: [], theirCards: [] },
+    });
+
+    const bot = makeFakeBot();
+    const stats = await runSweep(bot, [sessionId]);
+    expect(stats.dmd).toBe(0);
     expect(bot.sendCalls).toHaveLength(0);
   });
 
-  it('self-actor (caller is not a session participant): no DM', async () => {
-    const { sessionId } = await seedPair();
-    const stranger = await createTestUser();
-    fixtures.push(stranger);
+  it('multi-session sweep: handles N sessions in one run', async () => {
+    const pair1 = await seedPair();
+    const pair2 = await seedPair();
+    const db = getDb();
+    await sendChatMessage(db, { sessionId: pair1.sessionId, viewerUserId: pair1.alice.id, body: 'one' });
+    await sendChatMessage(db, { sessionId: pair2.sessionId, viewerUserId: pair2.alice.id, body: 'two' });
 
     const bot = makeFakeBot();
+    const stats = await runSweep(bot, [pair1.sessionId, pair2.sessionId]);
+    expect(stats.dmd).toBe(2);
+    expect(bot.sendCalls).toHaveLength(2);
+  });
+
+  it('open-slot session is scanned but skipped (no counterpart to author activity)', async () => {
+    const alice = await createTestUser();
+    fixtures.push(alice);
     const db = getDb();
-    const result = await notifySessionActivity(db, { sessionId, actorUserId: stranger.id, bot, appBaseUrl: 'https://x' });
-    expect(result.sent).toBe(false);
-    if (!result.sent) expect(result.reason).toBe('self-actor');
+    // Open-slot session: no userBId.
+    const openId = `open-${Math.random().toString(36).slice(2, 10)}`;
+    createdSessionIds.push(openId);
+    await db.insert(tradeSessions).values({
+      id: openId,
+      userAId: alice.id,
+      userBId: null,
+      userACards: [snap('p-1')],
+      userBCards: [],
+      confirmedByUserIds: [],
+      lastEditedAt: new Date(),
+      lastEditedByUserId: null,
+      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      status: 'active',
+      lastNotifiedAt: {},
+      pendingSuggestions: [],
+    });
+
+    const bot = makeFakeBot();
+    const stats = await runSweep(bot, [openId]);
+    // Scanned ≥ 1, dmd = 0 (no userBId means no counterpart loop).
+    expect(stats.scanned).toBeGreaterThanOrEqual(1);
+    expect(stats.dmd).toBe(0);
     expect(bot.sendCalls).toHaveLength(0);
   });
 });
 
-describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
-  // Targeted handler-level coverage to confirm the wiring at the
-  // handler boundary calls the helper. We don't need to exhaust every
-  // emit-site handler — `notifySessionActivity` is unit-tested above
-  // and the wiring shape is identical across the six handlers
-  // (chat / edit / confirm / unconfirm / suggest / accept).
+describeWithDb('handlers post-cron-refactor (no sync DM call)', () => {
+  // After the 2026-05-08 refactor, chat / edit / confirm / unconfirm /
+  // suggest / accept-suggestion handlers no longer fire DMs synchronously
+  // — the cron sweep above owns that. These tests just confirm the
+  // handlers still complete successfully end-to-end after the call
+  // sites were removed.
   const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
   const createdSessionIds: string[] = [];
 
@@ -238,7 +332,7 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     fixtures.length = 0;
   });
 
-  it('chat-send leaves a notified-activity event visible to the next mark-read', async () => {
+  it('chat-send handler still succeeds with no sync DM call', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);
     const bob = await createTestUser();
@@ -252,11 +346,6 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     createdSessionIds.push(seed.id);
 
     const cookie = await sealTestCookie(alice.id);
-    // The handler resolves the bot lazily off DISCORD_BOT_TOKEN; in a
-    // test env that's empty, so the helper short-circuits silently.
-    // We assert the chat itself succeeded — the handler-side wiring
-    // is exercised by the call-graph; absent the bot token, no DM
-    // fires, but no crash either.
     const req = mockRequest({
       method: 'POST',
       cookies: { swu_session: cookie },
@@ -268,9 +357,7 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     expect(res._status).toBe(200);
   });
 
-  // Lightweight sanity that the other handlers don't throw with the
-  // new wiring — same pattern, smaller assertions.
-  it('edit-side handler succeeds with the wiring in place', async () => {
+  it('edit-side handler still succeeds with no sync DM call', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);
     const bob = await createTestUser();
@@ -295,7 +382,7 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     expect(res._status).toBe(200);
   });
 
-  it('confirm handler succeeds with the wiring in place', async () => {
+  it('confirm handler still succeeds with no sync DM call', async () => {
     const alice = await createTestUser();
     fixtures.push(alice);
     const bob = await createTestUser();
@@ -318,5 +405,4 @@ describeWithDb('handleChatSession fires activity DM via waitUntil', () => {
     await handleConfirmSession(req, res);
     expect(res._status).toBe(200);
   });
-
 });

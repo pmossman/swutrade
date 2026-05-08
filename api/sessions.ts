@@ -21,7 +21,6 @@ import {
   inviteHandleToSession,
   listActiveSessionsForViewer,
   markSessionRead,
-  notifySessionActivity,
   proposeRevertForSession,
   sendChatMessage,
   sendSessionCreateInviteDm,
@@ -31,7 +30,6 @@ import {
   SESSION_DECLINE_NOTE_MAX_LENGTH,
 } from '../lib/sessions.js';
 import { createDiscordBotClient } from '../lib/discordBot.js';
-import { waitUntil } from '@vercel/functions';
 
 /**
  * Phase 5b dispatcher for `/api/sessions/*`. Follows the same
@@ -85,40 +83,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     default:
       return res.status(404).json({ error: 'Unknown /api/sessions action' });
   }
-}
-
-/**
- * Fire-and-forget activity notification — wraps `notifySessionActivity`
- * with the boilerplate every emit-site handler shares: bot client
- * resolve, app base URL resolve, `waitUntil` so the response doesn't
- * wait on the DM round-trip. Skips silently if the bot isn't
- * configured (e.g. local dev without DISCORD_BOT_TOKEN) — the
- * notify function is supplemental, never load-bearing.
- *
- * Failure modes (no Discord id, opt-out, cooldown) are handled
- * inside `notifySessionActivity` and collapse to no-ops; we log
- * unexpected throws here for observability.
- */
-function fireSessionActivityNotification(
-  req: VercelRequest,
-  args: { sessionId: string; actorUserId: string },
-): void {
-  const bot = process.env.DISCORD_BOT_TOKEN ? createDiscordBotClient() : null;
-  if (!bot) return;
-  const appBaseUrl = req.headers.host
-    ? `https://${req.headers.host}`
-    : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com';
-  const db = getDb();
-  waitUntil(
-    notifySessionActivity(db, {
-      sessionId: args.sessionId,
-      actorUserId: args.actorUserId,
-      bot,
-      appBaseUrl,
-    }).catch(err => {
-      console.error('fireSessionActivityNotification: unexpected error', args.sessionId, err);
-    }),
-  );
 }
 
 /**
@@ -405,9 +369,6 @@ export async function handleEditSession(req: VercelRequest, res: VercelResponse)
       return res.status(409).json({ error: 'Session is no longer active' });
     }
   }
-  if (result.ok) {
-    fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
-  }
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.ok ? result.view : null });
 }
@@ -433,11 +394,6 @@ export async function handleConfirmSession(req: VercelRequest, res: VercelRespon
     if (result.reason === 'terminal') {
       return res.status(409).json({ error: 'Session is no longer active' });
     }
-  }
-  // Skip activity DM if the session just settled — the dedicated
-  // settled-DM (gated by `dmSessionSettled`) covers that case.
-  if (result.ok && !result.settled) {
-    fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
   }
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({
@@ -473,9 +429,6 @@ export async function handleUnconfirmSession(req: VercelRequest, res: VercelResp
     if (result.reason === 'terminal') {
       return res.status(409).json({ error: 'Session is no longer active' });
     }
-  }
-  if (result.ok) {
-    fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
   }
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.ok ? result.view : null });
@@ -836,7 +789,6 @@ export async function handleChatSession(req: VercelRequest, res: VercelResponse)
         return res.status(429).json({ error: 'Too many messages — slow down a moment.' });
     }
   }
-  fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.ok ? result.view : null });
@@ -921,9 +873,6 @@ export async function handleSuggestSession(req: VercelRequest, res: VercelRespon
         return res.status(400).json({ error: result.reason });
     }
   }
-  if (result.ok) {
-    fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
-  }
 
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({
@@ -971,9 +920,6 @@ export async function handleAcceptSuggestion(req: VercelRequest, res: VercelResp
       case 'not-target':
         return res.status(403).json({ error: 'Only the suggestion target can accept' });
     }
-  }
-  if (result.ok) {
-    fireSessionActivityNotification(req, { sessionId: id, actorUserId: session.userId });
   }
 
   res.setHeader('Cache-Control', 'private, no-store');

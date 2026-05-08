@@ -1,12 +1,19 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
-import { botInstalledGuilds, userGuildMemberships, users } from '../lib/schema.js';
+import {
+  botInstalledGuilds,
+  sessionEvents,
+  tradeSessions,
+  userGuildMemberships,
+  users,
+} from '../lib/schema.js';
 import { verifyDiscordSignature } from '../lib/discordSignature.js';
 import { createDiscordBotClient, type DiscordBotClient } from '../lib/discordBot.js';
 import {
   createOrGetActiveSession,
+  recordSessionEvent,
   sendSessionCreateInviteDm,
 } from '../lib/sessions.js';
 import {
@@ -18,6 +25,7 @@ import {
   buildServerInviteMessage,
   buildServerAutoEnrolledMessage,
   buildServerEnrollConfirmationMessage,
+  buildSessionActivityMessage,
 } from '../lib/discordMessages.js';
 import {
   PREF_DEFINITIONS,
@@ -1155,7 +1163,219 @@ async function handleCronRequest(
     return runSignalExpirySweep(res);
   }
 
+  if (action === 'cron-session-followups') {
+    return runSessionFollowupsSweep(req, res);
+  }
+
   res.status(404).json({ error: `unknown cron action ${action}` });
+}
+
+/**
+ * Activity-relevant event types — these are the things a counterpart
+ * does that the other participant should hear about. Excludes:
+ *   - `created` (covered by the invite DM at session-create time)
+ *   - `edit-snapshot` (internal bookkeeping)
+ *   - `unconfirmed` (toggling Confirm off is too minor to ping)
+ *   - `notified` (our own DM record)
+ *   - `settled`/`cancelled`/`expired` (terminal — separate DM paths)
+ */
+const ACTIVITY_EVENT_TYPES = [
+  'chat',
+  'edited',
+  'confirmed',
+  'suggestion-created',
+  'suggestion-accepted',
+  'suggestion-dismissed',
+] as const;
+
+interface SessionFollowupsDeps {
+  bot?: DiscordBotClient;
+  /** Override for tests — the SWUTrade origin used in DM links. */
+  appBaseUrl?: string;
+  /** Test-scoping hook: when provided, only these session ids are
+   *  scanned. Production callers omit this and the sweep walks every
+   *  active session. The test DB is shared across CI runs and
+   *  accumulates thousands of leftover active sessions; without this
+   *  scope the per-test sweep iterates through all of them and hits
+   *  the vitest timeout. */
+  sessionIds?: string[];
+}
+
+/**
+ * Periodic sweep that catches up unread counterpart activity with a
+ * single DM per recipient per session. Replaces the synchronous
+ * cooldown-throttled DM that used to fire from `notifySessionActivity`
+ * — same DM body, but with strictly simpler semantics:
+ *
+ *   for each active session, for each participant P:
+ *     latestActivity = max(timestamp of counterpart-authored ACTIVITY_
+ *       EVENT_TYPES events on this session)
+ *     if latestActivity is newer than `lastReadAt[P]`
+ *        AND newer than `last_notified_at[P]`
+ *        AND P has `dmSessionActivity = true`
+ *        AND P has a Discord id
+ *     → DM P, stamp `last_notified_at[P] = now`, record a `notified` event.
+ *
+ * The cron interval IS the cooldown — running every 2 min means at most
+ * one DM per session per recipient per 2 min. No 10-min cooldown
+ * timer, no read-state-resets-cooldown gating, no synchronous fire-
+ * then-debounce. The recipient will get a single catch-up DM within
+ * one sweep window of a counterpart event, regardless of whether
+ * either of them has the app open.
+ *
+ * Edge cases that just disappear:
+ *   - Friend sent during a sync cooldown → next sweep picks it up.
+ *   - Both closed, friend sent, friend closed → next sweep picks it up.
+ *   - I closed mid-poll without firing markRead → cron looks at the
+ *     server-side timestamps, doesn't care when the client fired
+ *     markRead.
+ */
+export async function runSessionFollowupsSweep(
+  req: VercelRequest,
+  res: VercelResponse,
+  deps: SessionFollowupsDeps = {},
+): Promise<void> {
+  const db = getDb();
+  const bot = deps.bot ?? createDiscordBotClient();
+  const appBaseUrl = deps.appBaseUrl
+    ?? (req.headers.host ? `https://${req.headers.host}` : process.env.SWUTRADE_PUBLIC_URL ?? 'https://beta.swutrade.com');
+
+  // Active sessions only. Open-slot sessions (userBId IS NULL) are
+  // included but skipped per-iteration when computing the recipient
+  // pair.
+  const sessionFilter = deps.sessionIds && deps.sessionIds.length > 0
+    ? and(eq(tradeSessions.status, 'active'), inArray(tradeSessions.id, deps.sessionIds))
+    : eq(tradeSessions.status, 'active');
+  const activeSessions = await db
+    .select({
+      id: tradeSessions.id,
+      userAId: tradeSessions.userAId,
+      userBId: tradeSessions.userBId,
+      userALastReadAt: tradeSessions.userALastReadAt,
+      userBLastReadAt: tradeSessions.userBLastReadAt,
+      lastNotifiedAt: tradeSessions.lastNotifiedAt,
+    })
+    .from(tradeSessions)
+    .where(sessionFilter);
+
+  let scanned = 0;
+  let dmd = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const session of activeSessions) {
+    scanned += 1;
+    if (!session.userBId) continue; // open-slot, no counterpart
+
+    for (const recipientUserId of [session.userAId, session.userBId]) {
+      const counterpartUserId = recipientUserId === session.userAId
+        ? session.userBId
+        : session.userAId;
+      if (!recipientUserId || !counterpartUserId) continue;
+
+      // Latest counterpart-authored activity event.
+      const [latest] = await db
+        .select({
+          createdAt: sessionEvents.createdAt,
+          type: sessionEvents.type,
+        })
+        .from(sessionEvents)
+        .where(and(
+          eq(sessionEvents.sessionId, session.id),
+          eq(sessionEvents.actorUserId, counterpartUserId),
+          inArray(sessionEvents.type, ACTIVITY_EVENT_TYPES as unknown as string[]),
+        ))
+        .orderBy(desc(sessionEvents.createdAt))
+        .limit(1);
+      if (!latest) continue;
+      const latestTs = latest.createdAt.getTime();
+
+      // Already DM'd about this activity? `last_notified_at[P]` is
+      // an ISO string per recipient.
+      const lastNotifiedRaw = session.lastNotifiedAt?.[recipientUserId];
+      if (lastNotifiedRaw) {
+        const lastNotifiedTs = Date.parse(lastNotifiedRaw);
+        if (Number.isFinite(lastNotifiedTs) && lastNotifiedTs >= latestTs) {
+          skipped += 1;
+          continue;
+        }
+      }
+
+      // Recipient has already read past this activity?
+      const lastReadAt = recipientUserId === session.userAId
+        ? session.userALastReadAt
+        : session.userBLastReadAt;
+      if (lastReadAt && lastReadAt.getTime() >= latestTs) {
+        skipped += 1;
+        continue;
+      }
+
+      // Recipient pref + Discord identity check.
+      const [recipient] = await db
+        .select({
+          discordId: users.discordId,
+          dmSessionActivity: users.dmSessionActivity,
+        })
+        .from(users)
+        .where(eq(users.id, recipientUserId))
+        .limit(1);
+      if (!recipient?.discordId || !recipient.dmSessionActivity) {
+        skipped += 1;
+        continue;
+      }
+
+      // Counterpart handle for the DM body.
+      const [counterpart] = await db
+        .select({ handle: users.handle })
+        .from(users)
+        .where(eq(users.id, counterpartUserId))
+        .limit(1);
+      const counterpartHandle = counterpart?.handle ?? 'someone';
+
+      const sessionUrl = `${appBaseUrl.replace(/\/+$/, '')}/s/${encodeURIComponent(session.id)}`;
+      const body = buildSessionActivityMessage({ counterpartHandle, sessionUrl });
+
+      try {
+        await bot.sendDirectMessage(recipient.discordId, body);
+      } catch (err) {
+        console.error('cron-session-followups: sendDirectMessage failed', session.id, recipientUserId, err);
+        errors += 1;
+        await reportError({
+          source: 'bot.cron-session-followups.dm',
+          tags: { sessionId: session.id, recipientUserId },
+        }, err);
+        continue;
+      }
+
+      // Stamp last_notified_at[P] BEFORE recording the event so a
+      // mid-sweep crash doesn't leave us re-DMing on the next pass.
+      const nextLastNotifiedAt: Record<string, string> = {
+        ...(session.lastNotifiedAt ?? {}),
+        [recipientUserId]: new Date().toISOString(),
+      };
+      await db.update(tradeSessions)
+        .set({ lastNotifiedAt: nextLastNotifiedAt })
+        .where(eq(tradeSessions.id, session.id));
+      // Mutate locally so a second-participant iteration in the same
+      // session (rare — both participants having unread activity from
+      // each other) sees the fresh value.
+      session.lastNotifiedAt = nextLastNotifiedAt;
+
+      await recordSessionEvent(db, {
+        sessionId: session.id,
+        actorUserId: counterpartUserId,
+        type: 'notified',
+        payload: {
+          kind: 'activity',
+          recipientUserId,
+        },
+      });
+
+      dmd += 1;
+    }
+  }
+
+  res.status(200).json({ ok: true, scanned, dmd, skipped, errors });
 }
 
 /**
