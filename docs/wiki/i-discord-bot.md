@@ -209,8 +209,8 @@ This page covers the bot-side dispatch only. Full subsystem coverage — `card_s
 - `'cancel'` and `'fulfilled'` are author-only group actions; ownership is checked once via `handleSignalGroupAction` and the verb-appropriate ephemeral renders ("Only the post's author can cancel it" / "...mark this fulfilled").
 - `'fulfilled'` additionally calls `bot.lockThread(threadId)` after flipping status — manual close, no auto-detection on session-settle.
 - `'variant-open'` / `'variant-pick'` are row-scoped author-only and only valid on single-card variant=any rows; they narrow the underlying `wants_items.restriction_mode` (for wanted) or repoint `available_items.product_id` (for offering), recompute matches, and PATCH the embed in place.
-- `cron-signals` action runs daily at 08:00 UTC; flips overdue active rows to `expired` and PATCHes their embeds.
-- `cron-session-followups` action runs every 2 minutes; for each active session + each participant, sends a catch-up DM if the counterpart has unread (chat / edited / confirmed / suggestion-*) activity past `lastReadAt[P]` AND past `last_notified_at[P]`. Replaced the synchronous `notifySessionActivity` cooldown logic (retired 2026-05-08) — see [`a-sessions.md`](./a-sessions.md) for the rationale. The cron interval IS the cooldown.
+- `cron-signals` action runs daily at 08:00 UTC (Vercel cron); flips overdue active rows to `expired` and PATCHes their embeds.
+- `cron-session-followups` action runs every ~5 minutes (GitHub Actions cron, `.github/workflows/session-followups.yml`); for each active session + each participant, sends a catch-up DM if the counterpart has unread (chat / edited / confirmed / suggestion-*) activity past `lastReadAt[P]` AND past `last_notified_at[P]`. Replaced the synchronous `notifySessionActivity` cooldown logic (retired 2026-05-08) — see [`a-sessions.md`](./a-sessions.md) for the rationale. The cron interval IS the cooldown. Vercel Hobby caps cron frequency at daily, so this lives on GH Actions like the price-refresh job.
 
 The bot client methods specific to signals (`startThreadFromMessage`, `lockThread`) are in the bot-client method table above.
 

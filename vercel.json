@@ -57,10 +57,6 @@
     {
       "path": "/api/cron/signals",
       "schedule": "0 8 * * *"
-    },
-    {
-      "path": "/api/cron/session-followups",
-      "schedule": "*/2 * * * *"
     }
   ],
   "headers": [
