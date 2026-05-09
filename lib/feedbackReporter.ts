@@ -27,6 +27,8 @@
  * adding to the `kind` union + a new section in the embed builder.
  */
 
+import { tcgProductId } from './shared.js';
+
 export type FeedbackKind = 'price' | 'general';
 
 export interface FeedbackContext {
@@ -116,7 +118,10 @@ export function buildPayload(report: FeedbackReport): object {
     if (context.cardName) fields.push(`**Card:** ${context.cardName}`);
     if (context.variant) fields.push(`**Variant:** ${context.variant}`);
     if (context.productId) {
-      fields.push(`**productId:** \`${context.productId}\` — https://www.tcgplayer.com/product/${context.productId}`);
+      // Show our internal id as-is for debugging (`:foil` suffix
+      // included), but link to TCGPlayer with the raw numeric id.
+      const raw = tcgProductId(context.productId) ?? context.productId;
+      fields.push(`**productId:** \`${context.productId}\` — https://www.tcgplayer.com/product/${raw}`);
     }
     if (context.ourPrice !== undefined) {
       const priceStr = context.ourPrice == null

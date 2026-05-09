@@ -21,6 +21,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '../lib/db.js';
 import { cardSignals, wantsItems, availableItems, users } from '../lib/schema.js';
 import { lookupSignalFamily, lookupSignalCard, type SignalFamily } from '../lib/signalMatching.js';
+import { tcgProductId } from '../lib/shared.js';
 
 // resvg-js@2.6.2 only accepts font *file paths* (not buffers), so we write
 // the inlined base64 fonts to /tmp on cold start and hand the paths to Resvg.
@@ -69,7 +70,12 @@ async function fetchCardImage(productId: string): Promise<string | null> {
     return null;
   }
   try {
-    const url = `https://product-images.tcgplayer.com/fit-in/200x279/${productId}.jpg`;
+    // Strip our internal `:foil` suffix — TCGPlayer's image URL
+    // takes the raw numeric product id; the foil printing shares
+    // the same product image as its non-foil sibling (TWI-era
+    // schema).
+    const raw = tcgProductId(productId) ?? productId;
+    const url = `https://product-images.tcgplayer.com/fit-in/200x279/${raw}.jpg`;
     const res = await fetch(url);
     if (!res.ok) {
       imageCache.set(productId, null);

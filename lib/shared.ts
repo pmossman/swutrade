@@ -71,3 +71,21 @@ export function restrictionKeyFromVariants(
   if (!variants || variants.length === 0) return 'any';
   return [...variants].sort().join('|');
 }
+
+/**
+ * Strip our internal `:foil` suffix to recover the raw TCGPlayer
+ * numeric productId. Foil printings carried as listings under the
+ * SAME TCGPlayer productId as their Normal sibling (TWI-era schema)
+ * get an internal `:foil` suffix on the `productId` field so the two
+ * records can coexist in our maps without colliding. TCGPlayer URLs
+ * + image lookups need the unsuffixed numeric id — that's what this
+ * helper does. Newer sets where each foil is its own TCGPlayer
+ * product are unaffected (no suffix to strip). Isomorphic so server
+ * paths (api/og.ts, signalMessages, feedbackReporter) can use it
+ * without re-importing client services.
+ */
+export function tcgProductId(productId: string | undefined): string | undefined {
+  if (!productId) return productId;
+  const i = productId.indexOf(':');
+  return i === -1 ? productId : productId.slice(0, i);
+}

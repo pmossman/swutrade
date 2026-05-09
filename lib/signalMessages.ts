@@ -18,6 +18,7 @@
 import type { DiscordMessageBody, DiscordComponent } from './discordBot.js';
 import type { CardSignalKind, CardSignalStatus } from './schema.js';
 import type { VariantSpec } from './signalMatching.js';
+import { tcgProductId } from './shared.js';
 
 /** Custom-id prefix for signal-related button interactions. */
 export const SIGNAL_CUSTOM_ID_PREFIX = 'signal';
@@ -177,7 +178,7 @@ export function buildSignalPost(ctx: SignalEmbedContext): DiscordMessageBody {
   // embed noisy. Multi-card without an image still has no thumbnail
   // since the bullet list is the focal element there.
   const thumbnail = !ctx.imageUrl && ctx.cards.length === 1 && ctx.cards[0].productId
-    ? { url: `https://product-images.tcgplayer.com/fit-in/200x279/${ctx.cards[0].productId}.jpg` }
+    ? { url: `https://product-images.tcgplayer.com/fit-in/200x279/${tcgProductId(ctx.cards[0].productId)}.jpg` }
     : undefined;
 
   // Poster image header — only on active posts. Retired posts drop

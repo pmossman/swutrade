@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CardVariant } from '../types';
 import { SETS } from '../types';
+import { tcgProductId } from '../../lib/shared';
 import type { AuthApi } from '../hooks/useAuth';
 import type { WantsApi } from '../hooks/useWants';
 import { useGuildMemberships } from '../hooks/useGuildMemberships';
@@ -737,7 +738,7 @@ function CardRow({
     <li className="flex items-start gap-2 group">
       <span className="text-gray-500 select-none text-sm leading-6">•</span>
       <img
-        src={`https://product-images.tcgplayer.com/fit-in/100x140/${family.variants[0].productId}.jpg`}
+        src={`https://product-images.tcgplayer.com/fit-in/100x140/${tcgProductId(family.variants[0].productId)}.jpg`}
         alt=""
         className="w-8 h-11 object-cover rounded shrink-0 mt-0.5"
       />

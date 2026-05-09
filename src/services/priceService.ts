@@ -1,4 +1,5 @@
 import type { CardVariant, SetInfo, PriceMode, TradeCard } from '../types';
+import { tcgProductId } from '../../lib/shared';
 
 // Static data is served from /data/ (built at deploy time)
 const DATA_BASE = '/data';
@@ -73,12 +74,14 @@ export function countMissingPrices(cards: TradeCard[], mode: PriceMode): number 
 }
 
 export function cardImageUrl(productId: string | undefined, size: 'sm' | 'md' | 'lg' = 'sm'): string | null {
-  if (!productId || productId === '0') return null;
+  const raw = tcgProductId(productId);
+  if (!raw || raw === '0') return null;
   const dims = size === 'lg' ? '400x558' : size === 'md' ? '200x279' : '200x279';
-  return `https://product-images.tcgplayer.com/fit-in/${dims}/${productId}.jpg`;
+  return `https://product-images.tcgplayer.com/fit-in/${dims}/${raw}.jpg`;
 }
 
 export function cardTcgPlayerUrl(productId: string | undefined): string | null {
-  if (!productId || productId === '0') return null;
-  return `https://www.tcgplayer.com/product/${productId}`;
+  const raw = tcgProductId(productId);
+  if (!raw || raw === '0') return null;
+  return `https://www.tcgplayer.com/product/${raw}`;
 }

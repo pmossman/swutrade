@@ -52,7 +52,22 @@ function extractVariant(name: string): string {
   return raw;
 }
 
-function buildSearchBody(setApiName: string, from: number): string {
+function buildSearchBody(
+  setApiName: string,
+  from: number,
+  opts: { foilListingsOnly?: boolean } = {},
+): string {
+  const listingTermBase: Record<string, unknown> = {
+    sellerStatus: 'Live',
+    channelId: 0,
+  };
+  // foilListingsOnly: filters listingSearch to printing=Foil. We use
+  // this for the Foil-discovery pass on sets where Foil printings
+  // exist as listings under the same productId as Normal (TWI-era
+  // schema). Newer sets — JTL, SHD, SEC, LAW — already split each
+  // foil into its own productId, so the second pass returns nothing
+  // new for them.
+  if (opts.foilListingsOnly) listingTermBase.printing = ['Foil'];
   return JSON.stringify({
     algorithm: '',
     from,
@@ -67,8 +82,15 @@ function buildSearchBody(setApiName: string, from: number): string {
     },
     listingSearch: {
       filters: {
-        term: { sellerStatus: 'Live', channelId: 0 },
-        range: { quantity: { gte: 1 }, directInventory: { gte: 1 } },
+        term: listingTermBase,
+        // `quantity >= 1` only — no `directInventory` floor. Adding
+        // the directInventory requirement silently dropped products
+        // that are listed by non-Direct sellers but happen to have
+        // zero Direct stock at scrape time (Luke Hyperspace is one
+        // such case). The catalog should be comprehensive of "any
+        // seller has at least one for sale" rather than "Direct has
+        // stock right now."
+        range: { quantity: { gte: 1 } },
         exclude: { channelExclusion: 0 },
       },
       context: { cart: {} },
@@ -131,7 +153,99 @@ async function discoverSets(): Promise<DiscoveredSet[]> {
   }));
 }
 
+/**
+ * Internal-key helper. Records that share a TCGPlayer productId
+ * (the TWI-era pattern where a single product is sold in both
+ * Normal and Foil printings via the listings, not via separate
+ * productIds) are disambiguated by suffixing the synthetic Foil
+ * record's productId with `:foil`. Code that needs the raw
+ * TCGPlayer numeric id (for image URLs, TCGPlayer page links)
+ * strips the suffix via `tcgProductId()` in lib/shared.ts.
+ */
+const FOIL_KEY_SUFFIX = ':foil';
+
+interface FoilStats {
+  /** Min listing price across foil listings — the "low" channel. */
+  lowPrice: number | null;
+  /** Median listing price across foil listings — our best
+   *  approximation of "market price" for the foil printing,
+   *  since TCGPlayer's search API only returns one product-level
+   *  marketPrice (always the Normal one). */
+  marketPrice: number | null;
+}
+
+function computeFoilStats(listings: Array<{ price?: number }>): FoilStats {
+  const prices = listings
+    .map(l => (typeof l.price === 'number' ? l.price : null))
+    .filter((p): p is number => p !== null && Number.isFinite(p));
+  if (prices.length === 0) return { lowPrice: null, marketPrice: null };
+  const sorted = [...prices].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+  return {
+    lowPrice: sorted[0],
+    marketPrice: Math.round(median * 100) / 100,
+  };
+}
+
+/**
+ * Synthesize a Foil record from a Normal product that has Foil
+ * listings on it. The name + variant follow the convention used
+ * elsewhere in our catalog: a Standard Normal product becomes a
+ * "(Foil)" variant; a non-Standard one (Hyperspace, Showcase, …)
+ * becomes "(Hyperspace Foil)" / "(Showcase Foil)" / etc.
+ *
+ * Returns null when synthesis would be a no-op or wrong:
+ *   - source product is itself foil-only (already a foil)
+ *   - source variant name already contains "Foil" — synthesizing on
+ *     top would produce "(Foil Foil)" / "(Prestige Foil Foil)"
+ *     garbage. SEC-era products with dedicated foil productIds still
+ *     have foil LISTINGS too (they have foil-of-foil), but those
+ *     aren't a meaningful catalog entry.
+ *   - source variant is "Serialized" — serialized printings are
+ *     foil-by-convention in SWU; the "(Serialized Foil)" synth
+ *     duplicates rather than disambiguates.
+ */
+function synthesizeFoilRecord(
+  normal: CardData,
+  foilListings: Array<{ price?: number }>,
+): CardData | null {
+  if (normal.printing === 'Foil') return null;
+  if (/foil/i.test(normal.variant)) return null;
+  if (normal.variant === 'Serialized') return null;
+
+  const stats = computeFoilStats(foilListings);
+  if (stats.lowPrice === null && stats.marketPrice === null) return null;
+
+  // Naming convention. Standard becomes "(Foil)"; non-Standard
+  // wraps the existing variant in "(... Foil)".
+  const newName = normal.variant === 'Standard'
+    ? `${normal.name} (Foil)`
+    : normal.name.replace(/\([^)]+\)\s*$/, `(${normal.variant} Foil)`);
+  const newVariant = normal.variant === 'Standard'
+    ? 'Foil'
+    : `${normal.variant} Foil`;
+
+  return {
+    name: newName,
+    variant: newVariant,
+    printing: 'Foil',
+    rarity: normal.rarity,
+    number: normal.number,
+    marketPrice: stats.marketPrice,
+    lowPrice: stats.lowPrice,
+    set: normal.set,
+    setName: normal.setName,
+    productId: `${normal.productId}${FOIL_KEY_SUFFIX}`,
+  };
+}
+
 async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]> {
+  // First pass: discover all products in the set with their default
+  // (Normal, or Foil-only when foilOnly=true) listings.
+  //
   // TCGPlayer's paginated search occasionally returns the same productId
   // on more than one page (relevance-sorted pagination isn't stable when
   // new listings come online mid-query). Dedupe by productId while
@@ -187,6 +301,62 @@ async function fetchAllCards(slug: string, apiName: string): Promise<CardData[]>
     from += PAGE_SIZE;
     // Small delay between pages to be polite
     if (from < totalResults) await sleep(200);
+  }
+
+  // Second pass: surface Foil printings carried as listings on the
+  // SAME productId as Normal (TWI-era schema). Newer sets (JTL,
+  // SHD, SEC, LAW) split each foil into its own productId so this
+  // pass returns nothing new for them — the dedup-by-existing-foil-
+  // record check below skips. The only cost is one extra paginated
+  // query per set + one synthesized record per non-foil-only product
+  // that happens to have foil listings.
+  const foilByProductId = new Map<string, Array<{ price?: number }>>();
+  from = 0;
+  totalResults = Infinity;
+  while (from < totalResults) {
+    const res = await fetchWithRetry(TCGPLAYER_SEARCH_URL, {
+      method: 'POST',
+      headers: HEADERS,
+      body: buildSearchBody(apiName, from, { foilListingsOnly: true }),
+    });
+    const data: any = await res.json();
+    const resultSet = data.results?.[0];
+    if (!resultSet) break;
+    totalResults = resultSet.totalResults || 0;
+    const results = resultSet.results || [];
+    if (results.length === 0) break;
+    for (const item of results) {
+      const productId = String(Math.round(item.productId || 0));
+      if (!productId || productId === '0') continue;
+      const listings = Array.isArray(item.listings) ? item.listings : [];
+      if (listings.length === 0) continue;
+      foilByProductId.set(productId, listings);
+    }
+    from += PAGE_SIZE;
+    if (from < totalResults) await sleep(200);
+  }
+
+  // Synthesize Foil records. Skip when the source is itself foil-
+  // only, when the foil derivation produced no usable price, or
+  // when a sibling product with the foil-equivalent name already
+  // exists (e.g. SEC has a separate "Cad Bane (Foil)" productId
+  // — the foil-listings pass returns it too, but we don't want to
+  // emit a synthetic record that competes with the real one).
+  const existingNames = new Set(
+    Array.from(byProductId.values()).map(c => c.name),
+  );
+  let synthesizedFoils = 0;
+  for (const [productId, foilListings] of foilByProductId) {
+    const normal = byProductId.get(productId);
+    if (!normal) continue;
+    const synth = synthesizeFoilRecord(normal, foilListings);
+    if (!synth) continue;
+    if (existingNames.has(synth.name)) continue;
+    byProductId.set(synth.productId, synth);
+    synthesizedFoils += 1;
+  }
+  if (synthesizedFoils > 0) {
+    console.log(`  + ${synthesizedFoils} synthesized Foil record(s) (TWI-era same-productId pattern)`);
   }
 
   return Array.from(byProductId.values());
