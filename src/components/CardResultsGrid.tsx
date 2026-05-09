@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CardVariant } from '../types';
 import type { SetSearchGroup } from '../hooks/useCardSearch';
@@ -102,12 +102,33 @@ export function CardResultsGrid({
     overscan: 4,
   });
 
+  // Track scroll position so the sticky-set-header reflects the row
+  // ACTUALLY at the top of the viewport — not the first item the
+  // virtualizer chose to mount. With overscan=4 and ~130px family
+  // rows, the virtualizer keeps ~520px of mounted content above the
+  // visible viewport, so `virtualItems[0]` lags far behind the
+  // user's actual scroll position. That made the sticky header pin
+  // to the first set forever in result lists shorter than ~5 sets'
+  // worth of overscan height.
+  const [scrollTop, setScrollTop] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const onScroll = () => setScrollTop(el.scrollTop);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
   // Jump to the top whenever the results identity changes — e.g. the
   // user toggles a set filter, variant filter, or types a query.
   // Without this, the scroll position would survive into a shorter
-  // result list and strand the user staring at empty space.
+  // result list and strand the user staring at empty space. Reset
+  // the local scrollTop state too so the sticky-header calc doesn't
+  // briefly compute against a stale value before the scroll listener
+  // catches up.
   useEffect(() => {
     parentRef.current?.scrollTo({ top: 0 });
+    setScrollTop(0);
   }, [results]);
 
   if (isSearching) {
@@ -120,7 +141,16 @@ export function CardResultsGrid({
   }
 
   const virtualItems = virtualizer.getVirtualItems();
-  const stickyRow = virtualItems[0] ? rows[virtualItems[0].index] : null;
+  // Pick the first virtual item whose offset range still extends past
+  // the current scrollTop — that's the row at the visible top of the
+  // viewport. Falls back to the first mounted item if none qualify
+  // (initial render before the scroll listener has fired).
+  const stickyRow = (() => {
+    for (const vi of virtualItems) {
+      if (vi.start + vi.size > scrollTop) return rows[vi.index];
+    }
+    return virtualItems[0] ? rows[virtualItems[0].index] : null;
+  })();
 
   return (
     <div ref={parentRef} className="flex-1 min-h-0 overflow-y-auto">
