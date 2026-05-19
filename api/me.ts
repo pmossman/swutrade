@@ -518,7 +518,7 @@ export async function handleCommunity(req: VercelRequest, res: VercelResponse) {
  *   - Viewer's own row always excluded.
  *
  * Privacy layering inside each member entry:
- *   - `wantFamilyIds` populated only when member.wantsPublic=true.
+ *   - `wants` populated only when member.wantsPublic=true.
  *   - `availableProductIds` populated only when member.availablePublic=true.
  *   - Totals are reported even when lists are private — the count
  *     "this user has N wants" isn't leakage of WHICH cards, and
@@ -530,6 +530,15 @@ export async function handleCommunity(req: VercelRequest, res: VercelResponse) {
  * under 100KB. Client does overlap computation locally so we don't
  * need to look up familyId ↔ productId on the server.
  */
+/** Wire shape for a want's variant restriction. Mirrors the client
+ *  `VariantRestriction` type structurally so a JSON round-trip gives
+ *  the client a value its `matchesRestriction` predicate accepts.
+ *  Inlined here instead of importing because `src/persistence/schemas`
+ *  is Vite-bundled and not reachable from the server. */
+type VariantRestriction =
+  | { mode: 'any' }
+  | { mode: 'restricted'; variants: string[] };
+
 export interface CommunityMember {
   userId: string;
   handle: string;
@@ -544,7 +553,16 @@ export interface CommunityMember {
   availablePublic: boolean;
   wantsTotal: number;
   availableTotal: number;
-  wantFamilyIds: string[];
+  /** One entry per stored want, restriction included so the client
+   *  can decide "can the viewer fulfill this specific want?" using
+   *  the canonical `matchesRestriction` predicate. The earlier
+   *  family-id-only shape ignored restrictions, so the per-member
+   *  "you can offer N" chip lied when a viewer had a wrong-variant
+   *  printing of a card the member only wanted in a specific finish.
+   *  Same family can appear in multiple entries (different
+   *  restrictions); consumers fold by familyId when they want a
+   *  family-distinct count. */
+  wants: Array<{ familyId: string; restriction: VariantRestriction }>;
   availableProductIds: string[];
   /** Registry-driven peer-scoped prefs the viewer has toward this
    *  specific member, plus the value the cascade would resolve to
@@ -631,7 +649,12 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
 
   const wantsRows = wantsPublicIds.length > 0
     ? await db
-        .select({ userId: wantsItems.userId, familyId: wantsItems.familyId })
+        .select({
+          userId: wantsItems.userId,
+          familyId: wantsItems.familyId,
+          restrictionMode: wantsItems.restrictionMode,
+          restrictionVariants: wantsItems.restrictionVariants,
+        })
         .from(wantsItems)
         .where(inArray(wantsItems.userId, wantsPublicIds))
     : [];
@@ -667,11 +690,14 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
     guildIdsByUser.set(m.userId, ids);
   }
 
-  const wantsByUser = new Map<string, Set<string>>();
+  const wantsByUser = new Map<string, Array<{ familyId: string; restriction: VariantRestriction }>>();
   for (const w of wantsRows) {
-    const s = wantsByUser.get(w.userId) ?? new Set();
-    s.add(w.familyId);
-    wantsByUser.set(w.userId, s);
+    const arr = wantsByUser.get(w.userId) ?? [];
+    const restriction: VariantRestriction = w.restrictionMode === 'restricted'
+      ? { mode: 'restricted', variants: w.restrictionVariants ?? [] }
+      : { mode: 'any' };
+    arr.push({ familyId: w.familyId, restriction });
+    wantsByUser.set(w.userId, arr);
   }
   const availByUser = new Map<string, Set<string>>();
   for (const a of availableRows) {
@@ -711,7 +737,7 @@ export async function handleCommunityMembers(req: VercelRequest, res: VercelResp
       availablePublic: u.availablePublic,
       wantsTotal: wantsTotalByUser.get(u.id)?.size ?? 0,
       availableTotal: availTotalByUser.get(u.id)?.size ?? 0,
-      wantFamilyIds: u.wantsPublic ? Array.from(wantsByUser.get(u.id) ?? []) : [],
+      wants: u.wantsPublic ? wantsByUser.get(u.id) ?? [] : [],
       availableProductIds: u.availablePublic ? Array.from(availByUser.get(u.id) ?? []) : [],
       peerPrefs: { override, effective },
     };

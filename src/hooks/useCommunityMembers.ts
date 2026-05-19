@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPut } from '../services/apiClient';
+import type { VariantRestriction } from '../persistence/schemas';
 
 /**
  * One row in the CommunityView directory. Shape mirrors the server
@@ -28,8 +29,13 @@ export interface CommunityMember {
   availablePublic: boolean;
   wantsTotal: number;
   availableTotal: number;
-  /** Populated only when wantsPublic is true. */
-  wantFamilyIds: string[];
+  /** One entry per stored want, restriction included so overlap math
+   *  can use the canonical `matchesRestriction` predicate. Populated
+   *  only when wantsPublic is true; private wants ship as an empty
+   *  array. Same family may appear multiple times with different
+   *  restrictions — consumers fold by familyId when they want a
+   *  family-distinct count. */
+  wants: Array<{ familyId: string; restriction: VariantRestriction }>;
   /** Populated only when availablePublic is true. */
   availableProductIds: string[];
   peerPrefs: PeerPrefs;

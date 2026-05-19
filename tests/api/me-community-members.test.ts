@@ -93,7 +93,7 @@ describeWithDb('GET /api/me/community-members', () => {
     const body = res._json as { members: Array<{
       userId: string; handle: string;
       mutualGuildNames: string[];
-      wantFamilyIds: string[];
+      wants: Array<{ familyId: string; restriction: { mode: string; variants?: string[] } }>;
       availableProductIds: string[];
       wantsTotal: number; availableTotal: number;
     }> };
@@ -101,10 +101,54 @@ describeWithDb('GET /api/me/community-members', () => {
     const m = body.members[0];
     expect(m.userId).toBe(other.id);
     expect(m.mutualGuildNames).toEqual(['Test Lounge']);
-    expect(m.wantFamilyIds.sort()).toEqual(['SOR_001_Luke', 'SOR_002_Vader']);
+    expect(m.wants.map(w => w.familyId).sort()).toEqual(['SOR_001_Luke', 'SOR_002_Vader']);
+    // insertWant defaults to { mode: 'any' } — exercise the wire shape.
+    expect(m.wants.every(w => w.restriction.mode === 'any')).toBe(true);
     expect(m.availableProductIds).toEqual(['SOR_003_Leia_std']);
     expect(m.wantsTotal).toBe(2);
     expect(m.availableTotal).toBe(1);
+  });
+
+  it('preserves variant restrictions on the wire so the client can do restriction-aware overlap', async () => {
+    // Regression for the "1 of 11 you can offer" bug: the wire shape
+    // used to strip restrictions, so CommunityView's overlap chip would
+    // claim a match whenever the viewer had ANY printing of a card the
+    // member wanted, even when the member's want was restricted to a
+    // specific variant. This test pins the wire shape so a future
+    // shrink can't silently re-introduce the bug.
+    const viewer = await makeViewer();
+    const other = await makeMember({ wantsPublic: true });
+
+    const guildId = `dir-restrict-${Date.now()}`;
+    cleanups.push(await installBotInGuild(guildId, { guildName: 'Test Lounge' }));
+    cleanups.push(await createGuildMembership(viewer.id, guildId, {
+      enrolled: true, appearInQueries: true, guildName: 'Test Lounge',
+    }));
+    cleanups.push(await createGuildMembership(other.id, guildId, {
+      enrolled: true, appearInQueries: true, guildName: 'Test Lounge',
+    }));
+
+    await insertWant(other.id, 'TWI::cad-bane-hostage-taker', {
+      restriction: { mode: 'restricted', variants: ['Hyperspace Foil'] },
+    });
+
+    const cookie = await sealTestCookie(viewer.id);
+    const req = mockRequest({ method: 'GET', cookies: { swu_session: cookie } });
+    const res = mockResponse();
+    await handleCommunityMembers(req, res);
+
+    expect(res._status).toBe(200);
+    const body = res._json as { members: Array<{
+      userId: string;
+      wants: Array<{ familyId: string; restriction: { mode: string; variants?: string[] } }>;
+    }> };
+    const m = body.members.find(x => x.userId === other.id);
+    expect(m).toBeTruthy();
+    expect(m!.wants).toHaveLength(1);
+    expect(m!.wants[0]).toEqual({
+      familyId: 'TWI::cad-bane-hostage-taker',
+      restriction: { mode: 'restricted', variants: ['Hyperspace Foil'] },
+    });
   });
 
   it('omits the viewer from their own directory', async () => {
@@ -194,7 +238,8 @@ describeWithDb('GET /api/me/community-members', () => {
     const body = res._json as { members: Array<{
       userId: string;
       wantsPublic: boolean; availablePublic: boolean;
-      wantFamilyIds: string[]; availableProductIds: string[];
+      wants: Array<{ familyId: string; restriction: { mode: string; variants?: string[] } }>;
+      availableProductIds: string[];
       wantsTotal: number; availableTotal: number;
     }> };
     const m = body.members.find(x => x.userId === mixed.id);
@@ -202,7 +247,7 @@ describeWithDb('GET /api/me/community-members', () => {
     expect(m!.wantsPublic).toBe(true);
     expect(m!.availablePublic).toBe(false);
     // Contents: wants populated, available empty (private).
-    expect(m!.wantFamilyIds.sort()).toEqual(['family-1', 'family-2']);
+    expect(m!.wants.map(w => w.familyId).sort()).toEqual(['family-1', 'family-2']);
     expect(m!.availableProductIds).toEqual([]);
     // Totals: both populated — count isn't leakage of WHICH cards.
     expect(m!.wantsTotal).toBe(2);

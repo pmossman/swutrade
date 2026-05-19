@@ -18,6 +18,8 @@ import type { CardVariant } from '../types';
 import { cardFamilyId } from '../variants';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import type { VariantRestriction } from '../persistence/schemas';
+import { matchesRestriction } from '../listMatching';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 
@@ -53,10 +55,14 @@ interface MemberWithOverlap extends CommunityMember {
  * through to Overview.
  *
  * Overlap math (still client-side; only relevant in the Members tab):
- * the server returns each member's wantFamilyIds + availableProductIds,
- * and we intersect those against the viewer's own lists using the
- * productId → familyId lookup. We scope Members to the active guild
- * by filtering on `mutualGuildIds.includes(guild.guildId)`.
+ * the server returns each member's wants (with restriction) +
+ * availableProductIds, and we evaluate each direction with the
+ * canonical `matchesRestriction` predicate against the viewer's own
+ * lists. Earlier shape stripped restrictions and used a pure family-id
+ * intersection — the chip would claim "you can offer 1" when the
+ * viewer had only a Standard printing of a card the member wanted in
+ * Hyperspace Foil. We scope Members to the active guild by filtering
+ * on `mutualGuildIds.includes(guild.guildId)`.
  *
  * Popular wants on the per-guild page are aggregated client-side
  * from the community members directory: a familyId wanted by N members
@@ -111,22 +117,35 @@ export function CommunityView({ wants, available }: CommunityViewProps) {
     }
   }, [guildsReady, enrolledGuilds, route.guildId, navigate]);
 
-  // Viewer's lists materialized as familyId sets — shared across
-  // every member overlap computation. Memoized so re-renders from
-  // sort/tab switches don't rescan the lists.
-  const viewerAvailableFamilies = useMemo(() => {
-    const s = new Set<string>();
+  // Viewer's available cards grouped by familyId — feeds the
+  // "iCanOfferThem" direction. We need the CardVariant (not just the
+  // familyId) because `matchesRestriction` operates on the card's
+  // variant string, not on the family.
+  const viewerAvailableByFamily = useMemo(() => {
+    const m = new Map<string, CardVariant[]>();
     for (const item of available.items) {
       const card = byProductId.get(item.productId);
-      if (card) s.add(cardFamilyId(card));
+      if (!card) continue;
+      const fid = cardFamilyId(card);
+      const arr = m.get(fid) ?? [];
+      arr.push(card);
+      m.set(fid, arr);
     }
-    return s;
+    return m;
   }, [available.items, byProductId]);
 
-  const viewerWantFamilies = useMemo(() => {
-    const s = new Set<string>();
-    for (const w of wants.items) s.add(w.familyId);
-    return s;
+  // Viewer's wants folded by familyId — feeds the "theyCanOfferMe"
+  // direction. Multiple wants on the same family with different
+  // restrictions collapse to a list of restrictions; the count of
+  // satisfied families stays family-distinct.
+  const viewerWantsByFamily = useMemo(() => {
+    const m = new Map<string, VariantRestriction[]>();
+    for (const w of wants.items) {
+      const arr = m.get(w.familyId) ?? [];
+      arr.push(w.restriction);
+      m.set(w.familyId, arr);
+    }
+    return m;
   }, [wants.items]);
 
   // Guild lookup by id for header + breadcrumbs + deep-link validation.
@@ -141,8 +160,8 @@ export function CommunityView({ wants, available }: CommunityViewProps) {
     if (!route.guildId) return [];
     return members
       .filter(m => m.mutualGuildIds.includes(route.guildId!))
-      .map(m => enrichMember(m, viewerAvailableFamilies, viewerWantFamilies, byProductId));
-  }, [members, route.guildId, viewerAvailableFamilies, viewerWantFamilies, byProductId]);
+      .map(m => enrichMember(m, viewerAvailableByFamily, viewerWantsByFamily, byProductId));
+  }, [members, route.guildId, viewerAvailableByFamily, viewerWantsByFamily, byProductId]);
 
   const sortedMembers = useMemo(() => sortMembers(guildMembers, sort), [guildMembers, sort]);
 
@@ -651,12 +670,16 @@ function PopularPanel({
   // Aggregate familyId counts across this guild's members. The
   // /api/me/community rollup endpoint exists but returns only distinct
   // familyIds — no counts. The members directory already carries each
-  // member's wantFamilyIds (gated on wantsPublic), so we can count
-  // here without adding an endpoint.
+  // member's wants (gated on wantsPublic), so we can count here without
+  // adding an endpoint. One member contributes +1 per distinct family
+  // even if they have multiple wants on that family with different
+  // restrictions.
   const top = useMemo(() => {
     const counts = new Map<string, number>();
     for (const m of guildMembers) {
-      for (const fid of m.wantFamilyIds) {
+      const familiesThisMember = new Set<string>();
+      for (const w of m.wants) familiesThisMember.add(w.familyId);
+      for (const fid of familiesThisMember) {
         counts.set(fid, (counts.get(fid) ?? 0) + 1);
       }
     }
@@ -908,23 +931,54 @@ function formatMemberCount(guild: GuildMembershipSummary): string {
 
 function enrichMember(
   m: CommunityMember,
-  viewerAvailableFamilies: Set<string>,
-  viewerWantFamilies: Set<string>,
+  viewerAvailableByFamily: Map<string, CardVariant[]>,
+  viewerWantsByFamily: Map<string, VariantRestriction[]>,
   byProductId: Map<string, CardVariant>,
 ): MemberWithOverlap {
-  let iCanOfferThem = 0;
-  for (const fid of m.wantFamilyIds) {
-    if (viewerAvailableFamilies.has(fid)) iCanOfferThem++;
+  // iCanOfferThem: for each family the member wants, count it if the
+  // viewer has at least one available card whose variant satisfies
+  // *some* want in that family's restriction set. Family-distinct
+  // so the chip's "X of wantsTotal" stays apples-to-apples (wantsTotal
+  // is also family-distinct on the server side).
+  const theirWantsByFamily = new Map<string, VariantRestriction[]>();
+  for (const w of m.wants) {
+    const arr = theirWantsByFamily.get(w.familyId) ?? [];
+    arr.push(w.restriction);
+    theirWantsByFamily.set(w.familyId, arr);
   }
-  const theirAvailableFamilies = new Set<string>();
+  let iCanOfferThem = 0;
+  for (const [familyId, restrictions] of theirWantsByFamily) {
+    const viewerCards = viewerAvailableByFamily.get(familyId);
+    if (!viewerCards?.length) continue;
+    const satisfies = restrictions.some(r =>
+      viewerCards.some(card => matchesRestriction(card, r)),
+    );
+    if (satisfies) iCanOfferThem++;
+  }
+
+  // theyCanOfferMe: symmetric — group the member's available cards by
+  // family, then for each viewer-want family check whether any of
+  // their cards in that family satisfy any of the viewer's
+  // restrictions on that family.
+  const theirAvailableByFamily = new Map<string, CardVariant[]>();
   for (const pid of m.availableProductIds) {
     const card = byProductId.get(pid);
-    if (card) theirAvailableFamilies.add(cardFamilyId(card));
+    if (!card) continue;
+    const fid = cardFamilyId(card);
+    const arr = theirAvailableByFamily.get(fid) ?? [];
+    arr.push(card);
+    theirAvailableByFamily.set(fid, arr);
   }
   let theyCanOfferMe = 0;
-  for (const fid of theirAvailableFamilies) {
-    if (viewerWantFamilies.has(fid)) theyCanOfferMe++;
+  for (const [familyId, restrictions] of viewerWantsByFamily) {
+    const theirCards = theirAvailableByFamily.get(familyId);
+    if (!theirCards?.length) continue;
+    const satisfies = restrictions.some(r =>
+      theirCards.some(card => matchesRestriction(card, r)),
+    );
+    if (satisfies) theyCanOfferMe++;
   }
+
   return {
     ...m,
     iCanOfferThem,
