@@ -92,6 +92,43 @@ export function AvailablePanel({
     [available],
   );
 
+  // Decorate each row with ListRowMeta so applyListToolbar can filter
+  // + sort uniformly. variantTags for an AvailableItem is just the
+  // concrete variant the card resolves to (binder rows are always
+  // a specific printing — there's no "any" concept here).
+  //
+  // ⚠ Hooks order: these useMemos MUST run on every render, not just
+  // when mode === 'list'. The earlier shape put them after the
+  // `if (mode === 'picker') return` guard, which violated the
+  // "hooks must fire in the same order every render" rule and
+  // produced a "Rendered fewer hooks than expected" error the moment
+  // a user toggled into picker mode after the toolbar code shipped.
+  // Caught by the curate-and-share e2e (06dd0e7 CI failure).
+  type DecoratedAvail = {
+    item: AvailableApi['items'][number];
+    card: CardVariant | null;
+    addedAt: number;
+    variantTags: string[];
+  };
+
+  const decoratedAll = useMemo<DecoratedAvail[]>(
+    () => available.items.map(item => {
+      const card = byProductId.get(item.productId) ?? null;
+      return {
+        item,
+        card,
+        addedAt: item.addedAt,
+        variantTags: card ? [variantTagFromCard(card)] : [],
+      };
+    }),
+    [available.items, byProductId],
+  );
+
+  const visibleRows = useMemo<DecoratedAvail[]>(
+    () => applyListToolbar(decoratedAll, filters, sort, priceMode),
+    [decoratedAll, filters, sort, priceMode],
+  );
+
   if (mode === 'picker') {
     return (
       <ListCardPicker
@@ -121,35 +158,6 @@ export function AvailablePanel({
       />
     );
   }
-
-  // Decorate each row with ListRowMeta so applyListToolbar can filter
-  // + sort uniformly. variantTags for an AvailableItem is just the
-  // concrete variant the card resolves to (binder rows are always
-  // a specific printing — there's no "any" concept here).
-  type DecoratedAvail = {
-    item: AvailableApi['items'][number];
-    card: CardVariant | null;
-    addedAt: number;
-    variantTags: string[];
-  };
-
-  const decoratedAll = useMemo<DecoratedAvail[]>(
-    () => available.items.map(item => {
-      const card = byProductId.get(item.productId) ?? null;
-      return {
-        item,
-        card,
-        addedAt: item.addedAt,
-        variantTags: card ? [variantTagFromCard(card)] : [],
-      };
-    }),
-    [available.items, byProductId],
-  );
-
-  const visibleRows = useMemo<DecoratedAvail[]>(
-    () => applyListToolbar(decoratedAll, filters, sort, priceMode),
-    [decoratedAll, filters, sort, priceMode],
-  );
 
   const isListEmpty = available.items.length === 0;
   const hasActiveFilters = visibleRows.length !== decoratedAll.length;
