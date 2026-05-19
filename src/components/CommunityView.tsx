@@ -696,8 +696,8 @@ function PopularPanel({
   if (top.length === 0) {
     return (
       <EmptyState title="No popular wants yet.">
-        Members' public wants appear here once they start adding to their
-        wants lists. Check back once the community has more activity.
+        Members' public wishlists appear here once they start adding cards.
+        Check back once the community has more activity.
       </EmptyState>
     );
   }

@@ -133,7 +133,7 @@ export function ListToolbar({
 
   const showMatchToggle = mode === 'profile-other';
   const showPriorityToggle = mode === 'wishlist';
-  const defaultMatchLabel = matchToggleLabel ?? 'Only matches with your wants';
+  const defaultMatchLabel = matchToggleLabel ?? 'Only matches with your wishlist';
 
   return (
     <div className="flex flex-col gap-2 border-b border-space-800 pb-2 mb-2">

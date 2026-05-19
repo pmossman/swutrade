@@ -204,7 +204,7 @@ export function AutoBalanceBanner({
     if (preview.offering.length === 0 && preview.receiving.length === 0) {
       return (
         <span className="flex-1 text-gray-400">
-          No card overlap with @{senderHandle} yet — add wants or available cards first.
+          No card overlap with @{senderHandle} yet — add cards to your wishlist or trade binder first.
         </span>
       );
     }

@@ -419,7 +419,7 @@ function PublicProfileBlock({ handle }: { handle: string }) {
         Your public profile
       </h2>
       <p className="text-xs text-gray-500 leading-relaxed mb-3">
-        Share this link so other traders can see your wants and available lists
+        Share this link so other traders can see your wishlist and trade binder
         (subject to your visibility setting above).
       </p>
       <div className="flex flex-col sm:flex-row gap-2">
@@ -541,9 +541,9 @@ function ServersHub({
     <div className="mt-4 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-gray-500 leading-relaxed flex-1">
-          Enroll in a server to join its trading community — your wants +
-          available lists become visible to members, and you get matched against
-          theirs. Enrollment is per-server and optional.
+          Enroll in a server to join its trading community — your wishlist
+          and trade binder become visible to members, and you get matched
+          against theirs. Enrollment is per-server and optional.
         </p>
         <button
           type="button"

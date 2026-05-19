@@ -472,7 +472,12 @@ function ProfileLists({
   const availPrivate = profile.available === null;
   const activeRows = tab === 'wants' ? wantsRows : availableRows;
   const activeIsPrivate = tab === 'wants' ? wantsPrivate : availPrivate;
-  const activeLabel = tab === 'wants' ? 'wants' : 'available';
+  // User-facing label for sentence-embedding (e.g. "This user's
+  // {label} is private"). The internal `tab` slug stays 'wants' /
+  // 'available' (load-bearing across the toolbar's persistence key
+  // + every match-grouping check); only the display copy follows
+  // the canonical "wishlist / trade binder" vocabulary.
+  const activeLabel = tab === 'wants' ? 'wishlist' : 'trade binder';
 
   return (
     <div>
@@ -503,14 +508,14 @@ function ProfileLists({
         />
       </div>
 
-      <div role="tabpanel" aria-label={`${activeLabel} list`}>
+      <div role="tabpanel" aria-label={activeLabel}>
         {activeIsPrivate ? (
           <div className="text-center text-gray-500 py-16 text-sm">
-            This user's {activeLabel} list is private.
+            This user's {activeLabel} is private.
           </div>
         ) : activeRows.length === 0 ? (
           <div className="text-center text-gray-500 py-16 text-sm">
-            No items in this user's public {activeLabel} list.
+            No items in this user's public {activeLabel}.
           </div>
         ) : (
           <ProfileListTabBody
@@ -602,7 +607,7 @@ function ProfileListTabBody({
     && matchCount < visible.length;
   const matchGroupLabel = tab === 'wants'
     ? 'Cards you can offer'
-    : 'Matches with your wants';
+    : 'Matches with your wishlist';
 
   const activeFilterAxisCount = useMemo(() => {
     let n = 0;
@@ -625,7 +630,7 @@ function ProfileListTabBody({
 
   const matchToggleLabel = tab === 'wants'
     ? 'Only cards you can offer'
-    : 'Only matches with your wants';
+    : 'Only matches with your wishlist';
 
   return (
     <>
@@ -664,7 +669,7 @@ function ProfileListTabBody({
                 matchHeaderLabel={matchGroupLabel}
                 matchHeaderTone={matchTone}
                 showOtherHeader={showOtherLabel}
-                otherHeaderLabel={tab === 'wants' ? 'Other wants' : 'Other available'}
+                otherHeaderLabel={tab === 'wants' ? 'Rest of their wishlist' : 'Rest of their trade binder'}
                 percentage={percentage}
                 priceMode={priceMode}
                 matchTone={matchTone}
@@ -690,7 +695,7 @@ function ProfileListTab({
   isPrivate: boolean;
   onSelect: (t: ListTab) => void;
 }) {
-  const label = tab === 'wants' ? 'Wants' : 'Available';
+  const label = tab === 'wants' ? 'Wishlist' : 'Trade binder';
   // Active tab gets a thicker underline, accent-colored badge pill,
   // AND bolder label — multiple simultaneous affordances so "which
   // tab am I on" never requires pixel-peeping on a 2px underline.
@@ -726,9 +731,10 @@ function ProfileListTab({
 
 /**
  * Wraps a `<ProfileRow>` with the optional section labels — "Cards
- * you can offer" / "Matches with your wants" above the first row of
- * the match group, "Other wants" / "Other available" above the
- * first row of the non-match group. Lives in this file because the
+ * you can offer" / "Matches with your wishlist" above the first row
+ * of the match group, "Rest of their wishlist" / "Rest of their
+ * trade binder" above the first row of the non-match group. Lives
+ * in this file because the
  * label semantics are tightly coupled to the tab tone + match-grouping
  * logic in `ProfileListTabBody`; not worth extracting until a
  * second consumer surfaces.

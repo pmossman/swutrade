@@ -14,15 +14,17 @@ test.describe('Shared list URL roundtrip', () => {
     await expect(page.getByRole('button', { name: 'Start a trade', exact: true })).toBeVisible();
     await expect(page.getByText('SHARED LIST')).toBeVisible();
 
-    // Wants section + the Luke row with HYPERSPACE pill.
-    await expect(page.getByText('WANTS').first()).toBeVisible({ timeout: 10_000 });
+    // Wishlist section + the Luke row with HYPERSPACE pill.
+    // (Section titles normalized from "Wants" / "Available" to
+    // "Wishlist" / "Trade binder" in the canonical-language pass.)
+    await expect(page.getByText('WISHLIST').first()).toBeVisible({ timeout: 10_000 });
     await expect(
-      page.locator('section').filter({ hasText: 'WANTS' })
+      page.locator('section').filter({ hasText: 'WISHLIST' })
         .getByText('Luke Skywalker - Hero of Yavin'),
     ).toBeVisible();
 
-    // Available section.
-    await expect(page.getByText('AVAILABLE').first()).toBeVisible();
+    // Trade binder section.
+    await expect(page.getByText('TRADE BINDER').first()).toBeVisible();
   });
 
   test('Start a trade flips into trade view and lands on Offering overlay', async ({ page }) => {
@@ -51,10 +53,11 @@ test.describe('Shared list URL roundtrip', () => {
     // doesn't overlap the Hyperspace restriction).
     await page.getByRole('button', { name: 'STANDARD' }).click();
 
-    // Wants section's "No wants match" empty-state appears.
-    await expect(page.getByText(/No wants match the current filter/i)).toBeVisible({
-      timeout: 5_000,
-    });
+    // Wishlist section's empty-state copy appears (post-language-
+    // normalization: "No items in this wishlist match the current
+    // filter").
+    await expect(page.getByText(/No items in this wishlist match the current filter/i))
+      .toBeVisible({ timeout: 5_000 });
   });
 
   test('?from=<handle> surfaces a sender link pointing at the profile', async ({ page }) => {

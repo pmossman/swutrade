@@ -309,7 +309,7 @@ export function ListView({
           <div className="space-y-6">
             {wantsRows.length > 0 && (
               <ListSection
-                title="Wants"
+                title="Wishlist"
                 tone="blue"
                 rows={filteredWants}
                 totalRows={wantsRows.length}
@@ -320,7 +320,7 @@ export function ListView({
             )}
             {availableRows.length > 0 && (
               <ListSection
-                title="Available"
+                title="Trade binder"
                 tone="emerald"
                 rows={filteredAvailable}
                 totalRows={availableRows.length}
@@ -388,7 +388,7 @@ function ListSection({
       </div>
       {rows.length === 0 ? (
         <div className="text-[11px] text-gray-500 italic py-4">
-          No {title.toLowerCase()} match the current filter.
+          No items in this {title.toLowerCase()} match the current filter.
         </div>
       ) : (
         <ul className="flex flex-col divide-y divide-space-800">

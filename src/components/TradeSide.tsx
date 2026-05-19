@@ -368,7 +368,7 @@ export function TradeSide({
     chips.push(
       {
         id: 'mine',
-        label: isOffering ? 'My available' : 'My wants',
+        label: isOffering ? 'My binder' : 'My wishlist',
         cards: mineCards,
       },
       {
