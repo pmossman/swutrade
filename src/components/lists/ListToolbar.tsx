@@ -158,7 +158,11 @@ export function ListToolbar({
             </button>
           )}
         </div>
-        <span className="shrink-0 text-[11px] text-gray-500 tabular-nums whitespace-nowrap">
+        <span
+          className={`shrink-0 text-[11px] tabular-nums whitespace-nowrap ${
+            activeCount > 0 ? 'text-gold font-semibold' : 'text-gray-500'
+          }`}
+        >
           {activeCount > 0
             ? `${filteredCount} of ${totalCount}`
             : `${totalCount}`}
@@ -195,9 +199,15 @@ export function ListToolbar({
           <button
             type="button"
             onClick={clearAll}
-            className="ml-auto self-center text-[11px] text-gray-500 hover:text-gold transition-colors whitespace-nowrap"
+            // Gold tinge — same convention as SelectionFilterBar's
+            // aggregate clear. Surfaces the "you have N filters
+            // narrowing this view" state in peripheral vision so
+            // users don't go hunting for a missing card under stale
+            // filters.
+            className="ml-auto self-center text-[11px] font-semibold text-gold/80 hover:text-gold transition-colors whitespace-nowrap"
+            aria-label={`Clear ${activeCount} active filter${activeCount === 1 ? '' : 's'}`}
           >
-            Clear all
+            Clear {activeCount} filter{activeCount === 1 ? '' : 's'}
           </button>
         )}
       </div>
@@ -331,6 +341,46 @@ function ListMorePopover({
         </div>
       )}
     </Popover>
+  );
+}
+
+/**
+ * Body content for an empty-state when filters are likely the cause.
+ * When `activeCount > 0` it names the filters as the reason and
+ * surfaces an inline "Clear N filters" button so the user doesn't
+ * have to scroll back up to the toolbar. When `activeCount === 0`
+ * the host's "list is empty / nothing to show" copy belongs instead.
+ *
+ * Lives next to `ListToolbar` because the count semantics + button
+ * styling MUST match what the toolbar's aggregate clear shows; a
+ * second clear-button visual would dilute the gold-tinge convention
+ * for narrowing state.
+ */
+export function FilterAwareEmptyBody({
+  activeCount,
+  onClear,
+}: {
+  activeCount: number;
+  onClear: () => void;
+}) {
+  if (activeCount === 0) {
+    return <>Nothing to show.</>;
+  }
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <span>
+        {activeCount === 1
+          ? '1 filter is hiding every row.'
+          : `${activeCount} filters are hiding every row.`}
+      </span>
+      <button
+        type="button"
+        onClick={onClear}
+        className="text-[11px] font-semibold text-gold/80 hover:text-gold transition-colors px-3 py-1 rounded-md border border-gold/30 hover:border-gold/60"
+      >
+        Clear {activeCount} filter{activeCount === 1 ? '' : 's'}
+      </button>
+    </div>
   );
 }
 

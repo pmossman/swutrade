@@ -218,6 +218,19 @@ export function SelectionFilterBar({ filters, hideVariantFilter, extraChips }: S
         onClear={filters.clearMoreFilters}
         activeCount={filters.moreFiltersActiveCount}
       />
+      {filters.activeAxisCount > 0 && (
+        <button
+          type="button"
+          onClick={filters.clearAll}
+          // Gold tinge (deliberate-user-set-state per palette memo) so
+          // the "something's narrowing my view" signal pops in
+          // peripheral vision instead of blending into the gray chrome.
+          className="ml-auto self-center text-[11px] font-semibold text-gold/80 hover:text-gold transition-colors whitespace-nowrap px-2 py-1"
+          aria-label={`Clear ${filters.activeAxisCount} active filter${filters.activeAxisCount === 1 ? '' : 's'}`}
+        >
+          Clear {filters.activeAxisCount} filter{filters.activeAxisCount === 1 ? '' : 's'}
+        </button>
+      )}
     </div>
   );
 }

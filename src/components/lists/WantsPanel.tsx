@@ -7,7 +7,7 @@ import { ListCardPicker } from '../ListCardPicker';
 import { WantsRow } from '../ListRows';
 import { restrictionKey } from '../../../lib/shared';
 import { EmptyState } from '../ui/states';
-import { ListToolbar } from './ListToolbar';
+import { ListToolbar, FilterAwareEmptyBody } from './ListToolbar';
 import {
   applyListToolbar,
   type ListFilters,
@@ -116,6 +116,31 @@ export function WantsPanel({
     [decoratedAll, filters, sort, priceMode],
   );
 
+  // ⚠ Hooks order: these MUST stay above the `if (mode === 'picker')`
+  // early-return below. Same trap that bit AvailablePanel in
+  // 06dd0e7 — putting hooks after a conditional return changes the
+  // call count between renders and trips React's "Rendered fewer
+  // hooks than expected" runtime error. Caught by curate-and-share
+  // e2e. Future filter-related hooks belong here too.
+  const activeFilterAxisCount = useMemo(() => {
+    let n = 0;
+    if (filters.query.trim().length > 0) n++;
+    if (filters.selectedSets.length > 0) n++;
+    if (filters.selectedVariants.length > 0) n++;
+    if (filters.priorityOnly) n++;
+    if (filters.matchOnly) n++;
+    return n;
+  }, [filters]);
+  const handleClearFilters = useCallback(() => {
+    setFilters({
+      query: '',
+      selectedSets: [],
+      selectedVariants: [],
+      priorityOnly: false,
+      matchOnly: false,
+    });
+  }, []);
+
   if (mode === 'picker') {
     return (
       <ListCardPicker
@@ -160,7 +185,6 @@ export function WantsPanel({
   }
 
   const isListEmpty = wants.items.length === 0;
-  const hasActiveFilters = visibleWants.length !== decoratedAll.length;
 
   return (
     <>
@@ -180,9 +204,10 @@ export function WantsPanel({
           <EmptyState variant="centered" title={emptyState.title}>{emptyState.body}</EmptyState>
         ) : visibleWants.length === 0 ? (
           <EmptyState variant="centered" title="No matches">
-            {hasActiveFilters
-              ? "Your filters are hiding every row. Try Clear all."
-              : 'Nothing to show.'}
+            <FilterAwareEmptyBody
+              activeCount={activeFilterAxisCount}
+              onClear={handleClearFilters}
+            />
           </EmptyState>
         ) : (
           <ul className="flex flex-col gap-2">

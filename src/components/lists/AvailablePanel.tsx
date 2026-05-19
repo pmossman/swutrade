@@ -7,7 +7,7 @@ import { usePopularWants } from '../../hooks/usePopularWants';
 import { ListCardPicker } from '../ListCardPicker';
 import { AvailableRow } from '../ListRows';
 import { EmptyState } from '../ui/states';
-import { ListToolbar } from './ListToolbar';
+import { ListToolbar, FilterAwareEmptyBody } from './ListToolbar';
 import {
   applyListToolbar,
   variantTagFromCard,
@@ -129,6 +129,25 @@ export function AvailablePanel({
     [decoratedAll, filters, sort, priceMode],
   );
 
+  // ⚠ Hooks order: see the warning above `decoratedAll`. These must
+  // also live above `if (mode === 'picker')` for the same reason.
+  const activeFilterAxisCount = useMemo(() => {
+    let n = 0;
+    if (filters.query.trim().length > 0) n++;
+    if (filters.selectedSets.length > 0) n++;
+    if (filters.selectedVariants.length > 0) n++;
+    return n;
+  }, [filters]);
+  const handleClearFilters = useCallback(() => {
+    setFilters({
+      query: '',
+      selectedSets: [],
+      selectedVariants: [],
+      priorityOnly: false,
+      matchOnly: false,
+    });
+  }, []);
+
   if (mode === 'picker') {
     return (
       <ListCardPicker
@@ -160,7 +179,6 @@ export function AvailablePanel({
   }
 
   const isListEmpty = available.items.length === 0;
-  const hasActiveFilters = visibleRows.length !== decoratedAll.length;
 
   return (
     <>
@@ -180,9 +198,10 @@ export function AvailablePanel({
           <EmptyState variant="centered" title={emptyState.title}>{emptyState.body}</EmptyState>
         ) : visibleRows.length === 0 ? (
           <EmptyState variant="centered" title="No matches">
-            {hasActiveFilters
-              ? "Your filters are hiding every row. Try Clear all."
-              : 'Nothing to show.'}
+            <FilterAwareEmptyBody
+              activeCount={activeFilterAxisCount}
+              onClear={handleClearFilters}
+            />
           </EmptyState>
         ) : (
           <ul className="flex flex-col gap-2">

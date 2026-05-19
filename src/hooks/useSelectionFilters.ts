@@ -104,6 +104,17 @@ export interface SelectionFilters {
    *  a badge on the popover trigger so users know without opening
    *  whether anything's narrowing their view. */
   moreFiltersActiveCount: number;
+  /** Total number of FILTER AXES that are narrowing the result set
+   *  right now — variant (1 if any selected), set (1 if any
+   *  selected), plus `moreFiltersActiveCount` (rarity + sort). Powers
+   *  the "Clear N filters" aggregate affordance that lives at the
+   *  right end of the chip row when anything's active. We count axes
+   *  rather than individual chips because a user selecting 3 variants
+   *  conceptually has *one* filter active (the variant filter), not
+   *  three. The mental-model phrase the affordance reads matches:
+   *  "Clear 2 filters" → "variant + set", not "Hyperspace + Foil +
+   *  SHD". */
+  activeAxisCount: number;
 }
 
 interface Keys {
@@ -267,5 +278,9 @@ export function useSelectionFilters(keys: Keys): SelectionFilters {
     clearAll,
     totalSelected: selectedVariants.length + selectedSets.length + selectedRarities.length,
     moreFiltersActiveCount,
+    activeAxisCount:
+      (selectedVariants.length > 0 ? 1 : 0)
+      + (selectedSets.length > 0 ? 1 : 0)
+      + moreFiltersActiveCount,
   };
 }

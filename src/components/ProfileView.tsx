@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../types';
 import {
   cardImageUrl,
@@ -21,7 +21,7 @@ import { usePriceDataContext } from '../contexts/PriceDataContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { LoadingState } from './ui/states';
 import { apiGet } from '../services/apiClient';
-import { ListToolbar } from './lists/ListToolbar';
+import { ListToolbar, FilterAwareEmptyBody } from './lists/ListToolbar';
 import {
   applyListToolbar,
   variantTagFromCard,
@@ -572,7 +572,24 @@ function ProfileListTabBody({
     [rows, filters, sort, priceMode],
   );
 
-  const hasActiveFilters = visible.length !== rows.length;
+  const activeFilterAxisCount = useMemo(() => {
+    let n = 0;
+    if (filters.query.trim().length > 0) n++;
+    if (filters.selectedSets.length > 0) n++;
+    if (filters.selectedVariants.length > 0) n++;
+    if (filters.matchOnly) n++;
+    return n;
+  }, [filters]);
+
+  const handleClearFilters = useCallback(() => {
+    setFilters({
+      query: '',
+      selectedSets: [],
+      selectedVariants: [],
+      priorityOnly: false,
+      matchOnly: false,
+    });
+  }, []);
 
   const matchToggleLabel = tab === 'wants'
     ? 'Only cards you can offer'
@@ -592,9 +609,10 @@ function ProfileListTabBody({
       />
       {visible.length === 0 ? (
         <div className="text-center text-gray-500 py-12 text-sm">
-          {hasActiveFilters
-            ? "Your filters are hiding every row. Try Clear all."
-            : 'Nothing to show.'}
+          <FilterAwareEmptyBody
+            activeCount={activeFilterAxisCount}
+            onClear={handleClearFilters}
+          />
         </div>
       ) : (
         <ul className="flex flex-col divide-y divide-space-800">

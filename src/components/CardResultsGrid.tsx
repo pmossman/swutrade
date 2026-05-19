@@ -22,6 +22,13 @@ interface CardResultsGridProps {
   landscapeColsClass?: string;
   /** Message to show when results are empty. */
   emptyLabel?: string;
+  /** When the empty state is caused by active filters, hosts can pass
+   *  a count + a clear callback. Surfaces a tappable "Clear N filters"
+   *  affordance under the empty message so users don't have to scroll
+   *  back to the filter bar to recover. Omit both to keep the static
+   *  empty label (matches every pre-2026-05-19 callsite). */
+  activeFilterCount?: number;
+  onClearFilters?: () => void;
   /** Per-row pixel-height estimate for the virtualizer. The default
    *  is tuned for the multi-column tile grid (~260px per row of
    *  portrait tiles, ~180px for leader rows, doubled for >4-variant
@@ -65,6 +72,8 @@ export function CardResultsGrid({
   portraitColsClass = DEFAULT_PORTRAIT_COLS,
   landscapeColsClass = DEFAULT_LANDSCAPE_COLS,
   emptyLabel = 'No cards match your filters',
+  activeFilterCount,
+  onClearFilters,
   rowHeightEstimate,
 }: CardResultsGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -137,7 +146,22 @@ export function CardResultsGrid({
 
   const hasResults = results.some(sg => sg.groups.length > 0);
   if (!hasResults) {
-    return <CenteredMessage>{emptyLabel}</CenteredMessage>;
+    return (
+      <CenteredMessage>
+        <div className="flex flex-col items-center gap-3">
+          <span>{emptyLabel}</span>
+          {activeFilterCount && activeFilterCount > 0 && onClearFilters && (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className="text-[11px] font-semibold text-gold/80 hover:text-gold transition-colors px-3 py-1 rounded-md border border-gold/30 hover:border-gold/60"
+            >
+              Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
+            </button>
+          )}
+        </div>
+      </CenteredMessage>
+    );
   }
 
   const virtualItems = virtualizer.getVirtualItems();

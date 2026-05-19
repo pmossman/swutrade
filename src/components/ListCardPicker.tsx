@@ -620,6 +620,16 @@ export function ListCardPicker({
         // the initial estimate sets the scroll-extent feel.
         rowHeightEstimate={activeMode === 'family' ? () => 130 : undefined}
         emptyLabel={hasQuery ? 'No cards match your filters' : 'No cards in this filter'}
+        // Filter-aware empty state: the picker's user is most likely
+        // staring at a too-narrow query + filter combo. Surfacing the
+        // clear-all affordance HERE (under the empty grid, in addition
+        // to the toolbar's "Clear N filters" link above) saves a
+        // scroll back up to the filter row.
+        activeFilterCount={filters.activeAxisCount + (savedOnly ? 1 : 0)}
+        onClearFilters={() => {
+          filters.clearAll();
+          setSavedOnly(false);
+        }}
         renderTile={(card, ctx) => {
           const key = tileKey(card);
           const savedQty = key ? savedCounts.get(key) ?? 0 : 0;

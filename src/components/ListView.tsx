@@ -187,6 +187,10 @@ export function ListView({
   };
 
   const hasAnyFilter = query.length > 0 || selectedVariants.length > 0 || selectedSets.length > 0;
+  const activeFilterAxisCount =
+    (query.length > 0 ? 1 : 0)
+    + (selectedVariants.length > 0 ? 1 : 0)
+    + (selectedSets.length > 0 ? 1 : 0);
   const setSummary = useMemo(
     () => summarizeSelection(selectedSets, 'All sets', setSummaryLabel),
     [selectedSets],
@@ -284,9 +288,13 @@ export function ListView({
             <button
               type="button"
               onClick={clearFilters}
-              className="text-[11px] text-gray-500 hover:text-gold transition-colors px-2 py-1"
+              // Gold tinge — matches the convention in SelectionFilterBar
+              // + ListToolbar so the "filters narrowing this view"
+              // signal reads consistently across surfaces.
+              className="ml-auto self-center text-[11px] font-semibold text-gold/80 hover:text-gold transition-colors whitespace-nowrap px-2 py-1"
+              aria-label={`Clear ${activeFilterAxisCount} active filter${activeFilterAxisCount === 1 ? '' : 's'}`}
             >
-              Reset
+              Clear {activeFilterAxisCount} filter{activeFilterAxisCount === 1 ? '' : 's'}
             </button>
           )}
         </div>
@@ -365,7 +373,8 @@ function ListSection({
     ? 'text-blue-300 border-blue-500/30'
     : 'text-emerald-300 border-emerald-500/30';
 
-  const counter = hasAnyFilter && rows.length !== totalRows
+  const narrowed = hasAnyFilter && rows.length !== totalRows;
+  const counter = narrowed
     ? `${rows.length} of ${totalRows}`
     : `${totalRows}`;
 
@@ -373,7 +382,9 @@ function ListSection({
     <section>
       <div className={`flex items-baseline gap-2 pb-2 mb-3 border-b ${accent}`}>
         <span className="text-xs sm:text-sm font-bold tracking-[0.18em] uppercase">{title}</span>
-        <span className="text-[11px] text-gray-600">{counter}</span>
+        <span className={`text-[11px] tabular-nums ${narrowed ? 'text-gold font-semibold' : 'text-gray-600'}`}>
+          {counter}
+        </span>
       </div>
       {rows.length === 0 ? (
         <div className="text-[11px] text-gray-500 italic py-4">
