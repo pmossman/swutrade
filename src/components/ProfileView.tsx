@@ -567,10 +567,42 @@ function ProfileListTabBody({
     saveToolbarState(surfaceKey, filters, sort);
   }, [surfaceKey, filters, sort]);
 
-  const visible = useMemo(
-    () => applyListToolbar(rows, filters, sort, priceMode),
-    [rows, filters, sort, priceMode],
+  const visible = useMemo(() => {
+    const sorted = applyListToolbar(rows, filters, sort, priceMode);
+    // Match-grouping: when the matchMode filter is OFF on someone
+    // else's profile, partition matches to the top so the viewer
+    // sees the actionable rows without scanning the whole list. The
+    // selected sort applies *within* each group, so a user who
+    // chose "Price: high to low" still sees their matches in price
+    // order at the top. Skipped on own-profile (matchMode is hidden
+    // there — self-match is trivially true and not useful as a
+    // grouping axis) and when matchMode is already filtering to
+    // matches-only (nothing to partition).
+    if (filters.matchOnly || isSelf) return sorted;
+    const matches: typeof sorted = [];
+    const others: typeof sorted = [];
+    for (const r of sorted) (r.isMatch ? matches : others).push(r);
+    if (matches.length === 0 || others.length === 0) return sorted;
+    return [...matches, ...others];
+  }, [rows, filters, sort, priceMode, isSelf]);
+
+  const matchCount = useMemo(
+    () => visible.filter(r => r.isMatch).length,
+    [visible],
   );
+  const matchTone: 'emerald' | 'blue' = tab === 'wants' ? 'emerald' : 'blue';
+  // Show the match-group label only when there's a meaningful split:
+  // both groups present, and the user isn't already filtering to
+  // matches-only (the label would say "Matches" above a list that
+  // is entirely matches — redundant). Hidden on own profile too.
+  const showMatchGroupLabel =
+    !isSelf
+    && !filters.matchOnly
+    && matchCount > 0
+    && matchCount < visible.length;
+  const matchGroupLabel = tab === 'wants'
+    ? 'Cards you can offer'
+    : 'Matches with your wants';
 
   const activeFilterAxisCount = useMemo(() => {
     let n = 0;
@@ -616,17 +648,29 @@ function ProfileListTabBody({
         </div>
       ) : (
         <ul className="flex flex-col divide-y divide-space-800">
-          {visible.map(row => (
-            <ProfileRow
-              key={row.key}
-              card={row.card}
-              qty={row.qty}
-              restriction={row.restriction}
-              isPriority={row.isPriority}
-              percentage={percentage}
-              priceMode={priceMode}
-            />
-          ))}
+          {visible.map((row, i) => {
+            // Mid-list "Other" label appears once, between the
+            // tinted match group and the rest. Cheap heuristic — at
+            // index `matchCount` the run of matches ends — but only
+            // emit when we know there's a real split.
+            const showOtherLabel =
+              showMatchGroupLabel && i === matchCount;
+            return (
+              <ProfileMatchRowFragment
+                key={row.key}
+                row={row}
+                first={i === 0}
+                showMatchHeader={i === 0 && showMatchGroupLabel}
+                matchHeaderLabel={matchGroupLabel}
+                matchHeaderTone={matchTone}
+                showOtherHeader={showOtherLabel}
+                otherHeaderLabel={tab === 'wants' ? 'Other wants' : 'Other available'}
+                percentage={percentage}
+                priceMode={priceMode}
+                matchTone={matchTone}
+              />
+            );
+          })}
         </ul>
       )}
     </>
@@ -680,12 +724,79 @@ function ProfileListTab({
   );
 }
 
+/**
+ * Wraps a `<ProfileRow>` with the optional section labels — "Cards
+ * you can offer" / "Matches with your wants" above the first row of
+ * the match group, "Other wants" / "Other available" above the
+ * first row of the non-match group. Lives in this file because the
+ * label semantics are tightly coupled to the tab tone + match-grouping
+ * logic in `ProfileListTabBody`; not worth extracting until a
+ * second consumer surfaces.
+ */
+function ProfileMatchRowFragment({
+  row,
+  first: _first,
+  showMatchHeader,
+  matchHeaderLabel,
+  matchHeaderTone,
+  showOtherHeader,
+  otherHeaderLabel,
+  percentage,
+  priceMode,
+  matchTone,
+}: {
+  row: ProfileListRow;
+  first: boolean;
+  showMatchHeader: boolean;
+  matchHeaderLabel: string;
+  matchHeaderTone: 'emerald' | 'blue';
+  showOtherHeader: boolean;
+  otherHeaderLabel: string;
+  percentage: number;
+  priceMode: PriceMode;
+  matchTone: 'emerald' | 'blue';
+}) {
+  const headerToneClass = matchHeaderTone === 'emerald'
+    ? 'text-emerald-300'
+    : 'text-blue-300';
+  return (
+    <>
+      {showMatchHeader && (
+        <li className="list-none pt-2 pb-1 -mb-px">
+          <span className={`text-[10px] tracking-[0.15em] uppercase font-bold ${headerToneClass}`}>
+            {matchHeaderLabel}
+          </span>
+        </li>
+      )}
+      {showOtherHeader && (
+        <li className="list-none pt-3 pb-1 -mb-px">
+          <span className="text-[10px] tracking-[0.15em] uppercase font-bold text-gray-500">
+            {otherHeaderLabel}
+          </span>
+        </li>
+      )}
+      <ProfileRow
+        card={row.card}
+        qty={row.qty}
+        restriction={row.restriction}
+        isPriority={row.isPriority}
+        percentage={percentage}
+        priceMode={priceMode}
+        isMatch={row.isMatch}
+        matchTone={matchTone}
+      />
+    </>
+  );
+}
+
 function ProfileRow({
   card,
   qty,
   restriction,
   isPriority,
   priceMode,
+  isMatch,
+  matchTone,
 }: {
   card: CardVariant;
   qty: number;
@@ -696,6 +807,16 @@ function ProfileRow({
    *  See ListRows.AvailableRow for the rationale. */
   percentage?: number;
   priceMode: PriceMode;
+  /** This row is a cross-side match — the viewer has a card that
+   *  satisfies this want (wants tab), or the viewer wants this card
+   *  (available tab). Same predicate the matchMode filter uses. */
+  isMatch?: boolean;
+  /** Tint color for the match treatment. Emerald on the wants tab
+   *  ("you can offer this"); blue on the available tab ("you want
+   *  this"). Both flow from the viewer's perspective, deliberately
+   *  inverted vs the tab header tone (which encodes the profile
+   *  owner's perspective). */
+  matchTone?: 'emerald' | 'blue';
 }) {
   const variant = extractVariantLabel(card.name);
   const price = getCardPrice(card, priceMode);
@@ -706,8 +827,14 @@ function ProfileRow({
     ? restriction.variants.map(variantChipLabel).join(' / ')
     : null;
 
+  const matchClasses = isMatch
+    ? matchTone === 'emerald'
+      ? 'bg-emerald-500/[0.06] border-l-2 border-emerald-500/50 pl-2 -ml-2'
+      : 'bg-blue-500/[0.06] border-l-2 border-blue-500/50 pl-2 -ml-2'
+    : '';
+
   return (
-    <li className="flex items-center gap-3 py-1.5">
+    <li className={`flex items-center gap-3 py-1.5 ${matchClasses}`}>
       <div className="w-8 h-11 shrink-0 rounded bg-space-900 border border-space-800 overflow-hidden">
         {imgUrl ? (
           <img src={imgUrl} alt="" loading="lazy" className="w-full h-full object-cover" />
