@@ -27,7 +27,23 @@ export interface SessionData {
    *  or the cookie expires — if the user closes the tab without
    *  seeing the banner, it re-appears on next visit. */
   pendingMergeBanner?: { carriedCount: number };
+  /** Unix ms when the cookie was last re-saved by getSession's
+   *  rolling-refresh path. We slide the maxAge window at most once
+   *  per ROLLING_REFRESH_INTERVAL_MS so an active user effectively
+   *  never gets signed out, without writing Set-Cookie on every
+   *  request. */
+  lastRefreshedAt?: number;
 }
+
+/** 1 year. Combined with the rolling refresh in `getSession`, an
+ *  active user's cookie window keeps sliding forward — only a user
+ *  who goes fully dark for a year hits the absolute expiry. */
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+
+/** Minimum gap between rolling-refresh writes. Once per day is plenty
+ *  to keep the maxAge window sliding, while bounding Set-Cookie churn
+ *  on chatty endpoints (e.g., polling /api/auth/me). */
+const ROLLING_REFRESH_INTERVAL_MS = 1000 * 60 * 60 * 24;
 
 function getSessionOptions(): SessionOptions {
   return {
@@ -37,7 +53,7 @@ function getSessionOptions(): SessionOptions {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30,
+      maxAge: SESSION_MAX_AGE_SECONDS,
       path: '/',
     },
   };
@@ -49,6 +65,19 @@ export async function getSession(
 ): Promise<SessionData | null> {
   const session = await getIronSession<SessionData>(req, res, getSessionOptions());
   if (!session.userId) return null;
+
+  // Rolling refresh: slide the cookie's maxAge window forward when
+  // enough time has passed since the last save. iron-session writes
+  // an absolute Expires date into the cookie at save() time, so an
+  // untouched session would otherwise hit SESSION_MAX_AGE_SECONDS
+  // after issue regardless of activity.
+  const now = Date.now();
+  const lastRefreshedAt = session.lastRefreshedAt ?? 0;
+  if (now - lastRefreshedAt > ROLLING_REFRESH_INTERVAL_MS) {
+    session.lastRefreshedAt = now;
+    await session.save();
+  }
+
   return {
     userId: session.userId,
     username: session.username,
@@ -75,6 +104,7 @@ export async function createSession(
   session.discordAccessToken = data.discordAccessToken;
   session.discordAccessTokenExpiresAt = data.discordAccessTokenExpiresAt;
   if (data.pendingMergeBanner) session.pendingMergeBanner = data.pendingMergeBanner;
+  session.lastRefreshedAt = Date.now();
   await session.save();
 }
 
