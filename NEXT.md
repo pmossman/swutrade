@@ -32,7 +32,9 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-### List ergonomics: search + filter + cross-reference (PR 1)
+*(no slice currently active — pick the next from the queue)*
+
+### List ergonomics: search + filter + cross-reference (PR 1) ✅ shipped 2026-05-19
 
 **Why:** Every list surface in the app — Wishlist, Binder, Profile's
 Wants tab, Profile's Available tab — is a chronological scroll of
@@ -459,6 +461,9 @@ Branch preserved for reference (no merge planned). `docs/v2/` scaffolding stays 
 ## Done
 
 *(append here as slices ship; newest-first)*
+
+### 2026-05-19 — List ergonomics PR 1: shared toolbar + cross-reference ✅
+Commit `ccd9be2`. New `<ListToolbar>` (search + chip rail + More popover w/ sort + show-toggles) added to every list surface — WantsPanel, AvailablePanel, ProfileView. Pure filter+sort logic in `src/components/lists/applyListToolbar.ts` (20 vitest cases); React shell in `src/components/lists/ListToolbar.tsx`; localStorage persistence (per-surface keys, query never persisted) in `src/components/lists/toolbarPersistence.ts`. Vocabulary mirrors the picker's `SelectionFilterBar` (chip groups imported directly) so users don't context-switch between the two surfaces. Profile's `matchMode` toggle uses the canonical `matchesRestriction` predicate (same as the 5f91f2f community-overlap chip) so all three match-surfaces agree; default-on when overlap > 0. Server-side: `/api/user/[handle]` now ships `addedAt` per row so the toolbar's newest/oldest sort has an axis. Mobile + desktop visually verified via agent-browser at 375px + 1600px. 639/639 tests green. PR 2 (picker integration) + PR 3 (inline restriction edit) remain queued.
 
 ### 2026-04-21 — Wishlist / Binder split (foundational) ✅
 Commits: `14a7d48` (split landed) + follow-ups (`64fd3a4` vocab tweak, `8c1be05` picker consolidation, `4d7380a` viewport lock, `9c365d0` AvailableRow memoization, `9724079` EmptyState centered variant, `c237cf8` restrictionKey centralization). Two dedicated views at `/?view=wishlist` and `/?view=binder` (`src/components/WishlistView.tsx`, `BinderView.tsx`), shared edit panels split out under `src/components/lists/{WantsPanel,AvailablePanel}.tsx`. `useNavigation` grew `toWishlist()` / `toBinder()`; Home's WishlistModule + BinderModule call them and never deep-link the drawer. Routes added to `src/routing/config.ts` with STANDALONE flags so trade-codec sync leaves them alone. ListsDrawer kept for in-trade-builder quick-edit only (App.tsx + SessionView.tsx mount it). Vocabulary reconciled: "Wishlist" / "Trade binder" everywhere user-facing; schema names (`wants` / `available`) stay internal. e2e at `e2e/wishlist-binder.spec.ts` covers both views + NavMenu routing; `e2e/drawer.spec.ts` retained for the in-trade-builder surface. Unblocks the Wishlist / Binder enhancement backlog.
