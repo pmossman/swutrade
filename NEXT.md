@@ -32,7 +32,107 @@ Skipping any of 1–3 is a bug in the process.
 
 ## Active slice
 
-*(no slice currently active — pick the next from the queue)*
+### List ergonomics: search + filter + cross-reference (PR 1)
+
+**Why:** Every list surface in the app — Wishlist, Binder, Profile's
+Wants tab, Profile's Available tab — is a chronological scroll of
+rows with **zero** search, filter, or sort. The user-visible
+consequences:
+- "I want to filter @batterypow3r's available list to only see cards
+  that match my wants" — no affordance.
+- "When adding to my wishlist, I want to check if I already added
+  the card" — requires scrolling.
+- "I want to find the rows in my binder for one set" — requires
+  scrolling.
+
+The picker (`ListCardPicker.tsx`) already has a search box, a chip
+rail, and `MoreFiltersPopover`. The lists never got the same
+treatment because v0 they were small enough to scroll. With real
+users at 100+ wants / 200+ binder rows the affordances cap out.
+
+**Architectural fit:**
+- One shared `<ListToolbar>` primitive — search input + chip rail +
+  sort menu + optional `matchMode` toggle. Lives in
+  `src/components/lists/ListToolbar.tsx`. Crib chip styling from
+  `SelectionFilterBar` so the visual language stays cross-consistent
+  with the picker.
+- Each host (`WishlistView`, `ListView`, `ProfileView`) owns its
+  toolbar state (`useState({ query, filters, sort, matchMode })`)
+  and applies the filter inline in its existing render loop. No
+  shared filter-state context — keeps the host components self-
+  contained and avoids cross-surface coupling.
+- Filter vocabulary (set, color, variant, price band, priority-only)
+  is intentionally identical to the picker's so users don't have to
+  context-switch between "filter chips on the picker" vs "filter
+  chips on the list."
+
+**What ships (PR 1: foundation + cross-reference, combined slice):**
+- New `src/components/lists/ListToolbar.tsx` — pure presentational,
+  emits `{ query, filters, sort, matchMode? }` via callbacks. Takes
+  a `mode: 'self' | 'other'` prop so the match toggle only renders
+  on profile (other-user) surfaces.
+- `WishlistView` wired up:
+  - Toolbar with search + filters (set/color/variant/priority-only)
+    + sort (priority-first, newest, oldest, price-high, price-low,
+    name).
+  - Empty state when filters hide all rows ("3 filters applied,
+    no matches — clear filters").
+  - Filter/sort persisted to localStorage (`swu.wishlist.toolbar`);
+    search always starts empty.
+- `ListView` (Binder) same as above, minus "priority-only" filter
+  (binder has no priority concept).
+- `ProfileView` wired up:
+  - Same toolbar on both Wants + Available tabs.
+  - `matchMode` toggle: on Available tab labels "Only matches with
+    your wants"; on Wants tab labels "Only cards you can offer".
+    Uses the canonical `matchesRestriction` predicate (same one the
+    community-overlap fix from `5f91f2f` uses) so the math agrees
+    everywhere.
+  - Match mode defaults **on** when there's any overlap, off
+    otherwise. Persisted per-handle in localStorage so power users
+    who want it always-on get it sticky.
+- Persistence schemas: extend `src/persistence/schemas.ts` with
+  `ListToolbarStateSchema` (filters + sort) keyed by surface.
+
+**Done when:**
+- [ ] Toolbar renders on Wishlist, Binder, ProfileView (both tabs).
+- [ ] Free-text search filters rows by `card.displayName` in real
+      time (debounced 80ms — same as picker).
+- [ ] Filter chips work and match the picker's vocabulary.
+- [ ] Sort menu reorders rows; default sort matches the previous
+      behavior (priority-first → newest for wishlist; newest for
+      binder).
+- [ ] On a profile, "Only matches with your wants/available" toggle
+      filters by `matchesRestriction`. Default-on when overlap > 0.
+- [ ] Empty-state copy distinguishes "list is empty" from "filters
+      hide everything."
+- [ ] Filter/sort state persists across navigations via localStorage.
+- [ ] Vitest coverage for the filter/sort + matchMode logic
+      (extracted into a pure `applyListToolbar(rows, state)` helper
+      in `src/components/lists/listToolbar.ts`).
+- [ ] Mobile review: chip rail single-line scroll with overflow
+      "More" disclosure (the picker pattern); toolbar doesn't push
+      the first row below the fold on a 375px viewport.
+- [ ] Between-slice ritual passes (typecheck, full vitest green,
+      CI green on beta).
+
+**Explicit non-goals (deferred to PR 2 + 3 in Queue):**
+- No picker integration ("in wishlist · qty 2" badges + inline qty
+  edit in the picker + "in your wishlist" picker filter chip) —
+  Queue #1.
+- No inline restriction editor on list rows (tap a chip to swap a
+  want's variant restriction without deleting + re-adding) —
+  Queue #2.
+- No bulk operations (multi-select + delete/edit-many) — separate
+  future slice if real users ask.
+
+**Follow-ups (already enqueued):**
+- Queue #1 — Picker integration: dedup badges + inline qty/variant
+  editor.
+- Queue #2 — Inline restriction edit: per-row variant chip control
+  on wishlist rows.
+
+---
 
 ### Session collaboration: timeline + chat + suggestions ✅ shipped 2026-04-30
 
@@ -161,7 +261,75 @@ traders negotiate without leaving the canvas. Sets up snapshot history
 
 Ordered smallest / highest-clarity first so the between-slice ritual feedback loop stays fast. Re-order as priorities shift.
 
-### 1. Card signals — Discord-native response surface (PR 2)
+### 1. List ergonomics — Picker integration (PR 2)
+
+**Why:** PR 1 of the list ergonomics rework gives users search + filter
++ sort on each list and a cross-reference toggle on profile lists.
+What it doesn't fix: the "did I already add this?" question at the
+moment of *adding*. PR 2 closes that loop by surfacing wishlist
+status inside the picker itself.
+
+**What ships:**
+- Per-card "in wishlist · qty N" badge in `ListCardPicker` results,
+  fed by a new `useWantsByFamily` selector hook (or a lookup
+  derived from the existing `wants.items` already passed in).
+- Click on an already-added card opens an **inline qty + variant
+  editor** anchored to the card row instead of dispatching a fresh
+  add. The editor mutates the existing want via `wants.update()`
+  (dedup-by-`(familyId, restrictionKey)` is already enforced in
+  storage — see `useWants.ts`).
+- New filter chip in the picker's `SelectionFilterBar`: "**In your
+  wishlist**" — toggling it scopes results to families the user
+  already has wants on. Helpful both for "find the row I added
+  last week" and "stop adding duplicates."
+- Symmetric "**In your binder**" chip for the available-card picker
+  flow (TradeSide's "Offering" picker), since the same
+  did-I-already-add question applies there too.
+
+**Done when:**
+- [ ] Picker shows "in wishlist · qty N" badge on every result that
+      maps to an existing want family.
+- [ ] Clicking such a card opens the inline editor, not a duplicate-
+      add toast.
+- [ ] "In your wishlist" filter chip works in the wishlist add flow.
+- [ ] "In your binder" filter chip works in the binder add flow.
+- [ ] No regressions in the picker's existing search/filter UX.
+- [ ] Vitest + e2e coverage for the dedup-on-add path.
+- [ ] Between-slice ritual passes.
+
+---
+
+### 2. List ergonomics — Inline restriction edit (PR 3)
+
+**Why:** Today, changing a want from "any variant" to "Hyperspace
+Foil only" (or any other restriction tweak) means deleting the row
+and re-adding from the picker — a context-break that loses the
+row's position, addedAt date, and any qty stack. The picker's
+variant chip set is already canonical; surfacing it inline on each
+wishlist row gives users a one-tap restriction swap.
+
+**What ships:**
+- Compact restriction control on each wishlist row: tappable chip
+  pill that opens a small popover with the canonical variant chips
+  (Standard, Hyperspace, Showcase, Foil, ..., plus "Any").
+- Updates round-trip through `wants.update()` — same path used by
+  qty editing, so dedup-by-`(familyId, restrictionKey)` falls out
+  for free (if a user changes a row to a restriction another row
+  already has, they merge and qty stacks).
+- Mobile: bottom-sheet variant instead of popover.
+
+**Done when:**
+- [ ] Each wishlist row exposes a tappable restriction chip.
+- [ ] Editing a row's restriction calls `wants.update()` and
+      preserves addedAt / position.
+- [ ] Restriction-merge: if the new restriction collides with an
+      existing row, qtys merge and the duplicate disappears.
+- [ ] Vitest covers the merge edge case.
+- [ ] Between-slice ritual passes.
+
+---
+
+### 3. Card signals — Discord-native response surface (PR 2)
 
 **Why:** SWUTrade's wishlist + binder are the long-tail "what I want / what I have" inventory; signals are the **acute** version — "I specifically need 1× Luke before Friday's draft" or "I have an extra Cassian I want to offload by tonight." PR 1 (shipped 2026-04-28) made the *broadcast* — embed with public match listing, cancel/specify-variant buttons. But there's still no way for a matched user to *act* on a signal short of free-text DMing the author. PR 2 closes that gap.
 
