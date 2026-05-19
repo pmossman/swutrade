@@ -127,6 +127,7 @@ export function WantsPanel({
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}
+        savedChipLabel="In your wishlist"
         savedEntries={wants.items.map(item => ({
           id: item.id,
           familyId: item.familyId,

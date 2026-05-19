@@ -17,6 +17,7 @@ import { CardTile } from './CardTile';
 import { FamilyRow } from './FamilyRow';
 import { restrictionKeyFromVariants } from '../../lib/shared';
 import { SelectionFilterBar } from './SelectionFilterBar';
+import { Chip } from './ui/Chip';
 import { applySelectionFilters } from '../applySelectionFilters';
 
 export interface PickContext {
@@ -140,6 +141,14 @@ interface CommonPickerProps {
    *  Defaults to "list"; the trade overlay overrides to "trade" so
    *  screen readers + e2e tests can disambiguate the surface. */
   actionTarget?: string;
+  /** Label for the "show only items I've already added" filter chip.
+   *  When undefined the chip is hidden — the trade overlay's picker
+   *  doesn't need it. Hosts set per context: "In your wishlist" for
+   *  the wants picker, "In your binder" for the available picker.
+   *  Scopes the result grid to families/products whose savedQty > 0
+   *  so users can quickly review what they already have without
+   *  scrolling the full catalog. */
+  savedChipLabel?: string;
 }
 
 function representativeVariant(variants: CardVariant[]): CardVariant {
@@ -227,7 +236,13 @@ export function ListCardPicker({
   chips,
   initialQuery,
   actionTarget = 'list',
+  savedChipLabel,
 }: ListCardPickerProps) {
+  // "Show only items I've already added" toggle. Session-only (not
+  // persisted) — this is a focused inspection mode, not a saved
+  // preference. The chip is hidden when no savedChipLabel was
+  // provided OR when there's nothing to show (no saved entries).
+  const [savedOnly, setSavedOnly] = useState(false);
   // Active tile mode is just the selectionMode kind — no in-picker
   // toggle anymore. The variant filter chips drive the saved
   // restriction in 'family' mode.
@@ -455,10 +470,35 @@ export function ListCardPicker({
     ? { acceptedVariants: [] /* per-tile populated in renderTile via card.variant */ }
     : { acceptedVariants: selectedVariants };
 
+  // Saved-only post-filter — drops groups/variants whose tileKey
+  // doesn't appear in `savedCounts`. Lets users scope the catalog to
+  // "things I've already added" without scrolling the full grid.
+  // Applied AFTER the selection-filter pipeline so a user can still
+  // narrow by Variant/Set within the saved subset (e.g. "saved cards
+  // from SHD only").
+  const finalResults = useMemo<SetSearchGroup[]>(() => {
+    if (!savedOnly) return viewResults;
+    return viewResults
+      .map(sg => ({
+        ...sg,
+        groups: sg.groups
+          .map(g => {
+            const survivors = g.variants.filter(c => {
+              const key = tileKey(c);
+              return key !== null && (savedCounts.get(key) ?? 0) > 0;
+            });
+            return survivors.length > 0 ? { ...g, variants: survivors } : null;
+          })
+          .filter((g): g is NonNullable<typeof g> => g !== null),
+      }))
+      .filter(sg => sg.groups.length > 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedOnly, viewResults, savedCounts]);
+
   // Browse mode mounts hundreds of tiles — useDeferredValue lets the
   // picker chrome (filter bar + search input) paint in a high-priority
   // render while the heavy grid fills in as a low-priority follow-up.
-  const deferredResults = useDeferredValue(viewResults);
+  const deferredResults = useDeferredValue(finalResults);
 
   // Decrement: tapping the ×N badge removes one qty. Finds the newest
   // matching item (by pop from the id list) and asks the caller to
@@ -533,7 +573,20 @@ export function ListCardPicker({
       <div className="px-3 pt-2 shrink-0">
         <SelectionFilterBar
           filters={filters}
-          extraChips={chips}
+          extraChips={
+            <>
+              {chips}
+              {savedChipLabel && savedEntries.length > 0 && (
+                <Chip
+                  active={savedOnly}
+                  onClick={() => setSavedOnly(s => !s)}
+                  colorClass="bg-gold/15 text-gold border-gold/40"
+                >
+                  {savedOnly ? `${savedChipLabel} ✓` : savedChipLabel}
+                </Chip>
+              )}
+            </>
+          }
         />
       </div>
 

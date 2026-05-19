@@ -101,6 +101,7 @@ export function AvailablePanel({
         allCards={allCards}
         percentage={percentage}
         priceMode={priceMode}
+        savedChipLabel="In your binder"
         savedEntries={available.items.map(item => ({
           id: item.id,
           productId: item.productId,
