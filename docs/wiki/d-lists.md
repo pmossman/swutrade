@@ -333,6 +333,8 @@ Picker tiles carry a badge showing what a tap WILL save (`ListCardPicker.tsx:84-
 
 Saved tiles also carry a gold "×N" counter and a decrement button (`ListCardPicker.tsx:240-257`). Decrement finds the newest matching item (pops the last id) — for available this is just the productId match; for wants it's scoped to `(familyId + active-filter-restriction-key)` so a Hyperspace-filtered decrement doesn't nuke the Any-variant row.
 
+The picker also exposes a **"In your wishlist" / "In your binder"** filter chip (right of the SET filter, before MORE — shipped 2026-05-19). Toggling it scopes the result grid to families/products with `savedQty > 0`, so users can quickly review what's already saved without scrolling. Auto-hidden when `savedEntries.length === 0`. Session-only — this is a focused inspection mode, not a saved preference. The chip's label is host-supplied via the `savedChipLabel` prop on `ListCardPicker`; pass undefined to suppress.
+
 ### List toolbar (search + filter + sort + matchMode)
 
 Every list surface (WantsPanel, AvailablePanel, ProfileView's tab body) renders a `<ListToolbar>` above the row list when the list is non-empty (`src/components/lists/ListToolbar.tsx`). Vocabulary is deliberately identical to the picker's `SelectionFilterBar` — `VariantChipGroup` and `SetChipGroup` are imported directly so a user who's learned one filter surface already knows the other.
