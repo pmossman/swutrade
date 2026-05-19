@@ -48,10 +48,12 @@ interface ListToolbarProps {
 }
 
 const DEFAULT_SORT_LABEL: Record<ListToolbarMode, string> = {
-  'wishlist': 'Priority · oldest first',
-  'binder': 'Oldest first',
-  'profile-self': 'Oldest first',
-  'profile-other': 'Oldest first',
+  // Wishlist's default keeps the priority-first tier in front of the
+  // set-grouped sort. The others go straight to set ordering.
+  'wishlist': 'Priority · by set',
+  'binder': 'By set (newest first)',
+  'profile-self': 'By set (newest first)',
+  'profile-other': 'By set (newest first)',
 };
 
 const SEARCH_DEBOUNCE_MS = 80;

@@ -79,6 +79,52 @@ export interface ListRowMeta {
 const MAIN_SLUGS = new Set(SETS.filter(s => s.category === 'main').map(s => s.slug));
 const SPECIAL_SLUGS = new Set(SETS.filter(s => s.category === 'promo').map(s => s.slug));
 
+/** Slug → recency index. SETS lists oldest-first (SOR at index 0,
+ *  LAW newest among main sets at index 6); the index value IS the
+ *  recency — higher = newer. Unknown sets default to -1 → sink to
+ *  the bottom of any set-ordered list. */
+const SET_RECENCY: Map<string, number> = (() => {
+  const m = new Map<string, number>();
+  for (let i = 0; i < SETS.length; i++) {
+    m.set(SETS[i].slug, i);
+  }
+  return m;
+})();
+
+/** Canonical SWU aspect order — light-side pairings first, then dark
+ *  side, then neutral. Cards with multiple aspects sort by their
+ *  primary (first-listed) aspect; cards with no aspect (mostly
+ *  bases) sink to the bottom of each set group. */
+const ASPECT_ORDER: Record<string, number> = {
+  Heroism: 0,
+  Vigilance: 1,
+  Command: 2,
+  Cunning: 3,
+  Aggression: 4,
+  Villainy: 5,
+};
+
+function aspectIndex(card: CardVariant | null): number {
+  if (!card) return 999;
+  const primary = card.aspects?.[0];
+  if (!primary) return 100; // bases / aspectless — between aspects and unknown
+  return ASPECT_ORDER[primary] ?? 50;
+}
+
+function setRecency(card: CardVariant | null): number {
+  if (!card) return -1;
+  return SET_RECENCY.get(card.set) ?? -1;
+}
+
+function cardNumber(card: CardVariant | null): number {
+  if (!card) return Number.POSITIVE_INFINITY;
+  // `card.number` is a string like "001" or "078"; numeric parse so
+  // ordering matches the printed-card order, not lexicographic
+  // ("10" > "9" the right way).
+  const n = parseInt(card.number, 10);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
+
 function buildSetMatcher(selected: readonly string[]): ((slug: string) => boolean) | null {
   if (selected.length === 0) return null;
   const exact = new Set<string>();
@@ -106,13 +152,37 @@ function priceForSort(card: CardVariant | null, mode: PriceMode): number {
 }
 
 function cmpDefault<TRow extends ListRowMeta>(a: TRow, b: TRow): number {
+  // Tiered default sort:
+  //   1. Priority first (only matters on wishlist — binder rows
+  //      never set isPriority, so the priority tier collapses to
+  //      a no-op on that surface).
+  //   2. Set, newest first. Real users think of their collection in
+  //      set blocks ("the LAW cards I have", "my old SOR stuff");
+  //      newest-first puts the active-meta set at the top.
+  //   3. Aspect, canonical order (Heroism, Vigilance, Command,
+  //      Cunning, Aggression, Villainy). Groups same-color cards
+  //      visually within each set block — easier to scan.
+  //   4. Card number ascending. The printed-card order, which
+  //      conveniently keeps aspectless cards (Leaders / Bases by
+  //      convention low numbers) at the top of each aspect group.
+  //   5. addedAt as a stable tie-breaker so two rows for the same
+  //      card never swap on re-render.
   const pa = a.isPriority ? 1 : 0;
   const pb = b.isPriority ? 1 : 0;
   if (pa !== pb) return pb - pa;
-  // For wishlist surfaces, default sort is priority-first then
-  // **oldest first** (preserves the existing WantsPanel behavior:
-  // `a.addedAt - b.addedAt`). Binder default sort callers can pass
-  // 'newest' explicitly when they want newest-first.
+
+  const sa = setRecency(a.card);
+  const sb = setRecency(b.card);
+  if (sa !== sb) return sb - sa;
+
+  const ia = aspectIndex(a.card);
+  const ib = aspectIndex(b.card);
+  if (ia !== ib) return ia - ib;
+
+  const na = cardNumber(a.card);
+  const nb = cardNumber(b.card);
+  if (na !== nb) return na - nb;
+
   return a.addedAt - b.addedAt;
 }
 

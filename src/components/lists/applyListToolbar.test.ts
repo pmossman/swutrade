@@ -41,14 +41,53 @@ function row(id: string, overrides: Partial<Row> = {}): Row {
 }
 
 describe('applyListToolbar — no filters', () => {
-  it('passes everything through with default sort (priority-first then oldest)', () => {
+  it('default sort: priority first, then set (newest first), then aspect, then card number', () => {
+    // Set recency from src/types/index.ts SETS array: LAW > JTL >
+    // LOF > SEC > TWI > SHD > SOR. Within each set, aspect order
+    // is Heroism, Vigilance, Command, Cunning, Aggression, Villainy.
     const rows: Row[] = [
-      row('a', { addedAt: 100, isPriority: false }),
-      row('b', { addedAt: 200, isPriority: true }),
-      row('c', { addedAt: 300, isPriority: false }),
+      row('sor-luke', {
+        card: card({ set: 'spark-of-rebellion', aspects: ['Heroism'], number: '001' }),
+      }),
+      row('law-cad', {
+        card: card({ set: 'a-lawless-time', aspects: ['Villainy'], number: '050' }),
+      }),
+      row('law-han', {
+        card: card({ set: 'a-lawless-time', aspects: ['Heroism'], number: '002' }),
+      }),
+      row('priority-old', {
+        card: card({ set: 'spark-of-rebellion', aspects: ['Vigilance'], number: '003' }),
+        isPriority: true,
+      }),
     ];
     const result = applyListToolbar(rows, DEFAULT_LIST_FILTERS, 'default', 'market');
-    expect(result.map(r => r.id)).toEqual(['b', 'a', 'c']);
+    // Priority row first (regardless of set); then LAW block
+    // (Heroism #002 before Villainy #050); then SOR block.
+    expect(result.map(r => r.id)).toEqual(['priority-old', 'law-han', 'law-cad', 'sor-luke']);
+  });
+
+  it('default sort: tie-breaks by addedAt when set + aspect + number all match', () => {
+    const sameCard = { set: 'a-lawless-time', aspects: ['Heroism'], number: '042' };
+    const rows: Row[] = [
+      row('newer', { card: card(sameCard), addedAt: 300 }),
+      row('older', { card: card(sameCard), addedAt: 100 }),
+      row('mid', { card: card(sameCard), addedAt: 200 }),
+    ];
+    const result = applyListToolbar(rows, DEFAULT_LIST_FILTERS, 'default', 'market');
+    // Stable tie-break: older first (matches the historical
+    // priority-first-then-oldest-first behavior on a single-set list).
+    expect(result.map(r => r.id)).toEqual(['older', 'mid', 'newer']);
+  });
+
+  it('default sort: rows with null card sink to the bottom', () => {
+    const rows: Row[] = [
+      row('null', { card: null }),
+      row('law', {
+        card: card({ set: 'a-lawless-time', aspects: ['Heroism'], number: '001' }),
+      }),
+    ];
+    const result = applyListToolbar(rows, DEFAULT_LIST_FILTERS, 'default', 'market');
+    expect(result.map(r => r.id)).toEqual(['law', 'null']);
   });
 
   it('does not mutate the input array', () => {
