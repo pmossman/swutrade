@@ -5,6 +5,7 @@
 > Files covered:
 > - `src/components/WishlistView.tsx`, `src/components/BinderView.tsx` — dedicated full-page surfaces (canonical edit destinations)
 > - `src/components/lists/WantsPanel.tsx`, `src/components/lists/AvailablePanel.tsx` — shared panel bodies used by the views + the drawer
+> - `src/components/lists/ListToolbar.tsx`, `src/components/lists/applyListToolbar.ts`, `src/components/lists/toolbarPersistence.ts` — shared search/filter/sort toolbar shipped 2026-05-19; applies to wishlist, binder, and profile lists
 > - `src/components/ListsDrawer.tsx`, `src/components/ListRows.tsx`, `src/components/ListCardPicker.tsx`, `src/components/ListView.tsx`, `src/components/MigrationDialog.tsx`
 > - `src/hooks/useWants.ts`, `src/hooks/useAvailable.ts`, `src/hooks/useSharedLists.ts`, `src/hooks/usePopularWants.ts`, `src/hooks/useServerSync.ts`, `src/hooks/useRecipientProfile.ts`, `src/hooks/useCommunityCards.ts`, `src/hooks/usePersistedState.ts`
 > - `src/hooks/useSelectionFilters.ts`, `src/applySelectionFilters.ts`, `src/listMatching.ts`
@@ -84,6 +85,12 @@ The one-sentence version: **wants are cross-printing wishes keyed by `familyId`;
 **`src/listMatching.ts`** — `matchesRestriction(card, restriction)` and `bestMatchForWant(want, candidates, priceMode)`. Pure; no React, no storage. The matcher respects price mode (market vs low) and treats null prices as `Infinity` so an unpriced serialized card doesn't steal the "cheapest" slot.
 
 **`src/applySelectionFilters.ts`** — applies variant + set filters to `SetSearchGroup[]` results. Prunes empty groups/set-groups so the UI doesn't render empty sections. Exports `MAIN_GROUP` / `SPECIAL_GROUP` pseudo-slugs used as the set-category presets.
+
+**`src/components/lists/applyListToolbar.ts`** — pure filter+sort for list rows. Mirrors `applySelectionFilters`'s vocabulary (variant + set) but consumes a `ListRowMeta` shape so it works against either a WantsItem or an AvailableItem row. Returns a fresh array (does not mutate). Exercised standalone by `applyListToolbar.test.ts`. See "List toolbar" under UI/UX patterns for the conventions.
+
+**`src/components/lists/ListToolbar.tsx`** — the toolbar UI primitive (search + chip rail + More popover). Re-uses `VariantChipGroup` and `SetChipGroup` from `SelectionFilterBar.tsx` so the chip styling stays cross-consistent with the picker. Owns no state; value + callback pattern.
+
+**`src/components/lists/toolbarPersistence.ts`** — localStorage helpers keyed per surface (`swu.listToolbar.<surfaceKey>`). Drops the `query` field before persisting — search is never restored across mounts.
 
 ### Persistence
 
@@ -325,6 +332,27 @@ Picker tiles carry a badge showing what a tap WILL save (`ListCardPicker.tsx:84-
 - **Wants with 2+ variant filters** — one pill per variant in order, each in its variant color. Multi-variant is scannable — you can see every printing the restriction will accept.
 
 Saved tiles also carry a gold "×N" counter and a decrement button (`ListCardPicker.tsx:240-257`). Decrement finds the newest matching item (pops the last id) — for available this is just the productId match; for wants it's scoped to `(familyId + active-filter-restriction-key)` so a Hyperspace-filtered decrement doesn't nuke the Any-variant row.
+
+### List toolbar (search + filter + sort + matchMode)
+
+Every list surface (WantsPanel, AvailablePanel, ProfileView's tab body) renders a `<ListToolbar>` above the row list when the list is non-empty (`src/components/lists/ListToolbar.tsx`). Vocabulary is deliberately identical to the picker's `SelectionFilterBar` — `VariantChipGroup` and `SetChipGroup` are imported directly so a user who's learned one filter surface already knows the other.
+
+Toolbar shape (top to bottom):
+
+1. Search input + filtered/total count badge ("1 of 11" when narrowed, just "N" when not).
+2. Chip rail — Variant, Set, More (popover for sort + show-toggles). `flex-wrap` for mobile, single-row on desktop.
+3. "Clear all" link on the right when any filter is active.
+
+Filter + sort logic lives in `src/components/lists/applyListToolbar.ts` as pure `applyListToolbar(rows, filters, sort, priceMode)` — exercised independently of React via `applyListToolbar.test.ts`. Host components materialize a `ListRowMeta` per row (card, addedAt, variantTags, isPriority, isMatch) and pass it through. `variantTags`:
+- WantsItem with `restriction.any` → all `CANONICAL_VARIANTS` (matches any variant filter).
+- WantsItem with `restriction.restricted` → the restricted variants list.
+- AvailableItem → `[extractVariantLabel(card.name)]` (single concrete variant).
+
+Persistence: `toolbarPersistence.ts` keys per surface (`swu.listToolbar.wishlist`, `…binder`, `…profile.<handle>.<tab>`). Filter+sort persisted; the `query` field is **never** persisted — search is a one-shot query, not a saved view, so reviving it on next mount would surprise the user.
+
+`matchMode` toggle only appears on profile (other-user) surfaces — controlled by the `mode: 'profile-other'` prop. The toggle filters rows by `isMatch`, which the host pre-computes per row via the canonical `matchesRestriction` predicate (same one CommunityView's overlap chip uses; ensures all three surfaces agree on what "match" means). Default-on when there's any overlap on initial mount; persisted from there.
+
+Sort modes: `default`, `newest`, `oldest`, `price-desc`, `price-asc`, `name-asc`, `name-desc`. `default` is priority-first then `addedAt asc` (wishlist's pre-toolbar behavior); for binder this collapses to oldest-first. Null prices and null cards sink to the bottom in price-asc + name-asc respectively, instead of floating to the top — matches user intent ("show me my cheap cards first" doesn't mean "show me cards with unknown prices first").
 
 ### Shared-list landing UX
 

@@ -12,6 +12,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const [user] = await db.select().from(users).where(eq(users.handle, handle)).limit(1);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
+  // addedAt round-trips so the ProfileView toolbar can sort by
+  // newest/oldest. Without it the sort would have no axis to order
+  // against and would silently fall back to insertion order.
   const wants = user.wantsPublic
     ? (await db.select().from(wantsItems).where(eq(wantsItems.userId, user.id))).map(row => ({
         familyId: row.familyId,
@@ -20,6 +23,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? { mode: 'restricted' as const, variants: row.restrictionVariants ?? [] }
           : { mode: 'any' as const },
         isPriority: row.isPriority ?? undefined,
+        addedAt: row.addedAt,
       }))
     : null;
 
@@ -27,6 +31,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     ? (await db.select().from(availableItems).where(eq(availableItems.userId, user.id))).map(row => ({
         productId: row.productId,
         qty: row.qty,
+        addedAt: row.addedAt,
       }))
     : null;
 

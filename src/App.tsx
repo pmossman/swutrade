@@ -689,6 +689,8 @@ function App() {
         percentage={percentage}
         priceMode={priceMode}
         onStartTrade={handleStartTrade}
+        viewerWants={wants.items}
+        viewerAvailable={available.items}
       />
     );
   }

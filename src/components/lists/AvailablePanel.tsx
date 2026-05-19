@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../../types';
 import type { AvailableApi } from '../../hooks/useAvailable';
 import { cardFamilyId } from '../../variants';
@@ -7,6 +7,14 @@ import { usePopularWants } from '../../hooks/usePopularWants';
 import { ListCardPicker } from '../ListCardPicker';
 import { AvailableRow } from '../ListRows';
 import { EmptyState } from '../ui/states';
+import { ListToolbar } from './ListToolbar';
+import {
+  applyListToolbar,
+  variantTagFromCard,
+  type ListFilters,
+  type ListSortMode,
+} from './applyListToolbar';
+import { loadToolbarState, saveToolbarState } from './toolbarPersistence';
 
 /**
  * Shared available/binder body used by both the embedded drawer
@@ -28,6 +36,9 @@ interface AvailablePanelProps {
    *  display. Missing entries (card not yet loaded) render a placeholder. */
   byProductId: Map<string, CardVariant>;
   emptyState?: { title: string; body: string };
+  /** Persistence key for the toolbar state. Default groups the drawer
+   *  + dedicated view under one key. */
+  toolbarSurfaceKey?: string;
 }
 
 const DEFAULT_EMPTY = {
@@ -42,8 +53,20 @@ export function AvailablePanel({
   priceMode,
   byProductId,
   emptyState = DEFAULT_EMPTY,
+  toolbarSurfaceKey = 'binder',
 }: AvailablePanelProps) {
   const [mode, setMode] = useState<'list' | 'picker'>('list');
+
+  const initial = useMemo(
+    () => loadToolbarState(toolbarSurfaceKey, 'default'),
+    [toolbarSurfaceKey],
+  );
+  const [filters, setFilters] = useState<ListFilters>(initial.filters);
+  const [sort, setSort] = useState<ListSortMode>(initial.sort);
+
+  useEffect(() => {
+    saveToolbarState(toolbarSurfaceKey, filters, sort);
+  }, [toolbarSurfaceKey, filters, sort]);
 
   // "Popular wants" — how many other users have each of our binder
   // cards' families on their public wants list. Signed-in only;
@@ -98,15 +121,63 @@ export function AvailablePanel({
     );
   }
 
+  // Decorate each row with ListRowMeta so applyListToolbar can filter
+  // + sort uniformly. variantTags for an AvailableItem is just the
+  // concrete variant the card resolves to (binder rows are always
+  // a specific printing — there's no "any" concept here).
+  type DecoratedAvail = {
+    item: AvailableApi['items'][number];
+    card: CardVariant | null;
+    addedAt: number;
+    variantTags: string[];
+  };
+
+  const decoratedAll = useMemo<DecoratedAvail[]>(
+    () => available.items.map(item => {
+      const card = byProductId.get(item.productId) ?? null;
+      return {
+        item,
+        card,
+        addedAt: item.addedAt,
+        variantTags: card ? [variantTagFromCard(card)] : [],
+      };
+    }),
+    [available.items, byProductId],
+  );
+
+  const visibleRows = useMemo<DecoratedAvail[]>(
+    () => applyListToolbar(decoratedAll, filters, sort, priceMode),
+    [decoratedAll, filters, sort, priceMode],
+  );
+
+  const isListEmpty = available.items.length === 0;
+  const hasActiveFilters = visibleRows.length !== decoratedAll.length;
+
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        {available.items.length === 0 ? (
+        {!isListEmpty && (
+          <ListToolbar
+            mode="binder"
+            filters={filters}
+            onChangeFilters={setFilters}
+            sort={sort}
+            onChangeSort={setSort}
+            totalCount={decoratedAll.length}
+            filteredCount={visibleRows.length}
+          />
+        )}
+        {isListEmpty ? (
           <EmptyState variant="centered" title={emptyState.title}>{emptyState.body}</EmptyState>
+        ) : visibleRows.length === 0 ? (
+          <EmptyState variant="centered" title="No matches">
+            {hasActiveFilters
+              ? "Your filters are hiding every row. Try Clear all."
+              : 'Nothing to show.'}
+          </EmptyState>
         ) : (
           <ul className="flex flex-col gap-2">
-            {available.items.map(item => {
-              const card = byProductId.get(item.productId) ?? null;
+            {visibleRows.map(({ item, card }) => {
               const fid = card ? cardFamilyId(card) : null;
               return (
                 <AvailableRow

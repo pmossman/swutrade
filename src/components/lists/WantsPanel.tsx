@@ -1,12 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CardVariant, PriceMode } from '../../types';
 import type { WantsApi } from '../../hooks/useWants';
-import { cardFamilyId } from '../../variants';
+import { CANONICAL_VARIANTS, cardFamilyId } from '../../variants';
 import { bestMatchForWant } from '../../listMatching';
 import { ListCardPicker } from '../ListCardPicker';
 import { WantsRow } from '../ListRows';
 import { restrictionKey } from '../../../lib/shared';
 import { EmptyState } from '../ui/states';
+import { ListToolbar } from './ListToolbar';
+import {
+  applyListToolbar,
+  type ListFilters,
+  type ListSortMode,
+} from './applyListToolbar';
+import { loadToolbarState, saveToolbarState } from './toolbarPersistence';
 
 /**
  * Shared wants-list body used by both the embedded drawer (quick-edit
@@ -34,6 +41,11 @@ interface WantsPanelProps {
   /** Copy shown in the empty-state card. Drawer and dedicated-view
    *  pitch the same list differently. */
   emptyState?: { title: string; body: string };
+  /** Persistence + analytics key for the toolbar state. Default
+   *  groups the drawer + dedicated view under one key so a user who
+   *  narrows their wishlist in one surface sees the same filters in
+   *  the other. */
+  toolbarSurfaceKey?: string;
 }
 
 const DEFAULT_EMPTY = {
@@ -49,21 +61,60 @@ export function WantsPanel({
   byFamily,
   byFamilyAll,
   emptyState = DEFAULT_EMPTY,
+  toolbarSurfaceKey = 'wishlist',
 }: WantsPanelProps) {
   const [mode, setMode] = useState<'list' | 'picker'>('list');
   const [editingWantId, setEditingWantId] = useState<string | null>(null);
 
-  // Priority-first, then insertion order. Mirrors HomeView's
-  // WishlistModule preview so the top-pinned rows are consistent
-  // across both surfaces.
-  const sortedWants = useMemo(() => {
-    return [...wants.items].sort((a, b) => {
-      const pa = a.isPriority ? 1 : 0;
-      const pb = b.isPriority ? 1 : 0;
-      if (pa !== pb) return pb - pa;
-      return a.addedAt - b.addedAt;
-    });
-  }, [wants.items]);
+  // Toolbar state — restored from localStorage on mount (except query,
+  // which always starts empty so search doesn't surprise the user
+  // across navigations). Persisted on every change.
+  const initial = useMemo(
+    () => loadToolbarState(toolbarSurfaceKey, 'default'),
+    [toolbarSurfaceKey],
+  );
+  const [filters, setFilters] = useState<ListFilters>(initial.filters);
+  const [sort, setSort] = useState<ListSortMode>(initial.sort);
+
+  useEffect(() => {
+    saveToolbarState(toolbarSurfaceKey, filters, sort);
+  }, [toolbarSurfaceKey, filters, sort]);
+
+  // Materialize the rows the toolbar needs to filter+sort. Each row
+  // carries:
+  //   - card: best sample for displayName + variant + set + price
+  //   - variantTags: which canonical variants this want represents
+  //     (all of them for restriction.any; just the listed ones for
+  //     restriction.restricted) so the variant chip filter can
+  //     evaluate the row without re-reading the restriction.
+  type DecoratedRow = ReturnType<typeof decorate>;
+  const decorate = useCallback((item: WantsApi['items'][number]) => {
+    const candidates = byFamilyAll.get(item.familyId) ?? [];
+    const sampleCard =
+      bestMatchForWant(item, candidates, priceMode)
+      ?? byFamily.get(item.familyId)
+      ?? null;
+    const variantTags = item.restriction.mode === 'restricted'
+      ? item.restriction.variants
+      : [...CANONICAL_VARIANTS];
+    return {
+      item,
+      card: sampleCard,
+      addedAt: item.addedAt,
+      variantTags,
+      isPriority: item.isPriority,
+    };
+  }, [byFamily, byFamilyAll, priceMode]);
+
+  const decoratedAll = useMemo<DecoratedRow[]>(
+    () => wants.items.map(decorate),
+    [wants.items, decorate],
+  );
+
+  const visibleWants = useMemo<DecoratedRow[]>(
+    () => applyListToolbar(decoratedAll, filters, sort, priceMode),
+    [decoratedAll, filters, sort, priceMode],
+  );
 
   if (mode === 'picker') {
     return (
@@ -107,23 +158,35 @@ export function WantsPanel({
     );
   }
 
+  const isListEmpty = wants.items.length === 0;
+  const hasActiveFilters = visibleWants.length !== decoratedAll.length;
+
   return (
     <>
       <div className="flex-1 min-h-0 overflow-y-auto p-3">
-        {sortedWants.length === 0 ? (
+        {!isListEmpty && (
+          <ListToolbar
+            mode="wishlist"
+            filters={filters}
+            onChangeFilters={setFilters}
+            sort={sort}
+            onChangeSort={setSort}
+            totalCount={decoratedAll.length}
+            filteredCount={visibleWants.length}
+          />
+        )}
+        {isListEmpty ? (
           <EmptyState variant="centered" title={emptyState.title}>{emptyState.body}</EmptyState>
+        ) : visibleWants.length === 0 ? (
+          <EmptyState variant="centered" title="No matches">
+            {hasActiveFilters
+              ? "Your filters are hiding every row. Try Clear all."
+              : 'Nothing to show.'}
+          </EmptyState>
         ) : (
           <ul className="flex flex-col gap-2">
-            {sortedWants.map(item => {
-              // Prefer the variant that satisfies the want's restriction
-              // (e.g. Showcase art for a Showcase-restricted want).
-              // Falls back to the family's Standard rep when no
-              // candidates have loaded yet.
+            {visibleWants.map(({ item, card: sampleCard }) => {
               const candidates = byFamilyAll.get(item.familyId) ?? [];
-              const sampleCard =
-                bestMatchForWant(item, candidates, priceMode)
-                ?? byFamily.get(item.familyId)
-                ?? null;
               return (
                 <WantsRow
                   key={item.id}

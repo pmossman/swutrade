@@ -6,12 +6,14 @@ import {
   getCardPrice,
 } from '../services/priceService';
 import {
+  CANONICAL_VARIANTS,
+  cardFamilyId,
   extractVariantLabel,
   variantChipLabel,
 } from '../variants';
 import { VariantBadge } from './VariantBadge';
-import { bestMatchForWant } from '../listMatching';
-import type { VariantRestriction } from '../persistence';
+import { bestMatchForWant, matchesRestriction } from '../listMatching';
+import type { VariantRestriction, WantsItem, AvailableItem } from '../persistence';
 import { AppHeader } from './ui/AppHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -19,6 +21,14 @@ import { usePriceDataContext } from '../contexts/PriceDataContext';
 import { useFavorites } from '../hooks/useFavorites';
 import { LoadingState } from './ui/states';
 import { apiGet } from '../services/apiClient';
+import { ListToolbar } from './lists/ListToolbar';
+import {
+  applyListToolbar,
+  variantTagFromCard,
+  type ListFilters,
+  type ListSortMode,
+} from './lists/applyListToolbar';
+import { loadToolbarState, saveToolbarState } from './lists/toolbarPersistence';
 
 interface ProfileUser {
   username: string;
@@ -31,11 +41,13 @@ interface ProfileWant {
   qty: number;
   restriction: VariantRestriction;
   isPriority?: boolean;
+  addedAt: number;
 }
 
 interface ProfileAvailable {
   productId: string;
   qty: number;
+  addedAt: number;
 }
 
 interface ProfileData {
@@ -49,6 +61,14 @@ interface ProfileViewProps {
   percentage: number;
   priceMode: PriceMode;
   onStartTrade: (fromHandle?: string, autoBalance?: boolean) => void;
+  /** Viewer's own wants — feeds the per-row `isMatch` flag on the
+   *  profile's Available tab ("do I want this card?"). Empty array
+   *  when the viewer is signed out or has no wants. */
+  viewerWants: readonly WantsItem[];
+  /** Viewer's own available — feeds the per-row `isMatch` flag on
+   *  the profile's Wants tab ("do I have a card that satisfies this
+   *  want?"). */
+  viewerAvailable: readonly AvailableItem[];
 }
 
 /**
@@ -126,6 +146,8 @@ export function ProfileView({
   percentage,
   priceMode,
   onStartTrade,
+  viewerWants,
+  viewerAvailable,
 }: ProfileViewProps) {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -163,36 +185,102 @@ export function ProfileView({
     return () => { cancelled = true; };
   }, [handle]);
 
+  // Materialize the viewer's own lists into match-lookup shapes once,
+  // shared by both tabs' decoration paths. Uses the same canonical
+  // `matchesRestriction` predicate the community-overlap chip uses
+  // (CommunityView.tsx::enrichMember) so all three surfaces agree.
+  const viewerAvailableByFamily = useMemo(() => {
+    const m = new Map<string, CardVariant[]>();
+    for (const item of viewerAvailable) {
+      const card = byProductId.get(item.productId);
+      if (!card) continue;
+      const fid = cardFamilyId(card);
+      const arr = m.get(fid) ?? [];
+      arr.push(card);
+      m.set(fid, arr);
+    }
+    return m;
+  }, [viewerAvailable, byProductId]);
+
+  const viewerWantsByFamily = useMemo(() => {
+    const m = new Map<string, VariantRestriction[]>();
+    for (const w of viewerWants) {
+      const arr = m.get(w.familyId) ?? [];
+      arr.push(w.restriction);
+      m.set(w.familyId, arr);
+    }
+    return m;
+  }, [viewerWants]);
+
   const wantsRows = useMemo(() => {
     if (!profile?.wants) return [];
-    type WantRow = { key: string; card: CardVariant; qty: number; restriction: VariantRestriction; isPriority?: boolean };
+    type WantRow = {
+      key: string;
+      card: CardVariant;
+      qty: number;
+      restriction: VariantRestriction;
+      isPriority?: boolean;
+      addedAt: number;
+      isMatch: boolean;
+      variantTags: readonly string[];
+    };
     const rows: Array<WantRow | null> = profile.wants
       .map((w, i) => {
         const candidates = byFamilyAll.get(w.familyId) ?? [];
         if (candidates.length === 0) return null;
-        // bestMatchForWant only reads `restriction`; pass the minimum
-        // (Pick<WantsItem, 'restriction'>) so we don't need to fake
-        // the storage-layer fields (id, addedAt) just to satisfy types.
         const card = bestMatchForWant({ restriction: w.restriction }, candidates, priceMode);
         if (!card) return null;
-        return { key: 'w-' + i, card, qty: w.qty, restriction: w.restriction, isPriority: w.isPriority };
+        // isMatch = does the viewer have any available card whose
+        // variant satisfies this want's restriction?
+        const viewerCards = viewerAvailableByFamily.get(w.familyId) ?? [];
+        const isMatch = viewerCards.some(c => matchesRestriction(c, w.restriction));
+        const variantTags = w.restriction.mode === 'restricted'
+          ? w.restriction.variants
+          : [...CANONICAL_VARIANTS];
+        return {
+          key: 'w-' + i,
+          card,
+          qty: w.qty,
+          restriction: w.restriction,
+          isPriority: w.isPriority,
+          addedAt: w.addedAt,
+          isMatch,
+          variantTags,
+        };
       });
-    // Type-guard predicate replaces `as Array<…>`; the `is` narrows
-    // the post-filter array element type without an unsafe assertion.
     return rows.filter((r): r is WantRow => r !== null);
-  }, [profile?.wants, byFamilyAll, priceMode]);
+  }, [profile?.wants, byFamilyAll, priceMode, viewerAvailableByFamily]);
 
   const availableRows = useMemo(() => {
     if (!profile?.available) return [];
-    type AvailRow = { key: string; card: CardVariant; qty: number };
+    type AvailRow = {
+      key: string;
+      card: CardVariant;
+      qty: number;
+      addedAt: number;
+      isMatch: boolean;
+      variantTags: readonly string[];
+    };
     const rows: Array<AvailRow | null> = profile.available
       .map((a, i) => {
         const card = byProductId.get(a.productId);
         if (!card) return null;
-        return { key: 'a-' + i, card, qty: a.qty };
+        // isMatch = does the viewer have a want whose restriction
+        // this card's variant satisfies?
+        const fid = cardFamilyId(card);
+        const restrictions = viewerWantsByFamily.get(fid) ?? [];
+        const isMatch = restrictions.some(r => matchesRestriction(card, r));
+        return {
+          key: 'a-' + i,
+          card,
+          qty: a.qty,
+          addedAt: a.addedAt,
+          isMatch,
+          variantTags: [variantTagFromCard(card)],
+        };
       });
     return rows.filter((r): r is AvailRow => r !== null);
-  }, [profile?.available, byProductId]);
+  }, [profile?.available, byProductId, viewerWantsByFamily]);
 
   if (loading || isAnyLoading) {
     return (
@@ -317,6 +405,7 @@ export function ProfileView({
           availableRows={availableRows}
           percentage={percentage}
           priceMode={priceMode}
+          isSelf={!!auth.user && auth.user.handle === profile.user.handle}
         />
       </main>
 
@@ -342,6 +431,9 @@ interface ProfileListRow {
   qty: number;
   restriction?: VariantRestriction;
   isPriority?: boolean;
+  addedAt: number;
+  isMatch: boolean;
+  variantTags: readonly string[];
 }
 
 /**
@@ -361,12 +453,14 @@ function ProfileLists({
   availableRows,
   percentage,
   priceMode,
+  isSelf,
 }: {
   profile: ProfileData;
   wantsRows: ProfileListRow[];
   availableRows: ProfileListRow[];
   percentage: number;
   priceMode: PriceMode;
+  isSelf: boolean;
 }) {
   const [tab, setTab] = useState<ListTab>(() => {
     if (wantsRows.length > 0) return 'wants';
@@ -419,22 +513,105 @@ function ProfileLists({
             No items in this user's public {activeLabel} list.
           </div>
         ) : (
-          <ul className="flex flex-col divide-y divide-space-800">
-            {activeRows.map(row => (
-              <ProfileRow
-                key={row.key}
-                card={row.card}
-                qty={row.qty}
-                restriction={row.restriction}
-                isPriority={row.isPriority}
-                percentage={percentage}
-                priceMode={priceMode}
-              />
-            ))}
-          </ul>
+          <ProfileListTabBody
+            tab={tab}
+            rows={activeRows}
+            profileHandle={profile.user.handle}
+            percentage={percentage}
+            priceMode={priceMode}
+            isSelf={isSelf}
+          />
         )}
       </div>
     </div>
+  );
+}
+
+/** Tab body — toolbar + filtered rows. Split out so the toolbar state
+ *  resets cleanly when the user switches tabs (the toolbar persists
+ *  per-tab via separate storage keys, but mounting/unmounting also
+ *  keeps the search input from sticking visually across the swap). */
+function ProfileListTabBody({
+  tab,
+  rows,
+  profileHandle,
+  percentage,
+  priceMode,
+  isSelf,
+}: {
+  tab: ListTab;
+  rows: ProfileListRow[];
+  profileHandle: string;
+  percentage: number;
+  priceMode: PriceMode;
+  isSelf: boolean;
+}) {
+  const surfaceKey = `profile.${profileHandle}.${tab}`;
+  const initial = useMemo(
+    () => loadToolbarState(surfaceKey, 'default'),
+    [surfaceKey],
+  );
+
+  const anyOverlap = useMemo(() => rows.some(r => r.isMatch), [rows]);
+
+  // Default-on matchMode when there's actual overlap AND we're looking
+  // at someone else's profile. Skip the match toggle entirely on own-
+  // profile views (it's always trivially-on).
+  const [filters, setFilters] = useState<ListFilters>(() => ({
+    ...initial.filters,
+    matchOnly: !isSelf && (initial.filters.matchOnly || anyOverlap),
+  }));
+  const [sort, setSort] = useState<ListSortMode>(initial.sort);
+
+  useEffect(() => {
+    saveToolbarState(surfaceKey, filters, sort);
+  }, [surfaceKey, filters, sort]);
+
+  const visible = useMemo(
+    () => applyListToolbar(rows, filters, sort, priceMode),
+    [rows, filters, sort, priceMode],
+  );
+
+  const hasActiveFilters = visible.length !== rows.length;
+
+  const matchToggleLabel = tab === 'wants'
+    ? 'Only cards you can offer'
+    : 'Only matches with your wants';
+
+  return (
+    <>
+      <ListToolbar
+        mode={isSelf ? 'profile-self' : 'profile-other'}
+        filters={filters}
+        onChangeFilters={setFilters}
+        sort={sort}
+        onChangeSort={setSort}
+        totalCount={rows.length}
+        filteredCount={visible.length}
+        matchToggleLabel={matchToggleLabel}
+      />
+      {visible.length === 0 ? (
+        <div className="text-center text-gray-500 py-12 text-sm">
+          {hasActiveFilters
+            ? "Your filters are hiding every row. Try Clear all."
+            : 'Nothing to show.'}
+        </div>
+      ) : (
+        <ul className="flex flex-col divide-y divide-space-800">
+          {visible.map(row => (
+            <ProfileRow
+              key={row.key}
+              card={row.card}
+              qty={row.qty}
+              restriction={row.restriction}
+              isPriority={row.isPriority}
+              percentage={percentage}
+              priceMode={priceMode}
+            />
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 
