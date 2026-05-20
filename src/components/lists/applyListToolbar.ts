@@ -1,5 +1,5 @@
 import type { CardVariant, PriceMode } from '../../types';
-import { extractVariantLabel } from '../../variants';
+import { CANONICAL_VARIANTS, cardFamilyId, extractVariantLabel } from '../../variants';
 import { getCardPrice } from '../../services/priceService';
 import { MAIN_GROUP, SPECIAL_GROUP } from '../../applySelectionFilters';
 import { SETS } from '../../types';
@@ -118,11 +118,35 @@ function setRecency(card: CardVariant | null): number {
 
 function cardNumber(card: CardVariant | null): number {
   if (!card) return Number.POSITIVE_INFINITY;
-  // `card.number` is a string like "001" or "078"; numeric parse so
-  // ordering matches the printed-card order, not lexicographic
-  // ("10" > "9" the right way).
+  // `card.number` is a string like "001", "078", or "101/264"
+  // (Standard prints carry the "/total" denominator while
+  // Hyperspace + Foil variants ship without it). `parseInt` stops
+  // at the first non-digit so both forms reduce cleanly.
   const n = parseInt(card.number, 10);
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
+
+const VARIANT_ORDER_INDEX: Record<string, number> = (() => {
+  const m: Record<string, number> = {};
+  for (let i = 0; i < CANONICAL_VARIANTS.length; i++) {
+    m[CANONICAL_VARIANTS[i]] = i;
+  }
+  return m;
+})();
+
+/** Variant rank within a card family — Standard first, then the
+ *  rest of CANONICAL_VARIANTS in their canonical order. Wants rows
+ *  store the full variantTags array; we use the LOWEST index across
+ *  the tags so a `restriction.any` row sorts as if it were the
+ *  Standard print (matching where users see the canonical art). */
+function variantRank(row: ListRowMeta): number {
+  if (row.variantTags.length === 0) return CANONICAL_VARIANTS.length;
+  let best: number = CANONICAL_VARIANTS.length;
+  for (const tag of row.variantTags) {
+    const idx = VARIANT_ORDER_INDEX[tag];
+    if (idx !== undefined && idx < best) best = idx;
+  }
+  return best;
 }
 
 function buildSetMatcher(selected: readonly string[]): ((slug: string) => boolean) | null {
@@ -151,22 +175,59 @@ function priceForSort(card: CardVariant | null, mode: PriceMode): number {
   return p ?? -Infinity;
 }
 
-function cmpDefault<TRow extends ListRowMeta>(a: TRow, b: TRow): number {
+/** Default-sort context built once per `applyListToolbar` call so
+ *  the comparator can ask "what's the primary card number for this
+ *  family?" without a per-comparison map lookup. The primary number
+ *  is the lowest cleanly-parseable number across every row that
+ *  shares the family — Lawbringer Standard's "101/264" → 101 wins
+ *  over Lawbringer Hyperspace's "365" → 365, so both variants sit
+ *  in position 101 of the set block. */
+interface DefaultSortCtx {
+  familyPrimaryNumber: Map<string, number>;
+}
+
+function buildDefaultSortCtx<TRow extends ListRowMeta>(rows: readonly TRow[]): DefaultSortCtx {
+  const familyPrimaryNumber = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.card) continue;
+    const fid = cardFamilyId(row.card);
+    const n = cardNumber(row.card);
+    const prev = familyPrimaryNumber.get(fid);
+    if (prev === undefined || n < prev) familyPrimaryNumber.set(fid, n);
+  }
+  return { familyPrimaryNumber };
+}
+
+function familyKey(row: ListRowMeta, ctx: DefaultSortCtx): { primaryNumber: number; familyId: string } {
+  if (!row.card) {
+    return { primaryNumber: Number.POSITIVE_INFINITY, familyId: '' };
+  }
+  const familyId = cardFamilyId(row.card);
+  return {
+    primaryNumber: ctx.familyPrimaryNumber.get(familyId) ?? cardNumber(row.card),
+    familyId,
+  };
+}
+
+function cmpDefault<TRow extends ListRowMeta>(a: TRow, b: TRow, ctx: DefaultSortCtx): number {
   // Tiered default sort:
-  //   1. Priority first (only matters on wishlist — binder rows
-  //      never set isPriority, so the priority tier collapses to
-  //      a no-op on that surface).
+  //   1. Priority first (wishlist-only — binder rows never set
+  //      isPriority).
   //   2. Set, newest first. Real users think of their collection in
-  //      set blocks ("the LAW cards I have", "my old SOR stuff");
-  //      newest-first puts the active-meta set at the top.
-  //   3. Aspect, canonical order (Heroism, Vigilance, Command,
-  //      Cunning, Aggression, Villainy). Groups same-color cards
-  //      visually within each set block — easier to scan.
-  //   4. Card number ascending. The printed-card order, which
-  //      conveniently keeps aspectless cards (Leaders / Bases by
-  //      convention low numbers) at the top of each aspect group.
-  //   5. addedAt as a stable tie-breaker so two rows for the same
-  //      card never swap on re-render.
+  //      set blocks ("my LAW cards", "old SOR stuff").
+  //   3. Aspect, canonical order. Same-color cards group visually.
+  //   4. Family-primary number ascending. The family's *Standard*
+  //      print number is the canonical position; variants (Foil,
+  //      Hyperspace, etc.) pool at that same position so two prints
+  //      of the same card sit next to each other instead of being
+  //      separated by the 264-card-set gap that Hyperspace
+  //      numbering imposes.
+  //   5. Family id alphabetical (tie-breaks two different families
+  //      that happen to share a primary number — rare, but
+  //      deterministic).
+  //   6. Variant rank within family — Standard first, then
+  //      Hyperspace, Foil, etc. per CANONICAL_VARIANTS order.
+  //   7. addedAt as a stable tie-breaker.
   const pa = a.isPriority ? 1 : 0;
   const pb = b.isPriority ? 1 : 0;
   if (pa !== pb) return pb - pa;
@@ -179,9 +240,18 @@ function cmpDefault<TRow extends ListRowMeta>(a: TRow, b: TRow): number {
   const ib = aspectIndex(b.card);
   if (ia !== ib) return ia - ib;
 
-  const na = cardNumber(a.card);
-  const nb = cardNumber(b.card);
-  if (na !== nb) return na - nb;
+  const fka = familyKey(a, ctx);
+  const fkb = familyKey(b, ctx);
+  if (fka.primaryNumber !== fkb.primaryNumber) {
+    return fka.primaryNumber - fkb.primaryNumber;
+  }
+  if (fka.familyId !== fkb.familyId) {
+    return fka.familyId < fkb.familyId ? -1 : 1;
+  }
+
+  const va = variantRank(a);
+  const vb = variantRank(b);
+  if (va !== vb) return va - vb;
 
   return a.addedAt - b.addedAt;
 }
@@ -191,10 +261,11 @@ function cmpByMode<TRow extends ListRowMeta>(
   b: TRow,
   sort: ListSortMode,
   priceMode: PriceMode,
+  defaultCtx: DefaultSortCtx,
 ): number {
   switch (sort) {
     case 'default':
-      return cmpDefault(a, b);
+      return cmpDefault(a, b, defaultCtx);
     case 'newest':
       return b.addedAt - a.addedAt;
     case 'oldest':
@@ -287,8 +358,11 @@ export function applyListToolbar<TRow extends ListRowMeta>(
   });
 
   // Sort needs a new array (filter already returns one, so this is
-  // safe to mutate in place).
-  filtered.sort((a, b) => cmpByMode(a, b, sort, priceMode));
+  // safe to mutate in place). DefaultSortCtx is built once from the
+  // filtered set so cross-family primary-number lookups stay O(1)
+  // per comparison.
+  const defaultCtx = buildDefaultSortCtx(filtered);
+  filtered.sort((a, b) => cmpByMode(a, b, sort, priceMode, defaultCtx));
   return filtered;
 }
 

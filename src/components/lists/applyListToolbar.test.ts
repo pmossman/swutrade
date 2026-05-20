@@ -79,6 +79,59 @@ describe('applyListToolbar — no filters', () => {
     expect(result.map(r => r.id)).toEqual(['older', 'mid', 'newer']);
   });
 
+  it('default sort: keeps variants of the same card adjacent (Lawbringer regression)', () => {
+    // Standard Lawbringer is printed as "101/264"; Hyperspace
+    // version of the same card is "365" (it lives in the
+    // Hyperspace numbering block past the base set). Naïvely
+    // sorting by parsed number puts 264 cards between them; the
+    // family-primary-number tier collapses both to position 101 so
+    // they sit adjacent. Variant rank then orders Standard before
+    // Hyperspace within that family slot.
+    //
+    // Real-data invariant: `displayName` is the base name WITHOUT
+    // the variant suffix — enrichment normalizes this so every
+    // variant of one card shares the same displayName + the same
+    // familyId. The mock has to mirror that or cardFamilyId
+    // (which keys off displayName) returns different ids for
+    // each variant and the family-grouping tier never fires.
+    const lawSet = { set: 'a-lawless-time', aspects: ['Vigilance', 'Villainy'] };
+    const lawbringerDisplay = 'Lawbringer - Shadow Over Lothal';
+    const rows: Row[] = [
+      row('law-std', {
+        card: card({
+          ...lawSet,
+          name: 'Lawbringer - Shadow Over Lothal',
+          displayName: lawbringerDisplay,
+          variant: 'Standard',
+          number: '101/264',
+        }),
+        variantTags: ['Standard'],
+      }),
+      row('law-hs', {
+        card: card({
+          ...lawSet,
+          name: 'Lawbringer - Shadow Over Lothal (Hyperspace)',
+          displayName: lawbringerDisplay,
+          variant: 'Hyperspace',
+          number: '365',
+        }),
+        variantTags: ['Hyperspace'],
+      }),
+      row('bodhi', {
+        card: card({
+          ...lawSet,
+          name: 'Bodhi Rook - Creating a Diversion',
+          displayName: 'Bodhi Rook - Creating a Diversion',
+          variant: 'Standard',
+          number: '105/264',
+        }),
+        variantTags: ['Standard'],
+      }),
+    ];
+    const result = applyListToolbar(rows, DEFAULT_LIST_FILTERS, 'default', 'market');
+    expect(result.map(r => r.id)).toEqual(['law-std', 'law-hs', 'bodhi']);
+  });
+
   it('default sort: rows with null card sink to the bottom', () => {
     const rows: Row[] = [
       row('null', { card: null }),
