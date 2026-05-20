@@ -2,33 +2,63 @@ import { useEffect, useState } from 'react';
 import { apiPost } from '../services/apiClient';
 
 /**
- * Fetches per-familyId counts of public wants from other users for
- * the caller's current available-list familyIds. The resulting map
- * is `{}`-empty for families nobody else wants, so downstream
- * components can just read `counts[familyId] ?? 0`.
+ * Per-row popular-wants signal for binder rows. The 2026-05-20 rewrite
+ * switched this surface from a familyId-only count to a per-productId
+ * restriction-aware count plus a list of surfaceable wanter
+ * identities so the "N wants this" badge can be made tappable for
+ * trade-discovery.
  *
- * Debounces re-requests while the input list changes — useful when
- * the user edits their available list rapidly via the drawer. The
- * debounce + cancelled-flag protects against stale state writes from
- * an earlier in-flight request landing after a newer one.
+ * Input is keyed by `productId` (each binder row has a unique one)
+ * with the row's `familyId` + concrete `variant` attached so the
+ * server can filter wants whose restriction would actually accept
+ * the binder's specific print. A want restricted to `Hyperspace
+ * Foil` no longer counts toward a Standard binder row.
+ *
+ * Response shape, per productId:
+ *   - `count`: number of distinct OTHER users with a wants restriction
+ *     that matches this row's variant. Includes hidden-profile users
+ *     so the statistical signal is honest.
+ *   - `users`: up to 10 PublicUser tuples (handle / username /
+ *     avatarUrl) for surfacing in a popover. Users with
+ *     profileVisibility='private' are filtered out of this list
+ *     (they opt out of discovery) but their want still contributes
+ *     to the count.
  */
-export function usePopularWants(familyIds: readonly string[]): Record<string, number> {
-  const [counts, setCounts] = useState<Record<string, number>>({});
+export interface PopularWantsUser {
+  handle: string;
+  username: string;
+  avatarUrl: string | null;
+}
+
+export interface PopularWantsEntry {
+  count: number;
+  users: PopularWantsUser[];
+}
+
+export interface PopularWantsInput {
+  productId: string;
+  familyId: string;
+  variant: string;
+}
+
+export function usePopularWants(items: readonly PopularWantsInput[]): Record<string, PopularWantsEntry> {
+  const [counts, setCounts] = useState<Record<string, PopularWantsEntry>>({});
 
   useEffect(() => {
-    if (familyIds.length === 0) {
+    if (items.length === 0) {
       setCounts({});
       return;
     }
 
-    // Sort to stabilize the cache key — same set in any order maps
-    // to the same request body so repeated reorders don't refetch.
-    const normalized = [...familyIds].sort();
+    // Sort by productId to stabilize the cache key — same set in any
+    // order produces the same request body so repeated reorders don't
+    // refetch.
+    const normalized = [...items].sort((a, b) => a.productId.localeCompare(b.productId));
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const result = await apiPost<{ counts?: Record<string, number> }>(
+      const result = await apiPost<{ counts?: Record<string, PopularWantsEntry> }>(
         '/api/popular-wants',
-        { familyIds: normalized },
+        { items: normalized },
       );
       if (cancelled) return;
       setCounts(result.ok ? (result.data.counts ?? {}) : {});
@@ -38,7 +68,11 @@ export function usePopularWants(familyIds: readonly string[]): Record<string, nu
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [familyIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    // The stringified shape pins the effect deps — same set in same
+    // order means same fetch. Disabling exhaustive-deps because the
+    // serialized form IS the dep, not the array reference identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map(i => `${i.productId}:${i.variant}`).join(',')]);
 
   return counts;
 }

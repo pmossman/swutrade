@@ -7,6 +7,8 @@ import { extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type Canonica
 import { VariantBadge } from './VariantBadge';
 import { VariantSwapPopover } from './VariantSwapPopover';
 import { VariantChip } from './VariantChip';
+import { Popover } from './Popover';
+import type { PopularWantsEntry } from '../hooks/usePopularWants';
 import { NumberStepper } from './ui/NumberStepper';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 
@@ -314,9 +316,13 @@ interface AvailableRowProps {
    *  surfaces, not negotiation surfaces. */
   percentage?: number;
   priceMode: PriceMode;
-  /** Count of other signed-in users who have this card's family on
-   *  their public wants list. 0 or undefined hides the badge. */
-  wantCount?: number;
+  /** Per-row wanters payload: count of distinct other users whose
+   *  restriction would accept this exact binder variant, plus a
+   *  capped list of surfaceable identities (handle/avatar) for the
+   *  user-picker popover the badge opens. The 2026-05-20 rewrite
+   *  replaced the old family-id-only count with this variant-aware
+   *  shape — see api/popular-wants.ts. */
+  wanters?: PopularWantsEntry;
   /** Takes (id, next-qty) so the parent can pass a stable reference
    *  (the hook's `useCallback`'d update method) and let the row close
    *  over its own item.id. Replaces the older `(next) => void` shape
@@ -338,7 +344,7 @@ export const AvailableRow = memo(function AvailableRow({
   item,
   card,
   priceMode,
-  wantCount,
+  wanters,
   onChangeQty,
   onRemove,
   familyCandidates,
@@ -347,7 +353,8 @@ export const AvailableRow = memo(function AvailableRow({
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
   const price = card ? getCardPrice(card, priceMode) : null;
-  const showWantBadge = typeof wantCount === 'number' && wantCount > 0;
+  const wantCount = wanters?.count ?? 0;
+  const showWantBadge = wantCount > 0;
   // Swap is enabled only when the parent supplied both the family
   // candidates (catalog data to populate the popover) and a handler
   // (state mutation path). With only one variant in the family the
@@ -379,13 +386,8 @@ export const AvailableRow = memo(function AvailableRow({
             {price !== null && (
               <span className="text-[10px] text-gold font-semibold">{formatPrice(price)}</span>
             )}
-            {showWantBadge && (
-              <span
-                className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-200"
-                title={`${wantCount} other user${wantCount === 1 ? '' : 's'} want this on their public list`}
-              >
-                {wantCount} want{wantCount === 1 ? 's' : ''} this
-              </span>
+            {showWantBadge && wanters && (
+              <WantersBadge wanters={wanters} />
             )}
           </div>
         </div>
@@ -431,5 +433,89 @@ function StarIcon({ filled, className }: { filled: boolean; className?: string }
     >
       <path d="M8 1.5l2 4.5 5 .5-3.75 3.25L12.5 15 8 12.25 3.5 15l1.25-5.25L1 6.5 6 6z" />
     </svg>
+  );
+}
+
+/**
+ * Clickable "N wants this" badge on binder rows. Tapping opens a
+ * popover with up to 10 wanter identities — each tappable, deep-
+ * linking to /u/<handle> so the viewer can browse the wanter's
+ * profile and propose a trade. Wanters whose profileVisibility is
+ * `private` are excluded server-side (their want still contributes
+ * to the count for an honest signal, but they opt out of discovery).
+ *
+ * When `count > users.length` (capped at 10 by the API), the popover
+ * footer says "and N more" — count tells the full story even when
+ * the surfaceable list is bounded.
+ */
+function WantersBadge({ wanters }: { wanters: PopularWantsEntry }) {
+  const { count, users } = wanters;
+  const overflow = count - users.length;
+  return (
+    <Popover
+      align="center"
+      panelClassName="p-2 min-w-[220px]"
+      trigger={({ open, toggle }) => (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={`${count} other user${count === 1 ? '' : 's'} want this on their public list — tap to view`}
+          className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 hover:border-blue-500/50 transition-colors cursor-pointer"
+        >
+          {count} want{count === 1 ? 's' : ''} this
+        </button>
+      )}
+    >
+      {() => (
+        <div className="flex flex-col gap-1">
+          <span className="text-[10px] tracking-[0.1em] uppercase font-bold text-gray-500 px-2 pt-1 pb-0.5">
+            {count === 1 ? '1 trader wants this' : `${count} traders want this`}
+          </span>
+          {users.length === 0 ? (
+            <span className="text-[11px] text-gray-400 italic px-2 py-1">
+              No public profiles to show — all wanters have private profiles.
+            </span>
+          ) : (
+            <ul className="flex flex-col">
+              {users.map(u => (
+                <li key={u.handle}>
+                  <a
+                    href={`/u/${encodeURIComponent(u.handle)}`}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-space-700 transition-colors"
+                  >
+                    {u.avatarUrl ? (
+                      <img
+                        src={u.avatarUrl}
+                        alt=""
+                        className="w-6 h-6 rounded-full border border-space-700 shrink-0"
+                      />
+                    ) : (
+                      <span className="w-6 h-6 rounded-full bg-space-700 border border-space-600 text-[10px] text-gray-400 flex items-center justify-center shrink-0">
+                        {u.handle.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="flex flex-col min-w-0">
+                      <span className="text-xs text-gray-100 font-medium truncate">
+                        @{u.handle}
+                      </span>
+                      {u.username && u.username !== u.handle && (
+                        <span className="text-[10px] text-gray-500 truncate">{u.username}</span>
+                      )}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+          {overflow > 0 && (
+            <span className="text-[10px] text-gray-500 italic px-2 pb-1">
+              and {overflow} more
+            </span>
+          )}
+        </div>
+      )}
+    </Popover>
   );
 }

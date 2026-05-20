@@ -20,10 +20,14 @@ describeWithDb('POST /api/popular-wants', () => {
     ]);
     fixtures.push(u1, u2, u3);
 
-    // u1 + u2 want 'shared::vader'; u3 wants 'shared::vader' + 'only::cad'.
+    // u1 + u2 want 'shared::vader' with no restriction (any variant);
+    // u3 wants 'shared::vader' restricted to Hyperspace Foil only +
+    // wants 'only::cad' with no restriction.
     await insertWant(u1.id, 'shared::vader');
     await insertWant(u2.id, 'shared::vader');
-    await insertWant(u3.id, 'shared::vader');
+    await insertWant(u3.id, 'shared::vader', {
+      restriction: { mode: 'restricted', variants: ['Hyperspace Foil'] },
+    });
     await insertWant(u3.id, 'only::cad');
   });
 
@@ -32,20 +36,73 @@ describeWithDb('POST /api/popular-wants', () => {
     fixtures.length = 0;
   });
 
-  it('returns userCount per familyId for anonymous callers', async () => {
+  it('returns per-productId count + users for anonymous callers', async () => {
     const req = mockRequest({
       method: 'POST',
-      body: { familyIds: ['shared::vader', 'only::cad', 'nobody::wants-this'] },
+      body: {
+        items: [
+          { productId: 'p-vader-standard', familyId: 'shared::vader', variant: 'Standard' },
+          { productId: 'p-cad', familyId: 'only::cad', variant: 'Standard' },
+          { productId: 'p-nobody', familyId: 'nobody::wants-this', variant: 'Standard' },
+        ],
+      },
     });
     const res = mockResponse();
     await handler(req, res);
 
     expect(res._status).toBe(200);
-    const { counts } = res._json as { counts: Record<string, number> };
-    expect(counts['shared::vader']).toBeGreaterThanOrEqual(3);
-    expect(counts['only::cad']).toBeGreaterThanOrEqual(1);
-    // Families with zero matches are omitted rather than returned as 0.
-    expect(counts['nobody::wants-this']).toBeUndefined();
+    const { counts } = res._json as { counts: Record<string, { count: number; users: Array<{ handle: string }> }> };
+
+    // shared::vader Standard: only u1 + u2 match (u3's restriction is
+    // Hyperspace Foil only — doesn't satisfy Standard).
+    expect(counts['p-vader-standard']?.count).toBeGreaterThanOrEqual(2);
+    expect(counts['p-vader-standard']?.users.length).toBeGreaterThanOrEqual(2);
+
+    // only::cad Standard: u3 has restriction.any → matches.
+    expect(counts['p-cad']?.count).toBeGreaterThanOrEqual(1);
+
+    // Empty families omitted.
+    expect(counts['p-nobody']).toBeUndefined();
+  });
+
+  it('restriction-aware: Hyperspace Foil binder row matches Hyperspace-Foil-restricted want', async () => {
+    const req = mockRequest({
+      method: 'POST',
+      body: {
+        items: [
+          { productId: 'p-vader-hsf', familyId: 'shared::vader', variant: 'Hyperspace Foil' },
+        ],
+      },
+    });
+    const res = mockResponse();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    const { counts } = res._json as { counts: Record<string, { count: number }> };
+    // u1 + u2 (any) + u3 (HSF-only) all match a HSF binder row.
+    expect(counts['p-vader-hsf']?.count).toBeGreaterThanOrEqual(3);
+  });
+
+  it('restriction-aware: Standard binder row does NOT match Hyperspace-Foil-only want', async () => {
+    // Pin the regression: variant-stripped counts used to lie here —
+    // a Standard binder row would have shown +1 from u3's HSF-only
+    // want. With variant-awareness u3 falls out of the tally.
+    const req = mockRequest({
+      method: 'POST',
+      body: {
+        items: [
+          { productId: 'p-vader-std', familyId: 'shared::vader', variant: 'Standard' },
+        ],
+      },
+    });
+    const res = mockResponse();
+    await handler(req, res);
+
+    const { counts } = res._json as { counts: Record<string, { count: number; users: Array<{ handle: string }> }> };
+    // u1 + u2 only. u3's want is HSF-restricted and must NOT count.
+    const u3Handle = fixtures[2].handle;
+    const handles = counts['p-vader-std']?.users.map(u => u.handle) ?? [];
+    expect(handles).not.toContain(u3Handle);
   });
 
   it('excludes the caller from the count when signed in', async () => {
@@ -55,20 +112,25 @@ describeWithDb('POST /api/popular-wants', () => {
     const req = mockRequest({
       method: 'POST',
       cookies: { swu_session: sessionCookie },
-      body: { familyIds: ['shared::vader'] },
+      body: {
+        items: [
+          { productId: 'p-vader', familyId: 'shared::vader', variant: 'Standard' },
+        ],
+      },
     });
     const res = mockResponse();
     await handler(req, res);
 
     expect(res._status).toBe(200);
-    const { counts } = res._json as { counts: Record<string, number> };
-    // u1 is one of the three users wanting 'shared::vader'. Signed in
-    // as u1, the count drops by one.
-    expect(counts['shared::vader']).toBeGreaterThanOrEqual(2);
+    const { counts } = res._json as { counts: Record<string, { count: number; users: Array<{ handle: string }> }> };
+    // u1 is one of the matching wanters; signed-in as u1 the count
+    // drops by one + u1's handle never appears in the users list.
+    const handles = counts['p-vader']?.users.map(u => u.handle) ?? [];
+    expect(handles).not.toContain(u1.handle);
   });
 
-  it('returns empty counts for an empty familyIds list', async () => {
-    const req = mockRequest({ method: 'POST', body: { familyIds: [] } });
+  it('returns empty counts for an empty items list', async () => {
+    const req = mockRequest({ method: 'POST', body: { items: [] } });
     const res = mockResponse();
     await handler(req, res);
     expect(res._status).toBe(200);

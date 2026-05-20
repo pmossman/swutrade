@@ -75,20 +75,29 @@ export function AvailablePanel({
     saveToolbarState(toolbarSurfaceKey, filters, sort);
   }, [toolbarSurfaceKey, filters, sort]);
 
-  // "Popular wants" — how many other users have each of our binder
-  // cards' families on their public wants list. Signed-in only;
-  // surfaces the social payoff of having a public binder.
+  // "Popular wants" — per-productId list of other users whose
+  // restriction would actually accept this binder row's variant.
+  // Signed-in only; surfaces the social payoff of having a public
+  // binder. The 2026-05-20 rewrite added variant-awareness +
+  // wanter identities so the row badge can deep-link into a
+  // user-picker popover (see ListRows.AvailableRow's PopularWanters
+  // popover).
   const { user } = useAuthContext();
-  const availableFamilyIds = useMemo<string[]>(() => {
+  const popularWantsInput = useMemo(() => {
     if (!user) return [];
-    const ids = new Set<string>();
+    const items: { productId: string; familyId: string; variant: string }[] = [];
     for (const item of available.items) {
       const card = byProductId.get(item.productId);
-      if (card) ids.add(cardFamilyId(card));
+      if (!card || !card.productId) continue;
+      items.push({
+        productId: item.productId,
+        familyId: cardFamilyId(card),
+        variant: variantTagFromCard(card),
+      });
     }
-    return [...ids];
+    return items;
   }, [user, available.items, byProductId]);
-  const wantCounts = usePopularWants(availableFamilyIds);
+  const popularWants = usePopularWants(popularWantsInput);
 
   // Stable reference so each AvailableRow's React.memo can short-circuit
   // when only `wantCounts` or another row changes. `available.update`
@@ -234,6 +243,7 @@ export function AvailablePanel({
             {visibleRows.map(({ item, card }) => {
               const fid = card ? cardFamilyId(card) : null;
               const familyCandidates = fid ? byFamilyAll.get(fid) : undefined;
+              const wanters = popularWants[item.productId];
               return (
                 <AvailableRow
                   key={item.id}
@@ -241,7 +251,7 @@ export function AvailablePanel({
                   card={card}
                   percentage={percentage}
                   priceMode={priceMode}
-                  wantCount={fid ? wantCounts[fid] : undefined}
+                  wanters={wanters}
                   onChangeQty={handleChangeQty}
                   onRemove={available.remove}
                   familyCandidates={familyCandidates}
