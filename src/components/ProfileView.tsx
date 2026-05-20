@@ -282,6 +282,29 @@ export function ProfileView({
     return rows.filter((r): r is AvailRow => r !== null);
   }, [profile?.available, byProductId, viewerWantsByFamily]);
 
+  // ⚠ Hooks order: these MUST stay above the loading / error / null-
+  // profile early-returns below. Putting them after changes the
+  // hook-call count across renders and trips React's "Rendered fewer
+  // hooks than expected" runtime error. Same trap that bit
+  // AvailablePanel / WantsPanel in earlier slices — auth-gated e2e
+  // catches it because the test sees the profile-loading transition;
+  // anonymous specs don't hit the auth-gated profile path so they
+  // never exercise this.
+  //
+  // Selection-to-seed: viewer-selected productIds from this profile's
+  // Trade Binder tab seed the receiving side of the propose-trade
+  // flow. Lives at ProfileView root so the hero CTA can read the
+  // selection count + build the seeded URL.
+  const [selectedReceiving, setSelectedReceiving] = useState<Set<string>>(() => new Set());
+  const handleToggleReceivingSelect = useCallback((productId: string) => {
+    setSelectedReceiving(prev => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }, []);
+
   if (loading || isAnyLoading) {
     return (
       <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex">
@@ -309,19 +332,9 @@ export function ProfileView({
   // document.referrer via `deriveProfileParent`) so "Back" returns
   // the user to where they came from — Community, My trades, a trade
   // detail — instead of dumping them to Home every time. UX-A6.
-  // Selection-to-seed: viewer-selected productIds from this profile's
-  // Trade Binder tab seed the receiving side of the propose-trade
-  // flow. Lives at ProfileView root so the hero CTA can read the
-  // selection count + build the seeded URL.
-  const [selectedReceiving, setSelectedReceiving] = useState<Set<string>>(() => new Set());
-  const handleToggleReceivingSelect = useCallback((productId: string) => {
-    setSelectedReceiving(prev => {
-      const next = new Set(prev);
-      if (next.has(productId)) next.delete(productId);
-      else next.add(productId);
-      return next;
-    });
-  }, []);
+  // (selectedReceiving + handleToggleReceivingSelect hooks are
+  // declared above the early-returns to keep React's hook-call
+  // count stable. See the warning comment there.)
 
   const proposeHref = (() => {
     const params = new URLSearchParams();
