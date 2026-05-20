@@ -8,6 +8,8 @@ import { WantsRow } from '../ListRows';
 import { restrictionKey } from '../../../lib/shared';
 import { EmptyState } from '../ui/states';
 import { ListToolbar, FilterAwareEmptyBody } from './ListToolbar';
+import { usePopularHaves } from '../../hooks/usePopularWants';
+import { useAuthContext } from '../../contexts/AuthContext';
 import {
   applyListToolbar,
   type ListFilters,
@@ -116,6 +118,27 @@ export function WantsPanel({
     [decoratedAll, filters, sort, priceMode],
   );
 
+  // "Popular haves" — per-wishlist-row list of other users whose
+  // public binder has a variant satisfying this row's restriction.
+  // Signed-in only; surfaces the social payoff of having public
+  // wants. Symmetric to the binder's `usePopularWants` direction
+  // (see AvailablePanel). Both endpoints share a function file via
+  // vercel.json rewrites to stay under the Hobby function-count
+  // ceiling.
+  const { user } = useAuthContext();
+  const popularHavesInput = useMemo(() => {
+    if (!user) return [];
+    return wants.items.map(item => ({
+      rowId: item.id,
+      familyId: item.familyId,
+      restrictionMode: item.restriction.mode,
+      restrictionVariants: item.restriction.mode === 'restricted'
+        ? item.restriction.variants
+        : undefined,
+    }));
+  }, [user, wants.items]);
+  const popularHaves = usePopularHaves(popularHavesInput);
+
   // ⚠ Hooks order: these MUST stay above the `if (mode === 'picker')`
   // early-return below. Same trap that bit AvailablePanel in
   // 06dd0e7 — putting hooks after a conditional return changes the
@@ -213,6 +236,7 @@ export function WantsPanel({
           <ul className="flex flex-col gap-2">
             {visibleWants.map(({ item, card: sampleCard }) => {
               const candidates = byFamilyAll.get(item.familyId) ?? [];
+              const haves = popularHaves[item.id];
               return (
                 <WantsRow
                   key={item.id}
@@ -232,6 +256,7 @@ export function WantsPanel({
                   onChangeRestriction={next =>
                     wants.update(item.id, { restriction: next })
                   }
+                  haves={haves}
                 />
               );
             })}

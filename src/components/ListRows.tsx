@@ -93,6 +93,12 @@ interface WantsRowProps {
   onRemove: () => void;
   onToggleEdit: () => void;
   onChangeRestriction: (next: VariantRestriction) => void;
+  /** Per-row matching-traders payload: count + capped user list of
+   *  signed-in users whose public binder has a variant satisfying
+   *  this want's restriction. Drives the "N has this" badge that
+   *  opens a popover deep-linking to /u/<handle> for proposal.
+   *  Mirrors the symmetric `wanters` prop on AvailableRow. */
+  haves?: PopularWantsEntry;
 }
 
 function restrictionLabel(r: VariantRestriction): string {
@@ -112,6 +118,7 @@ export function WantsRow({
   onRemove,
   onToggleEdit,
   onChangeRestriction,
+  haves,
 }: WantsRowProps) {
   // Strip the variant suffix from the fallback name so unenriched cards
   // don't show "(Showcase)" in the title — variant is already conveyed
@@ -125,15 +132,20 @@ export function WantsRow({
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
-          <button
-            type="button"
-            onClick={onToggleEdit}
-            aria-expanded={isEditing}
-            className="self-start flex items-center gap-1 mt-1 px-2 py-1 rounded-md bg-space-900/70 border border-space-700 hover:border-gold/40 text-[11px] text-gray-300 hover:text-gold transition-colors"
-          >
-            <span className="truncate">{restrictionLabel(item.restriction)}</span>
-            <ChevronIcon open={isEditing} className="w-3 h-3 shrink-0" />
-          </button>
+          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+            <button
+              type="button"
+              onClick={onToggleEdit}
+              aria-expanded={isEditing}
+              className="self-start flex items-center gap-1 px-2 py-1 rounded-md bg-space-900/70 border border-space-700 hover:border-gold/40 text-[11px] text-gray-300 hover:text-gold transition-colors"
+            >
+              <span className="truncate">{restrictionLabel(item.restriction)}</span>
+              <ChevronIcon open={isEditing} className="w-3 h-3 shrink-0" />
+            </button>
+            {haves && haves.count > 0 && (
+              <TraderMatchBadge match={haves} direction="haves" />
+            )}
+          </div>
         </div>
         <button
           type="button"
@@ -387,7 +399,7 @@ export const AvailableRow = memo(function AvailableRow({
               <span className="text-[10px] text-gold font-semibold">{formatPrice(price)}</span>
             )}
             {showWantBadge && wanters && (
-              <WantersBadge wanters={wanters} />
+              <TraderMatchBadge match={wanters} direction="wants" />
             )}
           </div>
         </div>
@@ -437,20 +449,50 @@ function StarIcon({ filled, className }: { filled: boolean; className?: string }
 }
 
 /**
- * Clickable "N wants this" badge on binder rows. Tapping opens a
- * popover with up to 10 wanter identities — each tappable, deep-
- * linking to /u/<handle> so the viewer can browse the wanter's
- * profile and propose a trade. Wanters whose profileVisibility is
- * `private` are excluded server-side (their want still contributes
- * to the count for an honest signal, but they opt out of discovery).
+ * Clickable trader-match badge — surfaces on binder rows ("N wants
+ * this") and wishlist rows ("N has this"). Tapping opens a popover
+ * with up to 10 trader identities, each linking to `/u/<handle>` so
+ * the viewer can browse a profile and propose a trade.
  *
- * When `count > users.length` (capped at 10 by the API), the popover
- * footer says "and N more" — count tells the full story even when
- * the surfaceable list is bounded.
+ * Direction-aware labels:
+ *   - `wants` (binder row): "N wants this" / "N traders want this"
+ *   - `haves` (wishlist row): "N has this" / "N traders have this"
+ *
+ * Privacy convention enforced server-side: traders whose
+ * profileVisibility is `private` are excluded from the surfaced
+ * user list (opt-out of discovery) but their want / available row
+ * still contributes to the count. When `count > users.length`
+ * (capped at 10 by the API) the popover shows "and N more" so the
+ * statistical signal stays honest.
  */
-function WantersBadge({ wanters }: { wanters: PopularWantsEntry }) {
-  const { count, users } = wanters;
+function TraderMatchBadge({
+  match,
+  direction,
+}: {
+  match: PopularWantsEntry;
+  direction: 'wants' | 'haves';
+}) {
+  const { count, users } = match;
   const overflow = count - users.length;
+  const triggerText = direction === 'wants'
+    ? `${count} want${count === 1 ? 's' : ''} this`
+    : `${count} ha${count === 1 ? 's' : 've'} this`;
+  const headerText = direction === 'wants'
+    ? (count === 1 ? '1 trader wants this' : `${count} traders want this`)
+    : (count === 1 ? '1 trader has this' : `${count} traders have this`);
+  const ariaLabel = direction === 'wants'
+    ? `${count} other user${count === 1 ? '' : 's'} want this on their public list — tap to view`
+    : `${count} other user${count === 1 ? '' : 's'} ${count === 1 ? 'has' : 'have'} this on their public binder — tap to view`;
+  const emptyCopy = direction === 'wants'
+    ? 'No public profiles to show — all wanters have private profiles.'
+    : 'No public profiles to show — all owners have private profiles.';
+  // Color tone follows the trade-side palette: wants direction
+  // (someone wants something the viewer has) gets blue (= receiving
+  // for the viewer); haves direction (someone has something the
+  // viewer wants) gets emerald (= offering FOR the viewer).
+  const triggerClass = direction === 'wants'
+    ? 'bg-blue-500/15 border-blue-500/30 text-blue-200 hover:bg-blue-500/25 hover:border-blue-500/50'
+    : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200 hover:bg-emerald-500/25 hover:border-emerald-500/50';
   return (
     <Popover
       align="center"
@@ -461,22 +503,20 @@ function WantersBadge({ wanters }: { wanters: PopularWantsEntry }) {
           onClick={toggle}
           aria-haspopup="menu"
           aria-expanded={open}
-          aria-label={`${count} other user${count === 1 ? '' : 's'} want this on their public list — tap to view`}
-          className="text-[10px] font-semibold px-1.5 py-px rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-200 hover:bg-blue-500/25 hover:border-blue-500/50 transition-colors cursor-pointer"
+          aria-label={ariaLabel}
+          className={`text-[10px] font-semibold px-1.5 py-px rounded-full border transition-colors cursor-pointer ${triggerClass}`}
         >
-          {count} want{count === 1 ? 's' : ''} this
+          {triggerText}
         </button>
       )}
     >
       {() => (
         <div className="flex flex-col gap-1">
           <span className="text-[10px] tracking-[0.1em] uppercase font-bold text-gray-500 px-2 pt-1 pb-0.5">
-            {count === 1 ? '1 trader wants this' : `${count} traders want this`}
+            {headerText}
           </span>
           {users.length === 0 ? (
-            <span className="text-[11px] text-gray-400 italic px-2 py-1">
-              No public profiles to show — all wanters have private profiles.
-            </span>
+            <span className="text-[11px] text-gray-400 italic px-2 py-1">{emptyCopy}</span>
           ) : (
             <ul className="flex flex-col">
               {users.map(u => (

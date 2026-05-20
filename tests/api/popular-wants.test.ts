@@ -144,3 +144,99 @@ describeWithDb('POST /api/popular-wants', () => {
     expect(res._status).toBe(405);
   });
 });
+
+// Haves direction lives in the same function file (dispatched by
+// `?action=haves`), so the test file groups both directions. The
+// haves direction reads `availableItems` joined to `users` and
+// resolves productId → variant via the bundled family index.
+describeWithDb('POST /api/popular-wants?action=haves', () => {
+  const fixtures: Array<Awaited<ReturnType<typeof createTestUser>>> = [];
+
+  beforeEach(async () => {
+    const [u1, u2] = await Promise.all([createTestUser(), createTestUser()]);
+    // Make u1 + u2's binders public so the haves direction sees them.
+    const { getDb } = await import('../../lib/db.js');
+    const { users: usersTable } = await import('../../lib/schema.js');
+    const { eq } = await import('drizzle-orm');
+    const db = getDb();
+    await db.update(usersTable).set({ availablePublic: true }).where(eq(usersTable.id, u1.id));
+    await db.update(usersTable).set({ availablePublic: true }).where(eq(usersTable.id, u2.id));
+    fixtures.push(u1, u2);
+  });
+
+  afterEach(async () => {
+    for (const f of fixtures) await f.cleanup();
+    fixtures.length = 0;
+  });
+
+  it('matches a `restriction.any` wishlist row against any available variant in the family', async () => {
+    // Real productId from the bundled catalog so PRODUCT_TO_FAMILY
+    // resolves: 622133 = Luke Skywalker - Hero of Yavin (Hyperspace),
+    // familyId 'jump-to-lightspeed::luke-skywalker-hero-of-yavin'.
+    const { insertAvailable } = await import('./helpers.js');
+    await insertAvailable(fixtures[0].id, '622133');
+
+    const req = mockRequest({
+      method: 'POST',
+      query: { action: 'haves' },
+      body: {
+        items: [
+          {
+            rowId: 'wish-luke-any',
+            familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin',
+            restrictionMode: 'any',
+          },
+        ],
+      },
+    });
+    const res = mockResponse();
+    await handler(req, res);
+
+    expect(res._status).toBe(200);
+    const { counts } = res._json as { counts: Record<string, { count: number; users: Array<{ handle: string }> }> };
+    expect(counts['wish-luke-any']?.count).toBeGreaterThanOrEqual(1);
+    const handles = counts['wish-luke-any']?.users.map(u => u.handle) ?? [];
+    expect(handles).toContain(fixtures[0].handle);
+  });
+
+  it('restriction-aware: a Standard-only wishlist row does NOT match a Hyperspace-only available', async () => {
+    // u1 has Luke Hyperspace (productId 622133, variant Hyperspace).
+    // The wishlist row asks for Standard only — must not surface u1.
+    //
+    // Asserting on `u1's handle NOT in users` rather than `count === 0`
+    // because the test DB is shared — real users with Standard Luke
+    // in their public binders may show up legitimately. We only
+    // care that u1 (who has Hyperspace) doesn't pollute a Standard-
+    // only query.
+    const { insertAvailable } = await import('./helpers.js');
+    await insertAvailable(fixtures[0].id, '622133');
+
+    const req = mockRequest({
+      method: 'POST',
+      query: { action: 'haves' },
+      body: {
+        items: [
+          {
+            rowId: 'wish-luke-std',
+            familyId: 'jump-to-lightspeed::luke-skywalker-hero-of-yavin',
+            restrictionMode: 'restricted',
+            restrictionVariants: ['Standard'],
+          },
+        ],
+      },
+    });
+    const res = mockResponse();
+    await handler(req, res);
+
+    const { counts } = res._json as { counts: Record<string, { count: number; users: Array<{ handle: string }> }> };
+    const handles = counts['wish-luke-std']?.users.map(u => u.handle) ?? [];
+    expect(handles).not.toContain(fixtures[0].handle);
+  });
+
+  it('rejects non-POST methods', async () => {
+    const req = mockRequest({ method: 'GET', query: { action: 'haves' } });
+    const res = mockResponse();
+    await handler(req, res);
+    expect(res._status).toBe(405);
+  });
+});

@@ -76,3 +76,58 @@ export function usePopularWants(items: readonly PopularWantsInput[]): Record<str
 
   return counts;
 }
+
+// --- Symmetric: wishlist direction ---------------------------------
+
+/**
+ * Per-row "popular haves" for wishlist rows. Mirror of
+ * `usePopularWants` — same shape, opposite direction. Each input is
+ * a wishlist row's identity + restriction; each entry is the set of
+ * traders who have a print of that family with a variant satisfying
+ * the restriction.
+ *
+ * Backed by the same `/api/popular-wants` function file (dispatched
+ * to the `haves` branch via the vercel.json rewrite) so the deploy
+ * stays under the Hobby function-count ceiling.
+ */
+export interface PopularHavesInput {
+  rowId: string;
+  familyId: string;
+  restrictionMode: 'any' | 'restricted';
+  restrictionVariants?: readonly string[];
+}
+
+export function usePopularHaves(items: readonly PopularHavesInput[]): Record<string, PopularWantsEntry> {
+  const [counts, setCounts] = useState<Record<string, PopularWantsEntry>>({});
+
+  useEffect(() => {
+    if (items.length === 0) {
+      setCounts({});
+      return;
+    }
+
+    const normalized = [...items].sort((a, b) => a.rowId.localeCompare(b.rowId));
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const result = await apiPost<{ counts?: Record<string, PopularWantsEntry> }>(
+        '/api/popular-haves',
+        { items: normalized },
+      );
+      if (cancelled) return;
+      setCounts(result.ok ? (result.data.counts ?? {}) : {});
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.map(i => {
+    const key = i.restrictionMode === 'any'
+      ? 'any'
+      : `r:${[...(i.restrictionVariants ?? [])].sort().join('|')}`;
+    return `${i.rowId}:${i.familyId}:${key}`;
+  }).join(',')]);
+
+  return counts;
+}
