@@ -3,8 +3,10 @@ import type { CardVariant, PriceMode } from '../types';
 import type { WantsItem, AvailableItem, VariantRestriction } from '../persistence';
 import { formatPrice, getCardPrice } from '../services/priceService';
 import { CardThumb } from './ui/CardThumb';
-import { variantBadgeColor, variantChipLabel, extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
+import { extractVariantLabel, extractBaseName, CANONICAL_VARIANTS, type CanonicalVariant } from '../variants';
 import { VariantBadge } from './VariantBadge';
+import { VariantSwapPopover } from './VariantSwapPopover';
+import { VariantChip } from './VariantChip';
 import { NumberStepper } from './ui/NumberStepper';
 import { useConfirmAction } from '../hooks/useConfirmAction';
 
@@ -233,27 +235,24 @@ function RestrictionEditor({
         // Showcase printing, so those chips would be misleading).
         // A variant already locked in the saved restriction stays
         // visible even if the dataset doesn't know about it, so the
-        // user can still deselect stale state.
+        // user can still deselect stale state. Re-skinned 2026-05-20
+        // to share <VariantChip> with the new VariantSwapPopover so
+        // the two surfaces' chip visual stays in lockstep.
         const existing = new Set(familyCandidates.map(c => extractVariantLabel(c.name)));
         const relevant = CANONICAL_VARIANTS.filter(
           v => existing.has(v) || (restriction.mode === 'restricted' && restriction.variants.includes(v)),
         );
         return (
           <div className="flex flex-wrap gap-1">
-            {relevant.map(v => {
-              const selected = restriction.variants.includes(v);
-              return (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => toggleVariant(v)}
-                  className={`text-xs leading-none px-3 py-2 rounded font-medium transition-opacity ${variantBadgeColor(v)} ${selected ? '' : 'opacity-30'}`}
-                  aria-pressed={selected}
-                >
-                  {variantChipLabel(v)}
-                </button>
-              );
-            })}
+            {relevant.map(v => (
+              <VariantChip
+                key={v}
+                variant={v}
+                selected={restriction.variants.includes(v)}
+                onClick={() => toggleVariant(v)}
+                size="md"
+              />
+            ))}
           </div>
         );
       })()}
@@ -283,6 +282,26 @@ function SegmentedOption({
   );
 }
 
+/**
+ * Variant pill used inside the swap popover trigger. Renders the
+ * existing VariantBadge for non-Standard variants; for Standard,
+ * which VariantBadge intentionally skips, falls back to a small
+ * grey "Standard" pill. Standard rows still need a clickable
+ * anchor — otherwise swap is undiscoverable on the most common
+ * row shape. The grey tone keeps the chrome quiet for the
+ * implicit-baseline case.
+ */
+function VariantPillForSwap({ variant }: { variant: string }) {
+  if (variant && variant !== 'Standard') {
+    return <VariantBadge variant={variant} size="xs" />;
+  }
+  return (
+    <span className="text-[8px] tracking-wide uppercase font-bold px-1 py-0.5 rounded bg-space-800 text-gray-400 border border-space-700">
+      Standard
+    </span>
+  );
+}
+
 // --- Available -------------------------------------------------------------
 
 interface AvailableRowProps {
@@ -304,6 +323,15 @@ interface AvailableRowProps {
    *  whose inline arrow at the call site defeated React.memo. */
   onChangeQty: (id: string, nextQty: number) => void;
   onRemove: (id: string) => void;
+  /** Every CardVariant in this row's family — drives the variant-
+   *  swap popover anchored to the variant pill. When undefined or
+   *  empty the pill renders as the existing read-only badge. */
+  familyCandidates?: readonly CardVariant[];
+  /** Called when the user picks a different print variant via the
+   *  swap popover. The new CardVariant's productId becomes the
+   *  row's productId; the parent's `available.update` merges qty
+   *  if that productId already has a row. */
+  onSwapVariant?: (id: string, newCard: CardVariant) => void;
 }
 
 export const AvailableRow = memo(function AvailableRow({
@@ -313,11 +341,23 @@ export const AvailableRow = memo(function AvailableRow({
   wantCount,
   onChangeQty,
   onRemove,
+  familyCandidates,
+  onSwapVariant,
 }: AvailableRowProps) {
   const title = card?.displayName ?? card?.name ?? item.productId;
   const variant = card ? extractVariantLabel(card.name) : 'Standard';
   const price = card ? getCardPrice(card, priceMode) : null;
   const showWantBadge = typeof wantCount === 'number' && wantCount > 0;
+  // Swap is enabled only when the parent supplied both the family
+  // candidates (catalog data to populate the popover) and a handler
+  // (state mutation path). With only one variant in the family the
+  // popover would be a no-op — skip the trigger entirely so we don't
+  // dangle an interactive affordance that does nothing.
+  const swapEnabled =
+    !!card
+    && !!onSwapVariant
+    && !!familyCandidates
+    && familyCandidates.length > 1;
 
   return (
     <RowShell productId={card?.productId} title={title}>
@@ -325,7 +365,17 @@ export const AvailableRow = memo(function AvailableRow({
         <div className="flex-1 min-w-0">
           <div className="text-sm text-gray-100 leading-tight truncate">{title}</div>
           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <VariantBadge variant={variant} size="xs" />
+            {swapEnabled ? (
+              <VariantSwapPopover
+                currentCard={card!}
+                familyCandidates={familyCandidates!}
+                onSelect={next => onSwapVariant!(item.id, next)}
+              >
+                <VariantPillForSwap variant={variant} />
+              </VariantSwapPopover>
+            ) : (
+              <VariantBadge variant={variant} size="xs" />
+            )}
             {price !== null && (
               <span className="text-[10px] text-gold font-semibold">{formatPrice(price)}</span>
             )}

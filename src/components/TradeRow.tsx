@@ -9,6 +9,7 @@ import {
 import { enqueueRefresh, useLivePrice } from '../services/livePrices';
 import { extractBaseName, extractVariantLabel } from '../variants';
 import { VariantBadge } from './VariantBadge';
+import { VariantSwapPopover } from './VariantSwapPopover';
 import { KebabMenu, type KebabMenuItem } from './KebabMenu';
 import { CardThumb, type ThumbSize } from './ui/CardThumb';
 import { QtyAdjuster } from './ui/QtyAdjuster';
@@ -48,10 +49,14 @@ interface TradeRowProps {
    *  decrement button to onRemove when qty <= 1. */
   onChangeQty: (delta: number) => void;
   onRemove: () => void;
-  /** Open the search overlay seeded with this card's basename so the
-   *  user can swap to a different variant (the picker doesn't support
-   *  in-place edits yet). */
-  onReplace: () => void;
+  /** In-place variant swap: caller receives the chosen
+   *  CardVariant and replaces this row's card. When undefined (or
+   *  when familyCandidates is empty) the swap affordance is hidden;
+   *  the variant pill renders as the existing read-only badge. */
+  onSwapVariant?: (newCard: CardVariant) => void;
+  /** Every CardVariant in this row's family — feeds the swap
+   *  popover. Typically `byFamilyAll.get(cardFamilyId(card))`. */
+  familyCandidates?: readonly CardVariant[];
   /** Read-only mode — drops the qty stepper + kebab, renders qty as a
    *  static "× N" badge instead. Used for the counterpart side of a
    *  shared trade session and for the viewer's side once the session
@@ -78,7 +83,8 @@ export function TradeRow({
   accentColor,
   onChangeQty,
   onRemove,
-  onReplace,
+  onSwapVariant,
+  familyCandidates,
   readOnly = false,
   extraMenuItems,
 }: TradeRowProps) {
@@ -163,20 +169,13 @@ export function TradeRow({
       ),
     });
   }
-  // Swap variant is editor-side only — it routes through onReplace
-  // which opens the picker on the row's own panel. Read-only rows
-  // (counterpart side) skip it.
-  if (!readOnly) {
-    menuItems.push({
-      label: 'Swap variant',
-      onClick: onReplace,
-      icon: (
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 3l4 4m0 0l-4 4m4-4H4m4 14l-4-4m0 0l4-4m-4 4h16" />
-        </svg>
-      ),
-    });
-  }
+  // Swap variant used to be a kebab item that opened a search
+  // overlay seeded with the card basename — a flow that *added* a
+  // new variant row instead of swapping. The replacement is a
+  // popover anchored directly to the variant pill on the row body
+  // (see <VariantSwapPopover> wrapping <VariantBadge> below). The
+  // popover offers in-place semantics: pick a chip, the old
+  // variant disappears, the new one takes its slot.
   // Report inaccurate price — available on every row, including
   // read-only counterpart rows (the user might notice a bad price on
   // either side). Sends the raw (pre-percentage) price to triage —
@@ -220,7 +219,18 @@ export function TradeRow({
           <span className={`text-gray-100 leading-tight ${isLarge ? 'text-sm font-semibold' : isCompact ? 'text-[11px] truncate' : 'text-xs truncate'}`}>
             {extractBaseName(card.name)}
           </span>
-          <VariantBadge variant={variant} shrink />
+          {(!readOnly && onSwapVariant && familyCandidates && familyCandidates.length > 1) ? (
+            <VariantSwapPopover
+              currentCard={card}
+              familyCandidates={familyCandidates}
+              onSelect={onSwapVariant}
+              triggerClassName="shrink-0"
+            >
+              <TradeRowVariantPill variant={variant} />
+            </VariantSwapPopover>
+          ) : (
+            <VariantBadge variant={variant} shrink />
+          )}
           {isLarge && spreadBadge}
         </div>
         {!isCompact && !isLarge && (
@@ -296,5 +306,23 @@ export function TradeRow({
         }}
       />
     </div>
+  );
+}
+
+/** Variant pill used inside the swap-popover trigger on a trade
+ *  row. Non-Standard variants render the existing colored badge;
+ *  Standard rows get a small gray "STD" pill so the swap
+ *  affordance is discoverable on the most common row shape (the
+ *  default VariantBadge intentionally hides Standard to keep the
+ *  baseline quiet — but a clickable swap target needs *something*
+ *  to anchor to). */
+function TradeRowVariantPill({ variant }: { variant: string }) {
+  if (variant && variant !== 'Standard') {
+    return <VariantBadge variant={variant} shrink />;
+  }
+  return (
+    <span className="shrink-0 text-[8px] tracking-wide uppercase font-bold px-1 py-0.5 rounded bg-space-800 text-gray-400 border border-space-700">
+      STD
+    </span>
   );
 }

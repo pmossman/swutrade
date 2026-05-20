@@ -534,16 +534,40 @@ function App() {
     };
   }, []);
 
+  // Variant swap: remove the old row + add the new card with the old
+  // row's qty. The remove+add detour (vs an in-place card swap) hits
+  // the addCard reducer's tradeCardKey-dedup branch — if the target
+  // variant already has a row on this side, qty merges instead of
+  // creating two rows for the same card.
+  const swapVariant = useCallback((setter: React.Dispatch<React.SetStateAction<TradeCard[]>>) => {
+    return (oldKey: string, newCard: CardVariant) => {
+      setter(prev => {
+        const existing = prev.find(tc => tradeCardKey(tc.card) === oldKey);
+        if (!existing) return prev;
+        const newKey = tradeCardKey(newCard);
+        if (newKey === oldKey) return prev;
+        const without = prev.filter(tc => tradeCardKey(tc.card) !== oldKey);
+        const alreadyHas = without.find(tc => tradeCardKey(tc.card) === newKey);
+        if (alreadyHas) {
+          return without.map(tc =>
+            tradeCardKey(tc.card) === newKey
+              ? { ...tc, qty: Math.min(99, tc.qty + existing.qty) }
+              : tc,
+          );
+        }
+        return [...without, { card: newCard, qty: existing.qty }];
+      });
+    };
+  }, []);
+
   const handleAddYour = useMemo(() => addCard(setYourCards), [addCard]);
   const handleAddTheir = useMemo(() => addCard(setTheirCards), [addCard]);
   const handleQtyYour = useMemo(() => changeQty(setYourCards), [changeQty]);
   const handleQtyTheir = useMemo(() => changeQty(setTheirCards), [changeQty]);
   const handleRemoveYour = useMemo(() => removeCard(setYourCards), [removeCard]);
   const handleRemoveTheir = useMemo(() => removeCard(setTheirCards), [removeCard]);
-
-  const handleLoadAllSets = useCallback(() => {
-    priceData.loadAllSets();
-  }, [priceData]);
+  const handleSwapYour = useMemo(() => swapVariant(setYourCards), [swapVariant]);
+  const handleSwapTheir = useMemo(() => swapVariant(setTheirCards), [swapVariant]);
 
   const hasCards = yourCards.length > 0 || theirCards.length > 0;
 
@@ -848,10 +872,10 @@ function App() {
               onAdd={handleAddYour}
               onRemove={handleRemoveYour}
               onChangeQty={handleQtyYour}
+              onSwapVariant={handleSwapYour}
               accentColor="emerald"
               setCards={priceData.cards}
               isLoading={priceData.isAnyLoading}
-              onLoadAllSets={handleLoadAllSets}
               filters={filters}
               wants={wants}
               available={available}
@@ -880,10 +904,10 @@ function App() {
               onAdd={handleAddTheir}
               onRemove={handleRemoveTheir}
               onChangeQty={handleQtyTheir}
+              onSwapVariant={handleSwapTheir}
               accentColor="blue"
               setCards={priceData.cards}
               isLoading={priceData.isAnyLoading}
-              onLoadAllSets={handleLoadAllSets}
               filters={filters}
               wants={wants}
               available={available}
@@ -908,11 +932,11 @@ function App() {
                 onAdd={handleAddYour}
                 onRemove={handleRemoveYour}
                 onChangeQty={handleQtyYour}
+                onSwapVariant={handleSwapYour}
                 accentColor="emerald"
                   setCards={priceData.cards}
                 isLoading={priceData.isAnyLoading}
-                onLoadAllSets={handleLoadAllSets}
-                filters={filters}
+                  filters={filters}
                 wants={wants}
                 available={available}
                 sharedLists={effectiveSharedLists}
@@ -934,11 +958,11 @@ function App() {
                 onAdd={handleAddTheir}
                 onRemove={handleRemoveTheir}
                 onChangeQty={handleQtyTheir}
+                onSwapVariant={handleSwapTheir}
                 accentColor="blue"
                   setCards={priceData.cards}
                 isLoading={priceData.isAnyLoading}
-                onLoadAllSets={handleLoadAllSets}
-                filters={filters}
+                  filters={filters}
                 wants={wants}
                 available={available}
                 sharedLists={effectiveSharedLists}

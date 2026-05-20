@@ -2,7 +2,6 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import type { TradeCard, CardVariant, PriceMode } from '../types';
 import { tradeCardKey } from '../types';
 import { adjustPrice, formatPrice, getCardPrice } from '../services/priceService';
-import { extractBaseName } from '../variants';
 import { bestMatchForWant, matchesRestriction } from '../listMatching';
 import type { WantsItem } from '../persistence';
 import { useIsMobile } from '../hooks/useMediaQuery';
@@ -27,10 +26,16 @@ interface TradeSideProps {
   onAdd: (card: CardVariant) => void;
   onRemove: (key: string) => void;
   onChangeQty: (key: string, delta: number) => void;
+  /** Swap a row's variant in-place. `oldKey` is the existing row's
+   *  tradeCardKey; `newCard` is the chosen replacement (from the
+   *  popover's chip selection). Parent removes the old row and
+   *  re-adds with the new card — addCard's dedup-by-tradeCardKey
+   *  branch handles merging if the target variant already has a
+   *  row on the side. Omit when read-only. */
+  onSwapVariant?: (oldKey: string, newCard: CardVariant) => void;
   accentColor: 'emerald' | 'blue';
   setCards: Record<string, CardVariant[]>;
   isLoading: boolean;
-  onLoadAllSets: () => void;
   // Shared filter state. Lifted to App so both trade sides stay in sync.
   filters: SelectionFilters;
   // Personal-source pickers in the search overlay's empty state pull
@@ -160,10 +165,10 @@ export function TradeSide({
   onAdd,
   onRemove,
   onChangeQty,
+  onSwapVariant,
   accentColor,
   setCards,
   isLoading,
-  onLoadAllSets,
   wants,
   available,
   sharedLists,
@@ -403,13 +408,11 @@ export function TradeSide({
     setOverlayOpen(true);
   }, [autoScopeToTheirs, overlapCards.length, theirsCards.length]);
 
-  // Swap-variant handler for TradeRow kebab — seeds the overlay with
-  // the card's basename so the picker shows every printing of that card.
-  const handleReplace = useCallback((card: CardVariant) => {
-    onLoadAllSets();
-    setSeed({ query: extractBaseName(card.name) });
-    setOverlayOpen(true);
-  }, [onLoadAllSets]);
+  // (Old `handleReplace` removed — variant swap now happens in-place
+  // via <VariantSwapPopover> anchored to the row's variant pill.
+  // See TradeRow's render path. The popover semantically replaces
+  // the previous "swap variant" kebab item which seeded a search
+  // overlay and produced a duplicate row instead of an actual swap.)
 
   // Shared-list handoff: auto-open with the "they want" chip active
   // so the Offering-side picker lands straight on the sender's wants.
@@ -554,6 +557,7 @@ export function TradeSide({
             <div className="divide-y divide-space-700">
               {cards.map(tc => {
                 const key = tradeCardKey(tc.card);
+                const candidates = byFamilyAll.get(cardFamilyId(tc.card));
                 return (
                   <TradeRow
                     key={key}
@@ -565,7 +569,12 @@ export function TradeSide({
                     accentColor={accentColor}
                     onChangeQty={delta => onChangeQty(key, delta)}
                     onRemove={() => onRemove(key)}
-                    onReplace={() => handleReplace(tc.card)}
+                    onSwapVariant={
+                      onSwapVariant
+                        ? (newCard) => onSwapVariant(key, newCard)
+                        : undefined
+                    }
+                    familyCandidates={candidates}
                     readOnly={readOnly}
                     extraMenuItems={cardActions ? cardActions(tc) : undefined}
                   />

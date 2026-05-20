@@ -271,9 +271,32 @@ export function SessionView({
     writeCards(next);
   }, [keyToProductId, writeCards]);
 
-  const handleLoadAllSets = useCallback(() => {
-    priceData.loadAllSets();
-  }, [priceData]);
+  // Variant swap on the viewer's session side. Removes the old
+  // snapshot + appends the new card (or bumps qty if a snapshot
+  // for the target productId already exists, matching `handleAdd`'s
+  // dedup branch). Writes through the same `writeCards` path so
+  // the server sync + optimistic local update both happen in one
+  // step.
+  const handleSwapVariant = useCallback((oldKey: string, newCard: CardVariant) => {
+    const oldProductId = keyToProductId.get(oldKey);
+    if (!oldProductId) return;
+    const newProductId = newCard.productId || newCard.name;
+    if (newProductId === oldProductId) return;
+    const current = viewerSnapshotsRef.current;
+    const existing = current.find(s => s.productId === oldProductId);
+    if (!existing) return;
+    const without = current.filter(s => s.productId !== oldProductId);
+    const targetIdx = without.findIndex(s => s.productId === newProductId);
+    let next: TradeCardSnapshot[];
+    if (targetIdx >= 0) {
+      next = without.map((s, i) =>
+        i === targetIdx ? { ...s, qty: Math.min(99, s.qty + existing.qty) } : s,
+      );
+    } else {
+      next = [...without, snapshotFromCardVariant(newCard, existing.qty)];
+    }
+    writeCards(next);
+  }, [keyToProductId, writeCards]);
 
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -519,10 +542,10 @@ export function SessionView({
                   onAdd={handleAdd}
                   onRemove={handleRemove}
                   onChangeQty={handleChangeQty}
+                  onSwapVariant={handleSwapVariant}
                   accentColor="emerald"
                   setCards={priceData.cards}
                   isLoading={priceData.isAnyLoading}
-                  onLoadAllSets={handleLoadAllSets}
                   filters={filters}
                   wants={wants}
                   available={available}
@@ -573,7 +596,6 @@ export function SessionView({
                   accentColor="blue"
                   setCards={priceData.cards}
                   isLoading={priceData.isAnyLoading}
-                  onLoadAllSets={handleLoadAllSets}
                   filters={filters}
                   wants={wants}
                   available={available}

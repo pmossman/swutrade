@@ -3,6 +3,7 @@ import type { CardVariant, PriceMode } from '../../types';
 import type { AvailableApi } from '../../hooks/useAvailable';
 import { cardFamilyId } from '../../variants';
 import { useAuthContext } from '../../contexts/AuthContext';
+import { useCardIndexContext } from '../../contexts/CardIndexContext';
 import { usePopularWants } from '../../hooks/usePopularWants';
 import { ListCardPicker } from '../ListCardPicker';
 import { AvailableRow } from '../ListRows';
@@ -57,6 +58,12 @@ export function AvailablePanel({
 }: AvailablePanelProps) {
   const [mode, setMode] = useState<'list' | 'picker'>('list');
 
+  // byFamilyAll feeds the per-row swap popover — every row needs to
+  // know which sibling print variants exist for its card so the
+  // popover can render them as chips. Reading from context avoids a
+  // prop-drill through BinderView + ListsDrawer.
+  const { byFamilyAll } = useCardIndexContext();
+
   const initial = useMemo(
     () => loadToolbarState(toolbarSurfaceKey, 'default'),
     [toolbarSurfaceKey],
@@ -91,6 +98,25 @@ export function AvailablePanel({
     (id: string, qty: number) => available.update(id, { qty }),
     [available],
   );
+
+  // Variant swap: remove the old row + add a row for the new
+  // productId, preserving qty + note. The remove+add detour (vs a
+  // direct `update({ productId })`) makes the productId-dedup branch
+  // in `availableAddReducer` fire — if the user already has a row
+  // for the target variant, qty merges instead of producing two
+  // rows for the same productId. No-op when the new card has no
+  // productId (defensive — every catalog entry should).
+  const handleSwapVariant = useCallback((id: string, newCard: CardVariant) => {
+    if (!newCard.productId) return;
+    const existing = available.items.find(i => i.id === id);
+    if (!existing || existing.productId === newCard.productId) return;
+    available.remove(id);
+    available.add({
+      productId: newCard.productId,
+      qty: existing.qty,
+      note: existing.note,
+    });
+  }, [available]);
 
   // Decorate each row with ListRowMeta so applyListToolbar can filter
   // + sort uniformly. variantTags for an AvailableItem is just the
@@ -207,6 +233,7 @@ export function AvailablePanel({
           <ul className="flex flex-col gap-2">
             {visibleRows.map(({ item, card }) => {
               const fid = card ? cardFamilyId(card) : null;
+              const familyCandidates = fid ? byFamilyAll.get(fid) : undefined;
               return (
                 <AvailableRow
                   key={item.id}
@@ -217,6 +244,8 @@ export function AvailablePanel({
                   wantCount={fid ? wantCounts[fid] : undefined}
                   onChangeQty={handleChangeQty}
                   onRemove={available.remove}
+                  familyCandidates={familyCandidates}
+                  onSwapVariant={handleSwapVariant}
                 />
               );
             })}
