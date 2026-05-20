@@ -309,17 +309,53 @@ export function ProfileView({
   // document.referrer via `deriveProfileParent`) so "Back" returns
   // the user to where they came from — Community, My trades, a trade
   // detail — instead of dumping them to Home every time. UX-A6.
+  // Selection-to-seed: viewer-selected productIds from this profile's
+  // Trade Binder tab seed the receiving side of the propose-trade
+  // flow. Lives at ProfileView root so the hero CTA can read the
+  // selection count + build the seeded URL.
+  const [selectedReceiving, setSelectedReceiving] = useState<Set<string>>(() => new Set());
+  const handleToggleReceivingSelect = useCallback((productId: string) => {
+    setSelectedReceiving(prev => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  }, []);
+
+  const proposeHref = (() => {
+    const params = new URLSearchParams();
+    params.set('propose', profile.user.handle);
+    if (selectedReceiving.size > 0) {
+      // ?t= is the trade-codec's receiving-side encoding:
+      // `productId.qty,productId.qty,...`. App.tsx's useTradeUrl
+      // already decodes this on mount + populates theirCards, so the
+      // viewer lands in the trade builder with the seeded receiving
+      // already in place. view=trade pins the landing surface (vs.
+      // the home grid for an empty propose).
+      const encoded = Array.from(selectedReceiving).map(p => `${p}.1`).join(',');
+      params.set('t', encoded);
+      params.set('view', 'trade');
+    }
+    return `/?${params.toString()}`;
+  })();
+
   const tradeCta = auth.user && auth.user.handle !== profile.user.handle ? (
     // Signed-in, viewing someone else: single primary CTA that lands
-    // in the propose composer. Specific label "Trade with @alice" is
-    // unambiguous — the prior "Propose a trade" + "Just balance" pair
-    // was confusing (both auto-filled the editor; the only real
-    // difference was whether the Send button rendered).
+    // in the propose composer. The label adopts the selection count
+    // when any binder rows are chosen — "Trade with @alice · 3
+    // selected" reads as a commit affordance for the seeded receiving
+    // side.
     <a
-      href={`/?propose=${encodeURIComponent(profile.user.handle)}`}
+      href={proposeHref}
       className="flex items-center gap-1.5 px-3 sm:px-4 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
     >
       Trade with @{profile.user.handle}
+      {selectedReceiving.size > 0 && (
+        <span className="text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-gold/30 border border-gold/60 text-gold-bright">
+          {selectedReceiving.size}
+        </span>
+      )}
       <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
         <path d="M3 8h10M9 4l4 4-4 4" />
       </svg>
@@ -406,6 +442,8 @@ export function ProfileView({
           percentage={percentage}
           priceMode={priceMode}
           isSelf={!!auth.user && auth.user.handle === profile.user.handle}
+          selectedReceiving={selectedReceiving}
+          onToggleReceivingSelect={handleToggleReceivingSelect}
         />
       </main>
 
@@ -454,6 +492,8 @@ function ProfileLists({
   percentage,
   priceMode,
   isSelf,
+  selectedReceiving,
+  onToggleReceivingSelect,
 }: {
   profile: ProfileData;
   wantsRows: ProfileListRow[];
@@ -461,6 +501,12 @@ function ProfileLists({
   percentage: number;
   priceMode: PriceMode;
   isSelf: boolean;
+  /** Set of productIds currently selected on the Trade Binder tab.
+   *  Drives the per-row selection checkbox + the "Trade with @X · N"
+   *  CTA at the profile hero. Only meaningful when !isSelf — own-
+   *  profile views have no propose-from-here flow. */
+  selectedReceiving: Set<string>;
+  onToggleReceivingSelect: (productId: string) => void;
 }) {
   // Initial tab honors the `?tab=` URL param when present so a
   // contextual deep-link from a TraderMatchBadge (binder direction
@@ -547,6 +593,8 @@ function ProfileLists({
             percentage={percentage}
             priceMode={priceMode}
             isSelf={isSelf}
+            selectedReceiving={selectedReceiving}
+            onToggleReceivingSelect={onToggleReceivingSelect}
           />
         )}
       </div>
@@ -565,6 +613,8 @@ function ProfileListTabBody({
   percentage,
   priceMode,
   isSelf,
+  selectedReceiving,
+  onToggleReceivingSelect,
 }: {
   tab: ListTab;
   rows: ProfileListRow[];
@@ -572,6 +622,8 @@ function ProfileListTabBody({
   percentage: number;
   priceMode: PriceMode;
   isSelf: boolean;
+  selectedReceiving: Set<string>;
+  onToggleReceivingSelect: (productId: string) => void;
 }) {
   const surfaceKey = `profile.${profileHandle}.${tab}`;
   const initial = useMemo(
@@ -682,6 +734,16 @@ function ProfileListTabBody({
             // emit when we know there's a real split.
             const showOtherLabel =
               showMatchGroupLabel && i === matchCount;
+            // Selection mode is binder-tab-only on someone else's
+            // profile — own-profile views don't have a propose-trade-
+            // from-here flow, and selecting wishlist rows doesn't
+            // resolve to a productId (wants are family-keyed).
+            const selectable =
+              !isSelf
+              && tab === 'available'
+              && !!row.card.productId;
+            const productId = row.card.productId;
+            const selected = productId ? selectedReceiving.has(productId) : false;
             return (
               <ProfileMatchRowFragment
                 key={row.key}
@@ -695,6 +757,11 @@ function ProfileListTabBody({
                 percentage={percentage}
                 priceMode={priceMode}
                 matchTone={matchTone}
+                selectable={selectable}
+                selected={selected}
+                onToggleSelect={selectable && productId
+                  ? () => onToggleReceivingSelect(productId)
+                  : undefined}
               />
             );
           })}
@@ -772,6 +839,9 @@ function ProfileMatchRowFragment({
   percentage,
   priceMode,
   matchTone,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   row: ProfileListRow;
   first: boolean;
@@ -783,6 +853,9 @@ function ProfileMatchRowFragment({
   percentage: number;
   priceMode: PriceMode;
   matchTone: 'emerald' | 'blue';
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const headerToneClass = matchHeaderTone === 'emerald'
     ? 'text-emerald-300'
@@ -812,6 +885,9 @@ function ProfileMatchRowFragment({
         priceMode={priceMode}
         isMatch={row.isMatch}
         matchTone={matchTone}
+        selectable={selectable}
+        selected={selected}
+        onToggleSelect={onToggleSelect}
       />
     </>
   );
@@ -825,6 +901,9 @@ function ProfileRow({
   priceMode,
   isMatch,
   matchTone,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   card: CardVariant;
   qty: number;
@@ -845,6 +924,12 @@ function ProfileRow({
    *  inverted vs the tab header tone (which encodes the profile
    *  owner's perspective). */
   matchTone?: 'emerald' | 'blue';
+  /** When true, the row renders a checkbox affordance and `selected`
+   *  toggles via `onToggleSelect`. Used on the profile's Trade Binder
+   *  tab to seed the receiving side of a propose-trade flow. */
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const variant = extractVariantLabel(card.name);
   const price = getCardPrice(card, priceMode);
@@ -860,9 +945,49 @@ function ProfileRow({
       ? 'bg-emerald-500/[0.06] border-l-2 border-emerald-500/50 pl-2 -ml-2'
       : 'bg-blue-500/[0.06] border-l-2 border-blue-500/50 pl-2 -ml-2'
     : '';
+  // Selection mode: row becomes a single tap target. Tapping the
+  // row toggles the productId in the parent's selection map. Visual
+  // cue is the checkbox state + a gold ring on the selected row
+  // (gold = deliberate-user-set-state per the palette memo, same
+  // convention the toolbar "Clear N filters" pill uses).
+  const selectedClasses = selectable && selected
+    ? 'ring-1 ring-gold/40 bg-gold/[0.04] -mx-2 px-2 rounded-md'
+    : '';
+  const rowProps = selectable
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        onClick: onToggleSelect,
+        onKeyDown: (e: React.KeyboardEvent<HTMLLIElement>) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onToggleSelect?.();
+          }
+        },
+        'aria-pressed': selected,
+        'aria-label': `${selected ? 'Deselect' : 'Select'} ${display} for trade`,
+      }
+    : {};
 
   return (
-    <li className={`flex items-center gap-3 py-1.5 ${matchClasses}`}>
+    <li
+      className={`flex items-center gap-3 py-1.5 ${matchClasses} ${selectedClasses} ${selectable ? 'cursor-pointer' : ''}`}
+      {...rowProps}
+    >
+      {selectable && (
+        <span
+          aria-hidden
+          className={`shrink-0 inline-flex items-center justify-center w-5 h-5 rounded border ${
+            selected
+              ? 'bg-gold/30 border-gold text-gold-bright'
+              : 'bg-space-900 border-space-600 text-transparent'
+          }`}
+        >
+          <svg viewBox="0 0 12 12" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M2 6l3 3 5-6" />
+          </svg>
+        </span>
+      )}
       <div className="w-8 h-11 shrink-0 rounded bg-space-900 border border-space-800 overflow-hidden">
         {imgUrl ? (
           <img src={imgUrl} alt="" loading="lazy" className="w-full h-full object-cover" />
