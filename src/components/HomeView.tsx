@@ -189,7 +189,6 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
                 wants={wants.items}
                 cardByFamily={byFamily}
                 onEditWishlist={nav.toWishlist}
-                canPostToServer={canPostToServer}
                 flush
               />
             </div>
@@ -198,7 +197,6 @@ export function HomeView({ auth, wants, available }: HomeViewProps) {
                 available={available.items}
                 cardByProductId={byProductId}
                 onEditBinder={nav.toBinder}
-                canPostToServer={canPostToServer}
                 flush
               />
             </div>
@@ -564,15 +562,11 @@ function WishlistModule({
   wants,
   cardByFamily,
   onEditWishlist,
-  canPostToServer,
   flush = false,
 }: {
   wants: WantsItem[];
   cardByFamily: Map<string, CardVariant>;
   onEditWishlist: () => void;
-  /** True when the viewer is signed in (real account) and could
-   *  reach the Signal Builder. Gates the "Post to a server" CTA. */
-  canPostToServer: boolean;
   /** Render without the outer card chrome — the parent owns it. */
   flush?: boolean;
 }) {
@@ -618,14 +612,6 @@ function WishlistModule({
             </>
           )}
         </span>
-        {canPostToServer && wants.length > 0 && (
-          <a
-            href={priorityCount > 0 ? '/?signals=new&prefill=priorities' : '/?signals=new'}
-            className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
-          >
-            Post to a server →
-          </a>
-        )}
       </div>
 
       {wants.length === 0 && (
@@ -672,13 +658,11 @@ function BinderModule({
   available,
   cardByProductId,
   onEditBinder,
-  canPostToServer,
   flush = false,
 }: {
   available: AvailableItem[];
   cardByProductId: Map<string, CardVariant>;
   onEditBinder: () => void;
-  canPostToServer: boolean;
   /** Render without the outer card chrome — the parent owns it. */
   flush?: boolean;
 }) {
@@ -711,14 +695,6 @@ function BinderModule({
           <span className="text-gray-200 font-semibold">{available.length}</span>
           {available.length === 1 ? ' card available' : ' cards available'}
         </span>
-        {canPostToServer && available.length > 0 && (
-          <a
-            href="/?signals=new&kind=offering"
-            className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
-          >
-            Post to a server →
-          </a>
-        )}
       </div>
 
       {available.length === 0 && (
