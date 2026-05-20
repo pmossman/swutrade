@@ -448,6 +448,24 @@ function StarIcon({ filled, className }: { filled: boolean; className?: string }
   );
 }
 
+/** Build the `/u/<handle>?tab=…` href that lands the viewer on the
+ *  contextually-relevant list on the target's profile. The
+ *  vercel.json rewrite for `/u/:handle/:tab` is the canonical
+ *  path-form, but the SPA equally accepts `?tab=` directly — and
+ *  since this URL is built client-side and consumed by the same
+ *  SPA, the query form is cheaper than constructing a
+ *  rewrite-shaped path. */
+function profileTabHref(handle: string, direction: 'wants' | 'haves'): string {
+  // direction === 'wants' → I have a card someone wants → land on
+  // their WISHLIST so I can see the want's restriction + browse
+  // their other wants.
+  // direction === 'haves' → I want a card someone has → land on
+  // their TRADE BINDER so I can see the matching card and the rest
+  // of their offering.
+  const tab = direction === 'wants' ? 'wants' : 'available';
+  return `/u/${encodeURIComponent(handle)}?tab=${tab}`;
+}
+
 /**
  * Clickable trader-match badge — surfaces on binder rows ("N wants
  * this") and wishlist rows ("N has this"). Tapping opens a popover
@@ -522,7 +540,21 @@ function TraderMatchBadge({
               {users.map(u => (
                 <li key={u.handle}>
                   <a
-                    href={`/u/${encodeURIComponent(u.handle)}`}
+                    // Contextual tab landing: a wants-direction badge
+                    // (someone wants the viewer's binder card) lands
+                    // on the wanter's WISHLIST (where the matching
+                    // want lives, so the viewer can see what
+                    // restriction it carries + what else they want).
+                    // A haves-direction badge (someone has the
+                    // viewer's wishlist card) lands on the owner's
+                    // TRADE BINDER (where the matching card sits,
+                    // and where the viewer can browse the rest of
+                    // their offering). ProfileView reads the `tab`
+                    // query param on mount; vercel.json's
+                    // `/u/:handle/:tab` rewrite produces the
+                    // `?tab=` form server-side, but a direct
+                    // `?tab=` query also works for the SPA navigation.
+                    href={profileTabHref(u.handle, direction)}
                     className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-space-700 transition-colors"
                   >
                     {u.avatarUrl ? (

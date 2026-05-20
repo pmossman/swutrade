@@ -462,11 +462,33 @@ function ProfileLists({
   priceMode: PriceMode;
   isSelf: boolean;
 }) {
+  // Initial tab honors the `?tab=` URL param when present so a
+  // contextual deep-link from a TraderMatchBadge (binder direction
+  // → `/u/<handle>/available` lands on Trade Binder; wishlist
+  // direction → `/u/<handle>/wants` lands on Wishlist) shows the
+  // list the viewer actually came to see. Falls back to "first
+  // non-empty" when the URL doesn't specify.
   const [tab, setTab] = useState<ListTab>(() => {
+    if (typeof window !== 'undefined') {
+      const urlTab = new URLSearchParams(window.location.search).get('tab');
+      if (urlTab === 'wants' || urlTab === 'available') return urlTab;
+    }
     if (wantsRows.length > 0) return 'wants';
     if (availableRows.length > 0) return 'available';
     return 'wants';
   });
+
+  // Mirror tab changes back to the URL so the back button + tab-bar
+  // taps stay in lockstep. replaceState (vs pushState) so a quick
+  // tab toggle doesn't pollute the history stack with two entries
+  // per visit.
+  const onSelectTab = useCallback((next: ListTab) => {
+    setTab(next);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', next);
+    window.history.replaceState(null, '', url.toString());
+  }, []);
 
   const wantsPrivate = profile.wants === null;
   const availPrivate = profile.available === null;
@@ -497,14 +519,14 @@ function ProfileLists({
           active={tab === 'wants'}
           count={wantsRows.length}
           isPrivate={wantsPrivate}
-          onSelect={setTab}
+          onSelect={onSelectTab}
         />
         <ProfileListTab
           tab="available"
           active={tab === 'available'}
           count={availableRows.length}
           isPrivate={availPrivate}
-          onSelect={setTab}
+          onSelect={onSelectTab}
         />
       </div>
 
