@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost, apiPut } from '../services/apiClient';
+import { DECLINE_ERRORS } from '../services/sessionErrors';
 import { createKeyedCache } from './sharedCache';
 import type {
   TradeCardSnapshot as SchemaTradeCardSnapshot,
@@ -349,130 +350,155 @@ export function useSession(sessionId: string | null): SessionApi {
     if (session) setSeenCounterpartEditAt(session.lastEditedAt);
   }, [session]);
 
-  const saveCards = useCallback(async (cards: TradeCardSnapshot[]) => {
-    if (!sessionId || !session) return;
+  // The mutation lifecycle for this hook. Every server-mutating call
+  // — saveCards, confirm, cancel, suggest, accept-suggestion, … —
+  // wraps `request` with the same shape:
+  //
+  //   1. Pause the poll so a 2.5s tick can't land between the
+  //      optimistic apply and the request's response (which would
+  //      visibly revert the user's edit).
+  //   2. If an `optimistic` snapshot is supplied, apply it now AND
+  //      bump seenCounterpartEditAt to its timestamp so the viewer's
+  //      own edit doesn't trip the "counterpart changed" banner.
+  //   3. Fire the request.
+  //   4. On success: apply the server's session (if returned). When
+  //      we ran optimistic, re-sync seenCounterpartEditAt to the
+  //      server's lastEditedAt (handles clock skew + counterpart
+  //      edits the server reconciled).
+  //   5. On failure with optimistic or `rollbackOnFailure`, drop the
+  //      pause and `fetchOnce()` to overwrite local state with the
+  //      canonical server view.
+  //   6. Resume the poll regardless.
+  //
+  // Returns the underlying ActionResult so callers can narrow on
+  // domain reasons (decline → 'not-active' / 'no-counterpart' etc.).
+  // markRead deliberately bypasses this helper — read-state is fire-
+  // and-forget and shouldn't pause the poll.
+  const runMutation = useCallback(async <T extends { session?: SessionView | null }, E extends string = never>(
+    config: {
+      request: () => Promise<import('../services/apiClient').ActionResult<T, E>>;
+      optimistic?: (current: SessionView) => SessionView;
+      rollbackOnFailure?: boolean;
+    },
+  ): Promise<import('../services/apiClient').ActionResult<T, E>> => {
     pollPausedRef.current = true;
-    // Optimistic update — flip local state immediately so the viewer
-    // sees their change land without waiting for the round-trip.
-    // Confirmations also clear optimistically to match the server
-    // behaviour (edit invalidates confirms).
-    const optimistic: SessionView = {
-      ...session,
-      yourCards: cards,
-      confirmedByViewer: false,
-      confirmedByCounterpart: false,
-      lastEditedByViewer: true,
-      lastEditedAt: new Date().toISOString(),
-    };
-    applyServerSession(optimistic);
-    // Reset the "seen" pointer so the viewer's own edit doesn't
-    // trigger the counterpart-change banner on the next poll.
-    setSeenCounterpartEditAt(optimistic.lastEditedAt);
-
+    const hasOptimistic = !!config.optimistic && !!session;
+    if (hasOptimistic && config.optimistic && session) {
+      const optimistic = config.optimistic(session);
+      applyServerSession(optimistic);
+      setSeenCounterpartEditAt(optimistic.lastEditedAt);
+    }
     try {
-      const result = await apiPut<{ session: SessionView | null }>(
-        `/api/sessions/${encodeURIComponent(sessionId)}/edit`,
-        { cards },
-      );
-      if (!result.ok || !result.data.session) {
-        pollPausedRef.current = false;
-        // Rollback: re-fetch canonical server state.
-        await fetchOnce();
-        return;
+      const result = await config.request();
+      if (!result.ok) {
+        if (hasOptimistic || config.rollbackOnFailure) {
+          pollPausedRef.current = false;
+          await fetchOnce();
+        }
+        return result;
       }
-      applyServerSession(result.data.session);
-      setSeenCounterpartEditAt(result.data.session.lastEditedAt);
+      if (result.data.session) {
+        applyServerSession(result.data.session);
+        if (hasOptimistic) {
+          setSeenCounterpartEditAt(result.data.session.lastEditedAt);
+        }
+      }
+      return result;
     } finally {
       pollPausedRef.current = false;
     }
-  }, [sessionId, session, applyServerSession, fetchOnce]);
+  }, [session, applyServerSession, fetchOnce]);
+
+  const saveCards = useCallback(async (cards: TradeCardSnapshot[]) => {
+    if (!sessionId || !session) return;
+    // Optimistic apply + auto-rollback on failure are both handled by
+    // runMutation. The optimistic snapshot also clears confirmations
+    // to match the server behaviour (edit invalidates confirms).
+    await runMutation({
+      request: () => apiPut<{ session: SessionView | null }>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/edit`,
+        { cards },
+      ),
+      optimistic: current => ({
+        ...current,
+        yourCards: cards,
+        confirmedByViewer: false,
+        confirmedByCounterpart: false,
+        lastEditedByViewer: true,
+        lastEditedAt: new Date().toISOString(),
+      }),
+    });
+  }, [sessionId, session, runMutation]);
 
   const confirm = useCallback(async () => {
     if (!sessionId) return { settled: false };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null; settled: boolean }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null; settled: boolean }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/confirm`,
-      );
-      if (!result.ok || !result.data.session) return { settled: false };
-      applyServerSession(result.data.session);
-      return { settled: result.data.settled };
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+    if (!result.ok || !result.data.session) return { settled: false };
+    return { settled: result.data.settled };
+  }, [sessionId, runMutation]);
 
   const unconfirm = useCallback(async () => {
     if (!sessionId) return;
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/unconfirm`,
-      );
-      if (!result.ok || !result.data.session) return;
-      applyServerSession(result.data.session);
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+  }, [sessionId, runMutation]);
 
   const cancel = useCallback(async () => {
     if (!sessionId) return;
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
-      );
-      if (!result.ok || !result.data.session) return;
-      applyServerSession(result.data.session);
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+  }, [sessionId, runMutation]);
 
   const decline = useCallback(async (note?: string) => {
     if (!sessionId) return { ok: false as const, reason: 'error' as const };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null }, typeof DECLINE_ERRORS[number]>(
         `/api/sessions/${encodeURIComponent(sessionId)}/decline`,
         note ? { note } : {},
-      );
-      if (!result.ok) {
-        const r = (result.reason ?? '') as string;
-        if (r === 'not-active') return { ok: false as const, reason: 'not-active' as const };
-        if (r === 'no-counterpart') return { ok: false as const, reason: 'no-counterpart' as const };
-        if (r === 'note-too-long') return { ok: false as const, reason: 'note-too-long' as const };
-        return { ok: false as const, reason: 'error' as const };
+        { domainErrors: DECLINE_ERRORS },
+      ),
+    });
+    if (!result.ok) {
+      // result.reason is now narrowed to the DECLINE_ERRORS union +
+      // ActionFailureReason — switch exhaustively instead of string-
+      // comparing detail.
+      switch (result.reason) {
+        case 'not-active':
+        case 'no-counterpart':
+        case 'note-too-long':
+          return { ok: false as const, reason: result.reason };
+        default:
+          return { ok: false as const, reason: 'error' as const };
       }
-      if (result.data.session) applyServerSession(result.data.session);
-      return { ok: true as const };
-    } finally {
-      pollPausedRef.current = false;
     }
-  }, [sessionId, applyServerSession]);
+    return { ok: true as const };
+  }, [sessionId, runMutation]);
 
   const claim = useCallback(async () => {
     if (!sessionId) return;
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    // Claim is the one mutation where a failure (someone else won the
+    // race) should fall through to a re-fetch so the UI flips to
+    // whatever state the server has — usually 404 once the slot is
+    // filled. rollbackOnFailure handles that path. On success the
+    // helper applies the new session; we also clear the preview.
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/claim`,
-      );
-      if (!result.ok || !result.data.session) {
-        // On conflict (someone else claimed first), fall through and
-        // re-fetch so the UI flips to whatever state the server
-        // actually has — probably a 404 now that the slot is filled.
-        pollPausedRef.current = false;
-        await fetchOnce();
-        return;
-      }
-      setPreview(null);
-      applyServerSession(result.data.session);
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession, fetchOnce]);
+      ),
+      rollbackOnFailure: true,
+    });
+    if (result.ok && result.data.session) setPreview(null);
+  }, [sessionId, runMutation]);
 
   const sendChat = useCallback(async (body: string) => {
     if (!sessionId) return { ok: false as const, reason: 'error' as const };
@@ -480,24 +506,20 @@ export function useSession(sessionId: string | null): SessionApi {
     if (trimmed.length === 0 || trimmed.length > 500) {
       return { ok: false as const, reason: 'invalid' as const };
     }
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/chat`,
         { message: trimmed },
-      );
-      if (!result.ok) {
-        if (result.reason === 'rate-limited') {
-          return { ok: false as const, reason: 'rate-limited' as const };
-        }
-        return { ok: false as const, reason: 'error' as const };
+      ),
+    });
+    if (!result.ok) {
+      if (result.reason === 'rate-limited') {
+        return { ok: false as const, reason: 'rate-limited' as const };
       }
-      if (result.data.session) applyServerSession(result.data.session);
-      return { ok: true as const };
-    } finally {
-      pollPausedRef.current = false;
+      return { ok: false as const, reason: 'error' as const };
     }
-  }, [sessionId, applyServerSession]);
+    return { ok: true as const };
+  }, [sessionId, runMutation]);
 
   const markRead = useCallback(async () => {
     if (!sessionId) return;
@@ -536,69 +558,53 @@ export function useSession(sessionId: string | null): SessionApi {
     cardsToRemove?: TradeCardSnapshot[];
   }) => {
     if (!sessionId) return { ok: false as const, reason: 'no-session' };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null; suggestionId: string | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggest`,
         {
           targetSide: args.targetSide,
           cardsToAdd: args.cardsToAdd ?? [],
           cardsToRemove: args.cardsToRemove ?? [],
         },
-      );
-      if (!result.ok) return { ok: false as const, reason: result.reason };
-      if (result.data.session) applyServerSession(result.data.session);
-      return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+    if (!result.ok) return { ok: false as const, reason: result.reason };
+    return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
+  }, [sessionId, runMutation]);
 
   const acceptSuggestion = useCallback(async (suggestionId: string) => {
     if (!sessionId) return { ok: false };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/accept`,
-      );
-      if (!result.ok || !result.data.session) return { ok: false };
-      applyServerSession(result.data.session);
-      return { ok: true };
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+    if (!result.ok || !result.data.session) return { ok: false };
+    return { ok: true };
+  }, [sessionId, runMutation]);
 
   const dismissSuggestion = useCallback(async (suggestionId: string) => {
     if (!sessionId) return { ok: false };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/suggestion/${encodeURIComponent(suggestionId)}/dismiss`,
-      );
-      if (!result.ok || !result.data.session) return { ok: false };
-      applyServerSession(result.data.session);
-      return { ok: true };
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+    if (!result.ok || !result.data.session) return { ok: false };
+    return { ok: true };
+  }, [sessionId, runMutation]);
 
   const proposeRevert = useCallback(async (snapshotEventId: string) => {
     if (!sessionId) return { ok: false as const, reason: 'no-session' };
-    pollPausedRef.current = true;
-    try {
-      const result = await apiPost<{ session: SessionView | null; suggestionId: string | null }>(
+    const result = await runMutation({
+      request: () => apiPost<{ session: SessionView | null; suggestionId: string | null }>(
         `/api/sessions/${encodeURIComponent(sessionId)}/propose-revert`,
         { snapshotEventId },
-      );
-      if (!result.ok) return { ok: false as const, reason: result.reason };
-      if (result.data.session) applyServerSession(result.data.session);
-      return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
-    } finally {
-      pollPausedRef.current = false;
-    }
-  }, [sessionId, applyServerSession]);
+      ),
+    });
+    if (!result.ok) return { ok: false as const, reason: result.reason };
+    return { ok: true as const, suggestionId: result.data.suggestionId ?? '' };
+  }, [sessionId, runMutation]);
 
   return {
     session,
