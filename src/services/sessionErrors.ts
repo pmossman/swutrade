@@ -43,3 +43,21 @@ export const REVERT_ERRORS = [
   'no-op',
 ] as const;
 export type RevertError = typeof REVERT_ERRORS[number];
+
+export const CLAIM_ERRORS = [
+  'self',
+  'conflict',
+  'not-active',
+] as const;
+export type ClaimError = typeof CLAIM_ERRORS[number];
+
+// Universal codes that appear on multiple endpoints. Imported by
+// callers that need to narrow on (e.g.) "loader said the session
+// doesn't exist or the viewer can't see it" — the canonical
+// projection of the lifecycle loader's typed reasons.
+export const SESSION_LOADER_ERRORS = [
+  'not-found',
+  'not-participant',
+  'not-active',
+] as const;
+export type SessionLoaderError = typeof SESSION_LOADER_ERRORS[number];

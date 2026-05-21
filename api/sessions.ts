@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { createSession as createAuthSession, getSession, requireSession } from '../lib/auth.js';
 import { getDb } from '../lib/db.js';
+import { replyDomainError } from '../lib/apiResponse.js';
 import type { DiscordBotClient } from '../lib/discordBot.js';
 import { users } from '../lib/schema.js';
 import {
@@ -135,7 +136,7 @@ export async function handleGetSession(req: VercelRequest, res: VercelResponse) 
     return res.json({ preview });
   }
 
-  return res.status(404).json({ error: 'Not found' });
+  return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
 }
 
 /**
@@ -363,10 +364,10 @@ export async function handleEditSession(req: VercelRequest, res: VercelResponse)
   });
   if (!result.ok) {
     if (result.reason === 'not-found' || result.reason === 'not-participant') {
-      return res.status(404).json({ error: 'Not found' });
+      return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
     }
     if (result.reason === 'terminal') {
-      return res.status(409).json({ error: 'Session is no longer active' });
+      return replyDomainError(res, { status: 409, code: 'not-active', error: 'Session is no longer active' });
     }
   }
   res.setHeader('Cache-Control', 'private, no-store');
@@ -389,10 +390,10 @@ export async function handleConfirmSession(req: VercelRequest, res: VercelRespon
   const result = await confirmSession(db, { sessionId: id, viewerUserId: session.userId });
   if (!result.ok) {
     if (result.reason === 'not-found' || result.reason === 'not-participant') {
-      return res.status(404).json({ error: 'Not found' });
+      return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
     }
     if (result.reason === 'terminal') {
-      return res.status(409).json({ error: 'Session is no longer active' });
+      return replyDomainError(res, { status: 409, code: 'not-active', error: 'Session is no longer active' });
     }
   }
   res.setHeader('Cache-Control', 'private, no-store');
@@ -424,10 +425,10 @@ export async function handleUnconfirmSession(req: VercelRequest, res: VercelResp
   const result = await unconfirmSession(db, { sessionId: id, viewerUserId: session.userId });
   if (!result.ok) {
     if (result.reason === 'not-found' || result.reason === 'not-participant') {
-      return res.status(404).json({ error: 'Not found' });
+      return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
     }
     if (result.reason === 'terminal') {
-      return res.status(409).json({ error: 'Session is no longer active' });
+      return replyDomainError(res, { status: 409, code: 'not-active', error: 'Session is no longer active' });
     }
   }
   res.setHeader('Cache-Control', 'private, no-store');
@@ -549,10 +550,10 @@ export async function handleClaimSession(req: VercelRequest, res: VercelResponse
     // their own invite; 'conflict' = slot already filled by someone
     // else; 'terminal' = session is no longer active; 'not-found'
     // = bad id.
-    if (result.reason === 'not-found') return res.status(404).json({ error: 'Not found' });
-    if (result.reason === 'self') return res.status(400).json({ error: "You can't claim your own invitation" });
-    if (result.reason === 'terminal') return res.status(409).json({ error: 'Session is no longer active' });
-    if (result.reason === 'conflict') return res.status(409).json({ error: 'Someone else already joined this session' });
+    if (result.reason === 'not-found') return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
+    if (result.reason === 'self') return replyDomainError(res, { status: 400, code: 'self', error: "You can't claim your own invitation" });
+    if (result.reason === 'terminal') return replyDomainError(res, { status: 409, code: 'not-active', error: 'Session is no longer active' });
+    if (result.reason === 'conflict') return replyDomainError(res, { status: 409, code: 'conflict', error: 'Someone else already joined this session' });
   }
 
   res.setHeader('Cache-Control', 'private, no-store');
@@ -577,7 +578,7 @@ export async function handleCancelSession(req: VercelRequest, res: VercelRespons
   const db = getDb();
   const result = await cancelSession(db, { sessionId: id, viewerUserId: session.userId });
   if (!result.ok) {
-    return res.status(404).json({ error: 'Not found' });
+    return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
   }
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json({ session: result.view });
@@ -635,20 +636,30 @@ export async function handleDeclineSession(
   if (!result.ok) {
     switch (result.reason) {
       case 'not-found':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'not-participant':
-        return res.status(403).json({ error: 'Only session participants can decline' });
+        return replyDomainError(res, {
+          status: 403,
+          code: 'not-participant',
+          error: 'Only session participants can decline',
+        });
       case 'not-active':
-        return res.status(409).json({ error: 'Session is no longer active', code: 'not-active' });
+        return replyDomainError(res, {
+          status: 409,
+          code: 'not-active',
+          error: 'Session is no longer active',
+        });
       case 'no-counterpart':
-        return res.status(409).json({
-          error: 'Nothing to decline — the session has no counterpart yet.',
+        return replyDomainError(res, {
+          status: 409,
           code: 'no-counterpart',
+          error: 'Nothing to decline — the session has no counterpart yet.',
         });
       case 'note-too-long':
-        return res.status(400).json({
-          error: `Note is too long (max ${SESSION_DECLINE_NOTE_MAX_LENGTH} characters).`,
+        return replyDomainError(res, {
+          status: 400,
           code: 'note-too-long',
+          error: `Note is too long (max ${SESSION_DECLINE_NOTE_MAX_LENGTH} characters).`,
         });
     }
   }
@@ -729,7 +740,7 @@ export async function handleInviteHandle(
   if (!result.ok) {
     switch (result.reason) {
       case 'not-found':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'not-creator':
         return res.status(403).json({ error: 'Only the session creator can invite' });
       case 'not-open':
@@ -783,9 +794,9 @@ export async function handleChatSession(req: VercelRequest, res: VercelResponse)
     switch (result.reason) {
       case 'not-found':
       case 'not-participant':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'terminal':
-        return res.status(409).json({ error: 'Session is no longer active' });
+        return replyDomainError(res, { status: 409, code: 'not-active', error: 'Session is no longer active' });
       case 'empty':
       case 'too-long':
         return res.status(400).json({ error: result.reason });
@@ -821,7 +832,7 @@ export async function handleMarkReadSession(req: VercelRequest, res: VercelRespo
     viewerUserId: session.userId,
   });
   if (!result.ok) {
-    return res.status(404).json({ error: 'Not found' });
+    return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
   }
 
   res.setHeader('Cache-Control', 'private, no-store');
@@ -866,7 +877,7 @@ export async function handleSuggestSession(req: VercelRequest, res: VercelRespon
     switch (result.reason) {
       case 'not-found':
       case 'not-participant':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'terminal':
       case 'open-slot':
         return res.status(409).json({ error: result.reason });
@@ -917,7 +928,7 @@ export async function handleAcceptSuggestion(req: VercelRequest, res: VercelResp
       case 'not-found':
       case 'not-participant':
       case 'no-such-suggestion':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'terminal':
       case 'already-dismissed':
         return res.status(409).json({ error: result.reason });
@@ -960,7 +971,7 @@ export async function handleDismissSuggestion(req: VercelRequest, res: VercelRes
       case 'not-found':
       case 'not-participant':
       case 'no-such-suggestion':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'already-dismissed':
         return res.status(409).json({ error: 'Already dismissed' });
     }
@@ -1003,7 +1014,7 @@ export async function handleProposeRevertSession(req: VercelRequest, res: Vercel
       case 'not-found':
       case 'not-participant':
       case 'no-such-snapshot':
-        return res.status(404).json({ error: 'Not found' });
+        return replyDomainError(res, { status: 404, code: 'not-found', error: 'Not found' });
       case 'terminal':
       case 'open-slot':
         return res.status(409).json({ error: result.reason });
