@@ -1167,15 +1167,24 @@ function ListModuleActions({
   shareItems: WantsApi['items'] | AvailableApi['items'];
 }) {
   const { handleCopy, copied } = useShareListLink(shareKind, shareItems);
+  // Restrained action row — the previous heavy treatment
+  // (uppercase + heavy bold + wide tracking, same chrome as the
+  // profile "Trade with @X" page-primary CTA) drowned out the rest
+  // of the home grid. Here these are SECONDARY affordances inside
+  // a module that's one of several on the page, so the styling
+  // drops the uppercase + bold-tracking treatment and tightens the
+  // height. Mobile keeps the button full-width via flex-1 so the
+  // touch target stays comfortable; desktop reads as a quiet
+  // gold-tinted action.
   return (
     <div className="mb-3 flex items-center gap-2">
       <button
         type="button"
         onClick={onOpen}
-        className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+        className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-md bg-gold/10 border border-gold/30 hover:bg-gold/20 hover:border-gold/50 text-gold text-xs sm:text-[13px] font-semibold transition-colors"
       >
         {openLabel}
-        <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M3 8h10M9 4l4 4-4 4" />
         </svg>
       </button>
@@ -1184,14 +1193,14 @@ function ListModuleActions({
         onClick={handleCopy}
         aria-label={copied ? 'Link copied' : 'Copy share link'}
         title={copied ? 'Link copied' : 'Copy share link'}
-        className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-400 hover:text-gold transition-colors"
+        className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-400 hover:text-gold transition-colors"
       >
         {copied ? (
-          <svg viewBox="0 0 16 16" className="w-4 h-4 text-gold" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 text-gold" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M3 8l3 3 7-7" />
           </svg>
         ) : (
-          <svg viewBox="0 0 16 16" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M14 2L7 9" />
             <path d="M14 2l-5 12-2-5-5-2 12-5z" />
           </svg>
