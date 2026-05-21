@@ -16,6 +16,7 @@ import { relativeTime } from '../utils/relativeTime';
 import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTrades';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
+import { useShareListLink, type ShareListKind } from '../hooks/useShareListLink';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -612,6 +613,9 @@ function WishlistModule({
             </>
           )}
         </span>
+        {wants.length > 0 && (
+          <ShareLink kind="wants" items={wants} />
+        )}
       </div>
 
       {wants.length === 0 && (
@@ -695,6 +699,9 @@ function BinderModule({
           <span className="text-gray-200 font-semibold">{available.length}</span>
           {available.length === 1 ? ' card available' : ' cards available'}
         </span>
+        {available.length > 0 && (
+          <ShareLink kind="available" items={available} />
+        )}
       </div>
 
       {available.length === 0 && (
@@ -1141,5 +1148,35 @@ function ChevronIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
       <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/**
+ * Compact share-link affordance for the home-page WishlistModule +
+ * BinderModule. Sits in the count row's right slot (where the old
+ * "Post to a server →" link used to live before f524e0f). Single
+ * "Copy link" semantic — the full Wishlist / Binder dedicated views
+ * carry the heavier "Share image" flow + larger button chrome; here
+ * we keep it minimal so the home grid stays scannable.
+ *
+ * Uses `useShareListLink` so URL construction + clipboard fallback
+ * + 2s "Copied" feedback stay aligned with the dedicated views.
+ */
+function ShareLink({
+  kind,
+  items,
+}: {
+  kind: ShareListKind;
+  items: WantsApi['items'] | AvailableApi['items'];
+}) {
+  const { handleCopy, copied } = useShareListLink(kind, items);
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
+    >
+      {copied ? 'Copied ✓' : 'Share →'}
+    </button>
   );
 }
