@@ -639,12 +639,16 @@ export async function handleDeclineSession(
       case 'not-participant':
         return res.status(403).json({ error: 'Only session participants can decline' });
       case 'not-active':
-        return res.status(409).json({ error: 'Session is no longer active' });
+        return res.status(409).json({ error: 'Session is no longer active', code: 'not-active' });
       case 'no-counterpart':
-        return res.status(409).json({ error: 'Nothing to decline — the session has no counterpart yet.' });
+        return res.status(409).json({
+          error: 'Nothing to decline — the session has no counterpart yet.',
+          code: 'no-counterpart',
+        });
       case 'note-too-long':
         return res.status(400).json({
           error: `Note is too long (max ${SESSION_DECLINE_NOTE_MAX_LENGTH} characters).`,
+          code: 'note-too-long',
         });
     }
   }
