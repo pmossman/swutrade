@@ -17,6 +17,7 @@ import { useMyTrades, type TradeRow, type TradeRowState } from '../hooks/useMyTr
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { useShareListLink, type ShareListKind } from '../hooks/useShareListLink';
+import { KebabMenu, type KebabMenuItem } from './KebabMenu';
 import { useGuildMemberships, type GuildMembershipSummary } from '../hooks/useGuildMemberships';
 import { useFavorites, type Favorite } from '../hooks/useFavorites';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
@@ -1167,45 +1168,40 @@ function ListModuleActions({
   shareItems: WantsApi['items'] | AvailableApi['items'];
 }) {
   const { handleCopy, copied } = useShareListLink(shareKind, shareItems);
-  // Restrained action row — the previous heavy treatment
-  // (uppercase + heavy bold + wide tracking, same chrome as the
-  // profile "Trade with @X" page-primary CTA) drowned out the rest
-  // of the home grid. Here these are SECONDARY affordances inside
-  // a module that's one of several on the page, so the styling
-  // drops the uppercase + bold-tracking treatment and tightens the
-  // height. Mobile keeps the button full-width via flex-1 so the
-  // touch target stays comfortable; desktop reads as a quiet
-  // gold-tinted action.
+  // Compact "Open" button + kebab overflow menu — the previous
+  // full-width treatment was reading as a page-primary CTA when
+  // the action is just "go to the module's destination."
+  // Overflow menu carries the share affordance + leaves room for
+  // future low-priority actions (export, print, etc.) without
+  // adding new visual chrome to the module header.
+  const items: KebabMenuItem[] = [
+    {
+      label: copied ? 'Link copied' : 'Copy share link',
+      onClick: handleCopy,
+      // Brief hold so the user sees the copied-state flip before the
+      // menu auto-dismisses; matches the in-trade share button's UX.
+      holdBeforeCloseMs: 700,
+      icon: (
+        <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M14 2L7 9" />
+          <path d="M14 2l-5 12-2-5-5-2 12-5z" />
+        </svg>
+      ),
+    },
+  ];
   return (
-    <div className="mb-3 flex items-center gap-2">
+    <div className="mb-3 flex items-center gap-1.5">
       <button
         type="button"
         onClick={onOpen}
-        className="flex-1 flex items-center justify-center gap-1.5 h-8 rounded-md bg-gold/10 border border-gold/30 hover:bg-gold/20 hover:border-gold/50 text-gold text-xs sm:text-[13px] font-semibold transition-colors"
+        className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-gold/10 border border-gold/30 hover:bg-gold/20 hover:border-gold/50 text-gold text-[12px] font-semibold transition-colors"
       >
         {openLabel}
         <svg viewBox="0 0 16 16" className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M3 8h10M9 4l4 4-4 4" />
         </svg>
       </button>
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label={copied ? 'Link copied' : 'Copy share link'}
-        title={copied ? 'Link copied' : 'Copy share link'}
-        className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-400 hover:text-gold transition-colors"
-      >
-        {copied ? (
-          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5 text-gold" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M3 8l3 3 7-7" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-            <path d="M14 2L7 9" />
-            <path d="M14 2l-5 12-2-5-5-2 12-5z" />
-          </svg>
-        )}
-      </button>
+      <KebabMenu items={items} size="sm" ariaLabel="More actions" />
     </div>
   );
 }
