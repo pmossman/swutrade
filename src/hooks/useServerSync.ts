@@ -6,6 +6,40 @@ import type { AvailableApi } from './useAvailable';
 import type { WantsItem, AvailableItem } from '../persistence/schemas';
 
 /**
+ * Sync-list-bundle hook (filename retained as `useServerSync` for
+ * import stability; the conceptual model is a *bundle*).
+ *
+ * One hook owns:
+ *   - **Initial sync** on sign-in (push-up on first-ever sign-in with
+ *     local items + empty server; otherwise server-wins overwrite).
+ *   - **Foreground re-pull** across visibilitychange / focus / a 60s
+ *     visible-tab safety poll — captures the multi-device case.
+ *   - **Debounced PUT** on local mutations.
+ *   - **Gen-counter writeback contract** that makes it safe for the
+ *     bundle to call `slot.setAll(server)` without echoing it back
+ *     as a spurious PUT.
+ *
+ * Each *slot* in the bundle is a list-like persisted resource — today
+ * `wants` and `available`. Adding a third slot (favourites, signal
+ * drafts, etc.) is a config entry, not new orchestration code. The
+ * shape:
+ *
+ *   { items: T[]; setAll: (next: T[]) => void;
+ *     getUrl: string; putUrl: string; normalize?: (item: T) => T }
+ *
+ * The contract on `setAll`: it is the bundle's writeback channel and
+ * should not be called from outside this module. (Today the
+ * convention is enforced by the fact that the only `.setAll` call
+ * sites in the codebase live here. The named `SyncSlot` interface
+ * documents the role at the type-system level.)
+ *
+ * Why one hook over two: wants + available sync as a unit. Initial
+ * push-up and foreground re-pull touch both endpoints in lockstep;
+ * the gen counter is shared across them. Splitting would force the
+ * coordination back into a parent.
+ */
+
+/**
  * Apply `normalizeRestriction` to every server-pulled wants row so a
  * pre-fix client (or any future bug that wrote a 10-variant
  * restriction) is collapsed back to `{ mode: 'any' }` on this
@@ -42,13 +76,76 @@ async function syncPut<T>(url: string, body: unknown): Promise<T> {
   throw new Error(result.reason);
 }
 
+/**
+ * One participant in the bundle. The bundle treats every slot
+ * uniformly: pull from `getUrl`, push to `putUrl`, apply `normalize`
+ * on inbound items, write back via `setAll`.
+ */
+interface SyncSlot<T> {
+  items: T[];
+  setAll: (next: T[]) => void;
+  getUrl: string;
+  putUrl: string;
+  /** Optional inbound transform — e.g. collapse stale variant
+   *  restrictions on `wants`. */
+  normalize?: (items: T[]) => T[];
+}
+
 export interface ServerSyncApi {
   status: SyncStatus;
 }
 
+/**
+ * Sync-list bundle. Public-API-stable wrapper around the slot-based
+ * implementation: takes `wants` + `available` + `user` and returns a
+ * sync-status hook. Internally builds two `SyncSlot`s and runs them
+ * through `useSyncedListBundleImpl`.
+ */
 export function useServerSync(
   wants: WantsApi,
   available: AvailableApi,
+  user: User | null,
+): ServerSyncApi {
+  return useSyncedListBundleImpl(
+    {
+      wants: {
+        items: wants.items,
+        setAll: wants.setAll,
+        getUrl: '/api/sync/wants',
+        putUrl: '/api/sync/wants',
+        normalize: normalizeServerWants,
+      } satisfies SyncSlot<WantsItem>,
+      available: {
+        items: available.items,
+        setAll: available.setAll,
+        getUrl: '/api/sync/available',
+        putUrl: '/api/sync/available',
+      } satisfies SyncSlot<AvailableItem>,
+    },
+    user,
+  );
+}
+
+/**
+ * The generalised bundle implementation. Operates over a record of
+ * slots — wants/available today; favourites/etc. tomorrow.
+ *
+ * Holds the writeback gen-counter pair (`serverWriteGenRef` /
+ * `lastSeenWriteGenRef`) that lets the items-changed effect tell
+ * "server wrote this" from "user edited this". Without the counter,
+ * a server writeback would trigger the items effect, which would
+ * schedule a debounced PUT 500ms later, echoing the value back —
+ * the symptom that motivated this contract.
+ */
+// `any` here is the necessary type-erasure point — each slot's own T
+// is fully type-checked at the construction site (see useServerSync).
+// The impl operates uniformly over them and can't see the per-slot
+// shape; trying to keep `unknown` would force unsafe casts at every
+// `setAll` callsite. Centralising the erasure here keeps the impl
+// readable.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function useSyncedListBundleImpl<TSlots extends Record<string, SyncSlot<any>>>(
+  slots: TSlots,
   user: User | null,
 ): ServerSyncApi {
   const [status, setStatus] = useState<SyncStatus>('idle');
@@ -69,27 +166,58 @@ export function useServerSync(
   // Once initial sync completes, debounced mutations are allowed.
   const initialSyncDoneRef = useRef(false);
 
-  // Use the canonical persistence types here rather than `typeof
-  // wants.items` / `typeof available.items` — the typeof references
-  // tripped exhaustive-deps lint into thinking `wants` / `available`
-  // were runtime deps when in fact only the parameter values are
-  // used at runtime.
-  const pushWants = useCallback(async (items: WantsItem[]) => {
-    return syncPut<WantsItem[]>('/api/sync/wants', items);
-  }, []);
+  /**
+   * Apply a server response across the bundle. Increments the
+   * gen-counter first so the items-effect can detect this as a
+   * writeback (no echo PUT). Each slot's optional `normalize` runs
+   * before its `setAll`.
+   */
+  const applyServerResponses = useCallback(
+    (responses: Record<keyof TSlots, unknown[]>) => {
+      serverWriteGenRef.current += 1;
+      for (const key in slots) {
+        const slot = slots[key];
+        const items = responses[key];
+        const normalized = slot.normalize
+          ? slot.normalize(items as never)
+          : (items as never);
+        // setAll's type per slot is set by the parameterised type; the
+        // erasure here is safe because the slot's normalize (or
+        // identity) returned the slot's own T[].
+        (slot.setAll as (next: unknown[]) => void)(normalized);
+      }
+    },
+    [slots],
+  );
 
-  const pushAvailable = useCallback(async (items: AvailableItem[]) => {
-    return syncPut<AvailableItem[]>('/api/sync/available', items);
-  }, []);
+  /**
+   * Push every slot's local items to its `putUrl` in parallel.
+   * Settles `status` based on the worst outcome.
+   */
+  const pushAll = useCallback(async () => {
+    await Promise.all(
+      Object.values(slots).map(slot => syncPut(slot.putUrl, slot.items)),
+    );
+  }, [slots]);
 
-  // Initial sync on sign-in or mount. Server is always the source
-  // of truth — local data only ever migrates upward when the server
-  // is genuinely empty (first-ever sign-in for this Discord account).
+  /**
+   * Pull every slot in parallel. Returns a record keyed by slot name.
+   */
+  const pullAll = useCallback(async (): Promise<Record<keyof TSlots, unknown[]>> => {
+    const entries = await Promise.all(
+      Object.entries(slots).map(async ([key, slot]) => {
+        const items = await syncGet<unknown[]>(slot.getUrl);
+        return [key, items] as const;
+      }),
+    );
+    return Object.fromEntries(entries) as Record<keyof TSlots, unknown[]>;
+  }, [slots]);
+
+  // Initial sync on sign-in or mount. Server is always the source of
+  // truth — local data only ever migrates upward when the server is
+  // genuinely empty (first-ever sign-in for this Discord account).
   // If the server has anything, we apply it directly and overwrite
-  // the device's local cache. No "Import or Start Fresh?" prompt
-  // anymore — that step routinely confused users into dismissing
-  // away their own server data, leaving the device showing stale
-  // localStorage that never re-synced.
+  // the device's local cache.
   useEffect(() => {
     if (!user) {
       prevUserRef.current = null;
@@ -100,51 +228,27 @@ export function useServerSync(
     const wasSignedOut = prevUserRef.current === null;
     prevUserRef.current = user;
 
-    const localWantsCount = wants.items.length;
-    const localAvailableCount = available.items.length;
-    const hasLocalItems = localWantsCount > 0 || localAvailableCount > 0;
+    const hasLocalItems = Object.values(slots).some(s => s.items.length > 0);
 
     (async () => {
       setStatus('syncing');
       try {
-        const [serverWants, serverAvailable] = await Promise.all([
-          syncGet<unknown[]>('/api/sync/wants'),
-          syncGet<unknown[]>('/api/sync/available'),
-        ]);
-        const serverHasData = serverWants.length > 0 || serverAvailable.length > 0;
+        const pulled = await pullAll();
+        const serverHasData = Object.values(pulled).some(arr => arr.length > 0);
 
         if (wasSignedOut && hasLocalItems && !serverHasData) {
-          // First-ever sign-in for this Discord account with local
-          // items to bring along. Push them up silently — the
-          // server is empty so there's nothing to lose, and the
-          // user shouldn't have to think about it.
-          await Promise.all([
-            pushWants(wants.items),
-            pushAvailable(available.items),
-          ]);
-          // Round-trip via a fresh pull so the device's items now
-          // reflect any normalisation the server did on insert.
-          const [w, a] = await Promise.all([
-            syncGet<unknown[]>('/api/sync/wants'),
-            syncGet<unknown[]>('/api/sync/available'),
-          ]);
-          serverWriteGenRef.current += 1;
-          wants.setAll(normalizeServerWants(w as typeof wants.items));
-          available.setAll(a as typeof available.items);
-          initialSyncDoneRef.current = true;
-          setStatus('idle');
-          return;
+          // First-ever sign-in with local items to bring along.
+          // Push silently — the server is empty so there's nothing
+          // to lose. Round-trip via a fresh pull so the device sees
+          // any normalisation the server did on insert.
+          await pushAll();
+          const repulled = await pullAll();
+          applyServerResponses(repulled);
+        } else {
+          // Server-wins for every other case (multi-device, repeat
+          // sign-in).
+          applyServerResponses(pulled);
         }
-
-        // Server-wins: any time the server has data, apply it. This
-        // covers the multi-device case (signed in elsewhere first)
-        // + the same-device-second-sign-in case. Local items on
-        // this device get overwritten — that's the right behavior
-        // because the user's seen-state across devices is the
-        // server view.
-        serverWriteGenRef.current += 1;
-        wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
-        available.setAll(serverAvailable as typeof available.items);
         initialSyncDoneRef.current = true;
         setStatus('idle');
       } catch (err: unknown) {
@@ -155,32 +259,24 @@ export function useServerSync(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // Re-pull on tab/app foreground so a phone that was signed in
-  // hours ago picks up edits made on another device. Without this,
-  // the initial sign-in pull is the only refresh — a long-idle
-  // session reads stale localStorage forever (until reload).
-  //
-  // Skip rules:
-  //   - signed out → nothing to pull
-  //   - initial sync hasn't completed → the mount effect will handle it
-  //   - debounce timer is pending → local edits about to push; pulling
-  //     first would clobber them. Wait for the next foreground event
-  //     after the push has settled.
+  // Re-pull on tab/app foreground so a phone signed in hours ago picks
+  // up edits made on another device. Without this, initial sign-in is
+  // the only refresh — a long-idle session reads stale localStorage
+  // until reload. Three triggers, each catching a case the others miss:
+  // visibilitychange, window.focus (Safari quirk + alt-tab), and a
+  // 60s visible-tab poll for the always-foregrounded case.
   useEffect(() => {
     if (!user) return;
 
     const pull = async () => {
       if (!initialSyncDoneRef.current) return;
+      // Debounced PUT pending → skip; pulling first would clobber the
+      // local edits about to push.
       if (debounceRef.current) return;
       setStatus('syncing');
       try {
-        const [serverWants, serverAvailable] = await Promise.all([
-          syncGet<unknown[]>('/api/sync/wants'),
-          syncGet<unknown[]>('/api/sync/available'),
-        ]);
-        serverWriteGenRef.current += 1;
-        wants.setAll(normalizeServerWants(serverWants as typeof wants.items));
-        available.setAll(serverAvailable as typeof available.items);
+        const pulled = await pullAll();
+        applyServerResponses(pulled);
         setStatus('idle');
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : '';
@@ -191,18 +287,6 @@ export function useServerSync(
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') pull();
     };
-    // Three triggers, each catching a case the others miss:
-    //   - visibilitychange: tab backgrounding/foregrounding, most
-    //     mobile app-switch transitions, desktop tab switching.
-    //   - window.focus: Safari quirks where vischange doesn't always
-    //     fire on app resume; also alt-tab on desktop.
-    //   - 60s polling while visible: the load-bearing case for cross-
-    //     device sync. A user with the tab continuously in the
-    //     foreground (phone on home screen, second monitor, etc.)
-    //     never fires the other two events, so without polling they
-    //     can sit forever showing stale data after another device
-    //     edits the wishlist server-side. Gated on visibility so
-    //     hidden tabs don't burn requests.
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', pull);
     const pollInterval = window.setInterval(() => {
@@ -214,19 +298,23 @@ export function useServerSync(
       window.removeEventListener('focus', pull);
       window.clearInterval(pollInterval);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Debounced sync on local mutations — only after initial sync.
+  // Watches every slot's `items` reference. The gen-counter check
+  // skips when this items change came from a server writeback
+  // (initial sync, foreground re-pull, etc.) instead of a real
+  // local edit.
+  //
+  // We can't list slot.items individually in the dep array (the
+  // record is generic) so we synthesise a stable key from the
+  // array references. React's bailout still works because writing
+  // the same array reference twice is rare.
+  const itemsKey = Object.values(slots).map(s => s.items);
   useEffect(() => {
     if (!user || !initialSyncDoneRef.current) return;
 
-    // Skip when this items change came from a server writeback
-    // (initial sync, foreground re-pull, etc.) instead of a real
-    // local edit. The writeback path increments
-    // `serverWriteGenRef`; comparing against the gen we last saw
-    // tells us whether the items effect was triggered by us flipping
-    // the writeback gen, in which case there's no user edit to push.
     if (serverWriteGenRef.current !== lastSeenWriteGenRef.current) {
       lastSeenWriteGenRef.current = serverWriteGenRef.current;
       return;
@@ -240,10 +328,7 @@ export function useServerSync(
       if (syncVersionRef.current !== version) return;
       setStatus('syncing');
       try {
-        await Promise.all([
-          pushWants(wants.items),
-          pushAvailable(available.items),
-        ]);
+        await pushAll();
         setStatus('idle');
       } catch {
         setStatus('error');
@@ -254,7 +339,7 @@ export function useServerSync(
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wants.items, available.items, user?.id]);
+  }, [...itemsKey, user?.id]);
 
   return { status };
 }
