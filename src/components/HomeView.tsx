@@ -592,6 +592,16 @@ function WishlistModule({
       label="Your wishlist"
       headingId="your-wishlist-heading"
       flush={flush}
+      action={
+        wants.length > 0 ? (
+          <ListModuleActions
+            openLabel="Open wishlist"
+            onOpen={onEditWishlist}
+            shareKind="wants"
+            shareItems={wants}
+          />
+        ) : null
+      }
     >
       <div className="text-[12px] text-gray-400 tabular-nums mb-3">
         <span className="text-gray-200 font-semibold">{wants.length}</span>
@@ -604,15 +614,6 @@ function WishlistModule({
           </>
         )}
       </div>
-
-      {wants.length > 0 && (
-        <ListModuleActions
-          openLabel="Open wishlist"
-          onOpen={onEditWishlist}
-          shareKind="wants"
-          shareItems={wants}
-        />
-      )}
 
       {wants.length === 0 && (
         <EmptyListState
@@ -680,20 +681,21 @@ function BinderModule({
       label="Your trade binder"
       headingId="your-binder-heading"
       flush={flush}
+      action={
+        available.length > 0 ? (
+          <ListModuleActions
+            openLabel="Open trade binder"
+            onOpen={onEditBinder}
+            shareKind="available"
+            shareItems={available}
+          />
+        ) : null
+      }
     >
       <div className="text-[12px] text-gray-400 tabular-nums mb-3">
         <span className="text-gray-200 font-semibold">{available.length}</span>
         {available.length === 1 ? ' card available' : ' cards available'}
       </div>
-
-      {available.length > 0 && (
-        <ListModuleActions
-          openLabel="Open trade binder"
-          onOpen={onEditBinder}
-          shareKind="available"
-          shareItems={available}
-        />
-      )}
 
       {available.length === 0 && (
         <EmptyListState
@@ -1190,7 +1192,7 @@ function ListModuleActions({
     },
   ];
   return (
-    <div className="mb-3 flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5 shrink-0">
       <button
         type="button"
         onClick={onOpen}
