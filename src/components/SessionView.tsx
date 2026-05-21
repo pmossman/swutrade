@@ -4,7 +4,7 @@ import { AppHeader, type BreadcrumbSegment } from './ui/AppHeader';
 import { LoadingState, ErrorState, SuccessState } from './ui/states';
 import { useConfirm } from './ui/ConfirmDialog';
 import { apiPost } from '../services/apiClient';
-import { TradeSide } from './TradeSide';
+import { TradeSide, type TradeSideShared } from './TradeSide';
 import { TradeBalance } from './TradeBalance';
 import { ListsDrawer } from './ListsDrawer';
 import { useAuthContext } from '../contexts/AuthContext';
@@ -96,6 +96,30 @@ export function SessionView({
     () => (session ? sessionCapabilities(session) : null),
     [session],
   );
+
+  // Per-trade props shared across both <TradeSide /> invocations.
+  // Built once and memoised so any future React.memo(TradeSide) skips
+  // renders that change only the OTHER side's state (audit Trade UI #1).
+  const tradeSideShared = useMemo<TradeSideShared>(() => ({
+    percentage,
+    priceMode,
+    setCards: priceData.cards,
+    isLoading: priceData.isAnyLoading,
+    filters,
+    wants,
+    available,
+    sharedLists: null,
+    counterpartHandle: session?.counterpart?.handle ?? null,
+  }), [
+    percentage,
+    priceMode,
+    priceData.cards,
+    priceData.isAnyLoading,
+    filters,
+    wants,
+    available,
+    session?.counterpart?.handle,
+  ]);
   // Distinct from `confirm` above (which is the session-confirm API);
   // this is the "ask the user before destructive action" dialog hook.
   const askConfirm = useConfirm();
@@ -546,21 +570,14 @@ export function SessionView({
 
               <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
                 <TradeSide
+                  shared={tradeSideShared}
                   label="Your side"
                   cards={viewerTradeCards}
-                  percentage={percentage}
-                  priceMode={priceMode}
                   onAdd={handleAdd}
                   onRemove={handleRemove}
                   onChangeQty={handleChangeQty}
                   onSwapVariant={handleSwapVariant}
                   accentColor="emerald"
-                  setCards={priceData.cards}
-                  isLoading={priceData.isAnyLoading}
-                  filters={filters}
-                  wants={wants}
-                  available={available}
-                  sharedLists={null}
                   // Mobile-only collapse: tap header to fold the
                   // panel; lets the user focus on one side at a time.
                   // Locked-open if the OTHER side is currently
@@ -569,7 +586,6 @@ export function SessionView({
                   onToggleCollapse={isMobile && !theirSideCollapsed
                     ? () => setYourSideCollapsed(c => !c)
                     : undefined}
-                  counterpartHandle={counterpartHandle}
                   // Once the viewer has confirmed, their side locks.
                   // Any edit auto-clears confirmations server-side
                   // (editSessionSide), which would silently invalidate
@@ -594,10 +610,9 @@ export function SessionView({
                   ) : undefined}
                 />
                 <TradeSide
+                  shared={tradeSideShared}
                   label={counterpartHandle ? `@${counterpartHandle}'s side` : 'Their side'}
                   cards={counterpartCards}
-                  percentage={percentage}
-                  priceMode={priceMode}
                   // Read-only — counterpart owns this half. Handlers are
                   // required by the interface but never fire because
                   // Add Card + qty steppers are hidden in readOnly mode.
@@ -605,17 +620,10 @@ export function SessionView({
                   onRemove={noop}
                   onChangeQty={noop}
                   accentColor="blue"
-                  setCards={priceData.cards}
-                  isLoading={priceData.isAnyLoading}
-                  filters={filters}
-                  wants={wants}
-                  available={available}
-                  sharedLists={null}
                   collapsed={isMobile && theirSideCollapsed}
                   onToggleCollapse={isMobile && !yourSideCollapsed
                     ? () => setTheirSideCollapsed(c => !c)
                     : undefined}
-                  counterpartHandle={counterpartHandle}
                   readOnly
                   readOnlyEmptyLabel={
                     counterpartHandle

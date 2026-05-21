@@ -18,11 +18,53 @@ import type { SharedLists } from '../hooks/useSharedLists';
 import { cardFamilyId } from '../variants';
 import { useCardIndexContext } from '../contexts/CardIndexContext';
 
-interface TradeSideProps {
-  label: string;
-  cards: TradeCard[];
+/**
+ * Props that have the same value across both sides of a single trade.
+ * Bundled so each call-site builds the shared bag once (via useMemo)
+ * and hands it to both `<TradeSide />` invocations — collapses prop
+ * drilling from 24+ items per side to ~14, and stabilises the
+ * reference so `React.memo(TradeSide)` would actually skip renders
+ * (audit Trade UI #1).
+ *
+ * Per-side props (`cards`, `accentColor`, `onAdd`, `collapsed`, etc.)
+ * stay on the component because they differ between offering and
+ * receiving.
+ */
+export interface TradeSideShared {
   percentage: number;
   priceMode: PriceMode;
+  setCards: Record<string, CardVariant[]>;
+  isLoading: boolean;
+  /** Shared filter state. Lifted to App so both trade sides stay in sync. */
+  filters: SelectionFilters;
+  /** Personal-source pickers in the search overlay's empty state pull
+   *  from these. Offering side surfaces Available; Receiving surfaces
+   *  Wants. Card indexes (byFamilyAll / byProductId) come from
+   *  CardIndexContext now, so they don't need to be prop-drilled
+   *  alongside the personal-list APIs. */
+  wants: WantsApi;
+  available: AvailableApi;
+  sharedLists: SharedLists | null;
+  /** Phase-4 community rollup. For Offering: familyIds other enrolled
+   *  guild members want; for Receiving: productIds other enrolled
+   *  members have available. Empty lists are the baseline for non-
+   *  signed-in users or viewers with no enrolled guilds. */
+  communityWantFamilyIds?: readonly string[];
+  communityAvailableProductIds?: readonly string[];
+  /** When true, opening the search overlay auto-activates the "theirs"
+   *  source chip — used in propose mode so the first thing the user
+   *  sees is the overlap with their counterpart. */
+  autoScopeToTheirs?: boolean;
+  /** Counterpart handle (propose or shared-list context). Threaded
+   *  into TradeSearchOverlay so the picker header can show "for @alice". */
+  counterpartHandle?: string | null;
+}
+
+interface TradeSideProps {
+  /** Bundled per-trade props (same value across both sides). */
+  shared: TradeSideShared;
+  label: string;
+  cards: TradeCard[];
   onAdd: (card: CardVariant) => void;
   onRemove: (key: string) => void;
   onChangeQty: (key: string, delta: number) => void;
@@ -34,18 +76,6 @@ interface TradeSideProps {
    *  row on the side. Omit when read-only. */
   onSwapVariant?: (oldKey: string, newCard: CardVariant) => void;
   accentColor: 'emerald' | 'blue';
-  setCards: Record<string, CardVariant[]>;
-  isLoading: boolean;
-  // Shared filter state. Lifted to App so both trade sides stay in sync.
-  filters: SelectionFilters;
-  // Personal-source pickers in the search overlay's empty state pull
-  // from these. Offering side surfaces Available; Receiving surfaces
-  // Wants. Card indexes (byFamilyAll / byProductId) come from
-  // CardIndexContext now, so they don't need to be prop-drilled
-  // alongside the personal-list APIs.
-  wants: WantsApi;
-  available: AvailableApi;
-  sharedLists: SharedLists | null;
   /** When true, the card list collapses and the header shrinks to show
    *  just the label + count + total, with a chevron to re-expand. */
   collapsed: boolean;
@@ -59,24 +89,6 @@ interface TradeSideProps {
    *  search overlay with the "They want" source chip active. */
   autoOpenSharedLink?: boolean;
   onConsumeAutoOpen?: () => void;
-  /** Phase-4 community rollup. For Offering: familyIds other enrolled
-   *  guild members want (we scope to cards the viewer has available).
-   *  For Receiving: productIds other enrolled members have available
-   *  (we scope to cards matching the viewer's wants). Empty lists are
-   *  the baseline for non-signed-in users or viewers with no enrolled
-   *  guilds — the chip just doesn't render. */
-  communityWantFamilyIds?: readonly string[];
-  communityAvailableProductIds?: readonly string[];
-  /** When true, opening the search overlay auto-activates the "theirs"
-   *  source chip — used in propose mode so the first thing the user
-   *  sees is the overlap with their counterpart, not the whole catalog.
-   *  Manual chip toggling afterward stays the user's choice. */
-  autoScopeToTheirs?: boolean;
-  /** Counterpart handle (propose or shared-list context). Threaded
-   *  into TradeSearchOverlay so the picker header can show "for
-   *  @alice" — avoids the full-screen overlay feeling disconnected
-   *  from its parent flow. */
-  counterpartHandle?: string | null;
   /** First-run tutorial anchor id — rendered as `data-tour` on the
    *  empty-state Add Cards tile. Set only on the Offering side so
    *  the coachmark has one predictable target. */
@@ -158,30 +170,19 @@ function thumbSize(cardCount: number, isMobile: boolean): ThumbSize {
 }
 
 export function TradeSide({
+  shared,
   label,
   cards,
-  percentage,
-  priceMode,
   onAdd,
   onRemove,
   onChangeQty,
   onSwapVariant,
   accentColor,
-  setCards,
-  isLoading,
-  wants,
-  available,
-  sharedLists,
-  filters,
   collapsed,
   onToggleCollapse,
   flexBasis,
   autoOpenSharedLink,
   onConsumeAutoOpen,
-  communityWantFamilyIds,
-  communityAvailableProductIds,
-  autoScopeToTheirs,
-  counterpartHandle,
   dataTourAddCards,
   headerless,
   readOnly = false,
@@ -190,6 +191,20 @@ export function TradeSide({
   cardActions,
   customFooter,
 }: TradeSideProps) {
+  const {
+    percentage,
+    priceMode,
+    setCards,
+    isLoading,
+    wants,
+    available,
+    sharedLists,
+    filters,
+    communityWantFamilyIds,
+    communityAvailableProductIds,
+    autoScopeToTheirs,
+    counterpartHandle,
+  } = shared;
   const { byFamilyAll, byProductId } = useCardIndexContext();
   const isMobile = useIsMobile();
   const isOffering = accentColor === 'emerald';

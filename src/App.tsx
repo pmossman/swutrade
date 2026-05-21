@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import type { CardVariant, TradeCard, PriceMode } from './types';
 import { SETS, tradeCardKey } from './types';
-import { TradeSide } from './components/TradeSide';
+import { TradeSide, type TradeSideShared } from './components/TradeSide';
 import { TradeBalance } from './components/TradeBalance';
 import { TradeSummary } from './components/TradeSummary';
 import { ShareButtons } from './components/ShareButtons';
@@ -212,6 +212,40 @@ function App() {
   // Collapse controls are a mobile concern — side-by-side panels on
   // desktop don't benefit from collapsing either side.
   const isMobile = useIsMobile();
+
+  // Bundle the per-trade props that have the same value across both
+  // sides of the trade. Each `<TradeSide />` invocation reads from
+  // this stable object, so any future `React.memo(TradeSide)` skips
+  // renders that change only the other side's state (audit Trade UI
+  // #1). The dependency list is comprehensive but each piece is
+  // memoised or stable at the source.
+  const tradeSideShared = useMemo<TradeSideShared>(() => ({
+    percentage,
+    priceMode,
+    setCards: priceData.cards,
+    isLoading: priceData.isAnyLoading,
+    filters,
+    wants,
+    available,
+    sharedLists: effectiveSharedLists,
+    communityWantFamilyIds: community.wantFamilyIds,
+    communityAvailableProductIds: community.availableProductIds,
+    autoScopeToTheirs: !!proposeHandle,
+    counterpartHandle: proposeHandle ?? senderHandle ?? null,
+  }), [
+    percentage,
+    priceMode,
+    priceData.cards,
+    priceData.isAnyLoading,
+    filters,
+    wants,
+    available,
+    effectiveSharedLists,
+    community.wantFamilyIds,
+    community.availableProductIds,
+    proposeHandle,
+    senderHandle,
+  ]);
 
   // View mode: list-view is the default landing for shared-link URLs
   // (lists in URL but no trade). Users opt into the trade UI via the
@@ -858,30 +892,19 @@ function App() {
         {tradeViewMode === 'split' ? (
           <div ref={panelsRef} className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-2 gap-3">
             <TradeSide
+              shared={tradeSideShared}
               label="Offering"
               cards={yourCards}
-              percentage={percentage}
-              priceMode={priceMode}
               onAdd={handleAddYour}
               onRemove={handleRemoveYour}
               onChangeQty={handleQtyYour}
               onSwapVariant={handleSwapYour}
               accentColor="emerald"
-              setCards={priceData.cards}
-              isLoading={priceData.isAnyLoading}
-              filters={filters}
-              wants={wants}
-              available={available}
-              sharedLists={effectiveSharedLists}
               collapsed={isMobile && offeringCollapsed}
               onToggleCollapse={isMobile ? () => setOfferingCollapsed(c => !c) : undefined}
               flexBasis={!isMobile || offeringCollapsed || receivingCollapsed ? undefined : (splitRatio ?? undefined)}
               autoOpenSharedLink={autoOpenOfferingFromShared}
               onConsumeAutoOpen={consumeAutoOpenOffering}
-              communityWantFamilyIds={community.wantFamilyIds}
-              communityAvailableProductIds={community.availableProductIds}
-              autoScopeToTheirs={!!proposeHandle}
-              counterpartHandle={proposeHandle ?? senderHandle ?? null}
               dataTourAddCards="add-cards"
             />
             {/* Mobile-only drag handle between the two panels. Collapsed
@@ -890,81 +913,48 @@ function App() {
               <PanelDivider containerRef={panelsRef} onRatioChange={setSplitRatio} />
             )}
             <TradeSide
+              shared={tradeSideShared}
               label="Receiving"
               cards={theirCards}
-              percentage={percentage}
-              priceMode={priceMode}
               onAdd={handleAddTheir}
               onRemove={handleRemoveTheir}
               onChangeQty={handleQtyTheir}
               onSwapVariant={handleSwapTheir}
               accentColor="blue"
-              setCards={priceData.cards}
-              isLoading={priceData.isAnyLoading}
-              filters={filters}
-              wants={wants}
-              available={available}
-              sharedLists={effectiveSharedLists}
               collapsed={isMobile && receivingCollapsed}
               onToggleCollapse={isMobile ? () => setReceivingCollapsed(c => !c) : undefined}
               flexBasis={!isMobile || offeringCollapsed || receivingCollapsed || splitRatio === null ? undefined : 1 - splitRatio}
-              communityWantFamilyIds={community.wantFamilyIds}
-              communityAvailableProductIds={community.availableProductIds}
-              autoScopeToTheirs={!!proposeHandle}
-              counterpartHandle={proposeHandle ?? senderHandle ?? null}
             />
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex flex-col">
             {activeTradeTab === 'offering' ? (
               <TradeSide
+                shared={tradeSideShared}
                 label="Offering"
                 cards={yourCards}
-                percentage={percentage}
-                priceMode={priceMode}
                 onAdd={handleAddYour}
                 onRemove={handleRemoveYour}
                 onChangeQty={handleQtyYour}
                 onSwapVariant={handleSwapYour}
                 accentColor="emerald"
-                  setCards={priceData.cards}
-                isLoading={priceData.isAnyLoading}
-                  filters={filters}
-                wants={wants}
-                available={available}
-                sharedLists={effectiveSharedLists}
                 collapsed={false}
                 headerless
                 autoOpenSharedLink={autoOpenOfferingFromShared}
                 onConsumeAutoOpen={consumeAutoOpenOffering}
-                communityWantFamilyIds={community.wantFamilyIds}
-                communityAvailableProductIds={community.availableProductIds}
-                autoScopeToTheirs={!!proposeHandle}
-                counterpartHandle={proposeHandle ?? senderHandle ?? null}
               />
             ) : (
               <TradeSide
+                shared={tradeSideShared}
                 label="Receiving"
                 cards={theirCards}
-                percentage={percentage}
-                priceMode={priceMode}
                 onAdd={handleAddTheir}
                 onRemove={handleRemoveTheir}
                 onChangeQty={handleQtyTheir}
                 onSwapVariant={handleSwapTheir}
                 accentColor="blue"
-                  setCards={priceData.cards}
-                isLoading={priceData.isAnyLoading}
-                  filters={filters}
-                wants={wants}
-                available={available}
-                sharedLists={effectiveSharedLists}
                 collapsed={false}
                 headerless
-                communityWantFamilyIds={community.wantFamilyIds}
-                communityAvailableProductIds={community.availableProductIds}
-                autoScopeToTheirs={!!proposeHandle}
-                counterpartHandle={proposeHandle ?? senderHandle ?? null}
               />
             )}
           </div>
