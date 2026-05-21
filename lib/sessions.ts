@@ -29,6 +29,10 @@ import {
   type SessionStatus,
   type TradeCardSnapshot,
 } from './schema.js';
+import {
+  loadActiveAsParticipant,
+  loadAsParticipant,
+} from './sessionLifecycle.js';
 
 type Db = ReturnType<typeof getDb>;
 
@@ -1013,16 +1017,9 @@ export async function editSessionSide(
     cards: TradeCardSnapshot[];
   },
 ): Promise<EditSessionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   const viewerIsA = row.userAId === args.viewerUserId;
   const now = new Date();
@@ -1122,16 +1119,9 @@ export async function confirmSession(
   db: Db,
   args: { sessionId: string; viewerUserId: string },
 ): Promise<ConfirmSessionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   // Already confirmed — idempotent no-op beyond re-fetch for the
   // caller's rendered view.
@@ -1202,16 +1192,9 @@ export async function unconfirmSession(
   db: Db,
   args: { sessionId: string; viewerUserId: string },
 ): Promise<UnconfirmSessionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   // Idempotent: already unconfirmed → no mutation, just re-fetch for
   // the caller's rendered view.
@@ -1263,15 +1246,9 @@ export async function cancelSession(
     reason?: 'declined' | 'withdrawn';
   },
 ): Promise<CancelSessionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
+  const loaded = await loadAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   if (row.status === 'active') {
     const now = new Date();
@@ -1747,17 +1724,14 @@ export async function declineSession(
   // relying on cancelSession's narrower failure surface. cancelSession
   // is no-op-on-terminal — for decline we want an explicit signal so
   // the UI can show "this trade is no longer active" instead of a
-  // silent no-op.
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
+  // silent no-op. `'terminal'` from the loader maps to `'not-active'`
+  // here to preserve the existing wire reason.
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) {
+    if (loaded.reason === 'terminal') return { ok: false, reason: 'not-active' };
+    return loaded;
   }
-  if (row.status !== 'active') return { ok: false, reason: 'not-active' };
+  const { row } = loaded;
 
   // Identify the OTHER side — that's who gets the decline DM.
   const isA = row.userAId === args.viewerUserId;
@@ -1842,21 +1816,8 @@ export async function sendChatMessage(
   if (trimmed.length === 0) return { ok: false, reason: 'empty' };
   if (trimmed.length > CHAT_MAX_BODY_LENGTH) return { ok: false, reason: 'too-long' };
 
-  const [row] = await db
-    .select({
-      id: tradeSessions.id,
-      userAId: tradeSessions.userAId,
-      userBId: tradeSessions.userBId,
-      status: tradeSessions.status,
-    })
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
 
   // Rate limit: count viewer's chat events in the last minute.
   const windowStart = new Date(Date.now() - CHAT_RATE_LIMIT_WINDOW_MS);
@@ -2205,16 +2166,9 @@ export async function suggestForSession(
     return { ok: false, reason: 'empty' };
   }
 
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
   if (row.userBId === null) return { ok: false, reason: 'open-slot' };
 
   const viewerIsA = row.userAId === args.viewerUserId;
@@ -2346,16 +2300,9 @@ export async function acceptSuggestion(
   db: Db,
   args: { sessionId: string; viewerUserId: string; suggestionId: string },
 ): Promise<AcceptSuggestionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   const suggestions = row.pendingSuggestions ?? [];
   const idx = suggestions.findIndex(s => s.id === args.suggestionId);
@@ -2510,15 +2457,9 @@ export async function dismissSuggestion(
   db: Db,
   args: { sessionId: string; viewerUserId: string; suggestionId: string },
 ): Promise<DismissSuggestionResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
+  const loaded = await loadAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
 
   const suggestions = row.pendingSuggestions ?? [];
   const idx = suggestions.findIndex(s => s.id === args.suggestionId);
@@ -2572,16 +2513,9 @@ export async function proposeRevertForSession(
   db: Db,
   args: { sessionId: string; viewerUserId: string; snapshotEventId: string },
 ): Promise<ProposeRevertResult> {
-  const [row] = await db
-    .select()
-    .from(tradeSessions)
-    .where(eq(tradeSessions.id, args.sessionId))
-    .limit(1);
-  if (!row) return { ok: false, reason: 'not-found' };
-  if (row.userAId !== args.viewerUserId && row.userBId !== args.viewerUserId) {
-    return { ok: false, reason: 'not-participant' };
-  }
-  if (row.status !== 'active') return { ok: false, reason: 'terminal' };
+  const loaded = await loadActiveAsParticipant(db, args);
+  if (!loaded.ok) return loaded;
+  const { row } = loaded;
   if (row.userBId === null) return { ok: false, reason: 'open-slot' };
 
   // Pull the snapshot event. Must belong to this session and be of
