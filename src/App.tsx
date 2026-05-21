@@ -53,11 +53,11 @@ const CommunityView = lazy(() =>
 const TradesHistoryView = lazy(() =>
   import('./components/TradesHistoryView').then(m => ({ default: m.TradesHistoryView })),
 );
-const WishlistView = lazy(() =>
-  import('./components/WishlistView').then(m => ({ default: m.WishlistView })),
-);
-const BinderView = lazy(() =>
-  import('./components/BinderView').then(m => ({ default: m.BinderView })),
+// Wishlist + Trade Binder collapsed into one tabbed view 2026-05-21.
+// Legacy `?view=wishlist` / `?view=binder` URLs still route here
+// with the matching tab pre-selected via the `defaultTab` prop.
+const CollectionView = lazy(() =>
+  import('./components/CollectionView').then(m => ({ default: m.CollectionView })),
 );
 const CardBrowserView = lazy(() =>
   import('./components/CardBrowserView').then(m => ({ default: m.CardBrowserView })),
@@ -634,29 +634,22 @@ function App() {
     return <TradesHistoryView />;
   }
 
-  if (viewMode === 'wishlist') {
-    // Dedicated wishlist view — the canonical edit surface for wants.
-    // Drawer is retained only as a quick-edit sidebar inside the
-    // trade builder; nav/home links route here instead.
+  if (viewMode === 'wishlist' || viewMode === 'binder') {
+    // Both legacy view modes route into the unified CollectionView
+    // with the matching tab pre-selected. Internal tab switches
+    // update `?tab=` directly without re-triggering the routing
+    // layer. The two view modes are kept distinct so existing
+    // URLs (Home modules' links, NavMenu entries, shared deep
+    // links, e2e fixtures) work without changes.
     return (
-      <WishlistView
+      <CollectionView
         auth={auth}
         wants={wants}
-        allCards={allLoadedCards}
-        percentage={percentage}
-        priceMode={priceMode}
-      />
-    );
-  }
-
-  if (viewMode === 'binder') {
-    return (
-      <BinderView
-        auth={auth}
         available={available}
         allCards={allLoadedCards}
         percentage={percentage}
         priceMode={priceMode}
+        defaultTab={viewMode === 'wishlist' ? 'wishlist' : 'binder'}
       />
     );
   }

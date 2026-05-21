@@ -591,32 +591,27 @@ function WishlistModule({
       label="Your wishlist"
       headingId="your-wishlist-heading"
       flush={flush}
-      action={
-        <button
-          type="button"
-          onClick={onEditWishlist}
-          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
-        >
-          Edit wishlist →
-        </button>
-      }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex items-center justify-between gap-2">
-        <span>
-          <span className="text-gray-200 font-semibold">{wants.length}</span>
-          {wants.length === 1 ? ' card' : ' cards'}
-          {priorityCount > 0 && (
-            <>
-              {' · '}
-              <span className="text-gold font-semibold">{priorityCount}</span>
-              {' priority'}
-            </>
-          )}
-        </span>
-        {wants.length > 0 && (
-          <ShareLink kind="wants" items={wants} />
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{wants.length}</span>
+        {wants.length === 1 ? ' card' : ' cards'}
+        {priorityCount > 0 && (
+          <>
+            {' · '}
+            <span className="text-gold font-semibold">{priorityCount}</span>
+            {' priority'}
+          </>
         )}
       </div>
+
+      {wants.length > 0 && (
+        <ListModuleActions
+          openLabel="Open wishlist"
+          onOpen={onEditWishlist}
+          shareKind="wants"
+          shareItems={wants}
+        />
+      )}
 
       {wants.length === 0 && (
         <EmptyListState
@@ -684,25 +679,20 @@ function BinderModule({
       label="Your trade binder"
       headingId="your-binder-heading"
       flush={flush}
-      action={
-        <button
-          type="button"
-          onClick={onEditBinder}
-          className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors"
-        >
-          Edit trade binder →
-        </button>
-      }
     >
-      <div className="text-[12px] text-gray-400 tabular-nums mb-3 flex items-center justify-between gap-2">
-        <span>
-          <span className="text-gray-200 font-semibold">{available.length}</span>
-          {available.length === 1 ? ' card available' : ' cards available'}
-        </span>
-        {available.length > 0 && (
-          <ShareLink kind="available" items={available} />
-        )}
+      <div className="text-[12px] text-gray-400 tabular-nums mb-3">
+        <span className="text-gray-200 font-semibold">{available.length}</span>
+        {available.length === 1 ? ' card available' : ' cards available'}
       </div>
+
+      {available.length > 0 && (
+        <ListModuleActions
+          openLabel="Open trade binder"
+          onOpen={onEditBinder}
+          shareKind="available"
+          shareItems={available}
+        />
+      )}
 
       {available.length === 0 && (
         <EmptyListState
@@ -1152,31 +1142,61 @@ function ChevronIcon({ className }: { className?: string }) {
 }
 
 /**
- * Compact share-link affordance for the home-page WishlistModule +
- * BinderModule. Sits in the count row's right slot (where the old
- * "Post to a server →" link used to live before f524e0f). Single
- * "Copy link" semantic — the full Wishlist / Binder dedicated views
- * carry the heavier "Share image" flow + larger button chrome; here
- * we keep it minimal so the home grid stays scannable.
+ * Action row for the home-page WishlistModule + BinderModule —
+ * replaces the previous tap-tiny text-link pair that sat too close
+ * together on mobile (parker flagged 2026-05-21). Pattern:
  *
- * Uses `useShareListLink` so URL construction + clipboard fallback
- * + 2s "Copied" feedback stay aligned with the dedicated views.
+ *   [────  Open wishlist  ────] [icon: Share]
+ *
+ * Primary action is a full-width gold-tinged button that takes the
+ * viewer to the CollectionView with the right tab pre-selected.
+ * Share collapses to an icon-only square so it's a meaningful
+ * touch target without competing visually with the primary action.
+ * Tap area is 36×36 (above the iOS 44px floor when you count the
+ * 8px gap around it).
  */
-function ShareLink({
-  kind,
-  items,
+function ListModuleActions({
+  openLabel,
+  onOpen,
+  shareKind,
+  shareItems,
 }: {
-  kind: ShareListKind;
-  items: WantsApi['items'] | AvailableApi['items'];
+  openLabel: string;
+  onOpen: () => void;
+  shareKind: ShareListKind;
+  shareItems: WantsApi['items'] | AvailableApi['items'];
 }) {
-  const { handleCopy, copied } = useShareListLink(kind, items);
+  const { handleCopy, copied } = useShareListLink(shareKind, shareItems);
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      className="text-[11px] text-gray-500 hover:text-gold font-medium transition-colors whitespace-nowrap"
-    >
-      {copied ? 'Copied ✓' : 'Share →'}
-    </button>
+    <div className="mb-3 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex-1 flex items-center justify-center gap-1.5 h-9 rounded-lg bg-gold/15 border border-gold/40 hover:bg-gold/25 hover:border-gold/60 text-gold text-xs sm:text-sm font-bold tracking-wide uppercase transition-colors"
+      >
+        {openLabel}
+        <svg viewBox="0 0 16 16" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 8h10M9 4l4 4-4 4" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={copied ? 'Link copied' : 'Copy share link'}
+        title={copied ? 'Link copied' : 'Copy share link'}
+        className="shrink-0 inline-flex items-center justify-center w-9 h-9 rounded-lg bg-space-800/60 border border-space-700 hover:border-gold/40 hover:bg-space-800 text-gray-400 hover:text-gold transition-colors"
+      >
+        {copied ? (
+          <svg viewBox="0 0 16 16" className="w-4 h-4 text-gold" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 8l3 3 7-7" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 16 16" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M14 2L7 9" />
+            <path d="M14 2l-5 12-2-5-5-2 12-5z" />
+          </svg>
+        )}
+      </button>
+    </div>
   );
 }

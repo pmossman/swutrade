@@ -1,17 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Smoke coverage for the dedicated Wishlist + Binder views (the
- * 2026-04-21 split). Both views live at `?view=wishlist` /
- * `?view=binder` and are the canonical edit surfaces for each list;
- * the `ListsDrawer` is retained only as an in-trade-builder quick-
- * edit sidebar.
+ * Smoke coverage for the unified Collection view (the 2026-05-21 merge
+ * of the previously-separate Wishlist + Trade Binder views). The view
+ * lives at `?view=wishlist` / `?view=binder` — both URLs route into
+ * the same `CollectionView` component with the matching tab
+ * pre-selected via the `defaultTab` prop. Internal tab switches
+ * update `?tab=` directly without re-triggering the routing layer.
  *
- * Scope: navigate → header renders → panel renders → picker reachable
- * from the footer. Deep editing flows (priority toggle, variant
- * restriction editor, qty stepper) stay covered by `drawer.spec.ts`
- * since the shared `WantsPanel` / `AvailablePanel` components
- * underlie both surfaces.
+ * Scope: navigate → tab + chrome renders → panel renders → picker
+ * reachable from the footer → tab switch flips the surface. Deep
+ * editing flows stay covered by `drawer.spec.ts`.
  */
 
 const LUKE_FAMILY = 'jump-to-lightspeed::luke-skywalker-hero-of-yavin';
@@ -27,39 +26,58 @@ async function seedLists(page: Page) {
   }, LUKE_FAMILY);
 }
 
-test.describe('Dedicated Wishlist view', () => {
-  test('?view=wishlist renders the page chrome + seeded rows', async ({ page }) => {
+test.describe('Collection view — Wishlist tab', () => {
+  test('?view=wishlist lands on the Wishlist tab with seeded rows', async ({ page }) => {
     await seedLists(page);
     await page.goto('/?view=wishlist');
 
-    // Breadcrumb in the AppHeader — "Home › Wishlist".
+    // Breadcrumb echoes the active tab.
     await expect(
       page.getByRole('link', { name: /Home/i }).first(),
     ).toBeVisible({ timeout: 10_000 });
 
-    // Page heading + counts.
-    await expect(page.getByRole('heading', { name: /Your wishlist/i })).toBeVisible();
-    // Seeded row.
-    await expect(page.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible({ timeout: 10_000 });
+    // Wishlist tab is the active tab; Trade binder tab is inactive.
+    const wishlistTab = page.getByRole('tab', { name: /Wishlist/i });
+    const binderTab = page.getByRole('tab', { name: /(?:Trade )?Binder/i });
+    await expect(wishlistTab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+    await expect(binderTab).toHaveAttribute('aria-selected', 'false');
 
-    // Footer Add Card affordance — same label the drawer's Wants tab
-    // uses, since both surfaces render the shared WantsPanel.
+    // Seeded want renders.
+    await expect(page.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole('button', { name: /Add Card/i })).toBeVisible();
   });
 
   test('empty-state copy surfaces when the wishlist is empty', async ({ page }) => {
-    // No init script — wishlist starts empty.
     await page.goto('/?view=wishlist');
     await expect(page.getByText(/Your wishlist is empty/i)).toBeVisible({ timeout: 10_000 });
   });
+
+  test('tab bar flips the active surface to Trade binder', async ({ page }) => {
+    await seedLists(page);
+    await page.goto('/?view=wishlist');
+
+    // Seeded want visible on initial Wishlist landing.
+    await expect(page.getByText('Luke Skywalker - Hero of Yavin')).toBeVisible({ timeout: 10_000 });
+
+    // Click the Trade binder tab — same surface, different list.
+    await page.getByRole('tab', { name: /(?:Trade )?Binder/i }).click();
+    await expect(
+      page.getByRole('tab', { name: /(?:Trade )?Binder/i }),
+    ).toHaveAttribute('aria-selected', 'true');
+
+    // URL reflects the active tab.
+    await expect(page).toHaveURL(/tab=binder/);
+  });
 });
 
-test.describe('Dedicated Binder view', () => {
-  test('?view=binder renders the page chrome + seeded rows', async ({ page }) => {
+test.describe('Collection view — Trade binder tab', () => {
+  test('?view=binder lands on the Trade binder tab with seeded rows', async ({ page }) => {
     await seedLists(page);
     await page.goto('/?view=binder');
 
-    await expect(page.getByRole('heading', { name: /Your trade binder/i })).toBeVisible();
+    const binderTab = page.getByRole('tab', { name: /(?:Trade )?Binder/i });
+    await expect(binderTab).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+
     // Seeded available row — productId 622133 = Luke Skywalker
     // (Hyperspace). Resolved by byProductId in AvailablePanel.
     await expect(page.getByText(/Luke Skywalker/i).first()).toBeVisible({ timeout: 10_000 });
@@ -72,20 +90,24 @@ test.describe('Dedicated Binder view', () => {
   });
 });
 
-test.describe('Home → dedicated view routing', () => {
-  test('NavMenu "My Wishlist" + "My Binder" entries route to the views', async ({ page }) => {
+test.describe('Home → Collection routing', () => {
+  test('NavMenu "My Wishlist" + "My Trade Binder" entries land on the right tab', async ({ page }) => {
     await page.goto('/');
 
-    // Hamburger → My Wishlist routes to ?view=wishlist.
+    // Hamburger → My Wishlist lands on the Wishlist tab.
     await page.getByRole('button', { name: 'Navigation menu' }).click();
     await page.getByRole('link', { name: 'My Wishlist' }).click();
     await expect(page).toHaveURL(/view=wishlist/);
-    await expect(page.getByRole('heading', { name: /Your wishlist/i })).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole('tab', { name: /Wishlist/i }),
+    ).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
 
     // Same for My Trade Binder.
     await page.getByRole('button', { name: 'Navigation menu' }).click();
     await page.getByRole('link', { name: 'My Trade Binder' }).click();
     await expect(page).toHaveURL(/view=binder/);
-    await expect(page.getByRole('heading', { name: /Your trade binder/i })).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.getByRole('tab', { name: /(?:Trade )?Binder/i }),
+    ).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
   });
 });
