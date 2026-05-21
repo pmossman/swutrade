@@ -16,6 +16,7 @@ import { useSelectionFilters } from '../hooks/useSelectionFilters';
 import type { WantsApi } from '../hooks/useWants';
 import type { AvailableApi } from '../hooks/useAvailable';
 import { useSession, type SessionView as SessionData, type SessionPreview } from '../hooks/useSession';
+import { sessionCapabilities } from '../utils/sessionCapabilities';
 import { SessionTimelinePanel } from './SessionTimelinePanel';
 import { InlineSuggestionList, RevertSuggestionBanner } from './SessionSuggestions';
 import { SessionSuggestComposer } from './SessionSuggestComposer';
@@ -85,6 +86,16 @@ export function SessionView({
     sendChat, suggest, acceptSuggestion, dismissSuggestion, proposeRevert,
     markRead,
   } = api;
+  // Read-once capability projection driven by the lifecycle FSM.
+  // Every "is this CTA legal?" check goes through here so adding a
+  // new terminal status (e.g. `rejected`) is a single row edit in
+  // src/utils/sessionCapabilities.ts. Memo keyed on the fields that
+  // affect the table so we don't re-compute (and re-key useCallbacks)
+  // on unrelated session updates.
+  const caps = useMemo(
+    () => (session ? sessionCapabilities(session) : null),
+    [session],
+  );
   // Distinct from `confirm` above (which is the session-confirm API);
   // this is the "ask the user before destructive action" dialog hook.
   const askConfirm = useConfirm();
@@ -301,7 +312,7 @@ export function SessionView({
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const handleConfirm = useCallback(async () => {
-    if (confirming || !session || session.status !== 'active') return;
+    if (confirming || !session || !caps?.canConfirm) return;
     hapticMedium(); // "I'm committing" feedback on the tap itself.
     setConfirming(true);
     try {
@@ -313,9 +324,9 @@ export function SessionView({
     } finally {
       setConfirming(false);
     }
-  }, [confirm, confirming, session]);
+  }, [confirm, confirming, session, caps]);
   const handleCancel = useCallback(async () => {
-    if (cancelling || !session || session.status !== 'active') return;
+    if (cancelling || !session || !caps?.canCancel) return;
     // Only confirm when there's actual work to lose. A pristine
     // session (no cards on either side, no pending suggestions) is
     // safe to single-tap-cancel — single tap matches the "I just
@@ -342,9 +353,9 @@ export function SessionView({
     } finally {
       setCancelling(false);
     }
-  }, [cancel, cancelling, session, askConfirm]);
+  }, [cancel, cancelling, session, askConfirm, caps]);
   const handleUnconfirm = useCallback(async () => {
-    if (unconfirming || !session || session.status !== 'active') return;
+    if (unconfirming || !session || !caps?.canUnconfirm) return;
     hapticSoft();
     setUnconfirming(true);
     try {
@@ -352,7 +363,7 @@ export function SessionView({
     } finally {
       setUnconfirming(false);
     }
-  }, [unconfirm, unconfirming, session]);
+  }, [unconfirm, unconfirming, session, caps]);
 
   // Decline affordance — recipient-facing rejection of an offer.
   // Same terminal effect as Cancel but the counterpart's
@@ -362,7 +373,7 @@ export function SessionView({
   // on the other side.
   const [declining, setDeclining] = useState(false);
   const handleDecline = useCallback(async () => {
-    if (declining || !session || session.status !== 'active') return;
+    if (declining || !session || !caps?.canDecline) return;
     const ok = await askConfirm({
       title: 'Decline this trade?',
       message: 'The other side will be notified.',
@@ -377,7 +388,7 @@ export function SessionView({
     } finally {
       setDeclining(false);
     }
-  }, [decline, declining, session, askConfirm]);
+  }, [decline, declining, session, askConfirm, caps]);
 
   return (
     <div className="min-h-[100dvh] bg-space-900 text-gray-100 flex flex-col">
