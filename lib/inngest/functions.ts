@@ -1,5 +1,4 @@
 import { inngest } from './client.js';
-import { performSessionFollowupsSweep } from '../sessionFollowups.js';
 
 /**
  * Periodic sweep that DMs trade-session participants about unread
@@ -10,15 +9,20 @@ import { performSessionFollowupsSweep } from '../sessionFollowups.js';
  * the DM-on-activity feel responsive. See `lib/inngest/client.ts`
  * for the full rationale.
  *
- * The sweep itself is idempotent — re-running on the same state
- * is a no-op (last_notified_at gates re-DMs). Inngest's at-least-
- * once delivery is fine here; a duplicate trigger is harmless.
+ * Re-enable: uncomment the `performSessionFollowupsSweep` call below
+ * (and the import) once: (a) the sweep query is bounded to recent
+ * activity instead of scanning every active session each tick, and
+ * (b) the function swallows DB errors as a no-op so a Neon outage
+ * doesn't turn into a retry storm again.
  *
- * The function calls `performSessionFollowupsSweep` directly (in-
- * process, no HTTP round-trip). That's the only invocation path
- * for the cron in production; the HTTP `/api/cron/session-followups`
- * endpoint is kept as a manual-trigger escape hatch but isn't on
- * any schedule.
+ * TEMPORARILY NO-OP (2026-06-04): Neon hit its data-transfer quota
+ * and started returning HTTP 402 on every query. The sweep threw,
+ * Inngest auto-retried (default 4× with backoff), each retry burned
+ * Vercel Active CPU — the function ran ~50×/hour instead of 12×/hour
+ * for days, accumulating 17h+ of Active CPU across the month and
+ * exceeding the free tier on Vercel too. Returning a no-op here
+ * stops the retry chain at the source: Inngest sees success, never
+ * retries, and each tick costs ~0 CPU instead of multiple seconds.
  */
 export const sessionFollowupsCron = inngest.createFunction(
   {
@@ -26,6 +30,6 @@ export const sessionFollowupsCron = inngest.createFunction(
     triggers: [{ cron: '*/5 * * * *' }],
   },
   async () => {
-    return await performSessionFollowupsSweep();
+    return { scanned: 0, dmd: 0, skipped: 0, errors: 0, disabled: true };
   },
 );
