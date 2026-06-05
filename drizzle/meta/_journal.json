@@ -225,6 +225,13 @@
       "when": 1778123238733,
       "tag": "0031_prefs_hygiene_drop_dead_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780640540375,
+      "tag": "0032_drop_last_notified_at",
+      "breakpoints": true
     }
   ]
 }

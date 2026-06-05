@@ -385,28 +385,3 @@ export function buildSessionDeclinedMessage(opts: {
   };
 }
 
-/**
- * Auto-DM fired when a counterpart triggers any session activity
- * (chat, edit, confirm, suggestion). Generic copy intentionally —
- * the recipient sees the specific events when they tap through. The
- * cooldown (~10 min per session per recipient) means a burst of
- * activity collapses into one DM, so this is a "go look" pointer
- * rather than a per-event firehose.
- */
-export function buildSessionActivityMessage(opts: {
-  counterpartHandle: string;
-  sessionUrl: string;
-}): DiscordMessageBody {
-  return {
-    embeds: [{
-      title: 'New activity in your trade',
-      description: [
-        `@${opts.counterpartHandle} has new activity in your shared trade — chat, edit, or suggestion.`,
-        '',
-        `[Open shared trade](<${opts.sessionUrl}>)`,
-      ].join('\n'),
-      color: COLORS.gold,
-      footer: { text: 'SWUTrade shared trade · adjust in /swutrade settings' },
-    }],
-  };
-}

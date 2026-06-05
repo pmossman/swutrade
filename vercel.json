@@ -31,7 +31,6 @@
     { "source": "/api/bot/interactions", "destination": "/api/bot?action=interactions" },
     { "source": "/api/bot/events", "destination": "/api/bot?action=events" },
     { "source": "/api/cron/signals", "destination": "/api/bot?action=cron-signals" },
-    { "source": "/api/cron/session-followups", "destination": "/api/bot?action=cron-session-followups" },
     { "source": "/api/me/sessions", "destination": "/api/sessions?action=list" },
     { "source": "/api/sessions/create", "destination": "/api/sessions?action=create" },
     { "source": "/api/sessions/create-open", "destination": "/api/sessions?action=create-open" },

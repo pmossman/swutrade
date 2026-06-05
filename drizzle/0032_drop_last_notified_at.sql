@@ -1,0 +1,1 @@
+ALTER TABLE "trade_sessions" DROP COLUMN "last_notified_at";

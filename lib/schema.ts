@@ -53,9 +53,11 @@ export const users = pgTable('users', {
   dmSessionSettled: boolean('dm_session_settled').default(true).notNull(),
   dmSessionDeclined: boolean('dm_session_declined').default(true).notNull(),
   // Auto-notification when the counterpart does anything in a shared
-  // session (chat / edit / confirm / suggest). Cooldown-throttled
-  // server-side via `trade_sessions.last_notified_at` so a burst of
-  // activity collapses into a single DM.
+  // session (chat / edit / confirm / suggest). Column + pref UI are
+  // retained for backwards compatibility but no code currently reads
+  // this flag — the underlying sweep was retired 2026-06-04 (see
+  // [[project-inngest-retry-storm]]). Slated for a future hygiene
+  // pass alongside the other dead-pref columns.
   dmSessionActivity: boolean('dm_session_activity').default(true).notNull(),
   // Fires once per APPLICATION_AUTHORIZED event for an existing user
   // already in that guild. Opt-out surface for "SWUTrade just landed
@@ -354,10 +356,11 @@ export const communityEvents = pgTable(
  * alice)` collide. Settled/expired/cancelled rows don't count against
  * the cap so a pair who completes a trade can start a new session.
  *
- * Async resumption: `last_notified_at` is a JSONB map keyed by user
- * id → ISO timestamp of the last DM we sent that user about changes
- * here. The debounce-DM job reads this to decide whether to ping on
- * a new edit. Per-user so each side has its own debounce window.
+ * Async resumption: there is intentionally no auto-DM-on-activity
+ * mechanism. Earlier iterations used a `last_notified_at` JSONB +
+ * periodic sweep; the sweep was retired 2026-06-04 after a Neon
+ * data-transfer incident. Users discover counterpart activity by
+ * opening the app or via the next `/trade` Discord interaction.
  */
 export const sessionStatuses = ['active', 'settled', 'cancelled', 'expired'] as const;
 export type SessionStatus = typeof sessionStatuses[number];
@@ -438,11 +441,6 @@ export const tradeSessions = pgTable(
     lastEditedAt: timestamp('last_edited_at', { withTimezone: true }).defaultNow().notNull(),
     lastEditedByUserId: text('last_edited_by_user_id')
       .references(() => users.id, { onDelete: 'set null' }),
-    // Map user_id → ISO timestamp of last DM sent to them about
-    // changes here. The debounce-DM job reads this entry for the
-    // OTHER user when deciding whether to ping. Updated atomically
-    // with the DM send.
-    lastNotifiedAt: jsonb('last_notified_at').notNull().default({}).$type<Record<string, string>>(),
     // Longer TTL than proposals (days, not hours) because async
     // sessions can span multi-day negotiations. Exact policy (N days
     // of inactivity? N days from creation?) is the cron's call.
