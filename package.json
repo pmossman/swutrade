@@ -39,7 +39,6 @@
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fflate": "^0.8.2",
-    "inngest": "^4.3.0",
     "iron-session": "^8.0.4",
     "lucide-react": "^1.8.0",
     "qrcode.react": "^4.2.0",

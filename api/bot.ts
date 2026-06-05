@@ -10,10 +10,6 @@ import {
   sendSessionCreateInviteDm,
 } from '../lib/sessions.js';
 import {
-  performSessionFollowupsSweep,
-  type SessionFollowupsDeps,
-} from '../lib/sessionFollowups.js';
-import {
   PREF_CUSTOM_ID_PREFIX,
   SERVER_INVITE_CUSTOM_ID_PREFIX,
   buildPrefOptionsMessage,
@@ -1159,32 +1155,7 @@ async function handleCronRequest(
     return runSignalExpirySweep(res);
   }
 
-  if (action === 'cron-session-followups') {
-    return runSessionFollowupsSweep(req, res);
-  }
-
   res.status(404).json({ error: `unknown cron action ${action}` });
-}
-
-/**
- * HTTP wrapper for `performSessionFollowupsSweep` (defined in
- * `lib/sessionFollowups.ts`). Kept for manual debugging via
- * `/api/cron/session-followups` (auth-gated by `Authorization:
- * Bearer ${CRON_SECRET}` upstream in handleCronRequest). The
- * production trigger is Inngest's scheduled function — see
- * `lib/inngest/functions.ts::sessionFollowupsCron`.
- */
-export async function runSessionFollowupsSweep(
-  req: VercelRequest,
-  res: VercelResponse,
-  deps: SessionFollowupsDeps = {},
-): Promise<void> {
-  const result = await performSessionFollowupsSweep({
-    ...deps,
-    appBaseUrl: deps.appBaseUrl
-      ?? (req.headers.host ? `https://${req.headers.host}` : undefined),
-  });
-  res.status(200).json({ ok: true, ...result });
 }
 
 /**

@@ -832,7 +832,6 @@ export async function createOrGetActiveSession(
       status: 'active',
       confirmedByUserIds: [],
       lastEditedByUserId: creatorCards.length > 0 ? args.creatorUserId : null,
-      lastNotifiedAt: {},
       expiresAt: nextExpiresAt(),
     });
   } catch (err) {
@@ -893,7 +892,6 @@ export async function createOpenSession(
     lastEditedByUserId: creatorCards.length > 0 || counterpartCards.length > 0
       ? args.creatorUserId
       : null,
-    lastNotifiedAt: {},
     expiresAt: nextExpiresAt(),
   });
   await recordSessionEvent(db, {
@@ -1681,19 +1679,15 @@ export async function sendSessionCreateInviteDm(
   return { ok: true };
 }
 
-// Activity DMs (chat / edit / confirm / suggestion-* events) used to
-// fire synchronously from each emit-site with a 10-min cooldown
-// throttling bursts. Replaced 2026-05-08 with a periodic cron sweep
-// (`api/bot.ts::runSessionFollowupsSweep`, action `cron-session-
-// followups`, every 2 min) — same `last_notified_at` jsonb column,
-// same `dmSessionActivity` pref, same `buildSessionActivityMessage`
-// body, but the cron interval IS the cooldown. The sync function
-// (`notifySessionActivity`) and its `SESSION_ACTIVITY_DM_COOLDOWN_MS`
-// constant are gone; the cron reads `session_events` directly to
-// decide who needs a catch-up DM.
-//
-// The lifecycle DMs (invite, declined) keep their synchronous paths
-// — those are user-actioned moments where a 2-min latency would feel
+// Activity DMs (chat / edit / confirm / suggestion-* events) are
+// intentionally NOT sent. Earlier iterations tried synchronous DMs
+// with cooldowns, then a periodic Inngest sweep — the sweep ran an
+// unconditional `SELECT FROM trade_sessions WHERE status='active'`
+// every 5 min and exploded our Neon data-transfer quota under retry
+// amplification in 2026-06. Dropped entirely 2026-06-04 in favour of
+// "users find out by opening the app or via the next /trade Discord
+// command." Lifecycle DMs (invite, declined) keep their synchronous
+// paths — those are user-actioned moments where latency would feel
 // broken. See `sendSessionCreateInviteDm` + `declineSession` above.
 
 /**
